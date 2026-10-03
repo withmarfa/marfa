@@ -18,6 +18,21 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 - **Credential:** `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` and `marfa login` put one. Never a plain file. With both variables set, a command reads and writes no keychain, which is how an agent runs it.
 - **Unattended runs:** `MARFA_KEYCHAIN` names a keychain file to use instead of the person's, on macOS, and refuses every prompt. Tests and CI use it; CI fails a run that changed the login keychain's `marfa` entries.
 
+### Process outcomes
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Completed, including a completed drain containing refused writes |
+| 1 | Request refused or invalid, including another contract |
+| 2 | Invalid command line, missing store, or missing server |
+| 3 | Environmental failure, including network failure, rate limits, and full local storage |
+| 4 | Working-copy or queue rule, other store fault, or unavailable credential storage |
+| 5 | Missing or refused credential, or ended sign-in |
+
+`device drain` preserves its complete stdout report when it exits 3 for an unavailable pass or undelivered writes, or 5 for a credential-stopped pass. It prints no second error envelope for these report outcomes. Credential stop takes precedence if both occur. A completed pass with refused writes exits 0 and its plain output separately counts refused verdicts; JSON retains each typed verdict. Held writes alone do not make an environmental failure. A direct renewal error prints its typed error on stderr with empty stdout; earlier answers remain committed and the current queued request, idempotency key, and refusal count stay unchanged. Local renewal failures carry no invented server status. An environmental renewal failure while sending a queued request returns the unavailable report; a renewal failure during a follow-up read can end the call with its typed error.
+
+Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
+
 ## Build and check
 
 ```sh

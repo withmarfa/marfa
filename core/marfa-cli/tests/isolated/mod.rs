@@ -64,6 +64,38 @@ impl Isolated {
         command
     }
 
+    pub fn directory(&self) -> &std::path::Path {
+        &self.folder
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn keychain_path(&self) -> PathBuf {
+        self.keychain.clone()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn put(&self, account: &str, text: &str) {
+        self.opened();
+        let output = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-A",
+                "-s",
+                "marfa",
+                "-a",
+                account,
+                "-w",
+                text,
+            ])
+            .arg(&self.keychain)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "could not seed isolated credential store"
+        );
+    }
+
     pub fn missing(&self) -> PathBuf {
         self.folder.join("missing.keychain-db")
     }

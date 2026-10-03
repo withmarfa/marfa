@@ -7,7 +7,7 @@ use marfa_core::CoreError;
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error(transparent)]
-    Core(#[from] CoreError),
+    Core(CoreError),
     #[error("{0}")]
     Io(io::Error),
     #[error("{0} is not in the local copy")]
@@ -57,12 +57,13 @@ pub enum CliError {
     #[error("{0}")]
     Invalid(String),
     #[error(
-        "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
+        "{origin} {}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
+        contract_said(served.as_deref(), *status),
         if *write_sent { ". The write was sent, and may have taken effect before its answer was refused" } else { "" }
     )]
     ContractMismatch {
         origin: String,
-        served: String,
+        served: Option<String>,
         expected: u64,
         write_sent: bool,
         /// For a write, a 201 and a 409 say different things about whether
@@ -80,6 +81,50 @@ pub enum CliError {
     },
 }
 
+impl From<CoreError> for CliError {
+    fn from(error: CoreError) -> Self {
+        match error {
+            CoreError::RenewalFailed(cause) => match *cause {
+                CoreError::Server {
+                    status,
+                    code,
+                    message,
+                } => Self::Refused {
+                    status,
+                    code,
+                    message,
+                    retry_after_seconds: None,
+                    details: None,
+                },
+                CoreError::ContractMismatch {
+                    origin,
+                    served,
+                    expected,
+                    write_sent,
+                    status,
+                } => Self::ContractMismatch {
+                    origin,
+                    served,
+                    expected,
+                    write_sent,
+                    status,
+                },
+                other => Self::from(other),
+            },
+            CoreError::Redirected {
+                origin,
+                status,
+                location,
+            } => Self::Redirected {
+                origin,
+                status,
+                location,
+            },
+            other => Self::Core(other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     Done = 0,
@@ -94,6 +139,8 @@ impl CliError {
     pub fn code(&self) -> &'static str {
         match self {
             CliError::Core(core) => match core {
+                CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).code(),
+                CoreError::Redirected { .. } => "redirect",
                 CoreError::NotFound { .. } => "not_found",
                 CoreError::Unauthorized { .. } => "unauthorized",
                 CoreError::Forbidden { .. } => "forbidden",
@@ -101,10 +148,14 @@ impl CliError {
                 CoreError::UnknownType { .. } => "unknown_type",
                 CoreError::RateLimited { .. } => "rate_limited",
                 CoreError::Server { .. } => "server",
+                CoreError::Io(_) => "io",
                 CoreError::Network(_) => "network",
                 CoreError::Unnamed { .. } => "unnamed_answer",
                 CoreError::Decoding(_) => "decoding",
                 CoreError::Store(_) => "store",
+                CoreError::StorageFull(_) => "storage_full",
+                CoreError::SignedOut { .. } => "signed_out",
+                CoreError::NoKeychain(_) => "no_keychain",
                 CoreError::NoServer => "no_server",
                 CoreError::NoCursor => "no_cursor",
                 CoreError::HydrationIncomplete => "hydration_incomplete",
@@ -148,21 +199,26 @@ impl CliError {
     pub fn exit(&self) -> Exit {
         match self {
             CliError::Core(core) => match core {
-                CoreError::NotFound { .. }
+                CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).exit(),
+                CoreError::Redirected { .. }
+                | CoreError::NotFound { .. }
                 | CoreError::Forbidden { .. }
                 | CoreError::Validation { .. }
                 | CoreError::UnknownType { .. }
                 | CoreError::ContractMismatch { .. }
                 | CoreError::Invalid(_) => Exit::Refused,
-                CoreError::Unauthorized { .. } => Exit::Credential,
-                CoreError::RateLimited { .. }
+                CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
+                CoreError::Io(_)
+                | CoreError::StorageFull(_)
+                | CoreError::RateLimited { .. }
                 | CoreError::Server { .. }
                 | CoreError::Network(_)
                 | CoreError::Unnamed { .. }
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. }
                 | CoreError::BytesAbsent { .. } => Exit::Environment,
-                CoreError::Store(_)
+                CoreError::NoKeychain(_)
+                | CoreError::Store(_)
                 | CoreError::NoServer
                 | CoreError::NoCursor
                 | CoreError::HydrationIncomplete
@@ -204,9 +260,12 @@ impl CliError {
                 CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
-                CoreError::ContractMismatch { status, .. } | CoreError::Unnamed { status, .. } => {
-                    Some((Some(*status), None, None))
+                CoreError::ContractMismatch {
+                    status: Some(status),
+                    ..
                 }
+                | CoreError::Unnamed { status, .. }
+                | CoreError::Redirected { status, .. } => Some((Some(*status), None, None)),
                 _ => None,
             },
             CliError::Refused {
@@ -255,6 +314,16 @@ impl CliError {
     }
 }
 
+fn contract_said(served: Option<&str>, status: Option<u16>) -> String {
+    match served {
+        Some(served) => format!("answers contract {served}"),
+        None => status.map_or_else(
+            || "answers no contract at its root".into(),
+            |status| format!("answered {status} naming no contract"),
+        ),
+    }
+}
+
 fn details_suffix(details: &Option<Box<serde_json::Value>>) -> String {
     match details {
         Some(details) => format!(" {details}"),
@@ -283,14 +352,18 @@ Exit codes:
   0  done
   1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
   2  the command line was wrong, or named no store or server
-  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract); try again
+  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
+
+A device drain prints its complete report on stdout: 0 for a completed pass (including refused writes),
+3 for undelivered writes or an unavailable pass, and 5 for a credential-stopped pass.
+A report exit prints no additional refusal on stderr. Refused verdicts have a separate plain-text count.
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
 where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
-too_large, unknown_type, rate_limited, server, network, unnamed_answer, decoding, io, watch, store, no_store,
+too_large, unknown_type, rate_limited, server, network, unnamed_answer, decoding, io, watch, store, storage_full, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
 no_catalog, reading_handle, wrong_schema, copy_expired, stream_incomplete, wrong_server, not_held,
 contract_mismatch, redirect.";
@@ -306,6 +379,35 @@ mod tests {
             message: String::new(),
             retry_after_seconds: None,
             details: None,
+        }
+    }
+
+    #[test]
+    fn local_storage_and_renewal_errors_have_no_server_status() {
+        for (core, code, exit) in [
+            (
+                CoreError::StorageFull("full".into()),
+                "storage_full",
+                Exit::Environment,
+            ),
+            (
+                CoreError::SignedOut {
+                    origin: "https://marfa.example".into(),
+                },
+                "signed_out",
+                Exit::Credential,
+            ),
+            (
+                CoreError::NoKeychain("locked".into()),
+                "no_keychain",
+                Exit::Local,
+            ),
+            (CoreError::Store("malformed".into()), "store", Exit::Local),
+        ] {
+            let error = CliError::from(core);
+            assert_eq!(error.code(), code);
+            assert_eq!(error.exit(), exit);
+            assert!(error.envelope()["error"]["server"].is_null());
         }
     }
 
@@ -371,6 +473,7 @@ mod tests {
             CliError::Io(io::Error::other("x")).code(),
             CliError::Watch(String::new()).code(),
             CliError::Core(CoreError::Store(String::new())).code(),
+            CliError::Core(CoreError::StorageFull(String::new())).code(),
             CliError::NoStoreNamed.code(),
             CliError::NoServerNamed.code(),
             CliError::NoCredential {
@@ -408,7 +511,7 @@ mod tests {
             CliError::NotHeld(String::new()).code(),
             CliError::ContractMismatch {
                 origin: String::new(),
-                served: String::new(),
+                served: Some(String::new()),
                 expected: 1,
                 write_sent: false,
                 status: None,

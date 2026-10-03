@@ -5869,6 +5869,34 @@ describe("an edit behind an edit of the same row", () => {
       .find((text) => text.startsWith("create_item"));
     expect(create).not.toContain("waiting on");
     expect(create).not.toContain("after");
+    scriptWrites(harness.server, {
+      create: [
+        answers.created(
+          wireItem({
+            id: note.value.item_id!,
+            version: 1,
+            properties: { title: "made here", body: "made here" },
+          }),
+        ),
+      ],
+      update: [{ kind: "drop" }],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const history = await device.queue();
+    expect(history.ok).toBe(true);
+    if (!history.ok) return;
+    expect(
+      history.value.find((write) => write.kind === "update_item")?.depends_on,
+    ).toContain(note.value.id);
+    const afterAnswer = await device.text(["queue"]);
+    expect(afterAnswer.ok).toBe(true);
+    if (!afterAnswer.ok) return;
+    expect(
+      afterAnswer.value
+        .split("\n")
+        .find((text) => text.startsWith("update_item")),
+    ).not.toContain("waiting on");
   });
 
   it("sends an edit made after a catch-up on the version the edit ahead of it was answered with", async () => {

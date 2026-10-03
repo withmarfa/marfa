@@ -604,6 +604,9 @@ pub enum MarfaError {
         code: String,
         message: String,
     },
+    Io {
+        message: String,
+    },
     Network {
         message: String,
     },
@@ -617,6 +620,22 @@ pub enum MarfaError {
         message: String,
     },
     Store {
+        message: String,
+    },
+    Redirected {
+        origin: String,
+        status: u16,
+        location: Option<String>,
+        message: String,
+    },
+    StorageFull {
+        message: String,
+    },
+    SignedOut {
+        origin: String,
+        message: String,
+    },
+    NoKeychain {
         message: String,
     },
     NoServer {
@@ -673,7 +692,7 @@ pub enum MarfaError {
         /// The contract the answer named, or none where a success named none.
         served: Option<String>,
         expected: u64,
-        status: u16,
+        status: Option<u16>,
         /// The answer was to a write, which may have taken effect.
         write_sent: bool,
         message: String,
@@ -693,10 +712,15 @@ impl MarfaError {
             | MarfaError::UnknownType { message }
             | MarfaError::RateLimited { message, .. }
             | MarfaError::Server { message, .. }
+            | MarfaError::Io { message }
             | MarfaError::Network { message }
             | MarfaError::Unnamed { message, .. }
             | MarfaError::Decoding { message }
             | MarfaError::Store { message }
+            | MarfaError::Redirected { message, .. }
+            | MarfaError::StorageFull { message }
+            | MarfaError::SignedOut { message, .. }
+            | MarfaError::NoKeychain { message }
             | MarfaError::NoServer { message }
             | MarfaError::NoCursor { message }
             | MarfaError::HydrationIncomplete { message }
@@ -724,6 +748,7 @@ impl From<marfa_core::CoreError> for MarfaError {
         use marfa_core::CoreError as E;
         let message = error.to_string();
         match error {
+            E::RenewalFailed(cause) => Self::from(*cause),
             E::NotFound { code, .. } => MarfaError::NotFound { code, message },
             E::Unauthorized { code, .. } => MarfaError::Unauthorized { code, message },
             E::Forbidden { code, .. } => MarfaError::Forbidden { code, message },
@@ -743,10 +768,24 @@ impl From<marfa_core::CoreError> for MarfaError {
                 code,
                 message,
             },
+            E::Io(_) => MarfaError::Io { message },
             E::Network(_) => MarfaError::Network { message },
             E::Unnamed { status, .. } => MarfaError::Unnamed { status, message },
             E::Decoding(_) => MarfaError::Decoding { message },
             E::Store(_) => MarfaError::Store { message },
+            E::Redirected {
+                origin,
+                status,
+                location,
+            } => MarfaError::Redirected {
+                origin,
+                status,
+                location,
+                message,
+            },
+            E::StorageFull(_) => MarfaError::StorageFull { message },
+            E::SignedOut { origin } => MarfaError::SignedOut { origin, message },
+            E::NoKeychain(_) => MarfaError::NoKeychain { message },
             E::NoServer => MarfaError::NoServer { message },
             E::NoCursor => MarfaError::NoCursor { message },
             E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
@@ -1787,8 +1826,25 @@ mod tests {
                 "Server",
             ),
             (E::Network(text()).into(), "Network"),
+            (E::Io(text()).into(), "Io"),
+            (
+                E::RenewalFailed(Box::new(E::NoKeychain(text()))).into(),
+                "NoKeychain",
+            ),
+            (
+                E::Redirected {
+                    origin: text(),
+                    status: 302,
+                    location: None,
+                }
+                .into(),
+                "Redirected",
+            ),
             (E::Decoding(text()).into(), "Decoding"),
             (E::Store(text()).into(), "Store"),
+            (E::StorageFull(text()).into(), "StorageFull"),
+            (E::SignedOut { origin: text() }.into(), "SignedOut"),
+            (E::NoKeychain(text()).into(), "NoKeychain"),
             (E::NoServer.into(), "NoServer"),
             (E::NoCursor.into(), "NoCursor"),
             (E::HydrationIncomplete.into(), "HydrationIncomplete"),
@@ -1829,7 +1885,7 @@ mod tests {
                     origin: text(),
                     served: Some("4".into()),
                     expected: 3,
-                    status: 200,
+                    status: Some(200),
                     write_sent: false,
                 }
                 .into(),
@@ -1854,22 +1910,26 @@ mod tests {
             );
         }
         assert!(matches!(
-            &crossed[19].0,
+            &crossed.iter().find(|(_, name)| *name == "BytesAbsent").unwrap().0,
             MarfaError::BytesAbsent { hash, .. } if hash == "sha256:h"
         ));
         assert!(matches!(
-            &crossed[20].0,
+            &crossed.iter().find(|(_, name)| *name == "ContractMismatch").unwrap().0,
             MarfaError::ContractMismatch { served: Some(served), expected: 3, .. } if served == "4"
         ));
         assert!(matches!(
-            &crossed[22].0,
+            &crossed
+                .iter()
+                .find(|(_, name)| *name == "Unnamed")
+                .unwrap()
+                .0,
             MarfaError::Unnamed { status: 401, .. }
         ));
     }
 
     #[test]
     fn a_contract_refusal_crosses_with_its_status_and_whether_a_write_went() {
-        for (status, write_sent) in [(201, true), (200, false)] {
+        for (status, write_sent) in [(Some(201), true), (Some(200), false), (None, false)] {
             let crossed: MarfaError = marfa_core::CoreError::ContractMismatch {
                 origin: "https://marfa.example".into(),
                 served: None,

@@ -3065,7 +3065,9 @@ impl Folder {
                     None => match self.core.blob(blob).map(std::fs::read) {
                         Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
                         // A refused credential refuses every file alike.
-                        Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
+                        Err(
+                            error @ (CoreError::Unauthorized { .. } | CoreError::RenewalFailed(_)),
+                        ) => return Err(error),
                         // A held copy that cannot be read is one file's failure too.
                         Ok(Err(_)) | Err(_) => {
                             report.absent += 1;
@@ -4252,6 +4254,104 @@ fn safe_name(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blob_renewal_failure_does_not_complete_a_folder_pull() {
+        use crate::store;
+        for cause in [
+            CoreError::SignedOut {
+                origin: "https://marfa.example".into(),
+            },
+            CoreError::NoKeychain("locked".into()),
+            CoreError::Network("token endpoint unavailable".into()),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join(STATE_DIR).join("core.sqlite");
+            std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+            let core = working(Core::open(&db, None).unwrap()).unwrap();
+            settings_file::bind(&core, "folder").unwrap();
+            {
+                let conn = core.conn().unwrap();
+                store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+                store::meta_set(
+                    &conn,
+                    store::META_SLICE_TYPES,
+                    "[\"core.note\",\"core.file\"]",
+                )
+                .unwrap();
+                store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+                store::replace_types(
+                    &conn,
+                    &[
+                        store::testing::wire_type("core.note", None, Some("title")),
+                        store::testing::wire_type("core.file", None, Some("title")),
+                    ],
+                )
+                .unwrap();
+            }
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "queued", "body": "keep me" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+            drop(core);
+            let folder = Folder::open(
+                dir.path(),
+                Some(Server {
+                    url: server.url(),
+                    key: "fixture".into(),
+                }),
+            )
+            .unwrap();
+            let before = folder.core.queue().unwrap();
+            let expected = cause.clone();
+            folder
+                .core
+                .renew_credential_with(Box::new(move |_| Err(cause.clone())));
+            let hash = crate::blob::name_of(b"fixture");
+            server.on(
+                &format!("/blobs/{hash}/url"),
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let mut item = store::testing::note("file", "fixture.bin", "", "2026-01-01T00:00:00Z");
+            item.r#type = "core.file".into();
+            item.properties
+                .insert("blob_ref".into(), hash.clone().into());
+            let item = {
+                let conn = folder.core.conn().unwrap();
+                store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+                store::item_by_id(&conn, "file").unwrap().unwrap()
+            };
+            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            let names = Names::load(&folder, &catalog).unwrap();
+            let edge_types = EdgeTypes::default();
+            let rendering = Rendering {
+                catalog: &catalog,
+                names: &names,
+                edge_types: &edge_types,
+            };
+            let entry = Placing {
+                item: &item,
+                bound: None,
+                want: "fixture.bin".into(),
+                rank: placement::unplaced_rank(true),
+                taken: None,
+            };
+            let mut report = PullReport::default();
+            let outcome =
+                folder.write_placed(&entry, &rendering, &Default::default(), None, &mut report);
+            assert_eq!(outcome, Err(CoreError::RenewalFailed(Box::new(expected))));
+            assert_eq!(report.absent, 0);
+            assert_eq!(folder.core.queue().unwrap(), before);
+            assert!(!dir.path().join("fixture.bin").exists());
+            assert_eq!(server.seen(&format!("/blobs/{hash}/url")).len(), 1);
+        }
+    }
 
     #[test]
     fn a_folder_another_process_holds_is_refused_before_it_is_worked() {

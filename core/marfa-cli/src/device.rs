@@ -6,7 +6,7 @@ use marfa_core::{
     Sort,
 };
 
-use crate::error::CliError;
+use crate::error::{CliError, Exit};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
 use crate::values::{ItemState, SortDirection, SortField, Tier, properties};
@@ -536,7 +536,7 @@ pub struct ListArgs {
     pub offset: Option<u32>,
 }
 
-pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> {
+pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
     let store = Store {
         db: args.db,
         reader: args.reader,
@@ -787,7 +787,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                             &serde_json::json!({ "id": id, "thumbnail": null }),
                             json,
                             || format!("{id} carries no thumbnail"),
-                        );
+                        ).map(|()| Exit::Done);
                     };
                     if let Some(path) = &out {
                         std::fs::write(path, &thumbnail.bytes)?;
@@ -946,7 +946,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         }
         DeviceCommand::Drain => {
             let report = store.open_with_server(named)?.drain()?;
-            output::drained(&report, json)
+            output::drained(&report, json)?;
+            return Ok(output::drain_exit(&report));
         }
         DeviceCommand::Release { id, reason } => {
             let core = store.open(None)?;
@@ -1072,6 +1073,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             }
         }
     }
+    .map(|()| Exit::Done)
 }
 
 fn type_line(held: &marfa_core::ItemType) -> String {
@@ -1180,11 +1182,11 @@ impl Store {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);
         };
+        if (self.reader || !self.makes) && !path.exists() {
+            return Err(CliError::NoStoreAt(path.clone()));
+        }
         if self.reader {
             return Ok(Core::open_reader(path)?);
-        }
-        if !self.makes && !path.exists() {
-            return Err(CliError::NoStoreAt(path.clone()));
         }
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()

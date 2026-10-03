@@ -26,6 +26,8 @@ pub enum CoreError {
         code: String,
         message: String,
     },
+    #[error("{0}")]
+    Io(String),
     #[error("network: {0}")]
     Network(String),
     /// The server names its contract on every answer, so one naming none is
@@ -42,8 +44,24 @@ pub enum CoreError {
     },
     #[error("decoding: {0}")]
     Decoding(String),
+    /// A failed credential callback says nothing about the queued request.
+    /// Client boundaries expose the cause; drain preserves this provenance.
+    #[error("{0}")]
+    RenewalFailed(Box<CoreError>),
+    #[error("signed out of {origin}: sign in again")]
+    SignedOut { origin: String },
+    #[error("credential storage is unavailable: {0}")]
+    NoKeychain(String),
+    #[error("local storage is full: {0}")]
+    StorageFull(String),
     #[error("store: {0}")]
     Store(String),
+    #[error("{origin} answered {status}, a redirect to {}", location.as_deref().unwrap_or("nowhere it named"))]
+    Redirected {
+        origin: String,
+        status: u16,
+        location: Option<String>,
+    },
     #[error("no server configured for this call")]
     NoServer,
     #[error("no event cursor stored; hydrate first")]
@@ -79,7 +97,7 @@ pub enum CoreError {
         origin: String,
         served: Option<String>,
         expected: u64,
-        status: u16,
+        status: Option<u16>,
         /// The server acted on a write before its answer could say it speaks
         /// another contract.
         write_sent: bool,
@@ -93,9 +111,12 @@ impl CoreError {
     /// from a server that is not Marfa's.
     pub fn is_environmental(&self) -> bool {
         match self {
-            CoreError::Network(_) | CoreError::RateLimited { .. } | CoreError::Unnamed { .. } => {
-                true
-            }
+            CoreError::RenewalFailed(cause) => cause.is_environmental(),
+            CoreError::Io(_)
+            | CoreError::StorageFull(_)
+            | CoreError::Network(_)
+            | CoreError::RateLimited { .. }
+            | CoreError::Unnamed { .. } => true,
             CoreError::Server { status, .. } => *status >= 500 || *status == 408,
             _ => false,
         }
@@ -103,6 +124,7 @@ impl CoreError {
 
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
+            CoreError::RenewalFailed(cause) => cause.retry_after(),
             CoreError::RateLimited {
                 retry_after_seconds: Some(seconds),
                 ..
@@ -125,7 +147,7 @@ fn contract_mismatch(
     origin: &str,
     served: Option<&str>,
     expected: u64,
-    status: u16,
+    status: Option<u16>,
     write_sent: bool,
 ) -> String {
     let sent = if write_sent {
@@ -133,14 +155,18 @@ fn contract_mismatch(
     } else {
         ""
     };
+    let answered = status.map_or_else(
+        || "answered".to_string(),
+        |status| format!("answered {status}"),
+    );
     match served {
         Some(served) => format!(
-            "{origin} answered {status} on contract {served}, and this build of the core speaks contract {expected}, so the answer was not read: use a build for the server's contract{sent}"
+            "{origin} {answered} on contract {served}, and this build of the core speaks contract {expected}, so the answer was not read: use a build for the server's contract{sent}"
         ),
         // Nothing here says the answer came from a Marfa server at all: a
         // captive portal or a mistyped URL answers the same way.
         None => format!(
-            "{origin} answered {status} naming no contract, so it may not be a Marfa server: check the URL. This build of the core speaks contract {expected}{sent}"
+            "{origin} {answered} naming no contract, so it may not be a Marfa server: check the URL. This build of the core speaks contract {expected}{sent}"
         ),
     }
 }
@@ -161,7 +187,11 @@ fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
 
 impl From<rusqlite::Error> for CoreError {
     fn from(error: rusqlite::Error) -> Self {
-        CoreError::Store(error.to_string())
+        if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull) {
+            CoreError::StorageFull(error.to_string())
+        } else {
+            CoreError::Store(error.to_string())
+        }
     }
 }
 
@@ -180,6 +210,22 @@ impl From<url::ParseError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sqlite_full_is_environmental_without_reclassifying_store_faults() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA max_page_count = 2; CREATE TABLE filling(bytes BLOB);")
+            .unwrap();
+        let failure = conn
+            .execute("INSERT INTO filling VALUES (zeroblob(16384))", [])
+            .unwrap_err();
+        assert_eq!(
+            failure.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DiskFull)
+        );
+        assert!(CoreError::from(failure).is_environmental());
+        assert!(!CoreError::from(rusqlite::Error::InvalidQuery).is_environmental());
+    }
 
     #[test]
     fn a_rate_limit_is_environmental_and_names_its_wait_up_to_the_bound() {

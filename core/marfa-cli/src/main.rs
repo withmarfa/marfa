@@ -21,7 +21,7 @@ use crate::commands::{
     webhooks, whoami,
 };
 use crate::device::DeviceArgs;
-use crate::error::{CliError, EXIT_CODES_HELP};
+use crate::error::{CliError, EXIT_CODES_HELP, Exit};
 use crate::folders::FoldersCommand;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
@@ -160,7 +160,7 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit) => ExitCode::from(exit as u8),
         Err(CliError::ClosedOutput) => ExitCode::SUCCESS,
         Err(error) => refused(&error, json),
     }
@@ -214,7 +214,7 @@ fn usage(
     Some(CliError::Usage(message))
 }
 
-fn run(cli: Cli) -> Result<(), CliError> {
+fn run(cli: Cli) -> Result<Exit, CliError> {
     let out = Printer { json: cli.json };
     let named = Named {
         url: cli.url,
@@ -228,7 +228,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
-        Command::Device(args) => device::run(args, &named, cli.json),
+        Command::Device(args) => return device::run(args, &named, cli.json),
         Command::Folders { command } => folders::run(command, &named, cli.json),
         Command::Status => status::run(&remote()?, &out),
         Command::Whoami => whoami::run(&remote()?, &out),
@@ -250,6 +250,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
         Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }
+    .map(|()| Exit::Done)
 }
 
 #[cfg(test)]

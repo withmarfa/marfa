@@ -290,7 +290,36 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async drain(): Promise<Outcome<DrainReport>> {
-    return this.json<DrainReport>(["drain", ...this.server()]);
+    const result = await this.process([
+      ...this.prefix(),
+      "drain",
+      ...this.server(),
+    ]);
+    if (result.stderr.trim() !== "" && result.code !== 0) {
+      return { ok: false, refusal: classify(result.stderr, result.code) };
+    }
+    const report = JSON.parse(result.stdout) as DrainReport;
+    if (
+      !Array.isArray(report.verdicts) ||
+      typeof report.answered !== "number" ||
+      typeof report.undelivered !== "number" ||
+      !("stopped" in report) ||
+      !("unavailable" in report)
+    ) {
+      throw new Error("the drain did not print a complete report");
+    }
+    const expected =
+      report.stopped !== null
+        ? 5
+        : report.unavailable !== null || report.undelivered > 0
+          ? 3
+          : 0;
+    if (result.code !== expected || result.stderr.trim() !== "") {
+      throw new Error(
+        `the drain report requires exit ${String(expected)}, received ${String(result.code)}: ${result.stderr}`,
+      );
+    }
+    return { ok: true, value: report };
   }
 
   async release(
@@ -680,18 +709,29 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   private async invokeText(full: string[]): Promise<Outcome<string>> {
-    let stdout: string;
+    const result = await this.process(full);
+    if (result.code === 0) return { ok: true, value: result.stdout };
+    if (result.stderr.trim() === "") {
+      throw new Error(
+        `the device exited ${String(result.code)} saying nothing, so there is no refusal to read`,
+      );
+    }
+    return { ok: false, refusal: classify(result.stderr, result.code) };
+  }
+
+  private async process(
+    full: string[],
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
     try {
-      // A device that hangs is a failing device, and the runner owns the
-      // deadline for everything else; this bound stops one hung spawn from
-      // taking the file's whole budget with nothing naming it.
-      ({ stdout } = await run(this.options.binary, full, {
+      const { stdout, stderr } = await run(this.options.binary, full, {
         env: this.env(),
         timeout: 60_000,
         maxBuffer: 32 * 1024 * 1024,
-      }));
+      });
+      return { code: 0, stdout, stderr };
     } catch (error) {
       const failure = error as {
+        stdout?: string;
         stderr?: string;
         code?: number | string;
         killed?: boolean;
@@ -707,14 +747,12 @@ export class CliDevice implements DeviceUnderTest {
           `the device could not be run: ${failure.message ?? String(failure.code)}`,
         );
       }
-      if (failure.stderr === undefined || failure.stderr.trim() === "") {
-        throw new Error(
-          `the device exited ${String(failure.code)} saying nothing, so there is no refusal to read`,
-        );
-      }
-      return { ok: false, refusal: classify(failure.stderr, failure.code) };
+      return {
+        code: failure.code,
+        stdout: failure.stdout ?? "",
+        stderr: failure.stderr ?? "",
+      };
     }
-    return { ok: true, value: stdout };
   }
 }
 

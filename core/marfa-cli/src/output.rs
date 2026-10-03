@@ -101,6 +101,10 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
         return Ok(());
     }
+    let verdicts: std::collections::HashMap<_, _> = writes
+        .iter()
+        .map(|write| (write.id.as_str(), write.verdict))
+        .collect();
     for write in writes {
         // Not a blank column: a person fills a blank with whichever verdict
         // they expected.
@@ -122,9 +126,25 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
-        let held = match write.depends_on.len() {
+        let pending: Vec<_> = write
+            .depends_on
+            .iter()
+            .filter(|id| {
+                !matches!(
+                    verdicts.get(id.as_str()),
+                    Some(Some(
+                        marfa_core::Verdict::Accepted
+                            | marfa_core::Verdict::Merged
+                            | marfa_core::Verdict::Conflicted
+                            | marfa_core::Verdict::Refused
+                            | marfa_core::Verdict::Dead
+                    ))
+                )
+            })
+            .collect();
+        let held = match pending.len() {
             0 => String::new(),
-            1 => format!("  waiting on {}", write.depends_on[0]),
+            1 => format!("  waiting on {}", pending[0]),
             n => format!("  waiting on {n} writes"),
         };
         // A row held with nothing it depends on is held by this.
@@ -185,6 +205,16 @@ fn line(item: &Item) -> String {
     )
 }
 
+pub fn drain_exit(drain: &DrainReport) -> crate::error::Exit {
+    if drain.stopped.is_some() {
+        crate::error::Exit::Credential
+    } else if drain.unavailable.is_some() || drain.undelivered > 0 {
+        crate::error::Exit::Environment
+    } else {
+        crate::error::Exit::Done
+    }
+}
+
 pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
     report(drain, json, || {
         let mut lines = Vec::new();
@@ -220,6 +250,14 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             lines.push(line);
         }
         lines.push(counts(drain));
+        let refused = drain
+            .verdicts
+            .iter()
+            .filter(|write| write.verdict == Some(marfa_core::Verdict::Refused))
+            .count();
+        if refused > 0 {
+            lines.push(format!("refused {refused} write(s)"));
+        }
         lines.extend(undelivered(drain));
         if let Some(wait) = drain.retry_after_seconds {
             lines.push(format!(
@@ -654,6 +692,28 @@ mod tests {
 
     use super::{describe, edges_from};
     use serde_json::json;
+
+    #[test]
+    fn drain_exit_distinguishes_undelivered_held_and_credential_stopped() {
+        use crate::error::Exit;
+        let mut report = marfa_core::DrainReport {
+            answered: 0,
+            held: 1,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        };
+        assert_eq!(super::drain_exit(&report), Exit::Done);
+        report.undelivered = 1;
+        assert_eq!(super::drain_exit(&report), Exit::Environment);
+        report.stopped = Some("credential refused".into());
+        assert_eq!(super::drain_exit(&report), Exit::Credential);
+    }
 
     #[test]
     fn a_page_with_a_cursor_names_how_to_continue() {
