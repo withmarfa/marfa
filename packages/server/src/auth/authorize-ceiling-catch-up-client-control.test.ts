@@ -25,7 +25,6 @@ import {
   createTestAccount,
   createTestContext,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
@@ -308,19 +307,12 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     const widened = await storedCeiling(ctx, control);
     expect(widened?.length).toBe(union.length);
 
-    // The widen audit row is fire-and-forget, so asserting its absence
-    // without a barrier proves nothing — the insert may simply not have
-    // landed yet. Polling for the control's row is the barrier: it is a row
-    // the same code path emits, from a request that started after the attack
-    // request had already returned. Nothing sleeps.
-    const audits = await waitForAudit(
-      () =>
-        ctx!.storage.audit.list({
-          action: "auth.client.scopes_widened",
-          limit: 50,
-        }),
-      (result) => result.data.some((row) => row.resource_id === control),
-    );
+    // A completed control request has its audit row; the refused victim has none.
+    const audits = await ctx.storage.audit.list({
+      action: "auth.client.scopes_widened",
+      limit: 50,
+    });
+    expect(audits.data.some((row) => row.resource_id === control)).toBe(true);
     expect(audits.data.some((row) => row.resource_id === control)).toBe(true);
     expect(audits.data.some((row) => row.resource_id === victim)).toBe(false);
   });
@@ -349,14 +341,11 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // Widen-only, never shrink: the seeded literal survives at the front.
     expect(after?.[0]).toBe(SEEDED_SCOPE);
 
-    const audits = await waitForAudit(
-      () =>
-        ctx!.storage.audit.list({
-          action: "auth.client.scopes_widened",
-          limit: 10,
-        }),
-      (result) => result.data.length >= 1,
-    );
+    const audits = await ctx.storage.audit.list({
+      action: "auth.client.scopes_widened",
+      limit: 10,
+    });
+    expect(audits.data.length >= 1).toBe(true);
     const row = audits.data.find((r) => r.resource_id === clientId);
     expect(row?.details.surface).toBe("authorize");
   });

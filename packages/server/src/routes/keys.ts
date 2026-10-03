@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { randomBytes } from "node:crypto";
 import type { ApiKey, Permission } from "@withmarfa/shared";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -896,62 +897,6 @@ function refuseWideningAnAppsKey(
   }
 }
 
-/**
- * Run the bootstrap mint, and give the sentinel back only if nothing was
- * minted.
- *
- * `settings.claim` is atomic and one-shot, which is what keeps two concurrent
- * unauthenticated mints from both succeeding. It is also the only thing
- * telling `authMiddleware` to stop admitting an unauthenticated `POST /keys`,
- * and nothing else clears it, so a claim followed by a failure left standing
- * would be an instance with no credential and no route that could make one.
- *
- * **The release is conditional, and the condition is the whole safety of it.**
- * Releasing on any failure would reopen unauthenticated minting on an
- * instance that already has an operator key — a stranger who won the reopened
- * window would hold one, and an operator key mints a working key through
- * `POST /keys`, which is deliberately unclamped and hands out the whole
- * instance. That is a takeover, where the problem being solved was only a
- * lockout. So the window reopens exactly when there is no
- * credential to protect, which is the state the middleware's own gate is
- * about.
- *
- * The check is a read of the key table rather than a flag, because a throw
- * carries no reliable account of what committed before it.
- *
- * A failure to release is swallowed. It leaves the claim standing, which is
- * where a failure with no release would leave it, and replacing the caller's
- * error with a cleanup's would hide what actually went wrong.
- *
- * A non-bootstrap call passes straight through, because there is no claim to
- * give back.
- */
-async function withBootstrapRelease<T>(
-  isBootstrap: boolean,
-  storage: Storage,
-  mint: () => Promise<T>,
-): Promise<T> {
-  if (!isBootstrap) return await mint();
-  try {
-    return await mint();
-  } catch (error) {
-    try {
-      const minted = await storage.keys.list();
-      if (minted.length === 0) {
-        await storage.settings.release("bootstrapped");
-      }
-    } catch (releaseFailure) {
-      log("error", "bootstrap claim could not be released", {
-        error:
-          releaseFailure instanceof Error
-            ? releaseFailure.message
-            : String(releaseFailure),
-      });
-    }
-    throw error;
-  }
-}
-
 /** Everything, in the wildcard form, on one content family. */
 const EVERY_TYPE = { "*": "write" } as const;
 
@@ -974,9 +919,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     // reaches the port first during the window between `up` and the operator's
     // first call.
     //
-    // **Checked before the claim**: the claim is one-shot and irreversible, so
-    // a request that can never mint must not consume it. A wrong secret would
-    // otherwise lock a fresh instance out of bootstrap for good.
+    // Check before preparing the mint. The claim is later committed together
+    // with the key, consumed secret and audit, or all four roll back.
     //
     // The middleware reads no `Authorization` header on this path, so the
     // whole header is available here and the secret arrives the way every
@@ -995,300 +939,278 @@ export function keyRoutes(storage: Storage, salt: string) {
       }
     }
 
-    // Under bootstrap, atomically claim the sentinel BEFORE minting. Two
-    // concurrent unauthenticated POST /keys against a fresh DB both pass
-    // the middleware gate (which reads the sentinel non-atomically); only
-    // the caller whose INSERT-ON-CONFLICT-DO-NOTHING returns a row gets to
-    // mint. Everyone else is refused 401 here.
+    assertUnreservedSource(body.source);
+    // Once, so a claim named twice is stored once and every ceiling below
+    // reads the list the row will hold.
+    const requestedSources =
+      body.sources === undefined ? undefined : [...new Set(body.sources)];
+    assertUnreservedSources(requestedSources);
+
+    // **The default for a session is a key like the session.** An OAuth caller
+    // that names no permission maps gets the ones its own grant projects, which
+    // the bearer middleware has already computed and hung on the synthetic key.
+    // The alternative default is `{}`, which under one permission model is a
+    // credential that can read nothing — so "mint me a key" would hand back
+    // something inert, and the only way to get a working one would be to
+    // enumerate by hand what the session already holds.
+    const callerGrant = c.get("oauthGrant");
+    const callerKey = c.get("apiKey");
+    const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
+
+    // **The operator key seeds working keys and mints its own kind.** It
+    // holds nothing itself, so nothing about it can be a ceiling: a working
+    // key it mints holds what the body names, or the whole set when the
+    // body names nothing, because an operator's first credential having
+    // to be narrowed upward is the wrong default. A body naming
+    // `is_operator: true` produces a second operator key, which holds
+    // nothing, so naming any reach on one is refused below.
+    const callerIsOperator =
+      isBootstrap || c.get("apiKey")?.is_operator === true;
+    if (!callerIsOperator && body.is_operator === true) {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "Only an operator key can mint another. Running the instance sits outside the permission model, so nothing in a permission set reaches it.",
+      );
+    }
+    const mintsOperatorKey = isBootstrap || body.is_operator === true;
+    const seedsFromOperator =
+      !isBootstrap && callerIsOperator && !mintsOperatorKey;
+
+    // **The creator is the ceiling.** A body naming no reach takes the whole
+    // of it, and anything named beyond it is refused — which together mean
+    // a key can be narrowed at the moment of minting and can never be
+    // widened by one.
+    //
+    // The bootstrap key takes nothing, because it is the operator key: the
+    // instance tier is fenced outside the model rather than expressed as a
+    // full set inside it.
+    // One declaration of what the body asks for, read by all three
+    // ceilings below. A sixth permission family added to only one of them
+    // would fail open in whichever was missed.
+    const requested = {
+      type_permissions: body.type_permissions,
+      edge_permissions: body.edge_permissions,
+      metadata_permissions: body.metadata_permissions,
+      extension_permissions: body.extension_permissions,
+      profile_permissions: body.profile_permissions,
+    };
+    const callerHeldPermissions: Permission[] = isBootstrap
+      ? []
+      : mintingFromSession
+        ? (c.get("oauthGrant")?.scopes ?? []).filter(isPermission)
+        : (c.get("apiKey")?.permissions ?? []);
+    const requestedPermissions = body.permissions?.filter(isPermission);
+
+    // **An operator key holds nothing**, so a body naming reach for one is
+    // refused. Asked ahead of the two ceilings below because it is the more
+    // specific answer. Either would refuse a named permission first, with a
+    // message implying that a creator holding it could pass it on, which
+    // for this tier is exactly what is not true.
+    if (!isBootstrap && mintsOperatorKey) {
+      refuseReachOnAnOperatorKey(
+        requested,
+        requestedPermissions,
+        requestedSources,
+      );
+    }
+    // The key bootstrap mints is an operator key too, and a claim named on
+    // it is refused as on any other rather than dropped. This validation
+    // precedes the claim, so the secret remains usable after refusal.
     if (isBootstrap) {
-      const claimed = await storage.settings.claim("bootstrapped", "true");
-      if (!claimed) {
-        throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
-      }
+      refuseReachOnAnOperatorKey({}, undefined, requestedSources);
     }
 
-    // **Everything after the claim runs where a failure can be given back.**
-    // The claim has to come first or two concurrent callers both mint, but it
-    // is also what tells the middleware to stop admitting an unauthenticated
-    // mint. A throw between the two — a failed insert, a provisioning error,
-    // a dropped connection — would otherwise leave a sentinel with no operator
-    // key behind it, which is an instance nobody can reach and no route can
-    // repair. Releasing on the way out makes the attempt retryable, so a
-    // transient failure costs a retry rather than the instance.
-    //
-    // **The secret is spent inside that window, not before it.** Spending it
-    // beside the claim would survive the release and take the retry with it:
-    // the sentinel would be back, and the secret the caller has to present is
-    // gone, so the instance is no more reachable than before. Spent after the
-    // key exists, the two agree — either both stand, or neither has moved.
-    return await withBootstrapRelease(isBootstrap, storage, async () => {
-      assertUnreservedSource(body.source);
-      // Once, so a claim named twice is stored once and every ceiling below
-      // reads the list the row will hold.
-      const requestedSources =
-        body.sources === undefined ? undefined : [...new Set(body.sources)];
-      assertUnreservedSources(requestedSources);
-
-      // **The default for a session is a key like the session.** An OAuth caller
-      // that names no permission maps gets the ones its own grant projects, which
-      // the bearer middleware has already computed and hung on the synthetic key.
-      // The alternative default is `{}`, which under one permission model is a
-      // credential that can read nothing — so "mint me a key" would hand back
-      // something inert, and the only way to get a working one would be to
-      // enumerate by hand what the session already holds.
-      const callerGrant = c.get("oauthGrant");
-      const callerKey = c.get("apiKey");
-      const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
-
-      // **The operator key seeds working keys and mints its own kind.** It
-      // holds nothing itself, so nothing about it can be a ceiling: a working
-      // key it mints holds what the body names, or the whole set when the
-      // body names nothing, because an operator's first credential having
-      // to be narrowed upward is the wrong default. A body naming
-      // `is_operator: true` produces a second operator key, which holds
-      // nothing, so naming any reach on one is refused below.
-      const callerIsOperator =
-        isBootstrap || c.get("apiKey")?.is_operator === true;
-      if (!callerIsOperator && body.is_operator === true) {
+    // The operator key is not clamped, because its own set is empty and it
+    // is the seed rather than the ceiling.
+    if (requestedPermissions !== undefined && !callerIsOperator) {
+      const beyond = requestedPermissions.find(
+        (permission) => !callerHeldPermissions.includes(permission),
+      );
+      if (beyond !== undefined) {
         throw new MarfaError(
           ErrorCode.FORBIDDEN,
-          "Only an operator key can mint another. Running the instance sits outside the permission model, so nothing in a permission set reaches it.",
+          `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+          { required_scope: beyond },
         );
       }
-      const mintsOperatorKey = isBootstrap || body.is_operator === true;
-      const seedsFromOperator =
-        !isBootstrap && callerIsOperator && !mintsOperatorKey;
+    }
+    // **A body naming no reach at all takes the creator's whole set; a body
+    // naming any family gets only what it named, holding no permission it did not name.** One
+    // rule, and the second half of it is deliberate: naming a narrow type map
+    // and receiving the creator's edges or its `keys.mint` for free would be a key wider than the request, which is
+    // a different failure from a key wider than the creator and just as
+    // unwanted. Asking all five families and the claims is what makes
+    // "named nothing" unambiguous.
+    //
+    // Deriving is what stops the other shape — a credential holding every
+    // permission and unable to read a row, which is what an empty default
+    // produced. The operator key holds nothing to derive from, so a working
+    // key it mints with a body naming nothing takes everything instead.
+    const namesNoReach =
+      body.type_permissions === undefined &&
+      body.edge_permissions === undefined &&
+      body.metadata_permissions === undefined &&
+      body.extension_permissions === undefined &&
+      body.profile_permissions === undefined &&
+      requestedSources === undefined;
+    // Forced empty for an operator mint: an operator key holds nothing on
+    // any axis, which `api_keys_operator_holds_nothing` enforces on the
+    // row, and the guard above measures only what the request named, so a
+    // body naming nothing, which takes a creator's whole set, would
+    // otherwise derive permissions the row may not hold.
+    const permissions = mintsOperatorKey
+      ? []
+      : (requestedPermissions ??
+        (!namesNoReach
+          ? []
+          : seedsFromOperator
+            ? [...PERMISSIONS]
+            : callerHeldPermissions));
 
-      // **The creator is the ceiling.** A body naming no reach takes the whole
-      // of it, and anything named beyond it is refused — which together mean
-      // a key can be narrowed at the moment of minting and can never be
-      // widened by one.
-      //
-      // The bootstrap key takes nothing, because it is the operator key: the
-      // instance tier is fenced outside the model rather than expressed as a
-      // full set inside it.
-      // One declaration of what the body asks for, read by all three
-      // ceilings below. A sixth permission family added to only one of them
-      // would fail open in whichever was missed.
-      const requested = {
-        type_permissions: body.type_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
-        extension_permissions: body.extension_permissions,
-        profile_permissions: body.profile_permissions,
-      };
-      const callerHeldPermissions: Permission[] = isBootstrap
-        ? []
-        : mintingFromSession
-          ? (c.get("oauthGrant")?.scopes ?? []).filter(isPermission)
-          : (c.get("apiKey")?.permissions ?? []);
-      const requestedPermissions = body.permissions?.filter(isPermission);
+    // **The ceiling is asked of every creator, not only of a session.** A
+    // session is measured against its granted scopes; a key is measured against
+    // the literals its own maps confer, which is the same question through the
+    // same comparison. Bootstrap is the exception the design names: it is a
+    // seed, with no creator above it to be bounded by.
+    //
+    // Checked before the derive below, because the derived case cannot exceed
+    // anything: it is a copy of what the creator already holds.
+    if (mintingFromSession) {
+      refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
+    } else if (!isBootstrap && callerKey) {
+      refuseKeyReachAboveCreator(callerKey, requested);
+    }
+    // A session reaches here with its synthetic key as `callerKey`, so it
+    // is held to the same question as a key, against what its token
+    // claims. Both ceilings exempt the operator key themselves, and a
+    // missing `callerKey`, which is bootstrap, so every mint asks them.
+    refuseSourcesAboveCaller(callerKey, requestedSources);
+    await refuseOwnSourceClaimedElsewhere(storage, callerKey, body.source);
 
-      // **An operator key holds nothing**, so a body naming reach for one is
-      // refused. Asked ahead of the two ceilings below because it is the more
-      // specific answer. Either would refuse a named permission first, with a
-      // message implying that a creator holding it could pass it on, which
-      // for this tier is exactly what is not true.
-      if (!isBootstrap && mintsOperatorKey) {
-        refuseReachOnAnOperatorKey(
-          requested,
-          requestedPermissions,
-          requestedSources,
-        );
-      }
-      // The key bootstrap mints is an operator key too, and a claim named on
-      // it is refused as on any other rather than dropped. Inside the claim's
-      // window, so the refusal gives the claim back and the secret still
-      // mints.
-      if (isBootstrap) {
-        refuseReachOnAnOperatorKey({}, undefined, requestedSources);
-      }
+    const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
+    const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
+    // **An operator mint takes nothing on any axis, the content maps
+    // included.** The permissions are already forced empty above;
+    // leaving the five maps to the body would let an unauthenticated first
+    // caller name `*: write` on every family and get an operator credential
+    // holding it. There is no ceiling to clamp it against either, because
+    // bootstrap has no creator.
+    const holdsNothing = mintsOperatorKey;
+    const typePermissions = holdsNothing
+      ? {}
+      : (seed ?? creator?.type_permissions ?? body.type_permissions ?? {});
+    const edgePermissions = holdsNothing
+      ? {}
+      : (seed ?? creator?.edge_permissions ?? body.edge_permissions ?? {});
+    const metadataPermissions = holdsNothing
+      ? {}
+      : (seed ??
+        creator?.metadata_permissions ??
+        body.metadata_permissions ??
+        {});
+    const profilePermissions = holdsNothing
+      ? {}
+      : (seed ??
+        creator?.profile_permissions ??
+        body.profile_permissions ??
+        {});
+    const extensionPermissions = holdsNothing
+      ? {}
+      : (seed ??
+        creator?.extension_permissions ??
+        body.extension_permissions ??
+        {});
+    // No seed here: the operator claims nothing and there is no wildcard
+    // source, so a working key it mints naming nothing claims nothing
+    // either, and a claim is always one somebody named.
+    const sources = holdsNothing
+      ? []
+      : (creator?.sources ?? requestedSources ?? []);
 
-      // The operator key is not clamped, because its own set is empty and it
-      // is the seed rather than the ceiling.
-      if (requestedPermissions !== undefined && !callerIsOperator) {
-        const beyond = requestedPermissions.find(
-          (permission) => !callerHeldPermissions.includes(permission),
-        );
-        if (beyond !== undefined) {
+    const rawKey = generateRawKey();
+    const keyHash = hashApiKey(rawKey, salt);
+
+    // Resolved ahead of the write, so nothing between the insert and the
+    // response can fail and take the plaintext with it.
+    const grantItemId = await resolveGrantItemId(storage, c);
+
+    const minted = await runAuditedTransaction(
+      storage,
+      async () => {
+        // Claim, credential, secret consumption and audit are one unit. A
+        // refusal rolls them all back; an uncertain commit never reopens minting.
+        if (
+          isBootstrap &&
+          !(await storage.settings.claim("bootstrapped", "true"))
+        ) {
           throw new MarfaError(
-            ErrorCode.FORBIDDEN,
-            `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
-            { required_scope: beyond },
+            ErrorCode.UNAUTHORIZED,
+            "Authentication required",
           );
         }
-      }
-      // **A body naming no reach at all takes the creator's whole set; a body
-      // naming any family gets only what it named, holding no permission it did not name.** One
-      // rule, and the second half of it is deliberate: naming a narrow type map
-      // and receiving the creator's edges or its `keys.mint` for free would be a key wider than the request, which is
-      // a different failure from a key wider than the creator and just as
-      // unwanted. Asking all five families and the claims is what makes
-      // "named nothing" unambiguous.
-      //
-      // Deriving is what stops the other shape — a credential holding every
-      // permission and unable to read a row, which is what an empty default
-      // produced. The operator key holds nothing to derive from, so a working
-      // key it mints with a body naming nothing takes everything instead.
-      const namesNoReach =
-        body.type_permissions === undefined &&
-        body.edge_permissions === undefined &&
-        body.metadata_permissions === undefined &&
-        body.extension_permissions === undefined &&
-        body.profile_permissions === undefined &&
-        requestedSources === undefined;
-      // Forced empty for an operator mint: an operator key holds nothing on
-      // any axis, which `api_keys_operator_holds_nothing` enforces on the
-      // row, and the guard above measures only what the request named, so a
-      // body naming nothing, which takes a creator's whole set, would
-      // otherwise derive permissions the row may not hold.
-      const permissions = mintsOperatorKey
-        ? []
-        : (requestedPermissions ??
-          (!namesNoReach
-            ? []
-            : seedsFromOperator
-              ? [...PERMISSIONS]
-              : callerHeldPermissions));
+        const stored = await storage.keys.create(
+          {
+            label: body.label.trim(),
+            source: body.source,
+            sources,
+            default_tier: body.default_tier,
+            is_operator: mintsOperatorKey,
+            permissions,
+            type_permissions: typePermissions,
+            extension_permissions: extensionPermissions,
+            edge_permissions: edgePermissions,
+            metadata_permissions: metadataPermissions,
+            profile_permissions: profilePermissions,
+            // Documented as the credential's own levers, and taken as sent: a
+            // lever set here wins over the instance config for this key.
+            enforcement_override: body.enforcement_override,
+            // Set from who is minting, never from the body. A key an app made
+            // belongs to that app: the keys page groups it there, and revoking the
+            // app offers to revoke it.
+            oauth_client_id: mintingFromSession
+              ? c.get("oauthGrant")?.clientId
+              : undefined,
+          },
+          keyHash,
+        );
 
-      // **The ceiling is asked of every creator, not only of a session.** A
-      // session is measured against its granted scopes; a key is measured against
-      // the literals its own maps confer, which is the same question through the
-      // same comparison. Bootstrap is the exception the design names: it is a
-      // seed, with no creator above it to be bounded by.
-      //
-      // Checked before the derive below, because the derived case cannot exceed
-      // anything: it is a copy of what the creator already holds.
-      if (mintingFromSession) {
-        refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
-      } else if (!isBootstrap && callerKey) {
-        refuseKeyReachAboveCreator(callerKey, requested);
-      }
-      // A session reaches here with its synthetic key as `callerKey`, so it
-      // is held to the same question as a key, against what its token
-      // claims. Both ceilings exempt the operator key themselves, and a
-      // missing `callerKey`, which is bootstrap, so every mint asks them.
-      refuseSourcesAboveCaller(callerKey, requestedSources);
-      await refuseOwnSourceClaimedElsewhere(storage, callerKey, body.source);
-
-      const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
-      const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
-      // **An operator mint takes nothing on any axis, the content maps
-      // included.** The permissions are already forced empty above;
-      // leaving the five maps to the body would let an unauthenticated first
-      // caller name `*: write` on every family and get an operator credential
-      // holding it. There is no ceiling to clamp it against either, because
-      // bootstrap has no creator.
-      const holdsNothing = mintsOperatorKey;
-      const typePermissions = holdsNothing
-        ? {}
-        : (seed ?? creator?.type_permissions ?? body.type_permissions ?? {});
-      const edgePermissions = holdsNothing
-        ? {}
-        : (seed ?? creator?.edge_permissions ?? body.edge_permissions ?? {});
-      const metadataPermissions = holdsNothing
-        ? {}
-        : (seed ??
-          creator?.metadata_permissions ??
-          body.metadata_permissions ??
-          {});
-      const profilePermissions = holdsNothing
-        ? {}
-        : (seed ??
-          creator?.profile_permissions ??
-          body.profile_permissions ??
-          {});
-      const extensionPermissions = holdsNothing
-        ? {}
-        : (seed ??
-          creator?.extension_permissions ??
-          body.extension_permissions ??
-          {});
-      // No seed here: the operator claims nothing and there is no wildcard
-      // source, so a working key it mints naming nothing claims nothing
-      // either, and a claim is always one somebody named.
-      const sources = holdsNothing
-        ? []
-        : (creator?.sources ?? requestedSources ?? []);
-
-      const rawKey = generateRawKey();
-      const keyHash = hashApiKey(rawKey, salt);
-
-      // Resolved ahead of the write, so nothing between the insert and the
-      // response can fail and take the plaintext with it.
-      const grantItemId = await resolveGrantItemId(storage, c);
-
-      const stored = await storage.keys.create(
-        {
-          label: body.label.trim(),
-          source: body.source,
-          sources,
-          default_tier: body.default_tier,
-          is_operator: mintsOperatorKey,
-          permissions,
-          type_permissions: typePermissions,
-          extension_permissions: extensionPermissions,
-          edge_permissions: edgePermissions,
-          metadata_permissions: metadataPermissions,
-          profile_permissions: profilePermissions,
-          // Documented as the credential's own levers, and taken as sent: a
-          // lever set here wins over the instance config for this key.
-          enforcement_override: body.enforcement_override,
-          // Set from who is minting, never from the body. A key an app made
-          // belongs to that app: the keys page groups it there, and revoking the
-          // app offers to revoke it.
-          oauth_client_id: mintingFromSession
-            ? c.get("oauthGrant")?.clientId
-            : undefined,
-        },
-        keyHash,
-      );
-
-      // The audit row records the tier so every operator credential can be
-      // enumerated later. Derived from the stored row rather than from the
-      // request, so the trail stays accurate whatever the deployment shape.
-      const operatorTierMint = stored.is_operator;
-
-      void storage.audit.log({
+        if (isBootstrap) await consumeBootstrapSecret(storage);
+        return {
+          stored,
+          response: c.json(
+            {
+              id: stored.id,
+              key: rawKey,
+              label: stored.label,
+              source: stored.source,
+              sources: stored.sources,
+              default_tier: stored.default_tier,
+              is_operator: stored.is_operator,
+              permissions: stored.permissions,
+              oauth_client_id: stored.oauth_client_id,
+              type_permissions: stored.type_permissions,
+              extension_permissions: stored.extension_permissions,
+              edge_permissions: stored.edge_permissions,
+              metadata_permissions: stored.metadata_permissions,
+              profile_permissions: stored.profile_permissions,
+              enforcement_override: stored.enforcement_override,
+              created_at: stored.created_at,
+              last_used_at: stored.last_used_at,
+            },
+            201,
+          ),
+        };
+      },
+      ({ stored }) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
         action: isBootstrap ? "key.bootstrap" : "key.create",
         resource_type: "key",
         resource_id: stored.id,
-        details: mintDetails(c, operatorTierMint, grantItemId),
-      });
-
-      // The key row exists, so the secret has done its job and is spent.
-      // Ordered here rather than beside the claim because a failure before
-      // this point releases the claim, and a released claim with a spent
-      // secret is not a retry — it is the same lockout with an extra step.
-      if (isBootstrap) {
-        await consumeBootstrapSecret(storage);
-      }
-
-      return c.json(
-        {
-          id: stored.id,
-          key: rawKey,
-          label: stored.label,
-          source: stored.source,
-          sources: stored.sources,
-          default_tier: stored.default_tier,
-          is_operator: stored.is_operator,
-          permissions: stored.permissions,
-          oauth_client_id: stored.oauth_client_id,
-          type_permissions: stored.type_permissions,
-          extension_permissions: stored.extension_permissions,
-          edge_permissions: stored.edge_permissions,
-          metadata_permissions: stored.metadata_permissions,
-          profile_permissions: stored.profile_permissions,
-          enforcement_override: stored.enforcement_override,
-          created_at: stored.created_at,
-          last_used_at: stored.last_used_at,
-        },
-        201,
-      );
-    });
+        details: mintDetails(c, stored.is_operator, grantItemId),
+      }),
+    );
+    return minted.response;
   });
 
   router.openapi(listKeysRoute, async (c) => {
@@ -1316,19 +1238,17 @@ export function keyRoutes(storage: Storage, salt: string) {
     // **The answer is what happened, not what was asked for.** A door told ok
     // whatever the store did would answer a revoke of the wrong id as a
     // success, and the key meant would stay live with nothing saying so.
-    await keysInReach(storage, c).revoke(id);
-
-    // Under the refusal, so the log records revocations rather than
-    // attempts. An attempt that changed nothing is not an event in this
-    // key's life, and a row saying otherwise is the same false report the
-    // 200 was.
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "key.revoke",
-      resource_type: "key",
-      resource_id: id,
-    });
+    await runAuditedTransaction(
+      storage,
+      () => keysInReach(storage, c).revoke(id),
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "key.revoke",
+        resource_type: "key",
+        resource_id: id,
+      },
+    );
 
     return c.json({ ok: true as const }, 200);
   });
@@ -1355,114 +1275,117 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     // Measured, decided and written under one lock, so the reach and the
     // refusals below see the row the write lands on.
-    const updated = await keysInReach(storage, c).change(id, (existing) => {
-      // **The same ceiling as the mint, because this door reaches further.** A
-      // clamp applied only at `POST` is not a clamp at all: the permission maps
-      // are writable here a moment later, and this route addresses every key
-      // within the caller's reach rather than only the ones it minted. So a
-      // session refused a wide key at the mint could have widened an existing
-      // one instead — including a key it did not create.
-      //
-      // Asked of every editor rather than only of a session, for the reason the
-      // mint states: a key holding `keys.mint` and read on one type is an
-      // ordinary credential, and nothing about holding the permission to
-      // edit says how far what it edits may reach.
-      const requestedReach = {
-        type_permissions: body.type_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
-        extension_permissions: body.extension_permissions,
-        profile_permissions: body.profile_permissions,
-      };
-      const requestedPermissions = body.permissions?.filter(isPermission);
+    const updated = await runAuditedTransaction(
+      storage,
+      () =>
+        keysInReach(storage, c).change(id, (existing) => {
+          // **The same ceiling as the mint, because this door reaches further.** A
+          // clamp applied only at `POST` is not a clamp at all: the permission maps
+          // are writable here a moment later, and this route addresses every key
+          // within the caller's reach rather than only the ones it minted. So a
+          // session refused a wide key at the mint could have widened an existing
+          // one instead — including a key it did not create.
+          //
+          // Asked of every editor rather than only of a session, for the reason the
+          // mint states: a key holding `keys.mint` and read on one type is an
+          // ordinary credential, and nothing about holding the permission to
+          // edit says how far what it edits may reach.
+          const requestedReach = {
+            type_permissions: body.type_permissions,
+            edge_permissions: body.edge_permissions,
+            metadata_permissions: body.metadata_permissions,
+            extension_permissions: body.extension_permissions,
+            profile_permissions: body.profile_permissions,
+          };
+          const requestedPermissions = body.permissions?.filter(isPermission);
 
-      // Before the caller's own ceiling, because it is the more specific answer:
-      // a caller who both lacks the reach and is editing an app's key is better
-      // told that this key can never hold more than told what it does not hold.
-      refuseWideningAnAppsKey(
-        existing,
-        requestedReach,
-        requestedPermissions,
-        requestedSources,
-      );
-
-      if (c.get("authType") === "oauth") {
-        refuseSessionReachAboveGrant(
-          c.get("oauthGrant")?.scopes ?? [],
-          requestedReach,
-        );
-      } else {
-        refuseKeyReachAboveCreator(key, requestedReach);
-      }
-      refuseSourcesAboveCaller(key, requestedSources);
-
-      // An operator row holds nothing, its own row included, which is the
-      // shortest path there is from the instance tier to reach over everything.
-      //
-      // Refused where the body asks for something, and written empty where it
-      // asks for nothing in a non-empty way: `nothingWhereNamed` carries which
-      // bodies take the second path and why the row constraint is not the right
-      // place to find out.
-      const targetHoldsNothing = existing.is_operator;
-      if (targetHoldsNothing) {
-        refuseReachOnAnOperatorKey(
-          requestedReach,
-          requestedPermissions,
-          requestedSources,
-        );
-      }
-      const writtenReach = targetHoldsNothing
-        ? nothingWhereNamed(requestedReach)
-        : requestedReach;
-
-      // **The permissions are clamped here too.** They are editable through
-      // this door like any other family, so without it a key holding one
-      // permission could give itself every other one in the set.
-      if (requestedPermissions !== undefined && !key.is_operator) {
-        const held = key.permissions ?? [];
-        const beyond = requestedPermissions.find(
-          (permission) => !held.includes(permission),
-        );
-        if (beyond !== undefined) {
-          throw new MarfaError(
-            ErrorCode.FORBIDDEN,
-            `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
-            { required_scope: beyond },
+          // Before the caller's own ceiling, because it is the more specific answer:
+          // a caller who both lacks the reach and is editing an app's key is better
+          // told that this key can never hold more than told what it does not hold.
+          refuseWideningAnAppsKey(
+            existing,
+            requestedReach,
+            requestedPermissions,
+            requestedSources,
           );
-        }
-      }
 
-      return {
-        label: body.label,
-        default_tier: body.default_tier,
-        // Needs no forcing on an operator row, for the reason the permissions
-        // below need none: a claim is never a denial, so the guard above has
-        // already refused any list but the empty one.
-        sources: requestedSources,
-        type_permissions: writtenReach.type_permissions,
-        extension_permissions: writtenReach.extension_permissions,
-        edge_permissions: writtenReach.edge_permissions,
-        metadata_permissions: writtenReach.metadata_permissions,
-        // The permissions need no forcing: the guard above refuses a
-        // non-empty list outright, because no entry in one is a denial the way a
-        // `none` map entry is, so the only list that reaches an operator row is
-        // already the empty one.
-        permissions: requestedPermissions,
-        profile_permissions: writtenReach.profile_permissions,
-        enforcement_override: body.enforcement_override,
-      };
-    });
+          if (c.get("authType") === "oauth") {
+            refuseSessionReachAboveGrant(
+              c.get("oauthGrant")?.scopes ?? [],
+              requestedReach,
+            );
+          } else {
+            refuseKeyReachAboveCreator(key, requestedReach);
+          }
+          refuseSourcesAboveCaller(key, requestedSources);
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "key.update",
-      resource_type: "key",
-      resource_id: id,
-      details: {
-        fields: Object.keys(body).filter((k) => k !== "source"),
+          // An operator row holds nothing, its own row included, which is the
+          // shortest path there is from the instance tier to reach over everything.
+          //
+          // Refused where the body asks for something, and written empty where it
+          // asks for nothing in a non-empty way: `nothingWhereNamed` carries which
+          // bodies take the second path and why the row constraint is not the right
+          // place to find out.
+          const targetHoldsNothing = existing.is_operator;
+          if (targetHoldsNothing) {
+            refuseReachOnAnOperatorKey(
+              requestedReach,
+              requestedPermissions,
+              requestedSources,
+            );
+          }
+          const writtenReach = targetHoldsNothing
+            ? nothingWhereNamed(requestedReach)
+            : requestedReach;
+
+          // **The permissions are clamped here too.** They are editable through
+          // this door like any other family, so without it a key holding one
+          // permission could give itself every other one in the set.
+          if (requestedPermissions !== undefined && !key.is_operator) {
+            const held = key.permissions ?? [];
+            const beyond = requestedPermissions.find(
+              (permission) => !held.includes(permission),
+            );
+            if (beyond !== undefined) {
+              throw new MarfaError(
+                ErrorCode.FORBIDDEN,
+                `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+                { required_scope: beyond },
+              );
+            }
+          }
+
+          return {
+            label: body.label,
+            default_tier: body.default_tier,
+            // Needs no forcing on an operator row, for the reason the permissions
+            // below need none: a claim is never a denial, so the guard above has
+            // already refused any list but the empty one.
+            sources: requestedSources,
+            type_permissions: writtenReach.type_permissions,
+            extension_permissions: writtenReach.extension_permissions,
+            edge_permissions: writtenReach.edge_permissions,
+            metadata_permissions: writtenReach.metadata_permissions,
+            // The permissions need no forcing: the guard above refuses a
+            // non-empty list outright, because no entry in one is a denial the way a
+            // `none` map entry is, so the only list that reaches an operator row is
+            // already the empty one.
+            permissions: requestedPermissions,
+            profile_permissions: writtenReach.profile_permissions,
+            enforcement_override: body.enforcement_override,
+          };
+        }),
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "key.update",
+        resource_type: "key",
+        resource_id: id,
+        details: {
+          fields: Object.keys(body).filter((k) => k !== "source"),
+        },
       },
-    });
+    );
 
     return c.json(
       {

@@ -1,7 +1,12 @@
+import { withSessionEndAudit } from "./session-end-audit.js";
 import {
-  requireSuccessfulSignOut,
-  withSignOutFailureReporting,
-} from "./sign-out-failure.js";
+  CredentialPersistencePhase,
+  credentialRequest,
+  withCredentialAudit,
+  withCredentialRequest,
+} from "./credential-adapter.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import type { AuditLogEntry } from "../storage/interface.js";
 import { betterAuth } from "better-auth";
 import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -185,11 +190,16 @@ export interface MarfaAuth {
    * its owner; the test harness calls it directly to put a person behind
    * the sign-in page without going through that door.
    */
-  createEmailAccount: (params: {
-    email: string;
-    password: string;
-    name?: string;
-  }) => Promise<CreateEmailAccountResult>;
+  createEmailAccount: (
+    params: {
+      email: string;
+      password: string;
+      name?: string;
+    },
+    audit?: (
+      result: Extract<CreateEmailAccountResult, { ok: true }>,
+    ) => AuditLogEntry,
+  ) => Promise<CreateEmailAccountResult>;
   /**
    * The device plugin's verification step, in-process. With a session's
    * headers it claims a pending code for that person, which the plugin
@@ -265,6 +275,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // different one than the signer used would fail open.
   const signingSecret = options.secret;
 
+  const credentialAdapter = withIdempotentConsent(
+    drizzleAdapter(options.db, { provider: "sqlite", schema }),
+  );
   const instance = betterAuth({
     baseURL: options.baseURL,
     basePath: "/auth",
@@ -287,11 +300,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     // `consent-idempotent-adapter.ts`. Paired with the unique constraint
     // on `auth_oauth_consent (client_id, user_id)`; neither half is safe
     // to ship without the other.
-    database: withSignOutFailureReporting(
-      withIdempotentConsent(
-        drizzleAdapter(options.db, { provider: "sqlite", schema }),
-      ),
-    ),
+    database: options.storage
+      ? withCredentialAudit(credentialAdapter, options.storage)
+      : credentialAdapter,
     onAPIError: {
       // Better Auth answers anything its handler throws that is not one of
       // its own errors with a bare `500`. Write contention is a failure this
@@ -329,16 +340,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       ...(options.storage ? [buildSignInThrottlePlugin(options.storage)] : []),
       ...(options.storage && options.apiKeySalt
         ? [
-            buildOauthProviderPlugin({
-              storage: options.storage,
-              apiKeySalt: options.apiKeySalt,
-              baseURL: options.baseURL,
-            }),
-            // Sibling shell plugin hosting the refresh-replay before-hook,
-            // the client-revoke pair and the consent-skip audit. Consent
-            // projection and grant revocation remain in the Marfa route
-            // handlers that hold the verified client/user context; the two
-            // audit emits in the shell read theirs off the plugin's own rows.
+            withSessionEndAudit(
+              buildOauthProviderPlugin({
+                storage: options.storage,
+                apiKeySalt: options.apiKeySalt,
+                baseURL: options.baseURL,
+              }),
+              options.storage,
+            ),
+            // Scope validation and security observations precede the provider;
+            // credential writes and grant projection use the audited adapter.
             buildOauthProjectionPlugin({
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
@@ -415,6 +426,14 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       return undefined;
     },
   );
+
+  const credentialOperation = <T>(
+    path: string,
+    work: () => Promise<T>,
+  ): Promise<T> =>
+    credentialRequest.getStore()
+      ? work()
+      : withCredentialRequest({ path, clientIp: null }, work);
 
   // Wrap better-auth's session-lookup API behind a narrow promise.
   // `getSession` resolves to `null` when no valid cookie is present —
@@ -525,11 +544,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // Auth's own credential lookup keys on — imported rather than spelled
   // here, because a literal would keep working until the day the format
   // moved and then fail as "wrong password" with nothing naming the cause.
-  const createEmailAccount = async (params: {
-    email: string;
-    password: string;
-    name?: string;
-  }): Promise<CreateEmailAccountResult> => {
+  const createEmailAccount = async (
+    params: {
+      email: string;
+      password: string;
+      name?: string;
+    },
+    audit?: (
+      result: Extract<CreateEmailAccountResult, { ok: true }>,
+    ) => AuditLogEntry,
+  ): Promise<CreateEmailAccountResult> => {
     const authContext = await (
       instance as unknown as { $context: Promise<BetterAuthCredentialContext> }
     ).$context;
@@ -559,52 +583,59 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const submittedName = params.name?.trim() ?? "";
     const name =
       submittedName === "" ? (email.split("@")[0] ?? email) : submittedName;
-    let user: Awaited<
-      ReturnType<BetterAuthCredentialContext["internalAdapter"]["createUser"]>
-    >;
-    try {
-      user = await authContext.internalAdapter.createUser(
-        { email, name, emailVerified: true },
-        { method: "email-password" },
-      );
-    } catch (err) {
-      // The lookup above is a fast path, not a lock, so two callers
-      // creating one address both pass it and the second meets the unique
-      // index on `auth_user.email` — nothing of this call's was written,
-      // and "it already exists" is the truth. Read rather than matched on
-      // driver-specific constraint text, which would silently stop
-      // matching on an upgrade.
-      if (await authContext.internalAdapter.findUserByEmail(email)) {
-        return { ok: false, reason: "email_exists" };
+    const create = async (): Promise<CreateEmailAccountResult> => {
+      let user: Awaited<
+        ReturnType<BetterAuthCredentialContext["internalAdapter"]["createUser"]>
+      >;
+      try {
+        user = await authContext.internalAdapter.createUser(
+          { email, name, emailVerified: true },
+          { method: "email-password" },
+        );
+      } catch (err) {
+        // The lookup above is a fast path, not a lock, so two callers
+        // creating one address both pass it and the second meets the unique
+        // index on `auth_user.email` — nothing of this call's was written,
+        // and "it already exists" is the truth. Read rather than matched on
+        // driver-specific constraint text, which would silently stop
+        // matching on an upgrade.
+        if (await authContext.internalAdapter.findUserByEmail(email)) {
+          return { ok: false, reason: "email_exists" };
+        }
+        throw err;
       }
-      throw err;
-    }
-    if (!user) {
-      throw new Error("better-auth created no user");
-    }
-    // The user and account writes are not one transaction, because the
-    // helper that opens one is not reachable from here. A `linkAccount`
-    // that throws therefore leaves a user with no password, which a retry
-    // then refuses as a duplicate. It takes a database failure to reach,
-    // and the caller sees the throw rather than a pretended success.
-    await authContext.internalAdapter.linkAccount({
-      userId: user.id,
-      providerId: "credential",
-      issuer: createLocalAccountIssuer("credential"),
-      accountId: user.id,
-      password,
-    });
-    return {
-      ok: true,
-      authUserId: user.id,
-      email: user.email,
-      name: user.name,
-      createdAt: user.createdAt,
+      if (!user) {
+        throw new Error("better-auth created no user");
+      }
+      await authContext.internalAdapter.linkAccount({
+        userId: user.id,
+        providerId: "credential",
+        issuer: createLocalAccountIssuer("credential"),
+        accountId: user.id,
+        password,
+      });
+      return {
+        ok: true,
+        authUserId: user.id,
+        email: user.email,
+        name: user.name,
+        createdAt: user.createdAt,
+      };
     };
+    if (!options.storage) return create();
+    return runAuditedTransaction(options.storage, create, (result) =>
+      result.ok
+        ? (audit?.(result) ?? {
+            action: "auth.account.created",
+            resource_type: "auth_user",
+            resource_id: result.authUserId,
+          })
+        : null,
+    );
   };
 
   return {
-    handler: (request: Request, clientAddress: string | null) => {
+    handler: async (request: Request, clientAddress: string | null) => {
       // Set on the request's own headers rather than on a copy: copying a
       // request the server received starts reading its body, which is
       // otherwise read only if Better Auth gets as far as reading it.
@@ -612,15 +643,90 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       if (clientAddress !== null) {
         request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
       }
-      return new URL(request.url).pathname === "/auth/sign-out"
-        ? requireSuccessfulSignOut(() => instance.handler(request))
-        : instance.handler(request);
+      const path = new URL(request.url).pathname.replace(/^\/auth/, "");
+      const phase =
+        ["/oauth2/token", "/oauth2/revoke", "/change-password"].includes(
+          path,
+        ) && options.storage
+          ? new CredentialPersistencePhase(
+              options.storage,
+              path === "/change-password"
+                ? "auth.password.changed"
+                : path === "/oauth2/revoke"
+                  ? "auth.credentials.revoked"
+                  : "auth.token.issued",
+            )
+          : undefined;
+      let body: Record<string, unknown> | undefined;
+      if (
+        request.method === "POST" &&
+        ["/oauth2/register", "/sign-in/email"].includes(path)
+      ) {
+        try {
+          const copy = request.clone();
+          body = request.headers
+            .get("content-type")
+            ?.includes("application/json")
+            ? ((await copy.json()) as Record<string, unknown>)
+            : Object.fromEntries(new URLSearchParams(await copy.text()));
+        } catch {
+          /* The provider owns malformed-body responses. */
+        }
+      }
+      const registrationScopes =
+        path === "/oauth2/register" && typeof body?.scope === "string"
+          ? [...new Set(body.scope.split(" ").filter(Boolean))]
+          : undefined;
+      return withCredentialRequest(
+        {
+          path,
+          clientIp: clientAddress,
+          phase,
+          ...(registrationScopes?.length ? { registrationScopes } : {}),
+          email: typeof body?.email === "string" ? body.email : undefined,
+        },
+        async () => {
+          const response = await instance.handler(request);
+          if (
+            path === "/sign-in/email" &&
+            !credentialRequest.getStore()?.failure &&
+            !response.ok &&
+            response.status < 500 &&
+            options.storage
+          ) {
+            await runAuditedTransaction(options.storage, () => undefined, {
+              action: "auth.sign_in.failed",
+              resource_type: "auth_user",
+              client_ip: clientAddress,
+              resource_id:
+                typeof body?.email === "string" ? body.email : undefined,
+              details: {
+                email: typeof body?.email === "string" ? body.email : undefined,
+                method: "password",
+                reason:
+                  response.status === 429
+                    ? "too_many_attempts"
+                    : "invalid_credentials",
+              },
+            });
+          }
+          return response;
+        },
+      );
     },
     api: instance.api,
-    getSession: (headers: Headers) => api.getSession({ headers }),
-    deviceVerify,
-    deviceApprove: deviceDecision((params) => api.deviceApprove(params)),
-    deviceDeny: deviceDecision((params) => api.deviceDeny(params)),
+    getSession: (headers: Headers) =>
+      credentialOperation("/get-session", () => api.getSession({ headers })),
+    deviceVerify: (code, headers) =>
+      credentialOperation("/device", () => deviceVerify(code, headers)),
+    deviceApprove: (code, headers) =>
+      credentialOperation("/device/approve", () =>
+        deviceDecision((params) => api.deviceApprove(params))(code, headers),
+      ),
+    deviceDeny: (code, headers) =>
+      credentialOperation("/device/deny", () =>
+        deviceDecision((params) => api.deviceDeny(params))(code, headers),
+      ),
     createEmailAccount,
     ready,
     baseURL: options.baseURL,

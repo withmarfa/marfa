@@ -681,14 +681,14 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
 
   it("is a no-op at retentionDays 0, like every other housekeeping job here", async () => {
     const id = await seedRevokedGrant(OLD);
-    const purger = new RevokedGrantPurger(itemWrites(ctx.storage), 0);
+    const purger = new RevokedGrantPurger(ctx.storage, 0);
     expect(await purger.runOnce()).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
   it("sweeps through the purger at its configured window", async () => {
     const id = await seedRevokedGrant(OLD);
-    const purger = new RevokedGrantPurger(itemWrites(ctx.storage), 90);
+    const purger = new RevokedGrantPurger(ctx.storage, 90);
     expect(await purger.runOnce()).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
   });

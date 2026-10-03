@@ -26,7 +26,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
@@ -390,10 +389,11 @@ describe("the provider's own consent skip is audited", () => {
     // re-entry the decision makes into the plugin's authorize is not a
     // `reused`.
     await grantConsent(c, clientId, cookie, CALLBACK, scope);
-    const created = await waitForAudit(
-      () => c.storage.audit.list({ action: "auth.grant.created", limit: 10 }),
-      (r) => r.data.length >= 1,
-    );
+    const created = await c.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(created.data.length >= 1).toBe(true);
     expect(created.data.length).toBe(1);
     const reusedBefore = await c.storage.audit.list({
       action: "auth.grant.reused",
@@ -412,10 +412,11 @@ describe("the provider's own consent skip is audited", () => {
     expect(location.startsWith(CALLBACK)).toBe(true);
     expect(new URL(location).searchParams.get("code")).toBeTruthy();
 
-    const reused = await waitForAudit(
-      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
-      (r) => r.data.length >= 1,
-    );
+    const reused = await c.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reused.data.length >= 1).toBe(true);
     expect(reused.data.length).toBe(1);
     const row = reused.data[0]!;
     // The same shape Marfa's own skip writes, field for field: a reader of
@@ -441,10 +442,11 @@ describe("the provider's own consent skip is audited", () => {
       { headers: { cookie } },
     );
     expect(repeated.status).toBe(302);
-    const reusedTwice = await waitForAudit(
-      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
-      (r) => r.data.length >= 2,
-    );
+    const reusedTwice = await c.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reusedTwice.data.length >= 2).toBe(true);
     expect(reusedTwice.data[0]!.details.scopes).toEqual([scope]);
 
     // The plugin reads a POST's request from the form body. The hook has to
@@ -466,10 +468,11 @@ describe("the provider's own consent skip is audited", () => {
     expect((posted.headers.get("location") ?? "").startsWith(CALLBACK)).toBe(
       true,
     );
-    const reusedThrice = await waitForAudit(
-      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
-      (r) => r.data.length >= 3,
-    );
+    const reusedThrice = await c.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reusedThrice.data.length >= 3).toBe(true);
     expect(reusedThrice.data.length).toBe(3);
     expect(reusedThrice.data[0]!.details.scopes).toEqual([scope]);
     expect(reusedThrice.data[0]!.details.scopes).not.toContain("forged:scope");
@@ -493,4 +496,36 @@ describe("the provider's own consent skip is audited", () => {
     });
     expect(reusedAfter.data.length).toBe(3);
   });
+});
+
+it("withholds a provider-issued reuse code if its native observation fails", async () => {
+  ctx = await createTestContext();
+  const c = ctx;
+  const clientId = await seedClientWithRedirect(c, CALLBACK, null);
+  const cookie = await signInUser(c, "reuse-audit@example.test");
+  await grantConsent(c, clientId, cookie, CALLBACK, "core.note:read");
+  const db = c.storage as typeof c.storage & {
+    __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    __sqliteAll(sql: string): Promise<unknown[]>;
+  };
+  const codes = await db.__sqliteAll("SELECT id FROM auth_verification");
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_reuse_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.grant.reused' BEGIN SELECT RAISE(ABORT, 'reuse audit fault'); END",
+    [],
+  );
+  const authorize = () =>
+    request(c.app, "GET", authorizeUrl(clientId, "core.note:read"), {
+      headers: { cookie },
+    });
+  const failed = await authorize();
+  expect(failed.status).toBe(500);
+  expect(failed.headers.get("location")).toBeNull();
+  expect(await db.__sqliteAll("SELECT id FROM auth_verification")).toEqual(
+    codes,
+  );
+  await db.__sqliteRun("DROP TRIGGER reject_reuse_audit", []);
+  expect((await authorize()).status).toBe(302);
+  expect(
+    (await c.storage.audit.list({ action: "auth.grant.reused" })).data,
+  ).toHaveLength(1);
 });

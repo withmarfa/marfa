@@ -14,7 +14,6 @@ import {
   normalizeTimeBound,
 } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
-import { WriteTracker } from "../write-tracker.js";
 import { auditLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -36,8 +35,6 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
 }
 
 export class SqliteAuditStore implements AuditStore {
-  private readonly writes = new WriteTracker("audit");
-
   constructor(private db: DrizzleDb) {}
 
   private buildRow(
@@ -56,25 +53,8 @@ export class SqliteAuditStore implements AuditStore {
     };
   }
 
-  /** Fire-and-forget. Runs under the write tracker so `drain()` can wait for
-   *  it before the store closes and so its errors are swallowed: a late write
-   *  that loses the race against teardown can never surface as an unhandled
-   *  rejection. Never rejects — see the interface. */
-  async log(entry: AuditLogEntry): Promise<void> {
-    await this.writes.track(async () => {
-      // Inside the tracker, not outside it. Building the row serializes
-      // `details`, which can itself fail, and a caller promised a writer
-      // that never rejects must not be handed one that rejects before the
-      // insert is even attempted.
-      const row = this.buildRow(entry);
-      await this.db.insert(auditLog).values(row).run();
-    });
-  }
-
-  /** The propagating form. Not tracked: the caller is awaiting it, so there
-   *  is nothing in flight for shutdown to find, and tracking would swallow
-   *  the very failure this exists to surface. */
-  async logOrThrow(entry: AuditLogEntry, id?: string): Promise<void> {
+  /** Awaited strict insertion; serialization and database failures reach the caller. */
+  async log(entry: AuditLogEntry, id?: string): Promise<void> {
     await this.db.insert(auditLog).values(this.buildRow(entry, id)).run();
   }
 
@@ -86,13 +66,6 @@ export class SqliteAuditStore implements AuditStore {
         .where(eq(auditLog.id, id))
         .get()) !== undefined
     );
-  }
-
-  /** Resolve once every in-flight audit write has settled. Called by the
-   *  storage's `close()` so pending fire-and-forget writes drain before the
-   *  underlying connection is closed. */
-  async drain(): Promise<void> {
-    await this.writes.drain();
   }
 
   async list(filters: {

@@ -1,5 +1,15 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, count, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  gt,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  inArray,
+} from "drizzle-orm";
 import {
   generateId,
   MarfaError,
@@ -316,12 +326,26 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
-    const result = await this.db
-      .delete(apiKeys)
-      .where(
-        and(isNotNull(apiKeys.revoked_at), lt(apiKeys.revoked_at, cutoffIso)),
-      )
-      .run();
-    return result.rowsAffected;
+    return this.db.transaction(async (tx) => {
+      const candidates = await tx
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(
+          and(isNotNull(apiKeys.revoked_at), lt(apiKeys.revoked_at, cutoffIso)),
+        )
+        .orderBy(apiKeys.id)
+        .limit(200);
+      if (candidates.length === 0) return 0;
+      const result = await tx
+        .delete(apiKeys)
+        .where(
+          inArray(
+            apiKeys.id,
+            candidates.map((row) => row.id),
+          ),
+        )
+        .run();
+      return result.rowsAffected;
+    });
   }
 }

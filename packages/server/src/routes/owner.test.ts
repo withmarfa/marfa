@@ -485,9 +485,9 @@ describe("POST /owner", () => {
 
   it("fails the request when the audit row cannot be written", async () => {
     const ctx = await newContext();
-    const real = ctx.storage.audit.logOrThrow.bind(ctx.storage.audit);
-    ctx.storage.audit.logOrThrow = () => {
-      ctx.storage.audit.logOrThrow = real;
+    const real = ctx.storage.audit.log.bind(ctx.storage.audit);
+    ctx.storage.audit.log = () => {
+      ctx.storage.audit.log = real;
       return Promise.reject(new Error("the audit table is gone"));
     };
     const res = await create(ctx, {

@@ -1,9 +1,4 @@
-import type {
-  AuthSessionStore,
-  ItemStore,
-  SettingsStore,
-  Storage,
-} from "./interface.js";
+import type { AuthSessionStore, SettingsStore, Storage } from "./interface.js";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { runAuditedTransaction } from "./audited-transaction.js";
 import { itemWrites } from "./item-writes.js";
@@ -130,7 +125,7 @@ export class TrashPurger {
 }
 
 /**
- * Hard-deletes revoked application-grant rows once they are older than the
+ * Hard-deletes up to 200 revoked application-grant rows once older than the
  * configured window.
  *
  * **The row it sweeps is not trash and is not in a terminal lifecycle state.**
@@ -155,7 +150,7 @@ export class TrashPurger {
  */
 export class RevokedGrantPurger {
   constructor(
-    private items: Pick<ItemStore, "purgeRevokedAppGrantsOlderThan">,
+    private storage: Storage,
     private retentionDays: number,
     private nowFn: () => Date = () => new Date(),
   ) {}
@@ -165,7 +160,18 @@ export class RevokedGrantPurger {
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    const deleted = await this.items.purgeRevokedAppGrantsOlderThan(cutoff);
+    const deleted = await runAuditedTransaction(
+      this.storage,
+      () => itemWrites(this.storage).purgeRevokedAppGrantsOlderThan(cutoff),
+      (deleted) =>
+        deleted > 0
+          ? {
+              action: "auth.grants.purged",
+              resource_type: "oauth_grant",
+              details: { count: deleted, cutoff },
+            }
+          : null,
+    );
     if (deleted > 0) {
       log("info", "Revoked grant rows purged", { deleted });
     }
@@ -226,9 +232,23 @@ export class GrantInactivityRetirer {
       try {
         await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
-          properties: grant.properties,
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
+          audit: {
+            action: "auth.grant.retired",
+            resource_type: "oauth_grant",
+            resource_id: grant.clientId ?? grant.id,
+            client_ip: null,
+            details: {
+              client_id: grant.clientId,
+              user_id: grant.authUserId,
+              grant_item_id: grant.id,
+              reason: "inactive",
+              last_used_at: grant.lastUsedAt,
+              granted_at: grant.grantedAt,
+              inactivity_days: this.inactivityDays,
+            },
+          },
         });
       } catch (err) {
         // A lost client ends the sweep, not one grant: the scheduler
@@ -240,25 +260,6 @@ export class GrantInactivityRetirer {
         });
         continue;
       }
-      // Fire-and-forget like every other revoke door's row: the tracker
-      // drains it at close, and a retirement that cannot be audited is still
-      // a retirement the projection's own `revoked_at` records. This row is
-      // the only record of why, so it is written first of the two.
-      void this.storage.audit.log({
-        action: "auth.grant.retired",
-        resource_type: "oauth_grant",
-        resource_id: grant.clientId ?? grant.id,
-        client_ip: null,
-        details: {
-          client_id: grant.clientId,
-          user_id: grant.authUserId,
-          grant_item_id: grant.id,
-          reason: "inactive",
-          last_used_at: grant.lastUsedAt,
-          granted_at: grant.grantedAt,
-          inactivity_days: this.inactivityDays,
-        },
-      });
       retired += 1;
     }
     if (retired > 0) {
@@ -329,7 +330,7 @@ export class RateLimitWindowCleaner {
  * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
  * lets anyone register an `auth_oauth_client` row; without a reaper those
  * rows accumulate forever (DB growth) — most are abandoned registrations a
- * user never consented to. Each run deletes every client that is BOTH:
+ * user never consented to. Each run deletes up to 200 clients that are BOTH:
  *
  *   - older than the retention window (`created_at < now - retentionDays`),
  *     AND
@@ -362,7 +363,18 @@ export class DcrClientCleaner {
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    const deleted = await provider.deleteGrantlessClientsOlderThan(cutoff);
+    const deleted = await runAuditedTransaction(
+      this.storage,
+      () => provider.deleteGrantlessClientsOlderThan(cutoff),
+      (deleted) =>
+        deleted > 0
+          ? {
+              action: "auth.clients.purged",
+              resource_type: "oauth_client",
+              details: { count: deleted, cutoff },
+            }
+          : null,
+    );
     if (deleted > 0) {
       log("info", "DCR client cleanup", {
         deleted,
@@ -392,12 +404,23 @@ export class RevokedKeyReaper {
     private nowFn: () => Date = () => new Date(),
   ) {}
 
-  /** One sweep, reporting the count. */
+  /** One bounded sweep of at most 200 keys, reporting the audited count. */
   async runOnce(): Promise<number> {
     const cutoff = new Date(
       this.nowFn().getTime() - RevokedKeyReaper.REVOKED_RETENTION_MS,
     ).toISOString();
-    const deleted = await this.storage.keys.deleteRevokedKeysOlderThan(cutoff);
+    const deleted = await runAuditedTransaction(
+      this.storage,
+      () => this.storage.keys.deleteRevokedKeysOlderThan(cutoff),
+      (deleted) =>
+        deleted > 0
+          ? {
+              action: "keys.purged",
+              resource_type: "key",
+              details: { count: deleted, cutoff },
+            }
+          : null,
+    );
     if (deleted > 0) {
       log("info", "Revoked key reap", { deleted });
     }

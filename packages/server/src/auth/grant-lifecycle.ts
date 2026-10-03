@@ -1,8 +1,9 @@
+import { grantCoversScope } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
-import { log } from "../middleware/logger.js";
 
 /**
  * The transitions of a user-app grant that more than one door reaches.
@@ -43,14 +44,7 @@ export async function keysMintedByApp(
  * and cascade through the OAuth Provider plugin's tables (access tokens,
  * refresh tokens, and the consent row itself).
  *
- * **The cascade runs first, and a failure aborts the whole thing.** A
- * revocation that cannot drop the tokens is a revocation that did not
- * happen — the app keeps working for the rest of every token's lifetime.
- * Writing "revoked" onto the record first would leave `/auth/security`
- * describing access the user no longer has while that access still
- * works: a comforting record of a change nobody made. Leaving the record
- * alone keeps it true, and the caller turns the throw into a visible
- * failure the user can retry.
+ * Every database change and its audit share one transaction.
  *
  * Runs under the consent lock for the (client, user) pair. The silent
  * re-authorization path on `GET /auth/authorize` reads the standing
@@ -66,7 +60,6 @@ export async function revokeProjectedGrant(
      *  records and no live projection: the tokens and consent row still go,
      *  through the same lock, and there is no record to rewrite. */
     itemId: string | null;
-    properties?: Record<string, unknown>;
     clientId: string | undefined;
     authUserId: string | undefined;
     /**
@@ -79,6 +72,7 @@ export async function revokeProjectedGrant(
      * to ask — leaves them alone.
      */
     revokeKeys?: boolean;
+    audit?: AuditLogEntry;
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
@@ -92,29 +86,7 @@ export async function revokeProjectedGrant(
         opts.authUserId,
       );
     }
-    // No projection to flip and no device codes bound to one: the plugin's
-    // records above were the whole of the grant.
-    if (opts.itemId === null) return;
-    // Device codes after the tokens, and before the record. An outstanding
-    // approved device code is another thing that still mints access, since
-    // a poll inside its remaining TTL is a token mint and with
-    // `offline_access` the pair it hands back carries a refresh token
-    // nothing later invalidates, so a revocation that leaves one behind is
-    // a revocation that did not happen.
-    //
-    // **After the tokens, because this cascade aborts on a throw.** That is
-    // the same position `revokeTokensForGrant` gives its own sibling sweep:
-    // `revokeAuthorizationCodesForGrant` runs last, once the access tokens,
-    // the refresh tokens and the consent row are already gone. Running this
-    // one first would invert what a fault on the device-code table costs: a
-    // lock or a corrupt index there would abort before the tokens went, so
-    // the grant would stay active and every bearer would survive while
-    // Disconnect stayed permanently non-functional. Sweeping last, the same
-    // fault still kills every token and still leaves the record honestly
-    // reading active.
-    //
-    // Keyed on the (client, user) pair the plugin's rows carry once a person
-    // has claimed them, so a pending code nobody has claimed is left alone.
+    // Claimed device codes can mint new tokens, so they belong to the same withdrawal.
     if (
       opts.clientId &&
       opts.authUserId &&
@@ -125,18 +97,13 @@ export async function revokeProjectedGrant(
         opts.authUserId,
       );
     }
-    // Keys beside the device codes and for the same reason: a key this app
-    // minted is standing access that outlives every token above it, so a
-    // revocation asked to take them has not happened until they are gone.
-    // Before the record flip, so a fault here leaves the projection honestly
-    // reading active rather than describing a disconnection that stopped
-    // half-way.
     if (opts.revokeKeys === true) {
       const keys = await keysMintedByApp(storage, {
         clientId: opts.clientId,
       });
       for (const key of keys) await storage.keys.revoke(key.id);
     }
+    if (opts.itemId === null) return;
     await writeItem(
       storage,
       { kind: "platform" },
@@ -144,21 +111,35 @@ export async function revokeProjectedGrant(
         op: "update",
         id: opts.itemId,
         properties: {
-          ...opts.properties,
           status: "revoked",
           revoked_at: new Date().toISOString(),
         },
       },
     );
   };
+  const commit = () =>
+    runAuditedTransaction(
+      storage,
+      cascade,
+      opts.audit ?? {
+        action: "auth.grant.revoked",
+        resource_type: "oauth_grant",
+        resource_id: opts.clientId ?? opts.itemId ?? undefined,
+        details: {
+          client_id: opts.clientId,
+          user_id: opts.authUserId,
+          grant_item_id: opts.itemId,
+        },
+      },
+    );
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the
   // user-facing signal.
   if (!opts.clientId || !opts.authUserId) {
-    await cascade();
+    await commit();
     return;
   }
-  await withConsentLock(opts.clientId, opts.authUserId, cascade);
+  await withConsentLock(opts.clientId, opts.authUserId, commit);
 }
 
 /**
@@ -167,7 +148,7 @@ export async function revokeProjectedGrant(
  * Distinct from `auth.grant.created` so the operator trail separates
  * "user clicked Approve" from "server reused an existing grant". The
  * lookups here are read-only — reuse never rewrites the projection.
- * Best-effort: a failure logs and never blocks the redirect.
+ * The observation is durable before an authorization response is returned.
  */
 export async function auditGrantReused(
   storage: Storage,
@@ -178,70 +159,103 @@ export async function auditGrantReused(
     clientIp: string | null;
   },
 ): Promise<void> {
-  try {
-    let grantItemId: string | null = null;
-    if (typeof storage.oauthProvider?.findGrantItemId === "function") {
-      grantItemId = await storage.oauthProvider.findGrantItemId({
-        clientId: opts.clientId,
-        authUserId: opts.authUserId,
-      });
-    }
-    await storage.audit.log({
-      action: "auth.grant.reused",
-      resource_type: "oauth_grant",
-      resource_id: opts.clientId,
-      client_ip: opts.clientIp,
-      details: {
-        client_id: opts.clientId,
-        user_id: opts.authUserId,
-        scopes: opts.scopes,
-        grant_item_id: grantItemId,
-      },
-    });
-  } catch (err) {
-    log("warn", "consent skip: auth.grant.reused audit emit failed", {
-      client_id: opts.clientId,
-      error: err instanceof Error ? err.message : String(err),
+  let grantItemId: string | null = null;
+  if (typeof storage.oauthProvider?.findGrantItemId === "function") {
+    grantItemId = await storage.oauthProvider.findGrantItemId({
+      clientId: opts.clientId,
+      authUserId: opts.authUserId,
     });
   }
-}
-
-/**
- * Emit the `auth.grant.revoked` audit row. One shape for every revoke door,
- * so an operator reading the trail can filter on the action without
- * knowing which surface produced it; `source` names the surface only where
- * it is not the person acting on their own grant.
- *
- * Fire-and-forget on purpose: the revoke has already happened by the time
- * this runs, and an audit failure must not turn a completed revocation
- * into a user-visible error. `storage.audit.log` never rejects.
- */
-export function auditGrantRevoked(
-  storage: Storage,
-  opts: {
-    clientId: string | undefined;
-    authUserId: string | undefined;
-    grantItemId: string | null;
-    clientIp: string | null;
-    /** Set when the revocation came from the client presenting a refresh
-     *  token at the RFC 7009 endpoint rather than from the person. */
-    source?: "client" | "admin";
-    /** The operator's key when an operator acted, so the trail names who,
-     *  not only which surface. */
-    keyId?: string;
-  },
-): void {
-  void storage.audit.log({
-    action: "auth.grant.revoked",
+  await runAuditedTransaction(storage, () => undefined, {
+    action: "auth.grant.reused",
     resource_type: "oauth_grant",
-    resource_id: opts.clientId ?? opts.grantItemId ?? "unknown",
+    resource_id: opts.clientId,
     client_ip: opts.clientIp,
-    ...(opts.keyId === undefined ? {} : { key_id: opts.keyId }),
     details: {
       client_id: opts.clientId,
       user_id: opts.authUserId,
-      grant_item_id: opts.grantItemId,
-      ...(opts.source === undefined ? {} : { source: opts.source }),
+      scopes: opts.scopes,
+      grant_item_id: grantItemId,
     },
   });
+}
+
+/** The caller owns the consent lock and transaction, including the provider consent write. */
+export async function projectGrantOnConsent(
+  storage: Storage,
+  opts: {
+    authUserId: string;
+    clientId: string;
+    scopes: string[];
+    clientIp: string | null;
+  },
+): Promise<AuditLogEntry> {
+  let itemId =
+    (await storage.oauthProvider?.findGrantItemId({
+      clientId: opts.clientId,
+      authUserId: opts.authUserId,
+    })) ?? null;
+  const now = new Date().toISOString();
+  if (itemId) {
+    const existing = await storage.items.get(itemId);
+    const prior = Array.isArray(existing?.properties.scopes)
+      ? (existing.properties.scopes as string[])
+      : [];
+    if (prior.some((scope) => !grantCoversScope(opts.scopes, scope))) {
+      if (!storage.oauthProvider)
+        throw new Error("Credential storage is unavailable");
+      await storage.oauthProvider.revokeAccessTokensForGrant(
+        opts.clientId,
+        opts.authUserId,
+      );
+    }
+    const written = await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "update",
+        id: itemId,
+        properties: {
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+          revoked_at: undefined,
+        },
+      },
+    );
+    if (written.outcome !== "updated")
+      throw new Error("Consent projection was not updated");
+  } else {
+    const { item } = await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "create",
+        type: "system.connection",
+        state: "active",
+        properties: {
+          kind: "app",
+          client_id: opts.clientId,
+          user_id: opts.authUserId,
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+        },
+        source: "marfa/oauth2/consent",
+      },
+    );
+    itemId = item.id;
+  }
+  return {
+    action: "auth.grant.created",
+    resource_type: "oauth_grant",
+    resource_id: opts.clientId,
+    client_ip: opts.clientIp,
+    details: {
+      client_id: opts.clientId,
+      user_id: opts.authUserId,
+      scopes: opts.scopes,
+      grant_item_id: itemId,
+    },
+  };
 }

@@ -55,10 +55,8 @@ import {
  * to call `this.db.select(...)` etc. unchanged. The substitution is
  * transparent.
  *
- * **Better-auth bypass.** The Better Auth instance is constructed with
- * the *unwrapped* base db (`storage.betterAuthDb`). Auth runs its own
- * context-management (cookies, sessions) outside the request middleware
- * and would be confused by a substituted db.
+ * Better Auth uses this same handle, so captured provider adapters and
+ * its nested transactions enlist in the current writer.
  */
 
 /**
@@ -87,9 +85,8 @@ export const sqliteRequestContext =
 
 /**
  * Wrap a Drizzle libsql instance so per-request transactions transparently
- * substitute. Storage classes consume this wrapped instance; the unwrapped
- * base instance is reserved for Better Auth and other code paths that
- * intentionally bypass the per-request context.
+ * substitute. Storage classes and the private credential adapter consume
+ * this wrapped instance.
  */
 export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
   return new Proxy(baseDb, {

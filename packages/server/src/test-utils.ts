@@ -336,43 +336,6 @@ export async function createTestAccount(
 }
 
 /**
- * Retry-poll helper for fire-and-forget audit assertions.
- *
- * Most route handlers emit audit rows via `void storage.audit.log(...)`
- * — the audit insert is off the critical path. Tests that immediately
- * query audit after an action may lose the race against the pending
- * insert. Rather than make `audit.log` awaitable for production, tests
- * poll briefly until the row appears.
- *
- * Pass either:
- *   - `{ filter }` — runs `storage.audit.list(filter)` until at least
- *     `min` rows match, OR
- *   - `{ probe }` — calls the user-supplied async probe (e.g. a
- *     `GET /audit?...` HTTP request) and asserts the predicate.
- *
- * Returns the final result so the caller can chain assertions.
- *
- * Bounded to ~2s with 25ms polls — long enough to cover any audit
- * insert latency on a loaded machine, short enough that a real
- * regression (the row genuinely never lands) still surfaces fast.
- */
-export async function waitForAudit<T>(
-  probe: () => Promise<T>,
-  predicate: (result: T) => boolean,
-  options?: { timeoutMs?: number; intervalMs?: number },
-): Promise<T> {
-  const timeoutMs = options?.timeoutMs ?? 2000;
-  const intervalMs = options?.intervalMs ?? 25;
-  const deadline = Date.now() + timeoutMs;
-  let result = await probe();
-  while (!predicate(result) && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    result = await probe();
-  }
-  return result;
-}
-
-/**
  * Longest a competing request may take to reach the consent lock before
  * the caller treats it as a failure. Generous on purpose: it only has to
  * outlast the slowest legitimate arrival on a loaded machine, and

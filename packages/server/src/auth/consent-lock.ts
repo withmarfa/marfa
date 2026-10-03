@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 /**
  * Serializes writes to a user's standing OAuth grant for one client.
  *
@@ -33,6 +34,8 @@
  * waiter drains, so the map tracks in-flight work rather than every pair
  * the process has ever seen.
  */
+const ownership = new AsyncLocalStorage<{ key: string; active: boolean }>();
+
 const inFlight = new Map<string, Promise<void>>();
 
 /** Both parts are percent-encoded, so no pair of ids can collide. */
@@ -75,6 +78,8 @@ export async function withConsentLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const key = lockKey(clientId, authUserId);
+  const owner = ownership.getStore();
+  if (owner?.key === key && owner.active) return fn();
   const predecessor = inFlight.get(key);
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -87,9 +92,11 @@ export async function withConsentLock<T>(
   inFlight.set(key, held);
   depth.set(key, (depth.get(key) ?? 0) + 1);
   if (predecessor) await predecessor;
+  const heldOwner = { key, active: true };
   try {
-    return await fn();
+    return await ownership.run(heldOwner, fn);
   } finally {
+    heldOwner.active = false;
     release();
     if (inFlight.get(key) === held) inFlight.delete(key);
     const remaining = (depth.get(key) ?? 1) - 1;

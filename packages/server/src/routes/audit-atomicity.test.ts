@@ -32,7 +32,7 @@ describe("domain writes and their audit records", () => {
     const control = await send("control");
     expect(control.status).toBe(201);
     const hook = (await control.json()) as { id: string };
-    await ctx.storage.audit.drain();
+
     expect(
       (await ctx.storage.audit.list({ resource_id: hook.id })).data,
     ).toHaveLength(1);
@@ -535,7 +535,7 @@ describe.each(doors)("%s transaction", (action, prepare) => {
       }
       expect(afterSuccess).not.toEqual(beforeSuccess);
       const second = await prepare();
-      await ctx.storage.audit.drain();
+
       await settle();
       const before = await domainSnapshot(),
         itemEvents = live.events.length,

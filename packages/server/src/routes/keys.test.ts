@@ -13,7 +13,6 @@ import {
   request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
@@ -393,7 +392,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
 
     // A barrier rather than a deadline: the absence below is read once the
     // audit writer has settled, so a loaded machine cannot turn it red.
-    await ctx.storage.audit.drain();
+
     expect(
       await revokeAudits(unknown),
       "an audit row records a revocation that never happened",
@@ -407,7 +406,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
       key: ctx.operatorKey,
     });
     expect(first.status).toBe(200);
-    await ctx.storage.audit.drain();
+
     expect(await revokeAudits(id)).toBe(1);
 
     const second = await request(ctx.app, "DELETE", `/keys/${id}`, {
@@ -426,7 +425,6 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     // is what separates them for the caller who does hold the key.
     expect(err.error.message).toMatch(/already revoked/i);
 
-    await ctx.storage.audit.drain();
     expect(
       await revokeAudits(id),
       "the second revoke wrote an audit row for a revocation that changed nothing",
@@ -444,7 +442,6 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
 
-    await ctx.storage.audit.drain();
     expect(await revokeAudits(id)).toBe(1);
     expect(await ctx.storage.keys.get(id)).toBeNull();
   });
@@ -550,10 +547,8 @@ describe("bootstrap sentinel", () => {
       // Bootstrap mint emits the distinct `key.bootstrap` action, not
       // `key.create`, so operators can identify the first-mint event
       // in audit logs without ambiguity.
-      const audits = await waitForAudit(
-        () => storage.audit.list({ action: "key.bootstrap" }),
-        (r) => r.data.some((row) => row.resource_id === body.id),
-      );
+      const audits = await storage.audit.list({ action: "key.bootstrap" });
+      expect(audits.data.some((row) => row.resource_id === body.id)).toBe(true);
       const row = audits.data.find((r) => r.resource_id === body.id);
       expect(row).toBeTruthy();
       expect(row?.action).toBe("key.bootstrap");
@@ -739,29 +734,43 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("keeps the claim when a failure does reach the release, with a key already minted", async () => {
-    // The second lock, tested where the first one is deliberately absent.
-    // Nothing in the handler currently throws past the key insert — the
-    // provisioning above is caught, and the audit write is fire-and-forget —
-    // so this reaches the release the only way left, by making the audit
-    // write throw synchronously. The point is not that path; it is that a
-    // future step added after the insert cannot reopen the window by failing.
+  it("rolls bootstrap claim, key and secret consumption back when its audit fails", async () => {
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
-      storage.audit.log = () => {
-        throw new Error("storage is having a moment");
-      };
-
+      await (
+        storage as Storage & {
+          __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+        }
+      ).__sqliteRun(
+        "CREATE TRIGGER reject_bootstrap_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'key.bootstrap' BEGIN SELECT RAISE(ABORT, 'bootstrap audit refused'); END",
+        [],
+      );
       const res = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(500);
-
-      // The key was written before the throw, so the claim stands and the
-      // door stays shut even though the caller lost the plaintext.
+      expect(await storage.keys.list()).toHaveLength(0);
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+      expect(await storage.settings.get("bootstrap.secret")).toBe(
+        bootstrapSecret,
+      );
+      await (
+        storage as Storage & {
+          __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+        }
+      ).__sqliteRun("DROP TRIGGER reject_bootstrap_audit", []);
+      const retry = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(retry.status).toBe(201);
       expect(await storage.keys.list()).toHaveLength(1);
       expect(await storage.settings.get("bootstrapped")).toBe("true");
+      expect(await storage.settings.get("bootstrap.secret")).toBeNull();
+      expect(
+        (await storage.audit.list({ action: "key.bootstrap" })).data,
+      ).toHaveLength(1);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -953,9 +962,9 @@ describe("bootstrap sentinel", () => {
       expect(followUpRes.status).toBe(201);
       const followUp = (await followUpRes.json()) as { id: string };
 
-      const audits = await waitForAudit(
-        () => storage.audit.list({ action: "key.create" }),
-        (r) => r.data.some((row) => row.resource_id === followUp.id),
+      const audits = await storage.audit.list({ action: "key.create" });
+      expect(audits.data.some((row) => row.resource_id === followUp.id)).toBe(
+        true,
       );
       const row = audits.data.find((r) => r.resource_id === followUp.id);
       expect(row).toBeTruthy();
@@ -1215,9 +1224,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(res.status).toBe(201);
     const created = (await res.json()) as { id: string };
 
-    const audits = await waitForAudit(
-      () => oauthCtx.storage.audit.list({ action: "key.create" }),
-      (r) => r.data.some((row) => row.resource_id === created.id),
+    const audits = await oauthCtx.storage.audit.list({ action: "key.create" });
+    expect(audits.data.some((row) => row.resource_id === created.id)).toBe(
+      true,
     );
     const row = audits.data.find((r) => r.resource_id === created.id);
     expect(row).toBeTruthy();
@@ -1733,10 +1742,8 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.type_permissions).toEqual({});
     expect(stored?.permissions).toEqual([]);
 
-    const audits = await waitForAudit(
-      () => oauthCtx.storage.audit.list({ action: "key.create" }),
-      (r) => r.data.some((row) => row.resource_id === minted.id),
-    );
+    const audits = await oauthCtx.storage.audit.list({ action: "key.create" });
+    expect(audits.data.some((row) => row.resource_id === minted.id)).toBe(true);
     const row = audits.data.find((r) => r.resource_id === minted.id);
     expect(row?.details).toMatchObject({ operator_tier: true });
   });

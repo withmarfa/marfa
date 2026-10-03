@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
@@ -316,15 +316,11 @@ describe("Instance config — round trips", () => {
     expect(getBody.enforcement.strict_mode.types).toEqual(["core.note"]);
     expect(getBody.audit_retention_days).toBe(45);
 
-    // Audit write is fire-and-forget — use the shared poll helper
     // instead of an inline retry.
-    const auditResult = await waitForAudit(
-      () =>
-        configCtx.storage.audit.list({
-          action: "config.update",
-        }),
-      (r) => r.data.length >= 1,
-    );
+    const auditResult = await configCtx.storage.audit.list({
+      action: "config.update",
+    });
+    expect(auditResult.data.length >= 1).toBe(true);
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
     expect(auditResult.data[0]?.resource_type).toBe("config");
   });

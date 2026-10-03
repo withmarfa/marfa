@@ -896,3 +896,37 @@ describe("authorize scope narrowing on a form POST", () => {
     expect(granted).toEqual(["core.note:read", "openid"]);
   });
 });
+
+it("requires the native narrowing observation before returning its changed authorization request", async () => {
+  ctx = await createTestContext();
+  const cookie = await signInUser(ctx, "narrow-audit@example.test");
+  const clientId = await seedClient(ctx, [
+    "openid",
+    "core.note:read",
+    RETIRED_SCOPE,
+  ]);
+  const db = ctx.storage as typeof ctx.storage & {
+    __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+  };
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_narrow_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.scopes.narrowed' BEGIN SELECT RAISE(ABORT, 'narrow audit fault'); END",
+    [],
+  );
+  const { challenge } = pkcePair();
+  const begin = () =>
+    beginAuthorize(
+      ctx!,
+      clientId,
+      `openid core.note:read ${RETIRED_SCOPE}`,
+      cookie,
+      challenge,
+    );
+  const failed = await begin();
+  expect(failed.status).toBe(500);
+  expect(failed.headers.get("location")).toBeNull();
+  await db.__sqliteRun("DROP TRIGGER reject_narrow_audit", []);
+  expect((await begin()).status).toBe(302);
+  expect(
+    (await ctx.storage.audit.list({ action: "auth.scopes.narrowed" })).data,
+  ).toHaveLength(1);
+});

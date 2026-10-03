@@ -534,7 +534,7 @@ describe("a cursor continues the page it came from and nothing else", () => {
   it("refuses an item cursor on the audit log, whose column it names", async () => {
     const action = "test.cursor.listing";
     for (const resource of ["one", "two"]) {
-      await ctx.storage.audit.logOrThrow({
+      await ctx.storage.audit.log({
         action,
         resource_type: "test",
         resource_id: resource,

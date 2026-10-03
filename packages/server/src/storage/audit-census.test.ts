@@ -3,7 +3,7 @@
  * Native failure controls exercise the boundaries named in audit-census.json.
  * Resolve signatures rather than receiver names: aliases such as this.jobs and
  * handles narrowed to one method are still storage calls. Any new method or
- * caller must be classified here, including deliberately unfinished credentials.
+ * caller must be classified here, including provider credential boundaries.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -42,7 +42,7 @@ const READS: Record<string, string> = {
 };
 // Storage primitives themselves can be used by several kinds of boundary. The
 // caller inventory below distinguishes audited units, contained subwrites,
-// existing operational exceptions and credential work explicitly left to #1699.
+// existing operational exceptions and provider credential boundaries.
 const WRITES: Record<string, string> = {
   ItemStore:
     "create settleTombstones update delete purge restore restoreBeneath transition purgeTrashedOlderThan purgeRevokedAppGrantsOlderThan",
@@ -59,8 +59,8 @@ const WRITES: Record<string, string> = {
   WebhookDeliveryStore:
     "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cleanup",
   OauthProviderStore:
-    "widenClientScopes setRegisteredScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteGrantlessClientsOlderThan updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
-  AuditStore: "log logOrThrow drain cleanup",
+    "widenClientScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteGrantlessClientsOlderThan updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
+  AuditStore: "log cleanup",
   EventLogStore: "append cleanup",
   IdempotencyStore: "claim takeOverExpiredClaim complete release cleanup",
   SettingsStore: "set claim release",
@@ -129,6 +129,12 @@ it("classifies every declared method and every production mutation caller", () =
         ) {
           const name = `${declaration.parent.name.text}.${declaration.name.getText()}`;
           if (writes.has(name)) key = name;
+          if (name === "AuditStore.log") {
+            expect(
+              ts.isAwaitExpression(node.parent),
+              `${path}: audit writes must be awaited`,
+            ).toBe(true);
+          }
         } else if (
           declaration &&
           ts.isFunctionDeclaration(declaration) &&

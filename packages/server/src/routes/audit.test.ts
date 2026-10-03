@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
 
@@ -41,19 +41,15 @@ async function seedAudit(
   });
 }
 
-/** The `test.window` rows, once the fire-and-forget writes have landed,
- *  oldest first. */
+/** The completed `test.window` audit rows, oldest first. */
 async function windowRows(count: number): Promise<AuditRow[]> {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const res = await request(ctx.app, "GET", "/audit?action=test.window", {
-      key: ctx.workingKey,
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as AuditPage;
-    if (body.data.length === count) return body.data.slice().reverse();
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error("the test.window audit rows never landed");
+  const res = await request(ctx.app, "GET", "/audit?action=test.window", {
+    key: ctx.workingKey,
+  });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as AuditPage;
+  expect(body.data).toHaveLength(count);
+  return body.data.slice().reverse();
 }
 
 describe("GET /audit", () => {
@@ -211,21 +207,17 @@ describe("GET /audit", () => {
 
     // Look up the audit row for the item we just created — most reliable
     // way to find our own row vs. unrelated noise from other tests.
-    // Poll briefly because `audit.log` is fire-and-forget — the insert can
-    // land after this GET would otherwise return.
-    const body = await waitForAudit(
-      async () => {
-        const listRes = await request(
-          ctx.app,
-          "GET",
-          `/audit?action=item.create&resource_id=${created.item.id}`,
-          { key: ctx.workingKey, peer: "203.0.113.42" },
-        );
-        expect(listRes.status).toBe(200);
-        return (await listRes.json()) as AuditPage;
-      },
-      (b) => b.data.length >= 1,
-    );
+    const body = await (async () => {
+      const listRes = await request(
+        ctx.app,
+        "GET",
+        `/audit?action=item.create&resource_id=${created.item.id}`,
+        { key: ctx.workingKey, peer: "203.0.113.42" },
+      );
+      expect(listRes.status).toBe(200);
+      return (await listRes.json()) as AuditPage;
+    })();
+    expect(body.data.length >= 1).toBe(true);
     expect(body.data).toHaveLength(1);
     expect(body.data[0]?.client_ip).toBe("203.0.113.42");
     // Its own field, not a key smuggled through `details`: the details
@@ -294,24 +286,22 @@ describe("GET /audit", () => {
       expect(res.status).toBe(201);
       const created = (await res.json()) as { item: { id: string } };
 
-      // Same fire-and-forget audit race — poll until the row lands.
-      const body = await waitForAudit(
-        async () => {
-          const listRes = await request(
-            trustedCtx.app,
-            "GET",
-            `/audit?action=item.create&resource_id=${created.item.id}`,
-            {
-              key: trustedCtx.workingKey,
-              peer: "10.0.0.5",
-              headers: { "x-forwarded-for": "203.0.113.7" },
-            },
-          );
-          expect(listRes.status).toBe(200);
-          return (await listRes.json()) as AuditPage;
-        },
-        (b) => b.data.length >= 1,
-      );
+      // The completed request already has its audit record.
+      const body = await (async () => {
+        const listRes = await request(
+          trustedCtx.app,
+          "GET",
+          `/audit?action=item.create&resource_id=${created.item.id}`,
+          {
+            key: trustedCtx.workingKey,
+            peer: "10.0.0.5",
+            headers: { "x-forwarded-for": "203.0.113.7" },
+          },
+        );
+        expect(listRes.status).toBe(200);
+        return (await listRes.json()) as AuditPage;
+      })();
+      expect(body.data.length >= 1).toBe(true);
       expect(body.data).toHaveLength(1);
       // The leftmost untrusted hop is the recorded IP — NOT the peer
       // (which was a trusted proxy) and NOT some other XFF entry.

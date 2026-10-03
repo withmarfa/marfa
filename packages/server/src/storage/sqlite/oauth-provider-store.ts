@@ -3,7 +3,16 @@
  * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
-import { eq, and, desc, lt, isNotNull, sql, type SQL } from "drizzle-orm";
+import {
+  eq,
+  and,
+  desc,
+  lt,
+  isNotNull,
+  inArray,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -35,8 +44,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * In-flight tracking for the fire-and-forget `last_used_at` stamp. The
    * bearer middleware fires the stamp after the response and nothing
    * awaits it, so without tracking a stamp still in flight when the
-   * connection closes surfaces as an unhandled rejection. Same shape as
-   * the audit store's drain.
+   * connection closes can attempt to use a closed database.
    */
   private readonly stamps = new WriteTracker("oauth-grant-stamp");
 
@@ -351,18 +359,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     return updated.length > 0;
   }
 
-  async setRegisteredScopes(
-    clientId: string,
-    scopes: readonly string[],
-  ): Promise<boolean> {
-    const updated = await this.db
-      .update(auth_oauth_client)
-      .set({ scopes: JSON.stringify([...scopes]), updatedAt: new Date() })
-      .where(eq(auth_oauth_client.clientId, clientId))
-      .returning({ id: auth_oauth_client.id });
-    return updated.length > 0;
-  }
-
   async revokeTokensForGrant(
     clientId: string,
     authUserId: string,
@@ -644,19 +640,33 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    */
   async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
     const cutoff = new Date(cutoffIso);
-    const deleted = await this.db
-      .delete(auth_oauth_client)
-      .where(
-        and(
-          isNotNull(auth_oauth_client.createdAt),
-          lt(auth_oauth_client.createdAt, cutoff),
-          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
-          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
-          sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
-        ),
-      )
-      .returning({ id: auth_oauth_client.id });
-    return deleted.length;
+    return this.db.transaction(async (tx) => {
+      const candidates = await tx
+        .select({ id: auth_oauth_client.id })
+        .from(auth_oauth_client)
+        .where(
+          and(
+            isNotNull(auth_oauth_client.createdAt),
+            lt(auth_oauth_client.createdAt, cutoff),
+            sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
+            sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
+            sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
+          ),
+        )
+        .orderBy(auth_oauth_client.id)
+        .limit(200);
+      if (candidates.length === 0) return 0;
+      const deleted = await tx
+        .delete(auth_oauth_client)
+        .where(
+          inArray(
+            auth_oauth_client.id,
+            candidates.map((row) => row.id),
+          ),
+        )
+        .returning({ id: auth_oauth_client.id });
+      return deleted.length;
+    });
   }
 
   async getPriorConsent(

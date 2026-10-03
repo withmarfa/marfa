@@ -1,6 +1,5 @@
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import { itemWrites } from "../storage/item-writes.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
 import type { Storage } from "../storage/interface.js";
@@ -203,7 +202,7 @@ export function registerHousekeepingJobs(
   const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
   if (revokedGrantRetentionDays > 0) {
     const revokedGrantPurger = new RevokedGrantPurger(
-      itemWrites(storage),
+      storage,
       revokedGrantRetentionDays,
     );
     housekeeping.register({

@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Catching a client's stored scope ceiling up to what it is asking for.
  *
@@ -150,9 +151,26 @@ export async function catchUpClientScopeCeiling(opts: {
 
   const widened = [...held, ...missing];
   try {
-    if (!(await oauth.widenClientScopes(clientId, held, widened))) {
-      return ceiling;
-    }
+    const changed = await runAuditedTransaction(
+      storage,
+      () => oauth.widenClientScopes(clientId, held, widened),
+      (changed) =>
+        changed
+          ? {
+              action: "auth.client.scopes_widened",
+              resource_type: "oauth_client",
+              resource_id: clientId,
+              client_ip: null,
+              details: {
+                client_id: clientId,
+                surface,
+                added_scopes: missing,
+                ceiling_size: widened.length,
+              },
+            }
+          : null,
+    );
+    if (!changed) return ceiling;
   } catch (err) {
     // A failed catch-up is not a failed request. The comparison the caller
     // makes next still runs against the ceiling as it stands, which is the
@@ -167,23 +185,6 @@ export async function catchUpClientScopeCeiling(opts: {
   log("info", `oauth ${surface}: caught a stale client ceiling up`, {
     client_id: clientId,
     added_scopes: missing,
-  });
-  // Audited rather than only logged, and audited separately from whatever
-  // the caller does next, because this one is the registration row changing.
-  // The surface is part of the row for the same reason it is part of the log
-  // line: two callers write this action and the trail has to say which, and
-  // a device catch-up has no signed-in person behind it.
-  void storage.audit.log({
-    action: "auth.client.scopes_widened",
-    resource_type: "oauth_client",
-    resource_id: clientId,
-    client_ip: null,
-    details: {
-      client_id: clientId,
-      surface,
-      added_scopes: missing,
-      ceiling_size: widened.length,
-    },
   });
   return widened;
 }

@@ -1,111 +1,70 @@
-/**
- * The two audit writers, held to opposite promises, against real storage.
- *
- * There used to be one writer, documented as fire-and-forget and awaited at
- * sixteen call sites — four of them inside a `try` built to fail the
- * operation when the row did not land. None of those could ever run: the
- * writer runs under a tracker that catches everything and warns, so it
- * cannot reject. The guard read as live code and was not, and the test that
- * proved one of them stubbed a rejection the store could not produce.
- *
- * These cases produce a real failure from the real store. The lever is a
- * `details` payload that cannot be serialized; everything that then happens
- * is the store's own.
- */
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createTestContext } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
-import type { AuditLogEntry } from "./interface.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTestContext, type TestContext } from "../test-utils.js";
+import { runAuditedTransaction } from "./audited-transaction.js";
+import { afterCommit } from "./commit-hooks.js";
 
 let ctx: TestContext;
-
-beforeAll(async () => {
+beforeEach(async () => {
   ctx = await createTestContext();
 });
-
-afterAll(async () => {
+afterEach(async () => {
   await ctx.cleanup();
 });
 
-/** An entry the store cannot write, because `details` will not serialize. */
-function unwritableEntry(action: string): AuditLogEntry {
-  return {
-    action,
-    resource_type: "item",
-    resource_id: "itm_audit_contract",
-    // A BigInt has no JSON representation, so the store's own
-    // `JSON.stringify` of the details blob throws. Nothing here is stubbed:
-    // the rejection comes from the write path the pipelines use.
-    details: { attempts: 1n },
-  };
+const entry = { action: "test.audit.strict", resource_type: "settings" };
+
+async function expectNativeAuditFailure(pending: Promise<unknown>) {
+  const error: unknown = await pending.catch((failure: unknown) => failure);
+  expect(error).toBeInstanceOf(Error);
+  const cause = (error as Error).cause;
+  expect(cause).toBeInstanceOf(Error);
+  expect((cause as Error).message).toContain("strict audit refused");
 }
 
-describe("audit.log — fire-and-forget", () => {
-  it("does not reject when the write genuinely fails", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await expect(
-        ctx.storage.audit.log(unwritableEntry("test.audit.swallowed")),
-      ).resolves.toBeUndefined();
-      // Swallowed, not silent: the tracker logs it. A caller cannot see the
-      // failure, so the log line is the only place it exists.
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("writes nothing when it fails, so nothing reads as audited", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await ctx.storage.audit.log(unwritableEntry("test.audit.no_row"));
-    } finally {
-      warn.mockRestore();
-    }
-    const rows = await ctx.storage.audit.list({
-      action: "test.audit.no_row",
-      limit: 5,
-    });
-    expect(rows.data).toHaveLength(0);
-  });
-});
-
-describe("audit.logOrThrow — propagating", () => {
-  it("rejects when the write fails", async () => {
+describe("the awaited audit writer", () => {
+  it("exposes serialization failure and leaves no record", async () => {
     await expect(
-      ctx.storage.audit.logOrThrow(unwritableEntry("test.audit.propagated")),
+      ctx.storage.audit.log({ ...entry, details: { attempts: 1n } }),
     ).rejects.toThrow();
+    expect(
+      (await ctx.storage.audit.list({ action: entry.action })).data,
+    ).toEqual([]);
   });
 
-  it("writes the row on the ordinary path", async () => {
-    await ctx.storage.audit.logOrThrow({
-      action: "test.audit.written",
-      resource_type: "item",
-      resource_id: "itm_audit_contract_ok",
+  it("propagates native insert rejection and rolls back the represented unit and its publication", async () => {
+    const raw = ctx.storage as typeof ctx.storage & {
+      __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "CREATE TRIGGER reject_strict_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'test.audit.strict' BEGIN SELECT RAISE(ABORT, 'strict audit refused'); END",
+      [],
+    );
+    await expectNativeAuditFailure(ctx.storage.audit.log(entry));
+    const emitted: string[] = [];
+    const operation = () =>
+      runAuditedTransaction(
+        ctx.storage,
+        async () => {
+          await ctx.storage.settings.set("audit.strict", "accepted");
+          afterCommit(() => emitted.push("accepted"));
+        },
+        { ...entry, client_ip: "203.0.113.7", details: { reason: "contract" } },
+      );
+    await expectNativeAuditFailure(operation());
+    expect(await ctx.storage.settings.get("audit.strict")).toBeNull();
+    expect(
+      (await ctx.storage.audit.list({ action: entry.action })).data,
+    ).toEqual([]);
+    expect(emitted).toEqual([]);
+    await raw.__sqliteRun("DROP TRIGGER reject_strict_audit", []);
+    await operation();
+    expect(await ctx.storage.settings.get("audit.strict")).toBe("accepted");
+    const rows = (await ctx.storage.audit.list({ action: entry.action })).data;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
       client_ip: "203.0.113.7",
       details: { reason: "contract" },
     });
-
-    const rows = await ctx.storage.audit.list({
-      action: "test.audit.written",
-      limit: 5,
-    });
-    expect(rows.data).toHaveLength(1);
-    // No polling. The propagating form is awaited to completion rather than
-    // tracked, which is the other half of what makes it usable inside a
-    // transaction.
-    expect(rows.data[0]?.client_ip).toBe("203.0.113.7");
-    expect(rows.data[0]?.details.reason).toBe("contract");
+    expect(emitted).toEqual(["accepted"]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Which writer each propagating call site takes.
-//
-// Swapping one back to `log` compiles, passes every route test, and silently
-// removes the guarantee: the account cascade would commit a hard delete with
-// no record of it, and the install would return an id for a connection
-// nothing audited. Two of the three have a behavioral test; the cascade
-// resolves its storage at construction and cannot be handed a failing audit
-// store from a test, so the shape is what is pinned.
-// ---------------------------------------------------------------------------

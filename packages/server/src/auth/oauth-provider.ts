@@ -1,3 +1,5 @@
+import { credentialRequest } from "./credential-adapter.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * @better-auth/oauth-provider plugin wiring.
  *
@@ -34,11 +36,6 @@ import {
   decodeBasicCredentials,
   stripAccessTokenAuthorizationScheme,
 } from "better-auth/oauth2";
-import {
-  auditGrantReused,
-  auditGrantRevoked,
-  revokeProjectedGrant,
-} from "./grant-lifecycle.js";
 import { createHmac } from "node:crypto";
 import {
   profilePermissionCovers,
@@ -95,10 +92,6 @@ interface HookCtxLite {
   /** The request headers; read for a client that authenticates with HTTP
    *  Basic rather than a `client_id` in the body. */
   headers?: Headers | null;
-  /** What the revoke before-hook resolved, handed to the after-hook through
-   *  the context merge Better Auth performs on a before-hook's returned
-   *  `context`. See {@link resolveClientRevoke}. */
-  revokeResolution?: RevokeResolution;
   /** Set by the same before-hook when the presented token was already
    *  nothing this server would accept before the plugin ran. */
   revokedTokenWasDead?: boolean;
@@ -371,8 +364,7 @@ export interface OauthProviderOptions {
    *  `hashApiKey(token, salt)` returns identical output, letting the
    *  middleware look up `auth_oauth_access_token.token` directly. */
   apiKeySalt: string;
-  /** The Storage handle. Threaded into the custom-claim callbacks and the
-   *  grant-projection after-hooks. */
+  /** Storage for custom claims, grant checks, and security observations. */
   storage: Storage;
   /** Base URL for the issuer (used in id_token claims). */
   baseURL: string;
@@ -423,7 +415,7 @@ export function buildOauthProviderPlugin(
     // naming no scope: the plugin's registration validates a requested
     // `scope` against `clientRegistrationAllowedScopes` and stores this whole
     // set on the row whatever the request named, and the registration
-    // after-hook puts a named scope back in its place. Custom types
+    // adapter stores a named scope in that same registration unit. Custom types
     // registered at runtime require a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
@@ -635,35 +627,20 @@ export function buildOauthProjectionPlugin(opts: {
           // for. See `keepRequestedRegistrationScope`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            keepRequestedRegistrationScope(ctx, storage),
+            Promise.resolve(keepRequestedRegistrationScope(ctx)),
           ),
         },
         {
-          // Gives the authorize endpoint's failures a signal, and its own
-          // consent skip an audit row. See `logAuthorizeOutcome` and
-          // `auditProviderConsentSkip`.
+          // This notification does not write provider state or audit records.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) => {
             logAuthorizeOutcome(ctx);
-            if (refreshHasher) {
-              auditProviderConsentSkip(ctx, storage, refreshHasher);
-            }
             return Promise.resolve();
           }),
         },
         ...(refreshHasher
           ? [
               {
-                // A refresh token revoked by its client ends the grant it
-                // belongs to. Second half of a pair; the first is the
-                // before-hook below. See `cascadeClientRevoke`.
-                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
-                handler: createAuthMiddleware((ctx: HookCtxLite) =>
-                  cascadeClientRevoke(ctx, storage),
-                ),
-              },
-              {
-                // After the cascade, which reads the plugin's own answer.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
                   Promise.resolve(answerDeadTokenRevoked(ctx)),
@@ -743,8 +720,8 @@ export function buildOauthProjectionPlugin(opts: {
           ? [
               {
                 // Resolves the token a revoke presents before the plugin
-                // can mark or delete its row, and hands the resolution to
-                // the after-hook above. See `resolveClientRevoke`.
+                // can mark or delete its row. The credential adapter uses
+                // the resolved pair for the audited grant cascade.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
                   resolveClientRevoke(ctx, storage, refreshHasher),
@@ -790,23 +767,13 @@ export function buildOauthProjectionPlugin(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * After-hook for `/oauth2/register`: the client is registered for the scope
- * it asked for, in its stored row and in the answer.
- *
- * The plugin validates a requested `scope` against the registration
- * allowlist and then stores, and answers, the whole allowlist whatever the
- * request named, so a client asking for one type's read was recorded as
- * one that may ask for anything, `keys.mint` and `grants.manage` included.
- * The row is put right before the answer leaves, which is the first moment
- * anybody learns the client's id, so no request ever meets the wider row.
- * A registration naming no scope keeps the plugin's default, which is the
- * allowlist. A failed write fails the registration: the answer would
- * otherwise describe a row that says something else.
+ * Match the registration response to the requested scope stored by the adapter.
+ * The provider otherwise answers with its whole registration allowlist.
+ * A request naming no scope retains that default.
  */
-async function keepRequestedRegistrationScope(
+function keepRequestedRegistrationScope(
   ctx: HookCtxLite,
-  storage: Storage,
-): Promise<Record<string, unknown> | undefined> {
+): Record<string, unknown> | undefined {
   const answer = ctx.context?.returned;
   if (answer === null || typeof answer !== "object") return undefined;
   if ("statusCode" in answer) return undefined;
@@ -817,138 +784,7 @@ async function keepRequestedRegistrationScope(
   if (typeof asked !== "string") return undefined;
   const requested = [...new Set(asked.split(" ").filter((s) => s.length > 0))];
   if (requested.length === 0) return undefined;
-  const oauth = storage.oauthProvider;
-  if (!oauth) return undefined;
-  if (!(await oauth.setRegisteredScopes(clientId, requested))) {
-    throw new Error(`the client just registered is gone: ${clientId}`);
-  }
   return { ...registered, scope: requested.join(" ") };
-}
-
-// ---------------------------------------------------------------------------
-// The provider's own consent skip (after-hook)
-// ---------------------------------------------------------------------------
-
-/**
- * After-hook for `/oauth2/authorize`: when the plugin answers a request with
- * a code without showing the consent screen, write the `auth.grant.reused`
- * row Marfa's own skip writes.
- *
- * Two paths skip consent. Marfa's, on `GET /auth/authorize`, is reached when
- * the plugin has already redirected the browser to the consent page; it
- * emits `auth.grant.reused` itself. The plugin's own, inside its authorize
- * endpoint, finds a standing consent row covering the request and redirects
- * straight to the callback with a code, and Marfa's route never runs. Every
- * re-authorization by an app whose grant covers what it asks for takes the
- * second path, so the operator trail showed a grant being created once and
- * never used again, while the tokens kept being minted. "Every" means every
- * request the plugin's exact-membership check covered; a request covered
- * only by a pattern fell through to Marfa's page and was audited there.
- *
- * **A request off the wire, that succeeded, without the person asking to be
- * asked.** The plugin re-enters its own authorize endpoint from the consent
- * and continue endpoints, and from its sign-in resume, through
- * `runOAuth2Authorize`, which sets `authorizeSettings` on the context; a
- * request that arrived over HTTP has the field undefined, and that is the
- * whole of how the two are told apart. The sign-in resume is a wire-shaped
- * re-authorization this therefore skips, and that is safe only because of
- * two facts of this deployment: Marfa's sign-in returns to its own
- * `/auth/authorize` rather than posting the plugin's `oauth_query`, and no
- * `selectAccount` page is configured so `/oauth2/continue` is unreachable.
- * Adopting either reopens the gap.
- * A re-entry after a consent decision is a `created`, written by the
- * decision route, and must not also be a `reused`. `prompt=consent` means
- * the client asked for a fresh decision, and the plugin honors it by
- * rendering; if a code came back regardless, nothing was reused. Success is
- * a server-added `code` on the client's own `redirect_uri`, judged by
- * `serverAddedResponseParam` for the reason `logAuthorizeOutcome` gives.
- *
- * **Who, read from the code itself; what, from the request as the plugin
- * answered it.** The hook context carries no session, and the query names
- * the client but not the person. The authorization code the plugin just
- * minted does: its verification row carries `client_id` and `userId`, and
- * Marfa's store resolves it through the same hash the plugin stored it
- * under. That is one read of a row the plugin wrote a moment ago, and it
- * means the audit row names the person the code was minted for rather than
- * whoever the hook guessed. The scopes come from the request as the plugin
- * read it, the form body on a POST and the query on a GET, which is the
- * value the plugin minted for: the ceiling default when the request named
- * none, and the narrowing hook's rewrite when it dropped literals.
- * Marfa's own skip reads the same post-narrowing value, and deduplicates
- * it, so the two doors write one shape for one request. No request IP: the
- * hook context does not carry one, the same as the client-revoke cascade.
- *
- * Fire-and-forget, like the route's own emit: a reporting path must never
- * fail an authorization.
- */
-function auditProviderConsentSkip(
-  ctx: HookCtxLite,
-  storage: Storage,
-  hasher: (token: string) => string,
-): void {
-  try {
-    if (ctx.authorizeSettings !== undefined) return;
-    // The request as the plugin read it: the form body on a POST, the query
-    // on a GET, through the same selection the narrowing hook uses. Reading
-    // the query alone would miss a form-post skip entirely and let a caller
-    // put its own `scope` on the row through the URL.
-    const request = findAuthorizeRequest(ctx);
-    if (!request) return;
-    const params = request.params;
-    const prompt = typeof params.prompt === "string" ? params.prompt : "";
-    if (prompt.split(" ").includes("consent")) return;
-    const location = redirectLocationOf(ctx.context?.returned);
-    if (!location) return;
-    const redirectUri =
-      typeof params.redirect_uri === "string" ? params.redirect_uri : null;
-    if (!serverAddedResponseParam(redirectUri, location, "code")) return;
-    const code = new URL(location, "http://localhost").searchParams.get("code");
-    if (!code) return;
-    if (
-      typeof storage.oauthProvider?.findAuthorizationCodeGrantKey !== "function"
-    )
-      return;
-    const scopes =
-      typeof params.scope === "string"
-        ? [...new Set(params.scope.split(/\s+/).filter(Boolean))]
-        : [];
-    const provider = storage.oauthProvider;
-    void provider
-      .findAuthorizationCodeGrantKey(hasher(code))
-      .then((row) => {
-        if (!row) {
-          // Not a race in practice (the code is stored before the redirect
-          // is returned), so a miss is worth a line rather than silence.
-          log("info", "provider consent skip: code not found, no audit row", {
-            client_id: request.clientId,
-          });
-          return;
-        }
-        // A code minted with no consent row behind it is the plugin's
-        // `skipConsent` path, not a reuse. Registration refuses that field
-        // today and the code guard refuses such a code at exchange, so
-        // this is the third fence rather than the first; it costs one read
-        // already made.
-        if (!row.hasConsent) return;
-        return auditGrantReused(storage, {
-          authUserId: row.userId,
-          clientId: row.clientId,
-          scopes,
-          clientIp: null,
-        });
-      })
-      .catch((err: unknown) => {
-        log(
-          "warn",
-          "provider consent skip: auth.grant.reused audit emit failed",
-          {
-            error: err instanceof Error ? err.message : String(err),
-          },
-        );
-      });
-  } catch {
-    // A reporting path must never fail a request.
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -963,24 +799,6 @@ export const REFRESH_TOKEN_PREFIX = "marfa_rt_";
 /** The prefix the plugin puts on an opaque access token, which the bearer
  *  middleware reads to tell one from a key. */
 export const ACCESS_TOKEN_PREFIX = "marfa_at_";
-
-/** What the revoke before-hook establishes, for the after-hook to act on. */
-interface RevokeResolution {
-  /** The refresh row the presented token resolved to, as it stood before
-   *  the plugin ran. */
-  row: {
-    clientId: string;
-    userId: string;
-    revoked: boolean;
-  };
-  /** The hash the row was found under, so the after-hook can ask whether
-   *  the plugin deleted it. */
-  tokenHash: string;
-  /** The client the request authenticates as, resolved the way the plugin
-   *  resolves it, or undefined where this code cannot (a client
-   *  assertion). */
-  presentedClientId: string | undefined;
-}
 
 /**
  * The plugin's own normalization of the `token` field: trimmed, and a
@@ -1048,22 +866,13 @@ export function resolveRevokeClientId(input: {
  * records survive. RFC 7009 is the one thing a client can do to say
  * "disconnect me", and an app that did it correctly was still connected.
  *
- * **Why a before-hook exists at all.** The after-hook cannot learn from the
- * response what happened: the plugin answers a success and the cross-client
- * no-op both with an empty 200, and an unknown token and a replayed one
- * alike with a 400 (its `error.name === "BAD_REQUEST"` branch, meant to
- * answer those 200 as RFC 7009 section 2.2 asks, never matches, since
- * `APIError.name` is `"APIError"`), and on the replay path the row is
- * deleted before any after-hook can read it. So the row is read here, before
- * the plugin runs, together with the client the request authenticates as,
- * and so is whether the token was alive at all, which is what
- * {@link answerDeadTokenRevoked} decides by. Both are handed forward through
- * the context merge Better Auth performs on a before-hook's returned
- * `context`. Nothing is written here; a before-hook runs ahead of the plugin
- * authenticating the client, and a write above that line would be one an
- * unauthenticated caller could drive. The reads it does perform, indexed
- * lookups on a hash the caller chose, are bounded by the endpoint's own
- * per-IP cap and disclose nothing to the caller.
+ * Resolve the pair before the provider can delete a replayed token's row.
+ * The credential request retains that pair for the audited adapter cascade;
+ * the provider must authenticate the client before its mutation reaches it.
+ * Whether the token was already dead is passed through the hook context for
+ * `answerDeadTokenRevoked`, because the provider's response alone does not
+ * distinguish a successful revocation from a no-op. These indexed reads are
+ * bounded by the endpoint's per-IP cap and disclose nothing to the caller.
  */
 async function resolveClientRevoke(
   ctx: HookCtxLite,
@@ -1072,7 +881,6 @@ async function resolveClientRevoke(
 ): Promise<
   | {
       context: {
-        revokeResolution?: RevokeResolution;
         revokedTokenWasDead: boolean;
       };
     }
@@ -1104,25 +912,27 @@ async function resolveClientRevoke(
     if (!row || body.token_type_hint === "access_token") {
       return { context: { revokedTokenWasDead } };
     }
+    const request = credentialRequest.getStore();
+    if (
+      request &&
+      resolveRevokeClientId({ body, headers: ctx.headers }) === row.clientId
+    ) {
+      request.revoke = { clientId: row.clientId, userId: row.userId };
+    } else if (request) {
+      log("warn", "oauth client revoke: token belongs to another client", {
+        token_client_id: row.clientId,
+      });
+    }
     return {
       context: {
         revokedTokenWasDead,
-        revokeResolution: {
-          row,
-          tokenHash,
-          presentedClientId: resolveRevokeClientId({
-            body,
-            headers: ctx.headers,
-          }),
-        },
       },
     };
   } catch (err) {
-    // Fail open to the plugin: a lookup fault must not refuse a revocation.
     log("warn", "oauth client revoke: token precheck failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return undefined;
+    throw err;
   }
 }
 
@@ -1154,120 +964,6 @@ function answerDeadTokenRevoked(ctx: HookCtxLite): Response | undefined {
     status: 200,
     headers: { "content-type": "application/json" },
   });
-}
-
-/**
- * After-hook for `/oauth2/revoke`: end the grant a revoked refresh token
- * belongs to, when the plugin did revoke it.
- *
- * Decided from the before-hook's resolution and one fact about the plugin's
- * run, never from the response body. The row's client has to be the client
- * the request authenticated as; the plugin no-ops a mismatch and so does
- * this, and repeating the check here is what stops a stolen refresh token
- * presented under another registration from becoming a way to disconnect
- * somebody else's app. Then either the plugin answered success, which for
- * a refresh token means it marked the row, or the row the before-hook saw
- * is gone, which only the plugin's replay path does and only after deleting
- * every token of the grant. In both the tokens are dead and the two grant
- * records have to agree with that. A row still there and unmarked behind a
- * refusal (client authentication failed, a malformed request) means the
- * plugin touched nothing, and neither does this; a row still there but
- * marked means the plugin marked it and then failed on the access-token
- * delete behind it, which is a partial run and cascades.
- *
- * Two shapes to know about. Two requests presenting the same live token at
- * once both cascade: the loser meets the plugin's replay path, its row is
- * gone by the time it looks, and it writes a second audit row over a
- * cascade the winner already ran. The write is convergent under the
- * consent lock, so nothing corrupts, and the second row names the same
- * client. And a row deleted between the two hooks by anything else, such
- * as the person's Disconnect landing in the same instant, cascades here
- * too and is audited as the client's; idempotent, and a row nobody will
- * ever act on.
- *
- * **Best-effort past the plugin's own work, and honest about what a
- * failure leaves.** The cascade runs the tokens, the consent row, the
- * device codes and then the projection, and a fault partway through can
- * leave the consent row gone with the projection active. The response is
- * still the plugin's 200, because the tokens under the presented token are
- * already gone and refusing would tell the client to retry a revocation
- * that cannot be retried (the plugin has forgotten the token). The failure
- * is logged at error naming the grant, and the person's Disconnect
- * (`DELETE /auth/grants/{id}`) puts the record right. The person's own
- * Disconnect makes the opposite call and fails loud, because there the
- * cascade is the whole of the work.
- */
-async function cascadeClientRevoke(
-  ctx: HookCtxLite,
-  storage: Storage,
-): Promise<void> {
-  const resolution = ctx.revokeResolution;
-  if (!resolution) return;
-  const { row, tokenHash, presentedClientId } = resolution;
-  const provider = storage.oauthProvider;
-  if (
-    typeof provider?.findRefreshTokenGrantKey !== "function" ||
-    typeof provider.findGrantItemId !== "function" ||
-    typeof provider.revokeTokensForGrant !== "function"
-  )
-    return;
-  if (presentedClientId !== row.clientId) {
-    log("warn", "oauth client revoke: token belongs to another client", {
-      presented_client_id: presentedClientId,
-      token_client_id: row.clientId,
-    });
-    return;
-  }
-  let grantItemId: string | null = null;
-  try {
-    const returned = ctx.context?.returned;
-    const succeeded = returned === null || returned === undefined;
-    if (!succeeded) {
-      const after = await provider.findRefreshTokenGrantKey(tokenHash);
-      if (after && !after.revoked) {
-        // Refused before touching the row: nothing to agree with.
-        return;
-      }
-      // Either the replay path, where the family is gone, or a row the
-      // plugin marked and then failed behind (its access-token delete
-      // threw): in both the tokens the client holds are dead and the grant
-      // records have to follow.
-    }
-
-    grantItemId = await provider.findGrantItemId({
-      clientId: row.clientId,
-      authUserId: row.userId,
-    });
-    const item = grantItemId ? await storage.items.get(grantItemId) : null;
-    await revokeProjectedGrant(storage, {
-      itemId: item ? item.id : null,
-      properties: item?.properties,
-      clientId: row.clientId,
-      authUserId: row.userId,
-    });
-    auditGrantRevoked(storage, {
-      clientId: row.clientId,
-      authUserId: row.userId,
-      grantItemId: item ? item.id : null,
-      clientIp: null,
-      source: "client",
-    });
-    log("info", "oauth client revoke: grant ended", {
-      client_id: row.clientId,
-      user_id: row.userId,
-      grant_item_id: item ? item.id : null,
-    });
-  } catch (err) {
-    log("error", "oauth client revoke: grant cascade failed", {
-      client_id: row.clientId,
-      user_id: row.userId,
-      grant_item_id: grantItemId,
-      ...(grantItemId !== null && {
-        repair: `the grant's record may still read active; DELETE /auth/grants/${grantItemId} ends it`,
-      }),
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1728,7 +1424,7 @@ async function narrowAuthorizeScopes(
   // so there is no one to attribute it to yet, and inventing one by
   // guessing would be worse than the null the audit store already admits
   // for system-initiated rows. The client is the subject here anyway.
-  void storage.audit.log({
+  await storage.audit.log({
     action: "auth.scopes.narrowed",
     resource_type: "oauth_client",
     resource_id: clientId,
@@ -2018,26 +1714,20 @@ async function guardRefreshTokenGrant(
     return; // active — let the plugin rotate
   }
 
-  // Confirmed replay. Zap access tokens for this grant chain so they can't
-  // outlive the now-poisoned refresh chain. Best-effort + idempotent.
-  try {
-    if (
-      typeof storage.oauthProvider.revokeAccessTokensForGrant === "function"
-    ) {
-      await storage.oauthProvider.revokeAccessTokensForGrant(
-        row.clientId,
-        row.userId,
-      );
-      log("info", "oauth refresh-replay: revoked access tokens for grant", {
-        client_id: row.clientId,
-        user_id: row.userId,
-      });
-    }
-  } catch (err) {
-    log("warn", "oauth refresh-replay zap failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  await runAuditedTransaction(
+    storage,
+    async () => {
+      const provider = storage.oauthProvider;
+      if (!provider) throw new Error("Credential storage is unavailable");
+      await provider.revokeAccessTokensForGrant(row.clientId, row.userId);
+    },
+    {
+      action: "auth.refresh.replayed",
+      resource_type: "oauth_grant",
+      resource_id: row.clientId,
+      details: { client_id: row.clientId, user_id: row.userId },
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

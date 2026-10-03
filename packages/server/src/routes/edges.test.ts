@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -332,27 +332,24 @@ describe("PATCH /edges/:id — properties only", () => {
     });
     expect(patch.status).toBe(200);
 
-    // Audit insert is fire-and-forget. Poll briefly for the row.
-    const auditData = await waitForAudit(
-      async () => {
-        const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
-          key: ctx.workingKey,
-        });
-        return (await auditRes.json()) as {
-          data: {
-            action: string;
-            resource_id: string;
-            resource_type: string;
-            details?: { edge_type?: string };
-          }[];
-        };
-      },
-      (result) =>
-        result.data.some(
-          (e) =>
-            e.action === "edge.update" && e.resource_id === created.edge.id,
-        ),
-    );
+    const auditData = await (async () => {
+      const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
+        key: ctx.workingKey,
+      });
+      return (await auditRes.json()) as {
+        data: {
+          action: string;
+          resource_id: string;
+          resource_type: string;
+          details?: { edge_type?: string };
+        }[];
+      };
+    })();
+    expect(
+      auditData.data.some(
+        (e) => e.action === "edge.update" && e.resource_id === created.edge.id,
+      ),
+    ).toBe(true);
     const updateEntry = auditData.data.find(
       (e) => e.action === "edge.update" && e.resource_id === created.edge.id,
     );

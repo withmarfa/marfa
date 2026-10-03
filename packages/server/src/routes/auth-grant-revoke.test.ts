@@ -1,18 +1,8 @@
 /**
  * What revoking an app's grant has to guarantee.
  *
- * Two properties, both about the relationship between the record on
- * `/auth/security` and the access it describes:
- *
- *   - **A revoke that cannot revoke does not claim it did.** The cascade
- *     through the plugin's token tables runs before the projection is
- *     rewritten, so a failure leaves the record saying "active" — which
- *     is the truth, because the tokens are still live. The inverse order
- *     produces the one state worse than the failure: a security page
- *     showing revoked access that still works. The device-code sweep sits
- *     inside that cascade after the tokens, where `revokeTokensForGrant`
- *     puts its own sibling sweep of the authorization codes, so a fault on
- *     `auth_oauth_device_code` cannot stop the tokens from being dropped.
+ *   - **A failed revoke preserves its prior authority.** Tokens, pending
+ *     codes, consent, projection and audit commit or roll back together.
  *   - **The device-consent approval serializes with it.** Approving on a
  *     device is a fourth writer of the same standing grant, and left
  *     outside the consent lock its read-modify-write can straddle a whole
@@ -34,7 +24,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForConsentLockDepth,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -381,20 +370,21 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     const approving = approveDeviceFlow(c, second, cookie);
     await reached;
 
-    // Meanwhile the app is revoked through the grants door.
+    // The writer also serializes authentication reads. Observe the request
+    // entering validation before releasing the active approval transaction.
+    let reachedRevoke!: () => void;
+    const revokeArrived = new Promise<void>((resolve) => {
+      reachedRevoke = resolve;
+    });
+    const validate = c.storage.keys.validate.bind(c.storage.keys);
+    c.storage.keys.validate = (hash) => {
+      reachedRevoke();
+      return validate(hash);
+    };
     const revoking = request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
       key: c.workingKey,
     });
-    // The revoke has to be queued on the lock before the approval is let
-    // go. It does not get past the lock — that is the point — but a revoke
-    // that arrives after the approval has already finished leaves the same
-    // end state as one that arrived in time, so waiting for the arrival is
-    // the only thing that tells the two apart.
-    await waitForConsentLockDepth(
-      clientId,
-      grant.properties.user_id as string,
-      2,
-    );
+    await revokeArrived;
     release();
 
     const [approveRes, revokeRes] = await Promise.all([approving, revoking]);
@@ -797,19 +787,7 @@ describe("revocation reaches outstanding device codes", () => {
     ).toBeTruthy();
   });
 
-  it("REGRESSION: a device-code sweep that throws still leaves the tokens revoked", async () => {
-    // The sweep's position in the cascade, which nothing else pins.
-    //
-    // It runs AFTER `revokeTokensForGrant` and before the record is
-    // rewritten, matching where that function puts its own sibling sweep of
-    // the authorization codes. The cascade has no try/catch on purpose, so
-    // whichever step throws first is the last step that runs — and swept
-    // first, a persistent fault on `auth_oauth_device_code` would abort before
-    // any token was touched, leaving the grant active, every bearer and
-    // refresh token live, and Disconnect permanently non-functional while
-    // the app kept full access. Swept last, the same fault still kills every
-    // token, and the record still honestly reads active because the user's
-    // revoke did not entirely land.
+  it("rolls back the complete revoke when the device-code sweep fails and permits retry", async () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
@@ -833,6 +811,9 @@ describe("revocation reaches outstanding device codes", () => {
     // The device-code table is unreachable. Lock contention, a permissions
     // change, a corrupt index — the cause does not matter, only that it
     // persists.
+    const sweep = c.storage.oauthProvider!.deleteDeviceCodesForGrant.bind(
+      c.storage.oauthProvider,
+    );
     c.storage.oauthProvider!.deleteDeviceCodesForGrant = () =>
       Promise.reject(new Error("device code table unavailable"));
 
@@ -841,18 +822,27 @@ describe("revocation reaches outstanding device codes", () => {
     });
     expect(res.status).toBe(500);
 
-    // The property the ordering buys: the token cascade had already run, so
-    // the access the user asked to withdraw is gone even though the sweep
-    // behind it failed. Swept first, this token is still live.
     expect(
       await c.storage.oauthProvider?.validateAccessToken(tokenHash),
-    ).toBeNull();
+    ).not.toBeNull();
 
-    // Abort-on-throw is unchanged, and so is what it leaves on the record:
-    // the revoke did not complete, and the record does not claim it did.
     const after = await c.storage.items.get(grant.id);
     expect(after?.properties.status).toBe("active");
     expect(after?.properties.revoked_at).toBeUndefined();
+    c.storage.oauthProvider!.deleteDeviceCodesForGrant = sweep;
+    expect(
+      (
+        await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+          key: c.workingKey,
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      await c.storage.oauthProvider?.validateAccessToken(tokenHash),
+    ).toBeNull();
+    expect((await c.storage.items.get(grant.id))?.properties.status).toBe(
+      "revoked",
+    );
   });
 
   it("REGRESSION: a poll refuses a grant soft-deleted out of the active state", async () => {

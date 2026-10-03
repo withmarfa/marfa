@@ -38,6 +38,10 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
     When a domain change commits, the server MUST commit its audit record in the same database unit.
 
+    When a credential change commits, the server MUST commit its audit record in the same database unit (`keys-and-oauth.md` 47).
+
+    The server MUST exclude credential values, passwords, verification identifiers, authorization codes, private signing keys, and session cookie values from audit metadata.
+
     When the server returns success for a domain change, its audit record MUST be readable.
 
     If audit insertion fails, the server MUST roll back the represented database unit and its events.

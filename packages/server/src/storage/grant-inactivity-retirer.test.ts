@@ -14,7 +14,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { GrantInactivityRetirer } from "./retention.js";
@@ -194,6 +193,26 @@ describe("GrantInactivityRetirer.runOnce", () => {
 
     // Used long ago, approved longer ago: retired, and only it.
     await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
+    const raw = ctx.storage as Storage & {
+      __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "CREATE TRIGGER reject_retired_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'auth.grant.retired' BEGIN SELECT RAISE(ABORT, 'retirement audit refused'); END",
+      [],
+    );
+    expect(await retirer.runOnce()).toBe(0);
+    expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
+    expect(await tokenRows(ctx, clientId)).toBe(2);
+    expect(await consentRows(ctx, clientId)).toBe(1);
+    expect(
+      (await request(ctx.app, "GET", "/items", { key: accessToken })).status,
+    ).toBe(200);
+    expect(
+      (await ctx.storage.audit.list({ action: "auth.grant.retired" })).data,
+    ).toHaveLength(0);
+    await raw.__sqliteRun("DROP TRIGGER reject_retired_audit", []);
+    // The live-token control above counts as use. Age it again for the retry.
+    await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
     expect(await retirer.runOnce()).toBe(1);
     const grant = await grantOf(ctx, clientId);
     expect(grant.properties.status).toBe("revoked");
@@ -208,11 +227,11 @@ describe("GrantInactivityRetirer.runOnce", () => {
     });
     expect(dead.status).toBe(401);
 
-    const audits = await waitForAudit(
-      () =>
-        ctx!.storage.audit.list({ action: "auth.grant.retired", limit: 10 }),
-      (r) => r.data.length >= 1,
-    );
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.retired",
+      limit: 10,
+    });
+    expect(audits.data.length >= 1).toBe(true);
     expect(audits.data.length).toBe(1);
     const row = audits.data[0]!;
     expect(row.resource_id).toBe(clientId);

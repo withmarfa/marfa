@@ -22,7 +22,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
@@ -677,10 +676,13 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         wideScopes,
       );
       const storage = ctx.storage;
-      await waitForAudit(
-        () => storage.audit.list({ action: "auth.grant.created", limit: 10 }),
-        (result) => result.data.length === 1,
-      );
+      {
+        const auditResult = await storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        });
+        expect(auditResult.data.length === 1).toBe(true);
+      }
 
       let invalidQuery: string;
       if (failureMode === "expired") {
@@ -817,16 +819,12 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(grant?.properties.client_id).not.toBe("ATTACKER_CONTROLLED_VALUE");
 
     // Audit row exists with the real client_id + the resolved client_ip.
-    // Audit insert is fire-and-forget — poll briefly.
     const storage = ctx.storage;
-    const audits = await waitForAudit(
-      () =>
-        storage.audit.list({
-          action: "auth.grant.created",
-          limit: 10,
-        }),
-      (result) => result.data.length >= 1,
-    );
+    const audits = await storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length >= 1).toBe(true);
     expect(audits.data.length).toBe(1);
     const audit = audits.data[0];
     expect(audit?.resource_id).toBe(realClientId);
