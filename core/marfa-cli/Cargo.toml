@@ -16,6 +16,7 @@ keyring = "4"
 marfa-client = { path = "../marfa-client" }
 marfa-core.workspace = true
 notify.workspace = true
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

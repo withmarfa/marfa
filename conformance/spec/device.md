@@ -110,6 +110,10 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 50. **A store, its journals, its writer's lock and the folder of bytes beside it are made readable by their owner alone.** A store holds what its key reads, and made with the process's defaults it would be readable by every account on the machine. `device/working-copy.test.ts › makes a store, its lock and its bytes readable by their owner alone`.
 
+## CLI credentials across processes
+
+51. **CLI processes of one operating-system user coordinate changes to the same stored credential.** Refresh, logout and `keys forget` use the same lock even when their runtime, temporary or home environment variables differ. A refresh reads the credential again while holding that lock, so it reuses a token another process already rotated and cannot restore a credential after an overlapping logout or forget finishes. Forgetting a stored credential requires no refresh or network access. Logout reports `revoked: false` when no revocation endpoint was saved, rather than claiming a request was sent. Unsafe lock paths are refused before stored credentials are read or changed. The CLI's Rust process tests in `core/marfa-cli/src/auth/process_tests.rs` exercise distinct child environments, both logout/refresh orders, offline forgetting and unsafe paths. `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.

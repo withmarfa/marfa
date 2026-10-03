@@ -344,7 +344,9 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
         KeysCommand::Revoke { id } => revoke_request(id),
         KeysCommand::Keep => return keep(remote, out),
         KeysCommand::Forget => {
-            let had = credentials::forget(remote.origin())?;
+            let had = crate::auth::with_credential_lock(remote.origin(), || {
+                credentials::forget(remote.origin())
+            })?;
             return out.report(
                 &json!({ "origin": remote.origin(), "forgotten": had }),
                 || {

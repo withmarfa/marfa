@@ -1,10 +1,10 @@
-//! Never a plain file: two processes refreshing one token from a file race
-//! each other into a revoked chain.
+//! Credentials are kept in the operating system's credential store.
 //!
 //! The login keychain asks the person before a rebuilt binary may read an
-//! item another build wrote, so a test waiting on it waits forever. Tests
-//! keep their entries in a keychain file of their own (`isolated`), and
-//! `MARFA_KEYCHAIN` lets an unwatched run do the same, with prompts refused.
+//! item another build wrote, so a test waiting on it waits forever. Tests use
+//! isolated credential stores; process fixtures share plain files.
+//! `MARFA_KEYCHAIN` selects a file keychain on macOS for unattended runs, with
+//! prompts refused.
 
 use serde::{Deserialize, Serialize};
 
@@ -334,7 +334,50 @@ mod isolated {
     use crate::error::CliError;
 
     pub(super) fn keychain() -> &'static dyn Keychain {
+        static PROCESS: std::sync::LazyLock<Option<ProcessStore>> =
+            std::sync::LazyLock::new(|| {
+                std::env::var_os("MARFA_TEST_CREDENTIAL_STORE")
+                    .map(|path| ProcessStore(std::path::PathBuf::from(path)))
+            });
+        if let Some(store) = PROCESS.as_ref() {
+            return store;
+        }
         &*KEYCHAIN
+    }
+
+    struct ProcessStore(std::path::PathBuf);
+
+    impl ProcessStore {
+        fn path(&self, account: &str) -> std::path::PathBuf {
+            let name: String = account.bytes().map(|byte| format!("{byte:02x}")).collect();
+            self.0.join(name)
+        }
+    }
+
+    impl Keychain for ProcessStore {
+        fn get(&self, account: &str) -> Result<Option<String>, crate::error::CliError> {
+            match std::fs::read_to_string(self.path(account)) {
+                Ok(text) => Ok(Some(text)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        }
+
+        fn set(&self, account: &str, text: &str) -> Result<(), crate::error::CliError> {
+            let path = self.path(account);
+            let pending = path.with_extension(std::process::id().to_string());
+            std::fs::write(&pending, text)?;
+            std::fs::rename(pending, path)?;
+            Ok(())
+        }
+
+        fn delete(&self, account: &str) -> Result<bool, crate::error::CliError> {
+            match std::fs::remove_file(self.path(account)) {
+                Ok(()) => Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error.into()),
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]

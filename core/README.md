@@ -18,6 +18,8 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 - **Credential:** `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` and `marfa login` put one. Never a plain file. With both variables set, a command reads and writes no keychain, which is how an agent runs it.
 - **Unattended runs:** `MARFA_KEYCHAIN` names a keychain file to use instead of the person's, on macOS, and refuses every prompt. Tests and CI use it; CI fails a run that changed the login keychain's `marfa` entries.
 
+Refresh, `logout` and `keys forget` coordinate through one private lock per stored server for the operating-system user, independent of `HOME`, `TMPDIR` and `XDG_RUNTIME_DIR`. The lock files contain no credentials and stay under `.marfa-credential-locks` in the home directory recorded by the operating system; leave them in place while commands may be running. An unsafe lock path is refused before reading or changing stored credentials. `keys forget` works offline without refreshing a token. Logout removes the local sign-in and reports whether server revocation succeeded; without a saved revocation endpoint, it reports `revoked: false`.
+
 ### Process outcomes
 
 | Exit | Meaning |

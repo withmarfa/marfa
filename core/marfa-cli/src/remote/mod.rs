@@ -192,18 +192,13 @@ impl Remote {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
             None => match non_empty(std::env::var("MARFA_API_KEY").ok()) {
                 Some(key) => (Some(key), Some(CredentialSource::Environment)),
-                None => match credentials::read(&origin) {
+                None => match auth::resolve_credential(&origin) {
                     Ok(Some(found)) => {
-                        let found = if auth::is_stale(&found) {
-                            auth::refresh(&origin, None)?
-                        } else {
-                            found
-                        };
                         let bearer = found.bearer().to_string();
                         kept = Some(found);
                         (Some(bearer), Some(CredentialSource::Keychain))
                     }
-                    Ok(None) | Err(CliError::NoKeychain(_)) => (None, None),
+                    Ok(None) => (None, None),
                     Err(error) => return Err(error),
                 },
             },
