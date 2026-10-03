@@ -10,8 +10,8 @@ import type { EdgeStore, ItemReader } from "./interface.js";
 
 /**
  * Edge types that can reach around and close a cycle over more than one
- * edge — hierarchy for `parent-of`, version chain for `supersedes`. BFS is
- * skipped for every other edge type, where the graph is DAG-by-construction
+ * edge: hierarchy for `parent-of`, version chain for `supersedes`. Reachability
+ * is skipped for every other edge type, where the graph is DAG-by-construction
  * or unordered. A self-loop is the exception and is refused on all of them,
  * because one edge closing on itself needs no walk to find.
  */
@@ -28,9 +28,9 @@ const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
  * literal: a copy drifted once when the membership edge gained two container
  * types the copy did not, and two series could then hold each other. That
  * derivation is what makes this survive the target constraint becoming a role
- * rather than a list — a type declaring `container` is refused as a source the
+ * rather than a list: a type declaring `container` is refused as a source the
  * day it declares it, with nothing here to update. It is also what makes a
- * membership cycle impossible without a BFS: every cycle needs a container
+ * membership cycle impossible without a reachability query: every cycle needs a container
  * standing as a source somewhere, and no such edge can exist. Hierarchy is
  * what `parent-of` is for, and mixing the two gives an item two competing
  * notions of where it sits.
@@ -89,7 +89,7 @@ export function assertEdgeProperties(
  * A self-loop is the shortest cycle there is, so it answers `edge_cycle`
  * like any longer one: what the caller got wrong is the shape of the edge,
  * not the length of the path back. It needs no walk, which is why it is
- * refused on every edge type while the BFS below runs on two.
+ * refused on every edge type while reachability runs on two.
  *
  * One site, reached by every door, and deliberately after the edge type is
  * resolved: a proposal naming a type that does not exist has a worse problem
@@ -322,8 +322,7 @@ export async function assertEdgesCanBeCreated(
   const inBatchSourceCount = new Map<string, number>();
   const inBatchTargetCount = new Map<string, number>();
 
-  // Cycle-check walker — cached DB reads + layered in-batch edges.
-  const outboundCache = new Map<string, Edge[]>();
+  // Earlier proposals form part of the graph for each later check.
   const pendingByType = new Map<
     string,
     { source_id: string; target_id: string }[]
@@ -420,18 +419,16 @@ export async function assertEdgesCanBeCreated(
         break;
     }
 
-    // The cycles that need a walk. A self-loop is already refused above, on
-    // every type; BFS sees the DB graph plus every prior in-batch proposal of
+    // The cycles that need a reachability check. A self-loop is refused above, on
+    // every type; reachability sees the DB graph plus every prior proposal of
     // the same type.
     if (CYCLE_RISK_EDGE_TYPES.has(p.edge_type)) {
       const pending = pendingByType.get(p.edge_type) ?? [];
       if (
-        await wouldCreateCycle(
-          edgeStore,
+        await edgeStore.wouldCreateCycle(
           p.edge_type,
           p.source_id,
           p.target_id,
-          outboundCache,
           pending,
         )
       ) {
@@ -481,60 +478,6 @@ export async function assertEdgeCanBeCreated(
     );
   }
   return only;
-}
-
-/**
- * Cycle check (iterative BFS). Returns true if an edge source->target would
- * close a loop on the given edge_type. Layers in-batch pending edges on top
- * of the DB graph so multi-edge batches whose individual edges are each
- * acyclic but which together close a cycle are still rejected.
- *
- * For parent-of: source=parent, target=child. Walk outbound parent-of from
- * target (child): those are the child's own children, grandchildren, etc.
- * If proposed source (the parent-to-be) is reachable that way, the parent
- * is already a descendant of its future child — cycle.
- *
- * For supersedes: source=newer, target=older. Walk outbound supersedes
- * from target (older): those are things target supersedes (even older).
- * If proposed source (the newer-to-be) appears, the newer is actually in
- * the older-chain — cycle.
- */
-async function wouldCreateCycle(
-  edgeStore: EdgeStore,
-  edgeType: string,
-  proposedSource: string,
-  proposedTarget: string,
-  outboundCache: Map<string, Edge[]>,
-  pendingEdges: { source_id: string; target_id: string }[],
-): Promise<boolean> {
-  const visited = new Set<string>();
-  const frontier: string[] = [proposedTarget];
-  const MAX_DEPTH = 10000; // guard against degenerate graphs
-  let steps = 0;
-
-  while (frontier.length > 0 && steps < MAX_DEPTH) {
-    const next = frontier.shift();
-    if (!next) break;
-    if (visited.has(next)) continue;
-    visited.add(next);
-    if (next === proposedSource) return true;
-    let outbound = outboundCache.get(next);
-    if (!outbound) {
-      outbound = await edgeStore.listOutboundOfType(next, edgeType);
-      outboundCache.set(next, outbound);
-    }
-    for (const e of outbound) {
-      if (!visited.has(e.target_id)) frontier.push(e.target_id);
-    }
-    // Layer earlier in-batch proposals into the traversal.
-    for (const pending of pendingEdges) {
-      if (pending.source_id === next && !visited.has(pending.target_id)) {
-        frontier.push(pending.target_id);
-      }
-    }
-    steps++;
-  }
-  return false;
 }
 
 /** Lightweight row-shape → Edge helper. */

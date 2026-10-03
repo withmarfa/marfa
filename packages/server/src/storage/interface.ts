@@ -2490,8 +2490,19 @@ export interface EdgeStore {
     }[],
   ): Promise<Map<string, Edge>>;
   /**
-   * All outbound edges of a given type from sourceId. Used for cycle checks,
-   * cascade-on-delete, and edge hydration when the caller wants every entry.
+   * Whether adding sourceId -> targetId would close a cycle in the stored
+   * graph plus earlier proposals of the same type. The caller holds the
+   * write transaction throughout this check.
+   */
+  wouldCreateCycle(
+    edgeType: string,
+    sourceId: string,
+    targetId: string,
+    pendingEdges: { source_id: string; target_id: string }[],
+  ): Promise<boolean>;
+  /**
+   * All outbound edges of a given type from sourceId. Used for
+   * cascade-on-delete and edge hydration when the caller wants every entry.
    */
   listOutboundOfType(sourceId: string, edgeType: string): Promise<Edge[]>;
   /**
