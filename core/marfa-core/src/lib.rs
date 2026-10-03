@@ -1233,8 +1233,15 @@ fn queue_create(
         (Some(source), Some(source_id)) => store::item_under_key(tx, source, source_id)?,
         _ => None,
     };
+    let unresolved = target
+        .as_ref()
+        .map(|held| store::unanswered_keyed_create(tx, held))
+        .transpose()?
+        .unwrap_or(false);
     let current = target.as_ref().filter(|held| {
-        held.r#type == draft.r#type && draft.base_version.is_none_or(|base| base == held.version)
+        !unresolved
+            && held.r#type == draft.r#type
+            && draft.base_version.is_none_or(|base| base == held.version)
     });
     let properties = if let Some(held) = current {
         let mut properties = held.properties.clone();
@@ -1410,7 +1417,7 @@ fn queue_update(
     // Required nulls remain invalid even where replace projection drops
     // them. Stale edits cannot prove the server's eventual merged result.
     catalog.validate_properties(&next.r#type, &edit.properties, false)?;
-    if base == held.version {
+    if base == held.version && !store::unanswered_keyed_create(tx, &held)? {
         catalog.validate_properties(&next.r#type, &next.properties, true)?;
     }
     store::hold_beneath_item(tx, id)?;
@@ -1777,6 +1784,61 @@ mod tests {
         };
         assert!(matches!(
             core.update_item("typed", &retype),
+            Err(CoreError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn local_fields_keep_unanswered_keyed_placeholders_unresolved() {
+        let core = validation_copy();
+        let keyed = |value: Value| Draft {
+            source: Some("fixture".into()),
+            source_id: Some("unseen".into()),
+            ..validation_draft(value)
+        };
+        let first = core
+            .create_item(&keyed(serde_json::json!({"read": true})))
+            .unwrap();
+        let id = first.item_id.unwrap();
+        assert!(
+            core.create_item(&keyed(serde_json::json!({"read": false})))
+                .is_ok()
+        );
+        let edit = |value: Value| Edit {
+            base_version: Some(0),
+            properties: value.as_object().unwrap().clone(),
+            replace_properties: true,
+            ..Default::default()
+        };
+        assert!(
+            core.update_item(&id, &edit(serde_json::json!({"read": false})))
+                .is_ok()
+        );
+        let before = core.queue().unwrap();
+        assert!(matches!(
+            core.create_item(&keyed(serde_json::json!({"read": "yes"}))),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(matches!(
+            core.update_item(&id, &edit(serde_json::json!({"read": "yes"}))),
+            Err(CoreError::Validation { .. })
+        ));
+        assert_eq!(core.queue().unwrap(), before);
+        let ordinary = core
+            .create_item(&validation_draft(serde_json::json!({"title": "valid"})))
+            .unwrap()
+            .item_id
+            .unwrap();
+        core.update_item(
+            &ordinary,
+            &Edit {
+                source_id: Some("later-key".into()),
+                ..edit(serde_json::json!({"title": "valid"}))
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            core.update_item(&ordinary, &edit(serde_json::json!({}))),
             Err(CoreError::Validation { .. })
         ));
     }

@@ -255,6 +255,90 @@ describe("a working copy checks the fields its catalog holds", () => {
     );
   });
 
+  it("keeps repeated creates and edits to an unanswered keyed placeholder unresolved", async () => {
+    const { device } = await hydrated();
+    const keyed = { type: TYPE, source: "fixture", sourceId: "unseen" };
+    const first = await device.create({ ...keyed, properties: { read: true } });
+    expect(first.ok).toBe(true);
+    expect(
+      (await device.create({ ...keyed, properties: { read: false } })).ok,
+    ).toBe(true);
+    if (first.ok) {
+      expect(
+        (
+          await device.update(first.value.item_id!, {
+            version: 0,
+            properties: { read: false },
+            replace: true,
+          })
+        ).ok,
+      ).toBe(true);
+      invalid(
+        await device.update(first.value.item_id!, {
+          version: 0,
+          properties: { read: "yes" },
+        }),
+        "read",
+      );
+    }
+    invalid(
+      await device.create({ ...keyed, properties: { read: "yes" } }),
+      "read",
+    );
+  });
+
+  it("retries unchanged document bytes after their destination type is registered", async () => {
+    folder = await folderHarness("destination-registration", {
+      settings: { search: { types: [TYPE] } },
+      catalog: typeCatalog(types),
+      rows: {
+        [TYPE]: [
+          {
+            item: {
+              id: ROW,
+              type: TYPE,
+              properties: { title: "valid", body: "held" },
+            },
+          },
+        ],
+      },
+    });
+    expect((await folder.folder.pull()).ok).toBe(true);
+    const path = join(folder.dir, "valid.md");
+    const original = readFileSync(path, "utf8");
+    const changed = /^type:/m.test(original)
+      ? original.replace(/^type:.*$/m, "type: fixture.destination")
+      : original.replace(/^---\n/, "---\ntype: fixture.destination\n");
+    writeFileSync(path, changed);
+    writeFileSync(
+      join(folder.dir, "other.md"),
+      "---\ntitle: other\n---\nvalid neighbour\n",
+    );
+    const refused = await folder.folder.scan();
+    expect(refused.ok && refused.value.created).toBe(1);
+    expect(
+      refused.ok &&
+        refused.value.flagged.some(
+          (entry) =>
+            entry.path === "valid.md" &&
+            entry.reason.includes("fixture.destination"),
+        ),
+    ).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(changed);
+    folder.server.copyAnswer(
+      "GET",
+      "/types",
+      typeCatalog([...types, { ...types[0], id: "fixture.destination" }]),
+    );
+    expect((await folder.folder.device().catchUp()).ok).toBe(true);
+    expect((await folder.folder.device().catchUp()).ok).toBe(true);
+    const retried = await folder.folder.scan();
+    expect(retried.ok && retried.value.updated).toBe(1);
+    expect(readFileSync(path, "utf8")).toBe(changed);
+    const moved = await folder.folder.device().get(ROW);
+    expect(moved.ok && moved.value?.type).toBe("fixture.destination");
+  });
+
   it("keeps a queued write and its typed server refusal after the server catalog changes", async () => {
     const { device, server } = await hydrated();
     const queued = await device.create({

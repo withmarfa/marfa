@@ -1049,6 +1049,24 @@ pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     Ok(hashes)
 }
 
+/// A keyed create's version-zero row can still name an unseen server target.
+/// A natural key added by a later edit does not change a plain create's origin.
+pub fn unanswered_keyed_create(conn: &Connection, item: &Item) -> Result<bool, CoreError> {
+    if item.version != 0 {
+        return Ok(false);
+    }
+    Ok(waiting_writes_for_item(conn, &item.id)?
+        .iter()
+        .any(|write| {
+            write.kind == WriteKind::CreateItem
+                && write
+                    .body
+                    .get("source_id")
+                    .and_then(Value::as_str)
+                    .is_some()
+        }))
+}
+
 /// Whether a write to the row itself waits, not an edge from it.
 fn row_writes_wait(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(waiting_writes_for_item(conn, id)?

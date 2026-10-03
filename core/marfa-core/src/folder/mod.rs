@@ -2186,7 +2186,16 @@ impl Folder {
                 .as_deref()
                 .and_then(|to| unsuited_type(to, catalog))
             {
-                let held_for = format!("{}{reason}", state::REFUSED);
+                let prefix = if changes
+                    .r#type
+                    .as_deref()
+                    .is_some_and(|to| !catalog.known(to))
+                {
+                    LOCAL_ADMISSION_REFUSAL
+                } else {
+                    state::REFUSED
+                };
+                let held_for = format!("{prefix}{reason}");
                 flagged.push(Flagged::of(&file.key, &held_for));
                 return self
                     .bind_held(file, item_id, bound, held_for)
