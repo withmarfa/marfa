@@ -1,9 +1,10 @@
 //! Credentials are kept in the operating system's credential store.
 //!
 //! The login keychain asks the person before a rebuilt binary may read an
-//! item another build wrote, so a test waiting on it waits forever. Tests
-//! keep their entries in a keychain file of their own (`isolated`), and
-//! `MARFA_KEYCHAIN` lets an unwatched run do the same, with prompts refused.
+//! item another build wrote, so a test waiting on it waits forever. Tests use
+//! isolated credential stores; process fixtures share plain files.
+//! `MARFA_KEYCHAIN` selects a file keychain on macOS for unattended runs, with
+//! prompts refused.
 
 use serde::{Deserialize, Serialize};
 
@@ -333,7 +334,6 @@ mod isolated {
     use crate::error::CliError;
 
     pub(super) fn keychain() -> &'static dyn Keychain {
-        // Only test executables can opt into a shared process fixture.
         static PROCESS: std::sync::LazyLock<Option<ProcessStore>> =
             std::sync::LazyLock::new(|| {
                 std::env::var_os("MARFA_TEST_CREDENTIAL_STORE")

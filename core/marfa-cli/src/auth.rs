@@ -291,6 +291,20 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     with_credential_lock(origin, || refresh_locked(origin, refused))
 }
 
+pub fn resolve_credential(origin: &str) -> Result<Option<Kept>, CliError> {
+    with_credential_lock(origin, || {
+        let found = match credentials::read(origin) {
+            Ok(found) => found,
+            Err(CliError::NoKeychain(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match found {
+            Some(kept) if is_stale(&kept) => refresh_locked(origin, None).map(Some),
+            found => Ok(found),
+        }
+    })
+}
+
 fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     let current = credentials::read(origin)?.ok_or_else(|| signed_out(origin))?;
     let (refresh_token, client_id, token_endpoint) = match &current {

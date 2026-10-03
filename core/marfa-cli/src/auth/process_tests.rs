@@ -19,12 +19,12 @@ fn credential_process_child() {
         std::fs::write(ready, "ready").unwrap();
     }
     match operation.as_str() {
-        "seed" | "seed-no-revoke" => credentials::keep(
+        "seed" | "seed-no-revoke" | "seed-fresh" => credentials::keep(
             &origin,
             &Kept::Token {
                 access_token: "marfa_at_old".into(),
                 refresh_token: Some("marfa_rt_old".into()),
-                expires_at: Some(0),
+                expires_at: (operation != "seed-fresh").then_some(0),
                 client_id: "fixture-client".into(),
                 scope: None,
                 token_endpoint: format!("{origin}/token"),
@@ -32,6 +32,31 @@ fn credential_process_child() {
             },
         )
         .unwrap(),
+        "resolve-refresh" => {
+            let remote = Remote::resolve(&crate::remote::Named {
+                url: Some(origin.clone()),
+                key: None,
+            })
+            .unwrap();
+            let kept = credentials::read(&origin).unwrap().unwrap();
+            assert!(!is_stale(&kept));
+            assert!(remote.bearer().as_deref() == Some(kept.bearer()));
+        }
+        "resolve" | "resolve-unsafe" | "resolve-corrupt" => {
+            let resolved = Remote::resolve(&crate::remote::Named {
+                url: Some(origin),
+                key: None,
+            });
+            match operation.as_str() {
+                "resolve" => {
+                    assert_eq!(resolved.unwrap().bearer().as_deref(), Some("marfa_at_old"))
+                }
+                "resolve-unsafe" => assert!(matches!(resolved,
+                    Err(CliError::Invalid(message)) if message.contains("credential lock"))),
+                _ => assert!(matches!(resolved,
+                    Err(CliError::Invalid(message)) if message.contains("keychain entry"))),
+            }
+        }
         "refresh" => {
             let refreshed = refresh(&origin, None).unwrap();
             assert!(!is_stale(&refreshed));
@@ -325,10 +350,14 @@ fn respond(
 
 #[test]
 fn refresh_processes_with_different_environments_rotate_once() {
-    for second_operation in ["refresh", "refused"] {
+    for (first_operation, second_operation) in [
+        ("refresh", "refresh"),
+        ("refresh", "refused"),
+        ("resolve-refresh", "resolve-refresh"),
+    ] {
         let server = Server::new("/token");
         let fixture = Fixture::new(&server.origin);
-        let first = fixture.spawn("refresh", "one");
+        let first = fixture.spawn(first_operation, "one");
         assert!(
             server
                 .entered("/token")
@@ -462,6 +491,47 @@ fn credential_lock_fingerprint_is_stable() {
         fingerprint("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
+}
+
+#[test]
+fn resolution_checks_the_lock_before_reading_even_a_fresh_credential() {
+    use std::os::unix::fs::PermissionsExt;
+    let origin = format!(
+        "https://resolve-{}-{}.invalid",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let fixture = Fixture::new(&origin);
+    drop(credential_lock_file(&origin).unwrap());
+    let path = user_home()
+        .unwrap()
+        .join(".marfa-credential-locks")
+        .join(format!("{}.lock", fingerprint(&origin)));
+    struct RestoreMode(PathBuf);
+    impl Drop for RestoreMode {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    let _restore = RestoreMode(path.clone());
+    fixture.spawn("seed-fresh", "fresh").finish();
+    fixture.spawn("resolve", "safe-fresh").finish();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let account: String = origin.bytes().map(|byte| format!("{byte:02x}")).collect();
+    std::fs::write(
+        fixture.folder.join("store").join(account),
+        "not a credential",
+    )
+    .unwrap();
+    fixture.spawn("resolve-unsafe", "unsafe-corrupt").finish();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    fixture.spawn("resolve-corrupt", "safe-corrupt").finish();
+    fixture.spawn("seed-fresh", "replace-fresh").finish();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    fixture.spawn("resolve-unsafe", "unsafe-fresh").finish();
 }
 
 #[test]
