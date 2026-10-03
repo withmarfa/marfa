@@ -486,8 +486,7 @@ impl WriteKind {
         WriteKind::UploadBlob,
     ];
 
-    /// Only item and edge creates and updates carry a version, so only they
-    /// have edits behind them.
+    /// Creates and updates can advance the version a later edit names.
     pub fn edit(self) -> Option<WriteKind> {
         match self {
             WriteKind::CreateItem | WriteKind::UpdateItem => Some(WriteKind::UpdateItem),

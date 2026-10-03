@@ -281,6 +281,9 @@ fn readiness(
             _ => return Readiness::Held,
         }
     }
+    if row.kind == WriteKind::DeleteItem && row.base_version.is_none_or(|version| version <= 0) {
+        return Readiness::RefusedWith("the delete has no confirmed server version to remove; read the item before deleting it".into());
+    }
     Readiness::Ready
 }
 
@@ -343,11 +346,23 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             },
             Shape::Item,
         )),
-        WriteKind::DeleteItem => to(
-            Method::Delete,
-            vec!["items".into(), item_id()?.into()],
+        WriteKind::DeleteItem => Ok(Door::Json(
+            Outgoing {
+                method: Method::Delete,
+                segments: vec!["items".into(), item_id()?.into()],
+                params: vec![(
+                    "version".into(),
+                    row.base_version
+                        .ok_or_else(|| {
+                            CoreError::Invalid("a delete carries no read version".into())
+                        })?
+                        .to_string(),
+                )],
+                body: "{}",
+                idempotency_key: &row.idempotency_key,
+            },
             Shape::Plain,
-        ),
+        )),
         WriteKind::RestoreItem => to(
             Method::Post,
             vec!["items".into(), item_id()?.into(), "restore".into()],
@@ -903,6 +918,50 @@ fn move_edits_behind(
     Ok(())
 }
 
+fn move_deletes_behind(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    answered: &WireItem,
+    acknowledged: bool,
+) -> Result<()> {
+    for (id, base) in store::unsent_writes_behind(conn, row, &answered.id, WriteKind::DeleteItem)? {
+        if base.is_none_or(|base| base >= answered.version) {
+            continue;
+        }
+        // A new row's first receipt confirms only this device's create.
+        // Later receipts must still hold everything the delete read.
+        let own_create = row.kind == WriteKind::CreateItem
+            && !acknowledged
+            && answered.version == 1
+            && base == Some(0);
+        let unchanged = if let Some(read) = store::read_of(conn, &id)? {
+            if own_create {
+                let mut read: serde_json::Value = serde_json::from_str(&read)?;
+                // These fields are fixed by the create, never by an edit behind it.
+                // Keep the later local edits in the rest of the delete's read.
+                read["source"] = serde_json::json!(answered.source);
+                read["occurred_at"] = serde_json::json!(answered.occurred_at);
+                read["schema_version"] = serde_json::json!(answered.schema_version);
+                store::record_read(conn, &id, &read)?;
+            }
+            let read: WireItem = serde_json::from_str(&read)?;
+            read.properties == answered.properties
+                && read.r#type == answered.r#type
+                && read.tier == answered.tier
+                && read.source == answered.source
+                && read.source_id == answered.source_id
+                && read.occurred_at == answered.occurred_at
+                && read.schema_version == answered.schema_version
+        } else {
+            false
+        };
+        if own_create || unchanged {
+            store::rebase(conn, &id, answered.version)?;
+        }
+    }
+    Ok(())
+}
+
 fn move_edits_back(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     if !matches!(row.kind, WriteKind::UpdateItem | WriteKind::UpdateEdge) {
         return Ok(());
@@ -1166,6 +1225,9 @@ fn settle(
                             item: Some(&parsed.item),
                         },
                     )?;
+                    if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
+                        move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
+                    }
                     // Set aside against this device's own earlier save: the
                     // file holds the newest, so the pull leaves it and the
                     // next scan sends it as an edit.

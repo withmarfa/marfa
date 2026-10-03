@@ -2419,9 +2419,19 @@ fn lay_write(
                 if let Some(read) = read {
                     lay_changes(&mut item.properties, properties, &read);
                 } else {
-                    for (key, value) in properties {
-                        item.properties.insert(key.clone(), value.clone());
-                    }
+                    let projected = if properties.values().any(Value::is_null) {
+                        crate::catalog::Catalog::load(conn)?.projected_properties(
+                            payload
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or(&item.r#type),
+                            properties,
+                            replaces_properties(payload),
+                        )
+                    } else {
+                        properties.clone()
+                    };
+                    item.properties.extend(projected);
                 }
             }
             if let Some(Value::String(key)) = payload.get("source_id") {
@@ -2653,6 +2663,9 @@ pub fn move_edit(
 fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &Map<String, Value>) {
     for (key, was) in read {
         match sent.get(key) {
+            Some(Value::Null) => {
+                row.shift_remove(key);
+            }
             Some(value) if value != was => {
                 row.insert(key.clone(), value.clone());
             }
@@ -2663,7 +2676,7 @@ fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &M
         }
     }
     for (key, value) in sent {
-        if !read.contains_key(key) {
+        if !read.contains_key(key) && !value.is_null() {
             row.insert(key.clone(), value.clone());
         }
     }
@@ -2706,13 +2719,22 @@ pub fn edits_behind(
     answered: &QueuedWrite,
     subject: &str,
 ) -> Result<Vec<(String, Option<i64>)>, CoreError> {
-    let Some((kind, column)) = answered
-        .kind
-        .edit()
-        .and_then(|kind| Some((kind, kind.subject()?.column())))
-    else {
+    let Some(kind) = answered.kind.edit() else {
         return Ok(Vec::new());
     };
+    unsent_writes_behind(conn, answered, subject, kind)
+}
+
+pub fn unsent_writes_behind(
+    conn: &Connection,
+    answered: &QueuedWrite,
+    subject: &str,
+    kind: WriteKind,
+) -> Result<Vec<(String, Option<i64>)>, CoreError> {
+    let Some(subject_kind) = kind.subject() else {
+        return Ok(Vec::new());
+    };
+    let column = subject_kind.column();
     let mut statement = conn.prepare(&format!(
         "SELECT id, base_version FROM queue
           WHERE kind = ?1 AND {column} = ?2 AND sent = 0
