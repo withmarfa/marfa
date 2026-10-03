@@ -95,7 +95,7 @@ function archiveScalarRefusal(
   }
   return new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson row ${String(index + 1)}: ${field} must be ${expected}`,
+    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson parsed row ${String(index + 1)}: ${field} must be ${expected}`,
     {
       [kind === "item" ? "item_id" : "edge_id"]: row.id,
       row: index + 1,

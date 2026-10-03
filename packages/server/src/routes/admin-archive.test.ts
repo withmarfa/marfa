@@ -1521,7 +1521,6 @@ describe("POST /admin/restore-archive scalar preflight", () => {
       expect(items.events).toEqual([]);
       expect(edges.events).toEqual([]);
 
-      // The same type, blob and rows can land once the one scalar is valid.
       f.rows[1]!.item.version = 7;
       f.rows[1]!.item.tier = "feed";
       f.edge.version = 9;

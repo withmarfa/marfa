@@ -109,7 +109,6 @@ describe("archived row scalars", () => {
       expect((await client.getType(f.typeId)).status).toBe(404);
       expect((await operator.downloadBlob(f.hash)).status).toBe(404);
 
-      // These very registrations, blob and rows are writable with valid scalars.
       f.rows[1]!.version = 7;
       f.rows[1]!.tier = "feed";
       f.edge.version = 9;
