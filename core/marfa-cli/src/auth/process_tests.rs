@@ -74,27 +74,32 @@ fn credential_process_child() {
         )),
         "logout-human" => {
             crate::run(crate::Cli::try_parse_from(["marfa", "--url", &origin, "logout"]).unwrap())
-                .unwrap()
+                .unwrap();
         }
-        "logout" => crate::run(
-            crate::Cli::try_parse_from(["marfa", "--url", &origin, "--json", "logout"]).unwrap(),
-        )
-        .unwrap(),
-        "forget" => crate::run(
-            crate::Cli::try_parse_from([
-                "marfa",
-                "--url",
-                &format!("{origin}/?ignored=yes#fragment"),
-                "--json",
-                "keys",
-                "forget",
-            ])
-            .unwrap(),
-        )
-        .unwrap(),
+        "logout" => {
+            crate::run(
+                crate::Cli::try_parse_from(["marfa", "--url", &origin, "--json", "logout"])
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        "forget" => {
+            crate::run(
+                crate::Cli::try_parse_from([
+                    "marfa",
+                    "--url",
+                    &format!("{origin}/?ignored=yes#fragment"),
+                    "--json",
+                    "keys",
+                    "forget",
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        }
         "forget-current" => {
             crate::run(crate::Cli::try_parse_from(["marfa", "--json", "keys", "forget"]).unwrap())
-                .unwrap()
+                .unwrap();
         }
         "unsafe-lock" | "safe-lock" => {
             let folder = PathBuf::from(std::env::var_os("MARFA_TEST_CREDENTIAL_STORE").unwrap());
