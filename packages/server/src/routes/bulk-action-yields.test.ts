@@ -118,7 +118,6 @@ describe("bulk actions give other requests an event-loop turn", () => {
       });
       expect(minted.status).toBe(201);
       const credential = (await minted.json()) as { id: string; key: string };
-      // The unchanged credential can enumerate these rows before authority changes.
       const witness = await request(ctx.app, "POST", "/items/bulk-actions", {
         key: credential.key,
         body: { ...action, dry_run: true },

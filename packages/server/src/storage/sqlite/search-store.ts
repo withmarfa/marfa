@@ -52,7 +52,6 @@ export class SqliteSearchStore implements SearchStore {
         INSERT INTO item_search_keys(item_id) VALUES (${itemId})
         ON CONFLICT(item_id) DO NOTHING
       `);
-      // Reindexing preserves the key and the sidecar's current tags.
       await tx.run(sql`
         INSERT OR REPLACE INTO items_fts(rowid, title, body, description, name, extra, tags)
         VALUES (
