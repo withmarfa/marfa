@@ -566,8 +566,6 @@ function judgeResult(
   const resultingType = input.type ?? rowType;
   const validation = validateProperties(resultingType, result);
   if (validation.success) return;
-  // The fields named in the message as well as in `details`: a bulk action
-  // reports a row's refusal by its code and message alone.
   const detail = validation.errors
     .map((e) => `${e.field}: ${e.message}`)
     .join("; ");

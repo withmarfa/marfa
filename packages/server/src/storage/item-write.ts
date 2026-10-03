@@ -10,8 +10,9 @@
  * exists to notice. `item-write-census.test.ts` fails on a module that
  * writes an item row any other way, outside the exceptions it names.
  *
- * The doors keep what is theirs: parsing the request, rendering the answer,
- * and announcing what committed.
+ * The doors parse requests and render answers. By default, this function
+ * records events inside the write's transaction, with subscriber delivery
+ * after commit.
  */
 import { itemWrites } from "./item-writes.js";
 import {
@@ -190,7 +191,7 @@ export type ItemWrite =
   | ItemRestore
   | ItemPurge;
 
-/** What a lifecycle write moved, for the caller to announce. */
+/** What a lifecycle write moved, for events recorded in its transaction. */
 export interface ItemMoved {
   outcome: "moved";
   /** The row as it now stands, or as it stood before a purge took it. */

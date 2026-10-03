@@ -62,8 +62,8 @@ import { CONTRACT_VERSION } from "../contract.js";
  * **The query string is hashed as written**, so a door taking a free-text
  * query value would refuse a retry that re-encoded it. No door here takes
  * one: `PATCH /items/:id` carries `conflict`, a closed enum,
- * `DELETE /items/:id/purge` carries `version`, a whole number, and the rest
- * carry no query parameter.
+ * `DELETE /items/:id` and `DELETE /items/:id/purge` carry `version`, a whole
+ * number, and the rest carry no query parameter.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -235,9 +235,10 @@ async function fingerprint(
     canonicalPath(url.pathname),
     // The query is left as written, and the reason is checkable rather
     // than a judgment: no door in IDEMPOTENT_WRITE_DOORS carries a query
-    // value whose spelling can vary. Only PATCH /items/{id} takes one,
-    // `conflict`, a closed enum of ASCII words. A door that later accepts
-    // a free-text query value reopens exactly this bug on that axis, and
+    // value whose spelling can vary: PATCH /items/{id} takes `conflict`, a
+    // closed enum, and DELETE /items/{id} and its purge door take `version`,
+    // a whole number. A door that later accepts a free-text query value
+    // reopens exactly this bug on that axis, and
     // canonicalizing the query then also means deciding whether parameter
     // order is part of the request, which is a wider question than the
     // path's.
