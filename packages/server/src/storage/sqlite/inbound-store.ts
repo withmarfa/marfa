@@ -388,25 +388,59 @@ export class SqliteInboundStore implements InboundStore {
   private async withDuplicates(
     rows: DeliveryRow[],
   ): Promise<InboundDelivery[]> {
-    const keyed = rows.filter((row) => row.dedupe_key !== null);
-    const firsts = new Map<string, { id: string; outcome: string | null }>();
-    for (const row of keyed) {
-      const first = await this.db.all<{
-        id: string;
-        outcome: string | null;
-      }>(sql`
-        SELECT id, outcome FROM inbound_deliveries
-        WHERE endpoint_id = ${row.endpoint_id} AND dedupe_key = ${row.dedupe_key}
-        ORDER BY received_at, id
-        LIMIT 1
+    const pairs = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (row.dedupe_key === null) continue;
+      let dedupeKeys = pairs.get(row.endpoint_id);
+      if (dedupeKeys === undefined) {
+        dedupeKeys = new Set();
+        pairs.set(row.endpoint_id, dedupeKeys);
+      }
+      dedupeKeys.add(row.dedupe_key);
+    }
+    interface Original {
+      id: string;
+      outcome: string | null;
+    }
+    const firsts = new Map<string, Map<string, Original>>();
+    if (pairs.size > 0) {
+      const requested = [...pairs].flatMap(([endpoint, dedupeKeys]) =>
+        [...dedupeKeys].map((key) => sql`(${endpoint}, ${key})`),
+      );
+      const originals = await this.db.all<
+        Original & {
+          endpoint_id: string;
+          dedupe_key: string;
+        }
+      >(sql`
+        WITH requested(endpoint_id, dedupe_key) AS (
+          VALUES ${sql.join(requested, sql`, `)}
+        )
+        SELECT requested.endpoint_id, requested.dedupe_key, first.id, first.outcome
+        FROM requested
+        JOIN inbound_deliveries AS first ON first.id = (
+          SELECT candidate.id
+          FROM inbound_deliveries AS candidate
+          WHERE candidate.endpoint_id = requested.endpoint_id
+            AND candidate.dedupe_key = requested.dedupe_key
+          ORDER BY candidate.received_at, candidate.id
+          LIMIT 1
+        )
       `);
-      const earliest = first[0];
-      if (earliest !== undefined && earliest.id !== row.id) {
-        firsts.set(row.id, earliest);
+      for (const original of originals) {
+        let dedupeKeys = firsts.get(original.endpoint_id);
+        if (dedupeKeys === undefined) {
+          dedupeKeys = new Map();
+          firsts.set(original.endpoint_id, dedupeKeys);
+        }
+        dedupeKeys.set(original.dedupe_key, original);
       }
     }
     return rows.map((row) => {
-      const first = firsts.get(row.id);
+      const first =
+        row.dedupe_key === null
+          ? undefined
+          : firsts.get(row.endpoint_id)?.get(row.dedupe_key);
       return {
         id: row.id,
         endpoint_id: row.endpoint_id,
@@ -417,7 +451,7 @@ export class SqliteInboundStore implements InboundStore {
         size: row.size,
         sha256: row.sha256,
         duplicate_of:
-          first === undefined
+          first === undefined || first.id === row.id
             ? null
             : {
                 id: first.id,
