@@ -12,7 +12,8 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
-  MIN_PAGE_LIMIT,
+  pageLimit,
+  pageCursor,
 } from "../page-limits.js";
 import { VersionPageSchema } from "./_schemas.js";
 import {
@@ -29,20 +30,8 @@ const IdParam = z.object({
 });
 
 const PageQuery = z.object({
-  limit: z.coerce
-    .number()
-    .int()
-    .min(MIN_PAGE_LIMIT)
-    .max(MAX_PAGE_LIMIT)
-    .optional()
-    .default(DEFAULT_PAGE_LIMIT)
-    .describe(
-      `Page size, ${String(MIN_PAGE_LIMIT)}–${String(MAX_PAGE_LIMIT)} (default ${String(DEFAULT_PAGE_LIMIT)})`,
-    ),
-  cursor: z
-    .string()
-    .optional()
-    .describe("Opaque cursor from a previous page's `next_cursor`."),
+  limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+  cursor: pageCursor(),
 });
 
 // ---------------------------------------------------------------------------

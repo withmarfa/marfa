@@ -2,7 +2,8 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
-  MIN_PAGE_LIMIT,
+  pageLimit,
+  pageCursor,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
@@ -59,20 +60,8 @@ const listAuditRoute = createRoute({
         .string()
         .optional()
         .describe("Include entries written strictly before this instant."),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_PAGE_LIMIT)
-        .optional()
-        .default(DEFAULT_PAGE_LIMIT)
-        .describe(
-          `Maximum entries to return (${String(MIN_PAGE_LIMIT)}–${String(MAX_PAGE_LIMIT)}, default ${String(DEFAULT_PAGE_LIMIT)}).`,
-        ),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Opaque pagination cursor from a previous response."),
+      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      cursor: pageCursor(),
     }),
   },
   responses: {

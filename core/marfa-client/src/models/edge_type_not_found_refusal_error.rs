@@ -1,7 +1,7 @@
 /*
  * Marfa API
  *
- * Typed data layer for structured personal data
+ * Marfa stores typed records, called items, and the edges between them. This document describes every operation an instance answers.  ## Authentication  Send a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.  ## Permissions  Your credential reads and writes only the types its permissions reach. If you ask for an item whose type you can't read, Marfa answers as if the item doesn't exist, so a refusal never tells you that a hidden item exists. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.  ## Pagination  A list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.  ## Query parameters  A list refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, such as a cache buster.  ## Errors  An error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item as it stands now, so you can merge and try again.  ## Idempotency  A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.  ## Time  Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A range filter pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that items changed at the same moment are never skipped.  ## Every response  Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.
  *
  * The version of the OpenAPI document: 0
  *
@@ -13,10 +13,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EdgeTypeNotFoundRefusalError {
+    /// A machine-readable code for the error. Use it in your logic.
     #[serde(rename = "code")]
     pub code: Code,
+    /// A description of the error for a person to read. It can change, so don't match on it.
     #[serde(rename = "message")]
     pub message: String,
+    /// More about the error, such as the field it concerns. Each code defines its own details.
     #[serde(rename = "details", skip_serializing_if = "Option::is_none")]
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
@@ -30,7 +33,7 @@ impl EdgeTypeNotFoundRefusalError {
         }
     }
 }
-///
+/// A machine-readable code for the error. Use it in your logic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
     #[serde(rename = "edge_type_not_found")]

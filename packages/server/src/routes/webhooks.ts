@@ -1,7 +1,12 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  pageLimit,
+  pageCursor,
+} from "../page-limits.js";
 import {
   MarfaError,
   ErrorCode,
@@ -497,18 +502,8 @@ const listDeliveriesRoute = createRoute({
       id: z.string().describe("Id of the webhook whose deliveries to list."),
     }),
     query: z.object({
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_PAGE_LIMIT)
-        .optional()
-        .default(DEFAULT_PAGE_LIMIT)
-        .describe("Maximum number of delivery rows to return."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Opaque cursor from a previous page's `next_cursor`."),
+      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      cursor: pageCursor(),
     }),
   },
   responses: {

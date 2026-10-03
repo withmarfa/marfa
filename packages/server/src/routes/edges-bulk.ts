@@ -33,7 +33,7 @@ import {
   isValidId,
   generateId,
 } from "@withmarfa/shared";
-import { BulkResponseSchema } from "./_schemas.js";
+import { BulkResponseSchema, type BulkSkipReason } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -201,7 +201,7 @@ interface BulkEdgeResult {
   index: number;
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
-  reason?: string;
+  reason?: BulkSkipReason;
   error?: {
     code: string;
     message: string;

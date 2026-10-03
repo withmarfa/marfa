@@ -21,7 +21,7 @@
 
 import { CONDITIONAL_READ_OPERATIONS } from "./middleware/read-view.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
-import { refusalComponentName } from "./openapi.js";
+import { REFUSAL_TEXT, refusalComponentName } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
@@ -33,6 +33,7 @@ import { bodyCapFor } from "./middleware/body-cap.js";
 interface OpenAPIDoc {
   paths?: object;
   tags?: unknown[];
+  servers?: unknown[];
   components?: object;
 }
 
@@ -41,11 +42,48 @@ interface OpenAPIDoc {
  * version, whose rule is in `contract.ts`; the live `/openapi.json` and the
  * committed document read it from there.
  */
+/**
+ * The rules that hold across operations, stated once so that no operation
+ * repeats them. `API-STYLE.md` says what belongs here.
+ */
+const GENERAL_SECTIONS = [
+  "Marfa stores typed records, called items, and the edges between them. This document describes every operation an instance answers.",
+  "## Authentication",
+  "Send a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.",
+  "## Permissions",
+  "Your credential reads and writes only the types its permissions reach. If you ask for an item whose type you can't read, Marfa answers as if the item doesn't exist, so a refusal never tells you that a hidden item exists. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.",
+  "## Pagination",
+  'A list returns one page at a time, as `{ "data": [...], "next_cursor": "..." }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.',
+  "## Query parameters",
+  "A list refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, such as a cache buster.",
+  "## Errors",
+  'An error answers `{ "error": { "code": "...", "message": "...", "details": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item as it stands now, so you can merge and try again.',
+  "## Idempotency",
+  "A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.",
+  "## Time",
+  "Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A range filter pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that items changed at the same moment are never skipped.",
+  "## Every response",
+  "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.",
+].join("\n\n");
+
 export const OPENAPI_DOCUMENT_INFO = {
   title: "Marfa API",
   version: String(CONTRACT_VERSION),
-  description: "Typed data layer for structured personal data",
+  description: GENERAL_SECTIONS,
 } as const;
+
+/**
+ * Every instance answers at its own address. The default is the port a local
+ * server listens on; generated clients take it as their default base path,
+ * so it must be a real URL rather than a template.
+ */
+const SERVERS = [
+  {
+    url: "http://localhost:8600",
+    description:
+      "A Marfa instance running locally. Use your own instance's address.",
+  },
+];
 
 /**
  * Ordered, described public tag list. Resources first; auth/realtime last.
@@ -175,7 +213,7 @@ const IDEMPOTENCY_HEADER_PARAM = {
   required: false,
   schema: { type: "string", maxLength: 255 },
   description:
-    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.",
+    "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it.",
 };
 
 /** The doors, keyed the way the reflected document keys an operation. */
@@ -325,14 +363,23 @@ function chainRefusal(
         error: {
           type: "object",
           properties: {
-            code: { type: "string", enum: [...codes].sort() },
-            message: { type: "string" },
-            details: { type: "object", additionalProperties: {} },
+            code: {
+              type: "string",
+              enum: [...codes].sort(),
+              description: REFUSAL_TEXT.code,
+            },
+            message: { type: "string", description: REFUSAL_TEXT.message },
+            details: {
+              type: "object",
+              additionalProperties: {},
+              description: REFUSAL_TEXT.details,
+            },
           },
           required: ["code", "message"],
         },
       },
       required: ["error"],
+      description: REFUSAL_TEXT.refusal,
     },
     response: {
       description,
@@ -360,25 +407,25 @@ function chainRefusal(
 export const CHAIN_REFUSALS = {
   unauthorized: chainRefusal(
     ["unauthorized"],
-    "No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body.",
+    "`unauthorized`: the request has no credential, or its credential is not valid.",
   ),
   requestTooLarge: chainRefusal(
     ["request_too_large"],
-    "The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not.",
+    "`request_too_large`: the request body is larger than this instance accepts.",
   ),
   rateLimited: chainRefusal(
     ["rate_limited"],
-    "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
+    "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
   ),
   writeContention: chainRefusal(
     ["write_contention"],
-    "The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it.",
+    "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
   ),
 } as const;
 
 const READ_VIEW_REFUSAL = chainRefusal(
   ["read_view_changed"],
-  "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+  "`read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy.",
 );
 const READ_VIEW_PARAMETER = {
   name: "X-Marfa-Read-View",
@@ -391,7 +438,7 @@ const READ_VIEW_PARAMETER = {
     maxLength: 64,
   },
   description:
-    "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.",
+    "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read.",
 };
 
 function declaresSecurity(operation: Record<string, unknown>): boolean {
@@ -830,6 +877,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   spec.tags = PUBLIC_TAGS;
+  spec.servers = SERVERS;
 
   // Build a new paths object excluding internal operations, rather than
   // deleting keys in place (cleaner, and avoids dynamic-delete).
