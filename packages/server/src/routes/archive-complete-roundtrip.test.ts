@@ -211,6 +211,73 @@ describe("complete archive round trips", () => {
     expect(JSON.parse(event!.payload).item).toEqual(restored);
   });
 
+  it.each(["items", "edges"])(
+    "keeps restored %s discoverable by instant-based date filters",
+    async (kind) => {
+      const source = await context();
+      const target = await context();
+      const item = await note(source);
+      const other = await note(source, "target");
+      const edge = await source.storage.edges.createRaw({
+        source_id: item.id,
+        target_id: other.id,
+        edge_type: "references",
+      });
+      const archivedCreated = "2020-02-28T23:30:00";
+      const archivedUpdated = "2020-02-29T00:30:00-02:00";
+      await seedHistory(source, item, 1);
+      for (const [table, id] of [
+        ["items", item.id],
+        ["edges", edge.id],
+      ] as const) {
+        await sql(
+          source,
+          `UPDATE ${table} SET created_at = ?, updated_at = ? WHERE id = ?`,
+          [archivedCreated, archivedUpdated, id],
+        );
+      }
+      await sql(
+        source,
+        "UPDATE versions SET created_at = ?, occurred_at = ? WHERE item_id = ?",
+        [archivedUpdated, archivedCreated, item.id],
+      );
+      const history = await source.storage.versions.all(item.id);
+      const response = await restore(target, await exported(source));
+      expect(response.status, await response.clone().text()).toBe(200);
+      const id = kind === "items" ? item.id : edge.id;
+      const listedIds = async (query = "") => {
+        const listed = await request(target.app, "GET", `/${kind}${query}`, {
+          key: target.workingKey,
+        });
+        expect(listed.status).toBe(200);
+        const body = (await listed.json()) as { data: { id: string }[] };
+        return body.data.map((row) => row.id);
+      };
+      expect(await listedIds()).toContain(id);
+      for (const bound of [
+        "2020-02-29T01:00:00Z",
+        "2020-02-29T03:00:00+02:00",
+        "2020-02-29T01:00:00",
+      ]) {
+        expect(
+          await listedIds(`?updated_after=${encodeURIComponent(bound)}`),
+        ).toContain(id);
+      }
+      expect(
+        await listedIds("?updated_before=2020-02-29T02%3A30%3A00Z"),
+      ).not.toContain(id);
+      const stored =
+        kind === "items"
+          ? await target.storage.items.get(id)
+          : await target.storage.edges.get(id);
+      expect(stored).toMatchObject({
+        created_at: "2020-02-28T23:30:00.000Z",
+        updated_at: "2020-02-29T02:30:00.000Z",
+      });
+      expect(await target.storage.versions.all(item.id)).toEqual(history);
+    },
+  );
+
   it("preserves every snapshot across history pages and leaves duplicate live history untouched", async () => {
     const source = await context();
     const target = await context();

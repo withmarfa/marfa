@@ -79,11 +79,11 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
     Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › restores an actual export with $items items and $edges edges`.
 
-34. When an archive creates an item or edge, the server MUST preserve its recorded `created_at`, `updated_at` and current `version` values exactly.
+34. When an archive creates an item or edge, the server MUST preserve its recorded `created_at` and `updated_at` instants in canonical UTC millisecond form and its current `version` exactly.
 
-    Reason: restored dates describe the original record, and resetting a version can make an old write precondition match unrelated content.
+    Reason: restored dates describe the original record, and canonical UTC values remain comparable with list filters and cursors. Resetting a version can make an old write precondition match unrelated content.
 
-    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`.
+    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps restored %s discoverable by instant-based date filters`.
 
 35. When exporting an archive, the server MUST include every stored snapshot below each selected item's recorded current version that the exporting credential can read under that snapshot's historical type permissions.
 
@@ -111,7 +111,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 39. If an archive contains an invalid present item or edge date, or malformed history, the restore MUST refuse the whole archive with `400 validation_error` before writing rows, including when a row would otherwise be duplicated or skipped.
 
-    History shape: each snapshot is an object with a valid unique snapshot ID across the archive, the enclosing item's ID, a positive safe integer version below the current item version and unique within that item's history, object properties, a type identifier, a `library` or `feed` tier, valid `created_at` and `occurred_at` instants, and a string or null `source_id`. History, when present, is an array. Present row dates are valid instants. Validation uses the ordinary instant rules while preserving the archived spelling.
+    History shape: each snapshot is an object with a valid unique snapshot ID across the archive, the enclosing item's ID, a positive safe integer version below the current item version and unique within that item's history, object properties, a type identifier, a `library` or `feed` tier, valid `created_at` and `occurred_at` instants, and a string or null `source_id`. History, when present, is an array. Present row dates are valid instants. Validation uses the ordinary instant rules. Current row dates use canonical UTC millisecond form; historical snapshot dates retain their archived spelling.
 
     Reason: a malformed later row must not leave a partially restored archive.
 

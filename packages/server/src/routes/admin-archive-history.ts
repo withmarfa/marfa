@@ -43,7 +43,7 @@ function instant(value: unknown): value is string {
   }
 }
 
-/** Validates with the ordinary instant rules, retaining the archived spelling. */
+/** Current-row dates use canonical UTC so text-based filters compare instants. */
 export function archiveDates(
   kind: "item" | "edge",
   row: Record<string, unknown>,
@@ -56,7 +56,7 @@ export function archiveDates(
     if (!instant(value)) {
       throw refusal(kind, row, index, field, "a valid instant");
     }
-    dates[field] = value;
+    dates[field] = normalizeTimeBound(value, "archive date");
   }
   return dates;
 }

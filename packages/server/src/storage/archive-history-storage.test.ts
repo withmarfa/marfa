@@ -72,7 +72,7 @@ describe("archive history storage", () => {
         0,
       ),
     ).toEqual({
-      created_at: original[0]!.occurred_at,
+      created_at: "2020-02-29T10:34:56.789Z",
       updated_at: original[0]!.created_at,
     });
   });

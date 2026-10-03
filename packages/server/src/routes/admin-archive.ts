@@ -1,18 +1,17 @@
 /**
- * POST /admin/restore-archive — operator key only, tar.gz body.
+ * POST /admin/restore-archive: operator key only, tar.gz body.
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, blobs_imported}`. Enforces the
  * manifest version 0 contract, blob-hash verification, and a single import
- * transaction covering items, metadata, and edges.
+ * transaction covering items, metadata, history, and edges.
  *
  * Item ids are preserved from the archive so restored edges resolve;
  * an id or natural-key collision counts as a duplicate and leaves the
  * existing row untouched. Tags and extensions restore alongside their
  * items. Edges restore in a second pass, only where both endpoints
- * resolve in the target database — a hand-edited archive cannot plant a
- * reference to an item it does not carry. A row comes back at the version
+ * resolve in the target database. A row comes back at the version
  * it was archived at, with its original dates and readable item history.
  *
  * Paired with GET /export?format=archive.
@@ -883,7 +882,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                 item_id: created.id,
                 // `archiveTags` answers `undefined` for "the archive named
                 // none", which is what `create` wants and what a `Metadata`
-                // cannot hold — an item with no tags carries an empty list.
+                // cannot hold: an item with no tags carries an empty list.
                 tags: archiveTags(meta) ?? [],
                 extensions: stored,
               },
