@@ -180,7 +180,7 @@ export function exportRoutes(
     // the archive and NDJSON paths. An export is a bulk extraction of the
     // instance, so the record has to exist whether or not the stream that
     // follows completes.
-    void storage.audit.log({
+    await storage.audit.logOrThrow({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "export.run",

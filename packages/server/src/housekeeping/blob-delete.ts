@@ -1,5 +1,7 @@
 import type { BlobStore } from "../storage/blob-store.js";
-import type { Storage } from "../storage/interface.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { log } from "../middleware/logger.js";
+import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 
 /**
@@ -13,8 +15,8 @@ import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
  *
- * Two other paths call a store's `delete`, and neither is a deletion in
- * this sense: the upload door and the archive door each take back bytes
+ * Upload, archive preparation and replication also call a store's
+ * `delete` to take back bytes
  * this request wrote when the row that would have named them was refused,
  * under the same lock and before any row exists.
  */
@@ -48,9 +50,8 @@ export class LocationNotFound extends Error {
 
 /**
  * Drop one store's copy of a blob, when the log says enough live copies
- * would remain. The row goes before the bytes: a row without bytes is what
- * the integrity check strikes and replication mends, while bytes without a
- * row are what nothing sweeps.
+ * would remain. Location removal, audit and cleanup intent commit together
+ * before bytes are deleted, so a store failure leaves a retryable intent.
  */
 export async function dropBlobCopy(
   storage: Storage,
@@ -58,23 +59,37 @@ export async function dropBlobCopy(
   hash: string,
   storeId: string,
   minCopies: number,
+  actor: Pick<AuditLogEntry, "key_id" | "client_ip"> = { client_ip: null },
 ): Promise<void> {
   const store = stores.byId(storeId);
   if (!store) throw new LocationNotFound(hash, storeId);
   await withBlobUploadLock(hash, async () => {
-    const outcome = await storage.blobs.dropLocationKeeping(
-      hash,
-      storeId,
-      minCopies,
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        const outcome = await storage.blobs.dropLocationKeeping(
+          hash,
+          storeId,
+          minCopies,
+        );
+        if (outcome === "absent") throw new LocationNotFound(hash, storeId);
+        if (outcome === "below_minimum") {
+          const live = (await storage.blobs.listLocations(hash)).filter(
+            (location) => !location.detached,
+          ).length;
+          throw new CopiesBelowMinimum(hash, live, minCopies);
+        }
+        await storage.blobs.queueCopyDeletion(hash, storeId);
+      },
+      {
+        ...actor,
+        action: "blob.copy_dropped",
+        resource_type: "blob",
+        resource_id: hash,
+        details: { store_id: storeId },
+      },
     );
-    if (outcome === "absent") throw new LocationNotFound(hash, storeId);
-    if (outcome === "below_minimum") {
-      const live = (await storage.blobs.listLocations(hash)).filter(
-        (location) => !location.detached,
-      ).length;
-      throw new CopiesBelowMinimum(hash, live, minCopies);
-    }
-    await store.delete(hash);
+    await finishCopyDeletion(storage, store, hash);
   });
 }
 
@@ -97,10 +112,18 @@ export async function purgeBlob(
   due: { before: string; runStartedAt: string },
 ): Promise<boolean> {
   return withBlobUploadLock(hash, async () => {
-    const claimed = await storage.blobs.claimOrphanPurge(
-      hash,
-      due.before,
-      due.runStartedAt,
+    const claimed = await runAuditedTransaction(
+      storage,
+      () => storage.blobs.claimOrphanPurge(hash, due.before, due.runStartedAt),
+      (claimed) =>
+        claimed
+          ? {
+              action: "blob.purge",
+              resource_type: "blob",
+              resource_id: hash,
+              client_ip: null,
+            }
+          : null,
     );
     if (!claimed) return false;
     await deleteEverywhere(storage, stores, hash);
@@ -133,20 +156,41 @@ async function deleteEverywhere(
 ): Promise<void> {
   for (const store of stores.stores) {
     await store.delete(hash);
+    await storage.blobs.settleCopyDeletion(hash, store.id);
   }
   await storage.blobs.settlePurge(hash);
 }
 
-/**
- * The second half of a strike: the bytes under a name they do not hash to.
- * The integrity check has already removed the row; what is left in the
- * store would otherwise be found in place by replication's `put`, which
- * treats bytes already under a name as that blob, and the good copy would
- * never land.
- */
-export async function discardStruckCopy(
+/** Caller holds the per-hash lock, including through any replacement write. */
+export async function finishCopyDeletion(
+  storage: Storage,
   store: BlobStore,
   hash: string,
 ): Promise<void> {
+  if (!(await storage.blobs.copyDeletionPending(hash, store.id))) return;
   await store.delete(hash);
+  await storage.blobs.settleCopyDeletion(hash, store.id);
+}
+
+/** Retry committed cleanup without creating a second domain mutation or audit. */
+export async function finishPendingCopyDeletions(
+  storage: Storage,
+  stores: Stores,
+  limit: number,
+): Promise<void> {
+  for (const copy of await storage.blobs.listPendingCopyDeletions(limit)) {
+    const store = stores.byId(copy.store_id);
+    if (!store) continue;
+    try {
+      await withBlobUploadLock(copy.hash, () =>
+        finishCopyDeletion(storage, store, copy.hash),
+      );
+    } catch (err) {
+      log("error", "blob.copy_deletion_unfinished", {
+        hash: copy.hash,
+        store_id: copy.store_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }

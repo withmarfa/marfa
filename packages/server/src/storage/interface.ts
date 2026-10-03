@@ -805,9 +805,10 @@ export interface ItemStore {
    * Unlike `purge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
    * the automatic trash lifecycle with no route layer above it to do the
-   * cleanup, and edges have no FK to items to fall back on.
+   * cleanup, and edges have no FK to items to fall back on. At most `limit`
+   * rows per transaction (200 by default), oldest first.
    */
-  purgeTrashedOlderThan(beforeDate: string): Promise<number>;
+  purgeTrashedOlderThan(beforeDate: string, limit?: number): Promise<number>;
   /**
    * Hard-delete every revoked **application** grant row whose
    * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
@@ -1268,12 +1269,6 @@ export interface BlobRegistry {
    * record, so a purge cut short never finishes on bytes stored again.
    */
   recordUploader(hash: string, uploader: string): Promise<void>;
-  /**
-   * Remove the row a refused restore registered, unless something has
-   * claimed it since: another credential that sent the bytes, or anything
-   * that references the blob. Answers whether it went.
-   */
-  removeUnclaimed(hash: string, uploader: string): Promise<boolean>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 
   /**
@@ -1296,6 +1291,15 @@ export interface BlobRegistry {
    */
   recordLocation(hash: string, storeId: string): Promise<void>;
   listLocations(hash: string): Promise<BlobLocation[]>;
+  /** Durable cleanup intent, written with the location removal and its audit. */
+  queueCopyDeletion(hash: string, storeId: string): Promise<void>;
+  copyDeletionPending(hash: string, storeId: string): Promise<boolean>;
+  listPendingCopyDeletions(
+    limit: number,
+  ): Promise<{ hash: string; store_id: string }[]>;
+  /** Operational acknowledgement after bytes are removed; does not repeat the audit. */
+  settleCopyDeletion(hash: string, storeId: string): Promise<void>;
+
   /** Strike one store's copy from the log. True when a row went. */
   removeLocation(hash: string, storeId: string): Promise<boolean>;
   /**

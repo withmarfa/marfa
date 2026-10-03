@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
-import { discardStruckCopy, type Stores } from "./blob-delete.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import {
+  finishCopyDeletion,
+  finishPendingCopyDeletions,
+  type Stores,
+} from "./blob-delete.js";
 
 export interface IntegrityBounds {
   /** Most copies one run checks, over every store. */
@@ -42,6 +48,11 @@ export class BlobIntegrityChecker {
   ) {}
 
   async runOnce(): Promise<IntegrityResult> {
+    await finishPendingCopyDeletions(
+      this.storage,
+      this.stores,
+      this.bounds.maxRows,
+    );
     let verified = 0;
     let struck = 0;
     let bytes = 0;
@@ -62,48 +73,59 @@ export class BlobIntegrityChecker {
       ) {
         break;
       }
-      const intact =
-        store.kind === "disk"
-          ? await this.hashMatches(store, row.hash, row.size_bytes)
-          : (await store.has(row.hash))?.size_bytes === row.size_bytes;
-      bytes += row.size_bytes;
-      if (intact) {
-        await this.storage.blobs.markVerified(
-          row.hash,
-          store.id,
-          this.nowFn().toISOString(),
+      await withBlobUploadLock(row.hash, async () => {
+        const intact =
+          store.kind === "disk"
+            ? await this.hashMatches(store, row.hash, row.size_bytes)
+            : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+        bytes += row.size_bytes;
+        if (intact) {
+          await this.storage.blobs.markVerified(
+            row.hash,
+            store.id,
+            this.nowFn().toISOString(),
+          );
+          verified += 1;
+          return;
+        }
+        // A row dropped by an operator between the listing and the check is
+        // not a strike: nothing was found wrong with a copy the log claims.
+        const removed = await runAuditedTransaction(
+          this.storage,
+          async () => {
+            if (!(await this.storage.blobs.removeLocation(row.hash, store.id)))
+              return false;
+            await this.storage.blobs.queueCopyDeletion(row.hash, store.id);
+            return true;
+          },
+          (removed) =>
+            removed
+              ? {
+                  action: "blob.copy_struck",
+                  resource_type: "blob",
+                  resource_id: row.hash,
+                  client_ip: null,
+                  details: { store_id: store.id, kind: store.kind },
+                }
+              : null,
         );
-        verified += 1;
-        continue;
-      }
-      // A row dropped by an operator between the listing and the check is
-      // not a strike: nothing was found wrong with a copy the log claims.
-      if (!(await this.storage.blobs.removeLocation(row.hash, store.id))) {
-        continue;
-      }
-      struck += 1;
-      log("error", "blob.copy_struck", {
-        hash: row.hash,
-        store_id: store.id,
-        kind: store.kind,
-      });
-      try {
-        await discardStruckCopy(store, row.hash);
-      } catch (err) {
-        // The row is gone either way; bytes that cannot be removed are
-        // logged, and the next check finds them again.
-        log("error", "blob.struck_copy_kept", {
+        if (!removed) return;
+        struck += 1;
+        log("error", "blob.copy_struck", {
           hash: row.hash,
           store_id: store.id,
-          error: err instanceof Error ? err.message : String(err),
+          kind: store.kind,
         });
-      }
-      await this.storage.audit.log({
-        action: "blob.copy_struck",
-        resource_type: "blob",
-        resource_id: row.hash,
-        client_ip: null,
-        details: { store_id: store.id, kind: store.kind },
+        try {
+          await finishCopyDeletion(this.storage, store, row.hash);
+        } catch (err) {
+          // The durable cleanup intent survives for the next run.
+          log("error", "blob.struck_copy_kept", {
+            hash: row.hash,
+            store_id: store.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       });
     }
     return { verified, struck, bytes };

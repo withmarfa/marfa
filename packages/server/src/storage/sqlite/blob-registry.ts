@@ -20,6 +20,7 @@ import type {
   BlobStoreRow,
 } from "../interface.js";
 import {
+  blobCopyDeletions,
   blobLocations,
   blobOrphans,
   blobPurges,
@@ -136,25 +137,6 @@ export class SqliteBlobRegistry implements BlobRegistry {
     await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
   }
 
-  async removeUnclaimed(hash: string, uploader: string): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      const other = await tx
-        .select({ one: sql<number>`1` })
-        .from(blobUploaders)
-        .where(
-          and(
-            eq(blobUploaders.hash, hash),
-            not(eq(blobUploaders.uploader, uploader)),
-          ),
-        )
-        .limit(1)
-        .get();
-      if (other || (await referencedIn(tx, hash))) return false;
-      await tx.delete(blobs).where(eq(blobs.hash, hash)).run();
-      return true;
-    });
-  }
-
   async count(): Promise<{ count: number; total_size_bytes: number }> {
     const row = await this.db
       .select({
@@ -226,15 +208,76 @@ export class SqliteBlobRegistry implements BlobRegistry {
   }
 
   async recordLocation(hash: string, storeId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(blobCopyDeletions)
+        .where(
+          and(
+            eq(blobCopyDeletions.hash, hash),
+            eq(blobCopyDeletions.store_id, storeId),
+          ),
+        )
+        .run();
+      await tx
+        .insert(blobLocations)
+        .values({
+          hash,
+          store_id: storeId,
+          recorded_at: new Date().toISOString(),
+          verified_at: null,
+        })
+        .onConflictDoNothing()
+        .run();
+    });
+  }
+
+  async queueCopyDeletion(hash: string, storeId: string): Promise<void> {
     await this.db
-      .insert(blobLocations)
-      .values({
-        hash,
-        store_id: storeId,
-        recorded_at: new Date().toISOString(),
-        verified_at: null,
-      })
+      .insert(blobCopyDeletions)
+      .values({ hash, store_id: storeId })
       .onConflictDoNothing()
+      .run();
+  }
+
+  async copyDeletionPending(hash: string, storeId: string): Promise<boolean> {
+    const row = await this.db
+      .select()
+      .from(blobCopyDeletions)
+      .where(
+        and(
+          eq(blobCopyDeletions.hash, hash),
+          eq(blobCopyDeletions.store_id, storeId),
+        ),
+      )
+      .get();
+    return row !== undefined;
+  }
+
+  async listPendingCopyDeletions(
+    limit: number,
+  ): Promise<{ hash: string; store_id: string }[]> {
+    return this.db
+      .select({
+        hash: blobCopyDeletions.hash,
+        store_id: blobCopyDeletions.store_id,
+      })
+      .from(blobCopyDeletions)
+      .innerJoin(blobStores, eq(blobCopyDeletions.store_id, blobStores.id))
+      .where(isNull(blobStores.detached_at))
+      .orderBy(blobCopyDeletions.hash, blobCopyDeletions.store_id)
+      .limit(limit)
+      .all();
+  }
+
+  async settleCopyDeletion(hash: string, storeId: string): Promise<void> {
+    await this.db
+      .delete(blobCopyDeletions)
+      .where(
+        and(
+          eq(blobCopyDeletions.hash, hash),
+          eq(blobCopyDeletions.store_id, storeId),
+        ),
+      )
       .run();
   }
 

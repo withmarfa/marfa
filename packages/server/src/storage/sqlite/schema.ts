@@ -430,6 +430,17 @@ export const blobLocations = sqliteTable(
   ],
 );
 
+// Survives location removal until external byte deletion succeeds. No blob FK:
+// a whole-blob purge may remove the registry while a store is unavailable.
+export const blobCopyDeletions = sqliteTable(
+  "blob_copy_deletions",
+  {
+    hash: text("hash").notNull(),
+    store_id: text("store_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.hash, table.store_id] })],
+);
+
 // Every credential that has sent a blob's bytes, by the principal
 // `blobPrincipal` names. Sending them is the proof a reference's writer had
 // the bytes rather than only their hash.

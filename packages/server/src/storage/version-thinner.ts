@@ -1,5 +1,6 @@
 import { getTypeSchema } from "@withmarfa/shared";
-import type { VersionStore } from "./interface.js";
+import { runAuditedTransaction } from "./audited-transaction.js";
+import type { Storage } from "./interface.js";
 import {
   computeVersionsToDelete,
   resolvePolicy,
@@ -17,14 +18,14 @@ const DELETE_CHUNK_SIZE = 200;
  */
 export class VersionThinner {
   constructor(
-    private versionStore: VersionStore,
+    private storage: Storage,
     private globalDefaults: ResolvedPolicy,
   ) {}
 
   /** One batch. Reports how many versions were pruned across how many
    *  items. */
   async runOnce(): Promise<{ pruned: number; items: number }> {
-    const candidates = await this.versionStore.listThinningCandidates(
+    const candidates = await this.storage.versions.listThinningCandidates(
       2,
       BATCH_SIZE,
     );
@@ -49,7 +50,7 @@ export class VersionThinner {
     const typePolicy = typeSchema?.version_policy;
     const policy = resolvePolicy(typePolicy, this.globalDefaults);
 
-    const versions = await this.versionStore.all(itemId);
+    const versions = await this.storage.versions.all(itemId);
     const idsToDelete = computeVersionsToDelete(versions, policy);
 
     if (idsToDelete.length === 0) return 0;
@@ -57,7 +58,20 @@ export class VersionThinner {
     let deleted = 0;
     for (let i = 0; i < idsToDelete.length; i += DELETE_CHUNK_SIZE) {
       const chunk = idsToDelete.slice(i, i + DELETE_CHUNK_SIZE);
-      deleted += await this.versionStore.deleteByIds(chunk);
+      deleted += await runAuditedTransaction(
+        this.storage,
+        () => this.storage.versions.deleteByIds(chunk),
+        (pruned) =>
+          pruned > 0
+            ? {
+                action: "item.versions_thinned",
+                resource_type: "item",
+                resource_id: itemId,
+                client_ip: null,
+                details: { pruned, version_ids: chunk },
+              }
+            : null,
+      );
     }
     return deleted;
   }

@@ -11,6 +11,7 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import { operatorOnly } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
@@ -33,6 +34,7 @@ import {
   CopiesBelowMinimum,
   LocationNotFound,
   dropBlobCopy,
+  finishCopyDeletion,
 } from "../housekeeping/blob-delete.js";
 import {
   createOpenAPIRouter,
@@ -746,6 +748,7 @@ export function blobRoutes(
     // a request that saw the bytes absent is the one that put them there and
     // the only one that may take them back.
     const recorded = await withBlobUploadLock(hash, async () => {
+      await finishCopyDeletion(storage, disk, hash);
       const present = (await disk.has(hash)) !== null;
       if (present) {
         await rm(spool, { force: true });
@@ -755,14 +758,25 @@ export function blobRoutes(
       try {
         // The first upload fixes the type; a later one under another type
         // is answered with the type the bytes are served with.
-        return await storage.runInTransaction(async () => {
-          await storage.blobs.register(hash, mimeType, sizeBytes);
-          await storage.blobs.recordLocation(hash, disk.id);
-          await storage.blobs.recordUploader(hash, uploader);
-          const row = await storage.blobs.get(hash);
-          if (!row) throw new Error(`blob ${hash} was not registered`);
-          return row.mime_type;
-        });
+        return await runAuditedTransaction(
+          storage,
+          async () => {
+            await storage.blobs.register(hash, mimeType, sizeBytes);
+            await storage.blobs.recordLocation(hash, disk.id);
+            await storage.blobs.recordUploader(hash, uploader);
+            const row = await storage.blobs.get(hash);
+            if (!row) throw new Error(`blob ${hash} was not registered`);
+            return row.mime_type;
+          },
+          (recorded) => ({
+            client_ip: c.get("clientIp") ?? null,
+            key_id: c.get("apiKey")?.id,
+            action: "blob.upload",
+            resource_type: "blob",
+            resource_id: hash,
+            details: { mime_type: recorded, size_bytes: sizeBytes },
+          }),
+        );
       } catch (err) {
         // A file no row names is unreachable and nothing sweeps it. A failure
         // to undo leaves bytes behind rather than failing the request a
@@ -770,7 +784,8 @@ export function blobRoutes(
         // surfacing.
         if (!present) {
           try {
-            await disk.delete(hash);
+            if ((await storage.blobs.get(hash)) === null)
+              await disk.delete(hash);
           } catch (cleanupErr) {
             log("error", "blob.orphaned_after_refused_upload", {
               hash,
@@ -784,16 +799,8 @@ export function blobRoutes(
         }
         throw err;
       }
-    });
+    }).finally(() => rm(spool, { force: true }));
 
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "blob.upload",
-      resource_type: "blob",
-      resource_id: hash,
-      details: { mime_type: recorded, size_bytes: sizeBytes },
-    });
     // The other stores get their copies at replication's next run, which
     // this brings forward; a wake is a hint, so a scheduler that is not
     // running loses nothing but the hurry.
@@ -901,7 +908,10 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
     try {
-      await dropBlobCopy(storage, blobs, hash, params.store, minCopies);
+      await dropBlobCopy(storage, blobs, hash, params.store, minCopies, {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+      });
     } catch (err) {
       if (err instanceof LocationNotFound) {
         throw new MarfaError(
@@ -918,14 +928,6 @@ export function blobRoutes(
       }
       throw err;
     }
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "blob.copy_dropped",
-      resource_type: "blob",
-      resource_id: hash,
-      details: { store_id: params.store },
-    });
     return c.json({ ok: true as const }, 200);
   });
 

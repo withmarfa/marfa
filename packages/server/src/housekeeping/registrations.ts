@@ -167,7 +167,7 @@ export function registerHousekeepingJobs(
     });
   }
 
-  const versionThinner = new VersionThinner(storage.versions, {
+  const versionThinner = new VersionThinner(storage, {
     recentDays: config.versionRecentDays,
     dailySnapshotDays: config.versionDailySnapshotDays,
     weeklySnapshotDays: config.versionWeeklySnapshotDays,
@@ -183,7 +183,7 @@ export function registerHousekeepingJobs(
   // Registered whatever the instance default, because the retention can
   // be turned on through `/config` while the process runs.
   const trashPurger = new TrashPurger(
-    itemWrites(storage),
+    storage,
     config.trashRetentionDays,
     undefined,
     trashOverride,
