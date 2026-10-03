@@ -4646,11 +4646,13 @@
           },
           "inbound_handled_retention_days": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 36500
           },
           "inbound_pending_retention_days": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 36500
           }
         },
         "required": [
@@ -28952,11 +28954,13 @@
                   },
                   "inbound_handled_retention_days": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 36500
                   },
                   "inbound_pending_retention_days": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 36500
                   }
                 },
                 "additionalProperties": false

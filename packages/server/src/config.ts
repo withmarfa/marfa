@@ -20,6 +20,11 @@ import type { CidrRange } from "./middleware/client-ip.js";
  */
 export const DEFAULT_KEYS_RATE_LIMIT = 200;
 
+// A century-scale retention horizon keeps cutoff dates in ordinary ISO years.
+export const MAX_INBOUND_RETENTION_DAYS = 36_500;
+// Native JavaScript timers support at most a signed 32-bit millisecond delay.
+export const MAX_INBOUND_CLEANUP_INTERVAL_MS = 2_147_483_647;
+
 /** What bounds the inbound webhook doors. */
 export interface InboundLimits {
   /** The largest delivery the door stores, in bytes. */
@@ -769,16 +774,20 @@ const settingsShape = {
   MARFA_INBOUND_RETAINED_BYTES: count(DEFAULT_INBOUND_LIMITS.retainedBytes),
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
     DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
+    1,
+    MAX_INBOUND_CLEANUP_INTERVAL_MS,
   ),
   MARFA_INBOUND_IN_FLIGHT_BYTES: count(DEFAULT_INBOUND_LIMITS.inFlightBytes),
   MARFA_INBOUND_READ_TIMEOUT_MS: count(DEFAULT_INBOUND_LIMITS.readTimeoutMs),
   MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.handledRetentionDays,
     0,
+    MAX_INBOUND_RETENTION_DAYS,
   ),
   MARFA_INBOUND_PENDING_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
     0,
+    MAX_INBOUND_RETENTION_DAYS,
   ),
 
   MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(1_000),

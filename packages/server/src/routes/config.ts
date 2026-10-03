@@ -1,6 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
+import { MAX_INBOUND_RETENTION_DAYS } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -30,8 +31,18 @@ const instanceConfigShape = (strict: boolean) => ({
   audit_retention_days: z.number().int().min(0).optional(),
   event_log_retention_hours: z.number().int().min(0).optional(),
   trash_retention_days: z.number().int().min(0).optional(),
-  inbound_handled_retention_days: z.number().int().min(0).optional(),
-  inbound_pending_retention_days: z.number().int().min(0).optional(),
+  inbound_handled_retention_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_INBOUND_RETENTION_DAYS)
+    .optional(),
+  inbound_pending_retention_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_INBOUND_RETENTION_DAYS)
+    .optional(),
 });
 
 /**

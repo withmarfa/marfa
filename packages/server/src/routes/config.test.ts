@@ -390,3 +390,74 @@ describe("Instance config — round trips", () => {
     expect(await after.json()).toEqual(body);
   });
 });
+
+it("rejects unsupported inbound horizons before saving and restarts at the supported boundaries", async () => {
+  const ctx = await createTestContext();
+  const scheduler = new Housekeeping(ctx.storage.housekeeping, {
+    pollIntervalMs: 1000,
+  });
+  try {
+    const accepted = await request(ctx.app, "PUT", "/config", {
+      key: ctx.workingKey,
+      body: {
+        inbound_handled_retention_days: 36500,
+        inbound_pending_retention_days: 36500,
+      },
+    });
+    expect(accepted.status).toBe(200);
+    for (const field of [
+      "inbound_handled_retention_days",
+      "inbound_pending_retention_days",
+    ]) {
+      const denied = await request(ctx.app, "PUT", "/config", {
+        key: ctx.workingKey,
+        body: { [field]: 36501 },
+      });
+      expect(denied.status).toBe(400);
+    }
+    const saved = (await (
+      await request(ctx.app, "GET", "/config", { key: ctx.workingKey })
+    ).json()) as {
+      inbound_handled_retention_days: number;
+      inbound_pending_retention_days: number;
+    };
+    expect(saved.inbound_handled_retention_days).toBe(36500);
+    expect(saved.inbound_pending_retention_days).toBe(36500);
+    await expect(
+      ctx.storage.inbound.cleanup({ handledDays: 36500, pendingDays: 36500 }),
+    ).resolves.toEqual({ deleted: 0, remaining: false });
+    await expect(
+      ctx.storage.inbound.cleanup({ handledDays: 0, pendingDays: 0 }),
+    ).resolves.toEqual({ deleted: 0, remaining: false });
+    const stamp = new Date().toISOString();
+    await ctx.storage.housekeeping.upsert(
+      "owned-boundary",
+      2147483647,
+      new Date(Date.parse(stamp) + 2147483647).toISOString(),
+    );
+    await (
+      ctx.storage as Storage & {
+        __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+      }
+    ).__sqliteRun(
+      "UPDATE housekeeping SET last_finished_at = ? WHERE name = ?",
+      [stamp, "owned-boundary"],
+    );
+    scheduler.register({
+      name: "owned-boundary",
+      intervalMs: 2147483647,
+      firstRunDelayMs: 0,
+      run: () => Promise.resolve({ deleted: 0 }),
+    });
+    await expect(scheduler.start()).resolves.toBeUndefined();
+    const row = (await ctx.storage.housekeeping.list()).find(
+      (r) => r.name === "owned-boundary",
+    );
+    expect(row?.next_run_at).toBe(
+      new Date(Date.parse(stamp) + 2147483647).toISOString(),
+    );
+  } finally {
+    await scheduler.stop();
+    await ctx.cleanup();
+  }
+});

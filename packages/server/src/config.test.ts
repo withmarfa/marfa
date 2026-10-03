@@ -478,3 +478,24 @@ describe("inbound retained capacity settings", () => {
     }
   });
 });
+
+it("bounds inbound date horizons and the native timer interval", () => {
+  const maximum = loadConfig({
+    MARFA_INBOUND_HANDLED_RETENTION_DAYS: "36500",
+    MARFA_INBOUND_PENDING_RETENTION_DAYS: "36500",
+    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483647",
+  });
+  expect(maximum.inbound).toMatchObject({
+    handledRetentionDays: 36500,
+    pendingRetentionDays: 36500,
+    cleanupIntervalMs: 2147483647,
+  });
+  for (const name of [
+    "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
+    "MARFA_INBOUND_PENDING_RETENTION_DAYS",
+  ])
+    expect(refusal({ [name]: "36501" })).toContain(name);
+  expect(
+    refusal({ MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483648" }),
+  ).toContain("MARFA_INBOUND_CLEANUP_INTERVAL_MS");
+});
