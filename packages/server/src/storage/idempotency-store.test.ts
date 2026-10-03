@@ -226,6 +226,7 @@ describe("claim", () => {
     // goes on to record is recorded against nothing and the next repeat of
     // the key writes for real.
     const recorded = await store.complete({
+      authorization: [],
       id: secondId,
       heldSince: new Date().toISOString(),
       response_status: 201,
@@ -252,6 +253,7 @@ describe("claim", () => {
     });
     expect(
       await ctx.storage.idempotency.complete({
+        authorization: [],
         id,
         heldSince,
         response_status: 201,
@@ -337,6 +339,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
 
     expect(
       await ctx.storage.idempotency.complete({
+        authorization: [],
         id,
         heldSince: staleSince,
         response_status: 201,
@@ -366,6 +369,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     // writer rather than every writer.
     expect(
       await ctx.storage.idempotency.complete({
+        authorization: [],
         id,
         heldSince: takenAt,
         response_status: 201,

@@ -1,3 +1,4 @@
+import type { ReplayRequirement } from "../../middleware/replay-requirements.js";
 import { and, eq, lt } from "drizzle-orm";
 import type {
   ClaimIdempotencyKeyInput,
@@ -14,6 +15,7 @@ type Row = typeof idempotencyRecords.$inferSelect;
 function toRecord(row: Row): IdempotencyRecord {
   return {
     id: row.id,
+    authorization: JSON.parse(row.authorization) as ReplayRequirement[],
     credential: row.credential,
     idempotency_key: row.idempotency_key,
     fingerprint: row.fingerprint,
@@ -71,6 +73,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
         fingerprint: input.fingerprint,
         created_at: input.now,
         state: "in_flight",
+        authorization: "[]",
         response_status: null,
         response_content_type: null,
         response_body: null,
@@ -92,6 +95,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
   }
 
   async complete(input: {
+    authorization: ReplayRequirement[];
     id: string;
     heldSince: string;
     response_status: number;
@@ -106,6 +110,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       .update(idempotencyRecords)
       .set({
         state: "complete",
+        authorization: JSON.stringify(input.authorization),
         response_status: input.response_status,
         response_content_type: input.response_content_type,
         response_body: input.response_body,

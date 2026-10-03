@@ -1,3 +1,9 @@
+import { captureReplayRequirements } from "./replay-requirements.js";
+import type { ReplayRequirement } from "./replay-requirements.js";
+import {
+  authorizeReplay,
+  rememberResponseDisclosures,
+} from "./replay-authorization.js";
 import type { Context, ErrorHandler, MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
@@ -355,28 +361,35 @@ export function idempotencyMiddleware(opts: {
       c.req.raw.body === null ? "" : await c.req.raw.clone().text();
     const digest = await fingerprint(c, bodyText, contract);
 
-    const held = await acquire(storage, credentialHandle(c), key, digest);
+    const held = await acquire(storage, credentialHandle(c), key, digest, c);
     if ("answer" in held) return withPreparedHeaders(c, held.answer);
 
     const { recordId, heldSince } = held;
-    let response: Response;
-    try {
-      await next();
-      response = c.res;
-    } catch (err) {
-      // Rendered through the app's own handler, so the body recorded is
-      // the body that goes out, byte for byte. Returned rather than
-      // rethrown: it has already been rendered, and rethrowing would
-      // render it a second time.
-      // Hono's own dispatcher casts the same way before calling this:
-      // `onError` is typed for an Error, and a throw of anything else
-      // reaches it unchanged rather than being reshaped.
-      const rendered = errorHandler(err as Error, c);
-      response = rendered instanceof Promise ? await rendered : rendered;
-    }
-
-    await recordOutcome(storage, recordId, heldSince, response);
-    return response;
+    const captured = await captureReplayRequirements(async () => {
+      let response: Response;
+      try {
+        await next();
+        response = c.res;
+      } catch (err) {
+        const rendered = errorHandler(err as Error, c);
+        response = rendered instanceof Promise ? await rendered : rendered;
+      }
+      if (response.headers.get("Content-Type")?.includes("application/json")) {
+        await rememberResponseDisclosures(
+          storage,
+          await response.clone().text(),
+        );
+      }
+      return response;
+    });
+    await recordOutcome(
+      storage,
+      recordId,
+      heldSince,
+      captured.value,
+      captured.requirements,
+    );
+    return captured.value;
   });
 }
 
@@ -410,6 +423,7 @@ async function acquire(
   credential: string,
   key: string,
   digest: string,
+  c: Context<AppEnv>,
 ): Promise<{ recordId: string; heldSince: string } | { answer: Response }> {
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
     const id = generateId();
@@ -441,6 +455,7 @@ async function acquire(
     }
 
     if (held.state === "complete") {
+      await authorizeReplay(c, storage, held.authorization);
       if (held.response_body === null || held.response_status === null) {
         throw new MarfaError(
           ErrorCode.IDEMPOTENCY_RESULT_NOT_RETAINED,
@@ -519,6 +534,7 @@ async function recordOutcome(
   recordId: string,
   heldSince: string,
   response: Response,
+  authorization: ReplayRequirement[],
 ): Promise<void> {
   try {
     if (response.status >= 500 || RELEASED_STATUSES.has(response.status)) {
@@ -540,6 +556,7 @@ async function recordOutcome(
       id: recordId,
       heldSince,
       response_status: response.status,
+      authorization,
       response_content_type: retained ? contentType : null,
       response_body: retained ? body : null,
       completed_at: new Date().toISOString(),

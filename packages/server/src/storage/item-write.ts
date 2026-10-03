@@ -1,3 +1,4 @@
+import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * The one way an item row is created or changed.
  *
@@ -499,8 +500,15 @@ function mayRead(writer: ItemWriter, type: string): boolean {
   return writer.kind === "platform" || mayReadType(writer.key, type);
 }
 
-function assertTypeWrite(writer: ItemWriter, type: string): void {
-  if (writer.kind === "credential") checkTypeAccess(writer.key, type, "write");
+function assertTypeWrite(writer: ItemWriter, type: string | Item): void {
+  if (writer.kind === "credential") {
+    if (typeof type !== "string") rememberItemSubject(type, "write");
+    checkTypeAccess(
+      writer.key,
+      typeof type === "string" ? type : type.type,
+      "write",
+    );
+  }
 }
 
 /**
@@ -586,6 +594,7 @@ async function assertEdgeTargets(
       seen.add(target);
       const row = await storage.items.get(target);
       if (!row || !mayRead(writer, row.type)) throw edgeTargetNotFound(target);
+      if (writer.kind === "credential") rememberItemSubject(row, "read");
     }
   }
 }
@@ -635,7 +644,7 @@ async function updateById(
     await storage.items.getIncludingTrashed(write.id),
     notFound,
   );
-  assertTypeWrite(writer, row.type);
+  assertTypeWrite(writer, row);
   const retypeTo =
     write.retype === true &&
     write.declared_type !== undefined &&
@@ -685,17 +694,7 @@ async function changeRow(
       // it writes under, its own or one it claims, or it takes the row from
       // the key its own connector syncs it by.
       const key = credentialOf(writer);
-      if (
-        key !== undefined &&
-        row.source !== key.source &&
-        key.sources?.includes(row.source) !== true
-      ) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `This credential may not move a natural key under the source "${row.source}". A key moves one only under its own source or one it claims.`,
-          { source: row.source },
-        );
-      }
+      if (key !== undefined) itemProvenanceSource(key, row.source);
       const holder = await storage.items.findBySourceId(
         row.source,
         change.source_id,
@@ -875,7 +874,10 @@ async function put(
     // that silently, and refusing would fail the same sync forever, so it
     // is acknowledged and nothing is written. Gated on the row's type first,
     // so a refusal discloses nothing.
-    if (key !== undefined) checkResolvedRowWrite(key, existing);
+    if (key !== undefined) {
+      checkResolvedRowWrite(key, existing);
+      rememberItemSubject(existing, "write");
+    }
     if (!write.retype) requireDeclaredTypeMatches(write.type, existing);
     return {
       outcome: "unchanged",
@@ -887,7 +889,10 @@ async function put(
 
   if (existing) {
     const row = existing;
-    if (key !== undefined) checkResolvedRowWrite(key, row);
+    if (key !== undefined) {
+      checkResolvedRowWrite(key, row);
+      rememberItemSubject(row, "write");
+    }
     return await naming(row.id, async () => {
       if (
         write.door === "item" &&
@@ -1168,7 +1173,7 @@ async function deleteRow(
     includeTrashed: false,
     message: `Item ${write.id} not found`,
   });
-  assertTypeWrite(writer, row.type);
+  assertTypeWrite(writer, row);
   const stale = staleAgainst(row, write.version);
   if (stale) return stale;
   const trashed = await trash(storage, writer, row);
@@ -1184,7 +1189,7 @@ async function transitionRow(
     includeTrashed: true,
     message: "Item not found",
   });
-  assertTypeWrite(writer, row.type);
+  assertTypeWrite(writer, row);
   // Into the bin is a delete by another name: it takes what a delete takes,
   // is held by what holds a delete, and is restored as a delete is.
   if (write.state === "trashed" && row.state !== "trashed") {
@@ -1211,7 +1216,7 @@ async function restoreRow(
     includeTrashed: true,
     message: `Item ${write.id} not found`,
   });
-  assertTypeWrite(writer, row.type);
+  assertTypeWrite(writer, row);
   const broughtBack = await itemWrites(storage).restoreBeneath(row.id);
   const item = await itemWrites(storage).restore(row.id);
   return moved(item, row.state, { broughtBack });
@@ -1235,8 +1240,10 @@ async function purgeRow(
   // both, so asking it would strand the row for good.
   if (writer.kind === "credential") {
     if (row.state === softDeleteState(row.type)) {
+      rememberItemSubject(row, "write", true);
       checkTypePermission(writer.key, row.type, "write");
     } else {
+      rememberItemSubject(row, "write");
       checkTypeAccess(writer.key, row.type, "write");
     }
   }

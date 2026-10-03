@@ -30,8 +30,6 @@ const RAISES = /ErrorCode\.(TYPE_NOT_PERMITTED|EDGE_PERMISSION_DENIED)\b/;
 const RAISERS: Record<string, string> = {
   "middleware/auth.ts":
     "the grant checks, through `grantRefusal`, and the refusals no grant opens: the reserved fence, a map reaching no type, a natural key resolving an unreadable row",
-  "routes/folders.ts":
-    "the folder door's own type gate, through `grantRefusal`, naming `system.folder`",
   "routes/_blob-reach.ts":
     "an upload needs write on some type rather than on one, so there is no single grant to name",
 };

@@ -1,3 +1,7 @@
+import {
+  rememberReplayRequirement,
+  rememberItemSubject,
+} from "./replay-requirements.js";
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context, MiddlewareHandler } from "hono";
@@ -614,6 +618,12 @@ export function checkTypeAccess(
   }
 
   checkTypePermission(key, type, level);
+  rememberReplayRequirement({
+    kind: "type",
+    type,
+    level,
+    permissionOnly: false,
+  });
 }
 
 /**
@@ -635,6 +645,12 @@ export function checkTypePermission(
       { kind: "type", name: type, level },
     );
   }
+  rememberReplayRequirement({
+    kind: "type",
+    type,
+    level,
+    permissionOnly: true,
+  });
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (level === "write" && resolved === "read") {
     throw grantRefusal(
@@ -684,7 +700,10 @@ export function checkExtensionPermission(
     apiKey?.extension_permissions,
     extensionLabelOf(apiKey),
   );
-  if (perm === "write" || (level === "read" && perm === "read")) return;
+  if (perm === "write" || (level === "read" && perm === "read")) {
+    rememberReplayRequirement({ kind: "extension", namespace, level });
+    return;
+  }
   throw grantRefusal(
     ErrorCode.FORBIDDEN,
     `No ${level} access to extension namespace "${namespace}"`,
@@ -887,10 +906,15 @@ export const requireDeclaredCredential = createMiddleware<AppEnv>(
 
 export function requireTypeAccess(
   c: Context<AppEnv>,
-  type: string,
+  type: string | { id: string; type: string },
   level: "read" | "write",
 ): void {
-  checkTypeAccess(c.get("apiKey"), type, level);
+  checkTypeAccess(
+    c.get("apiKey"),
+    typeof type === "string" ? type : type.type,
+    level,
+  );
+  if (typeof type !== "string") rememberItemSubject(type, level);
 }
 
 /**
@@ -904,6 +928,8 @@ export function requireReadableRow<T extends { type: string }>(
 ): T {
   getTypeFilter(c);
   if (!row || !mayReadRow(c, row)) throw notFound();
+  if ("id" in row && typeof row.id === "string")
+    rememberItemSubject({ id: row.id, type: row.type }, "read");
   return row;
 }
 
@@ -1024,8 +1050,15 @@ export function itemProvenanceSource(
   key: ApiKey | undefined,
   named?: string,
 ): string | undefined {
-  if (named === undefined || named === key?.source) return key?.source;
-  if (key?.sources?.includes(named) === true) return named;
+  if (named === undefined) return key?.source;
+  if (named === key?.source) {
+    rememberReplayRequirement({ kind: "source", source: named });
+    return key.source;
+  }
+  if (key?.sources?.includes(named) === true) {
+    rememberReplayRequirement({ kind: "source", source: named });
+    return named;
+  }
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     `This credential may not write under the source "${named}". A write names its own credential's source or one that credential claims.`,
@@ -1103,7 +1136,10 @@ export function checkEdgePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(key);
-  if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
+  if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) {
+    rememberReplayRequirement({ kind: "edge_type", edgeType, level });
+    return;
+  }
   throw grantRefusal(
     ErrorCode.EDGE_PERMISSION_DENIED,
     `Missing edge.${edgeType}:${level} permission`,
@@ -1134,8 +1170,12 @@ export function requireMetadataPermission(
   // credential, operator included. A `publisher.*` namespace binds to
   // nobody: user accounts carry no handle and no door compares one, so it
   // registers on the grammar alone.
-  if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
+  if (
+    metadataPermissionCovers(apiKey.metadata_permissions, subresource, level)
+  ) {
+    rememberReplayRequirement({ kind: "metadata", subresource, level });
     return;
+  }
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     `Missing metadata.${subresource}:${level} permission`,
@@ -1189,7 +1229,10 @@ export function requirePermission(
     c.get("authType") === "oauth"
       ? (c.get("oauthGrant")?.scopes ?? [])
       : (key.permissions ?? []);
-  if (hasPermission(held, permission)) return;
+  if (hasPermission(held, permission)) {
+    rememberReplayRequirement({ kind: "permission", permission });
+    return;
+  }
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     `This credential does not hold ${permission}`,
@@ -1220,13 +1263,17 @@ export function getTypeFilter(
   level: "read" | "write" = "read",
 ): TypeFilter {
   const filter = computeTypeFilter(c.get("apiKey"), level);
-  if (level === "read") refuseReachingNoType(filter);
+  if (level === "read") {
+    refuseReachingNoType(filter);
+    rememberReplayRequirement({ kind: "reach" });
+  }
   return filter;
 }
 
 /** `getTypeFilter`'s refusal, for a credential in hand. */
 export function checkReachesSomeType(apiKey: ApiKey | undefined): void {
   refuseReachingNoType(computeTypeFilter(apiKey));
+  rememberReplayRequirement({ kind: "reach" });
 }
 
 function refuseReachingNoType(filter: TypeFilter): void {

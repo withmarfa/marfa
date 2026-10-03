@@ -1,3 +1,4 @@
+import { rememberEdgeSubject } from "../middleware/replay-requirements.js";
 import { edgePermissionCovers, parseFilter } from "@withmarfa/shared";
 import type { ApiKey, Edge } from "@withmarfa/shared";
 import type { Context } from "hono";
@@ -97,9 +98,12 @@ export async function readableEdges(
     storage,
     ofReadableKind.map((edge) => edge.source_id),
   );
-  return ofReadableKind.filter((edge) =>
+  const readable = ofReadableKind.filter((edge) =>
     sourceTypeReadable(key, types.get(edge.source_id)),
   );
+  for (const edge of readable)
+    rememberEdgeSubject(edge, "read", types.get(edge.source_id));
+  return readable;
 }
 
 /**

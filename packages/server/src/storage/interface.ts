@@ -1,3 +1,4 @@
+import type { ReplayRequirement } from "../middleware/replay-requirements.js";
 import type {
   Item,
   CreateItemInput,
@@ -2136,6 +2137,7 @@ export interface EventLogStore {
 export type IdempotencyRecordState = "in_flight" | "complete";
 
 export interface IdempotencyRecord {
+  authorization: ReplayRequirement[];
   id: string;
   /** The credential the key belongs to; see `ClaimIdempotencyKeyInput`. */
   credential: string;
@@ -2247,6 +2249,7 @@ export interface IdempotencyStore {
    * caller logs it.
    */
   complete(input: {
+    authorization: ReplayRequirement[];
     id: string;
     /** The `created_at` this caller's claim carries. */
     heldSince: string;
