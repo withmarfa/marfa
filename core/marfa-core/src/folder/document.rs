@@ -643,6 +643,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unindented_sequence_edits_keep_child_source() {
+        let source =
+            "---\nitems:\n- 'one' # first\n- 'two' # second\nkeep: 1.00 # precision\n---\nBody\n";
+        let original = read(source);
+        assert!(original.unreadable.is_none());
+        assert_eq!(original.front["items"], serde_json::json!(["one", "two"]));
+        let mut front = original.front.clone();
+        front["items"] = serde_json::json!(["two", "one"]);
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert_eq!(
+            output,
+            source.replace(
+                "- 'one' # first\n- 'two' # second",
+                "- 'two' # second\n- 'one' # first"
+            )
+        );
+    }
+
+    #[test]
+    fn unindented_sequence_replacements_stay_values_of_their_keys() {
+        for source in [
+            "---\nitems:\n- 'one' # first\n- 'two' # second\nkeep: 1.00 # precision\n---\nBody\n",
+            "---\nouter:\n  items:\n  - 'one' # first\n  - 'two' # second\nkeep: 1.00 # precision\n---\nBody\n",
+        ] {
+            let original = read(source);
+            for value in [
+                serde_json::json!([]),
+                serde_json::json!({}),
+                serde_json::json!(null),
+                serde_json::json!("scalar"),
+            ] {
+                let mut front = original.front.clone();
+                if source.contains("outer:") {
+                    front["outer"]["items"] = value;
+                } else {
+                    front["items"] = value;
+                }
+                let output = write(&front, &original.body, Some(&original)).unwrap();
+                assert_eq!(read(&output).front, front);
+                assert_eq!(read(&output).body, "Body\n");
+                assert!(output.contains("keep: 1.00 # precision\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn first_property_removal_keeps_a_frontmatter_opening() {
+        for newline in ["\n", "\r\n"] {
+            let source = "---\nremove: old\n\nkeep: 'é' # keep\n---\nBody\n".replace('\n', newline);
+            let original = read(&source);
+            assert!(original.unreadable.is_none());
+            let mut front = original.front.clone();
+            front.remove("remove");
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert_eq!(
+                output,
+                source.replace(&format!("remove: old{newline}{newline}"), "")
+            );
+        }
+    }
+
+    #[test]
     fn metadata_keeps_the_persons_unchanged_frontmatter() {
         let source = "---\r\n# café\r\nquoted: 'hi' # stay\r\nnumber: 1.10\r\nlist: [a, b]\r\nblock: |\r\n  é\r\n---\r\nBody\r\n";
         let document = read(source);

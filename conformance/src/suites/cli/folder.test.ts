@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
@@ -44,6 +45,198 @@ interface PushReport {
 }
 
 describe("a folder round trip", () => {
+  it.each([
+    "unindented sequence",
+    "first property before a blank line",
+    "refused rendering",
+  ])(
+    "preserves %s edits and continues pulling another document",
+    async (mode) => {
+      const folder = join(dir, "preserved");
+      mkdirSync(folder);
+      const settings = await c.cli.json<ItemEnvelope>([
+        "folders",
+        "create",
+        "--title",
+        unique("preserved"),
+        "--search",
+        JSON.stringify({ types: ["core.note"] }),
+      ]);
+      trackFolder(c.ctx, settings.item.id);
+      await c.cli.json([
+        "folders",
+        "add",
+        folder,
+        "--folder",
+        settings.item.id,
+      ]);
+      await c.cli.json(["folders", "hydrate", folder]);
+      const path = join(folder, "authored.md");
+      const title = unique("preserved");
+      writeFileSync(
+        path,
+        `---\nremove: old\nkeep: 'é' # keep\nitems: ['one', 'two']\ntitle: '${title}'\n---\nBody\n`,
+      );
+      await c.cli.json(["folders", "push", folder]);
+      const first = readFileSync(path, "utf8");
+      const id = /^marfa_id: (.+)$/m.exec(first)![1]!.trim();
+      trackItem(c.ctx, id);
+      const authored =
+        mode === "unindented sequence"
+          ? first.replace(
+              "items: ['one', 'two']",
+              "items:\n- 'one' # first\n- 'two' # second",
+            )
+          : mode === "refused rendering"
+            ? first
+            : first.replace("remove: old\n", "remove: old\n\n");
+      writeFileSync(path, authored);
+      const scan = await c.cli.json<{ updated: number }>([
+        "folders",
+        "scan",
+        folder,
+      ]);
+      expect(scan.updated).toBe(0);
+      const independent = await c.cli.json<ItemEnvelope>([
+        "items",
+        "create",
+        "--type",
+        "core.note",
+        "--properties",
+        JSON.stringify({
+          title: unique("independent"),
+          body: "Continuation\n",
+        }),
+      ]);
+      trackItem(c.ctx, independent.item.id);
+      await c.cli.json([
+        "items",
+        "update",
+        id,
+        "--version",
+        "1",
+        "--replace",
+        "--properties",
+        JSON.stringify({
+          title,
+          body: "Changed body\n",
+          keep: "é",
+          items: mode === "unindented sequence" ? [] : ["one", "two"],
+          ...(mode === "unindented sequence" ? { remove: "old" } : {}),
+        }),
+      ]);
+      const store = join(folder, ".marfa", "core.sqlite");
+      const binding = () => {
+        const db = new DatabaseSync(store, { readOnly: true });
+        try {
+          return db
+            .prepare(
+              "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation FROM folder_files WHERE item_id = ?",
+            )
+            .get(id);
+        } finally {
+          db.close();
+        }
+      };
+      const before = binding();
+      expect(before).toBeDefined();
+      await c.cli.json(["device", "--db", store, "catch-up"]);
+      const pullOnce = () =>
+        c.cli.json<{
+          rewritten: number;
+          written: number;
+          unwritten: number;
+          flagged: Array<{ path: string; flag: string; reason: string }>;
+        }>(["folders", "pull", folder]);
+      if (mode === "refused rendering")
+        process.env.MARFA_TEST_FAULT = "render-frontmatter=authored.md";
+      let pull;
+      try {
+        pull = await pullOnce();
+      } finally {
+        delete process.env.MARFA_TEST_FAULT;
+      }
+      expect(pull.unwritten).toBe(mode === "refused rendering" ? 1 : 0);
+      if (mode !== "refused rendering")
+        expect(pull.rewritten).toBeGreaterThanOrEqual(1);
+      expect(pull.written).toBeGreaterThanOrEqual(1);
+      expect(
+        readFileSync(
+          join(folder, `${independent.item.properties.title}.md`),
+          "utf8",
+        ),
+      ).toContain("Continuation\n");
+      if (mode === "refused rendering") {
+        expect(readFileSync(path, "utf8")).toBe(authored);
+        expect(binding()).toEqual(before);
+        await c.cli.json([
+          "items",
+          "update",
+          independent.item.id,
+          "--version",
+          "1",
+          "--properties",
+          JSON.stringify({ body: "Continuation again\n" }),
+        ]);
+        await c.cli.json(["device", "--db", store, "catch-up"]);
+        process.env.MARFA_TEST_FAULT = "render-frontmatter=authored.md";
+        let repeated;
+        try {
+          repeated = await pullOnce();
+        } finally {
+          delete process.env.MARFA_TEST_FAULT;
+        }
+        expect(repeated.unwritten).toBe(1);
+        expect(repeated.flagged).toContainEqual({
+          path: "authored.md",
+          flag: "unwritten",
+          reason: expect.stringContaining("injected rendering failure"),
+        });
+        expect(binding()).toEqual(before);
+        expect(readFileSync(path, "utf8")).toBe(authored);
+        expect(
+          readFileSync(
+            join(folder, `${independent.item.properties.title}.md`),
+            "utf8",
+          ),
+        ).toContain("Continuation again\n");
+        const unchanged = await c.cli.json<{ updated: number }>([
+          "folders",
+          "scan",
+          folder,
+        ]);
+        expect(unchanged.updated).toBe(0);
+        writeFileSync(path, first);
+        await c.cli.json(["folders", "scan", folder]);
+        await c.cli.json(["folders", "pull", folder]);
+      }
+      const expected = (
+        mode === "unindented sequence"
+          ? authored.replace("- 'one' # first\n- 'two' # second", "  []")
+          : mode === "refused rendering"
+            ? first.replace("remove: old\n", "")
+            : authored.replace("remove: old\n\n", "")
+      )
+        .replace("marfa_version: 1", "marfa_version: 2")
+        .replace("---\nBody\n", "---\nChanged body\n");
+      expect(readFileSync(path, "utf8")).toBe(expected);
+      await c.cli.json(["folders", "pull", folder]);
+      expect(readFileSync(path, "utf8")).toBe(expected);
+      const settled = await c.cli.json<{ updated: number }>([
+        "folders",
+        "scan",
+        folder,
+      ]);
+      expect(settled.updated).toBe(0);
+      writeFileSync(path, expected.replace("Changed body\n", "User body\n"));
+      const edited = await c.cli.json<PushReport>(["folders", "push", folder]);
+      expect(edited.scan.updated).toBe(1);
+      const remote = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+      expect(remote.item.properties.body).toBe("User body\n");
+      expect(remote.item.properties.keep).toBe("é");
+    },
+  );
+
   it("keeps authored YAML bytes while first push adds metadata and a remote edit changes one value", async () => {
     const folder = join(dir, "styled");
     mkdirSync(folder);

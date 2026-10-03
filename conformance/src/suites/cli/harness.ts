@@ -58,6 +58,7 @@ const INHERITED = [
   "LANG",
   "XDG_RUNTIME_DIR",
   "MARFA_FOLDER_REGISTRY",
+  "MARFA_TEST_FAULT",
 ];
 
 /** The long-running children a file started, killed when the file ends. */
