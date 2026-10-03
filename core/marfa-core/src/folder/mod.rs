@@ -4345,7 +4345,10 @@ mod tests {
             let mut report = PullReport::default();
             let outcome =
                 folder.write_placed(&entry, &rendering, &Default::default(), None, &mut report);
-            assert_eq!(outcome, Err(CoreError::RenewalFailed(Box::new(expected))));
+            assert_eq!(
+                outcome.err(),
+                Some(CoreError::RenewalFailed(Box::new(expected)))
+            );
             assert_eq!(report.absent, 0);
             assert_eq!(folder.core.queue().unwrap(), before);
             assert!(!dir.path().join("fixture.bin").exists());
