@@ -1707,6 +1707,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1723,6 +1724,7 @@ export interface components {
         };
         /** @description An error response. */
         UnauthorizedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1739,6 +1741,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1755,6 +1758,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1818,6 +1822,7 @@ export interface components {
         };
         /** @description An error response. */
         ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1834,6 +1839,7 @@ export interface components {
         };
         /** @description An error response. */
         UnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1850,6 +1856,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgePermissionDeniedOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1877,6 +1884,7 @@ export interface components {
         };
         /** @description An error response. */
         MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1925,6 +1933,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1941,6 +1950,7 @@ export interface components {
         };
         /** @description An error response. */
         TypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1957,6 +1967,7 @@ export interface components {
         };
         /** @description An error response. */
         ItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -1977,6 +1988,7 @@ export interface components {
         };
         /** @description An error response. */
         LinkTakenOrSourceIdConflictOrTypeMismatchRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2002,6 +2014,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2018,6 +2031,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrInvalidTransitionOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2034,6 +2048,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2050,6 +2065,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2069,6 +2085,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2085,6 +2102,7 @@ export interface components {
         };
         /** @description An error response. */
         ForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2115,7 +2133,7 @@ export interface components {
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row. */
             id?: string;
             /**
-             * @description Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, the edge exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.
+             * @description Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.
              * @enum {string}
              */
             reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed";
@@ -2132,6 +2150,7 @@ export interface components {
         };
         /** @description An error response. */
         BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2148,6 +2167,7 @@ export interface components {
         };
         /** @description An error response. */
         BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2164,6 +2184,7 @@ export interface components {
         };
         /** @description An error response. */
         BulkAtomicRollbackRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2213,6 +2234,7 @@ export interface components {
         BulkActionJobStatus: "queued" | "in_progress" | "completed" | "failed" | "canceled";
         /** @description An error response. */
         BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2241,6 +2263,7 @@ export interface components {
         };
         /** @description An error response. */
         ForbiddenRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2257,6 +2280,7 @@ export interface components {
         };
         /** @description An error response. */
         BulkJobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2281,6 +2305,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2304,6 +2329,7 @@ export interface components {
         };
         /** @description An error response. */
         ValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2323,6 +2349,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2339,6 +2366,7 @@ export interface components {
         };
         /** @description An error response. */
         IdReusedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2355,6 +2383,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2371,6 +2400,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2391,6 +2421,7 @@ export interface components {
         };
         /** @description An error response. */
         BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2437,6 +2468,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2453,6 +2485,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgePermissionDeniedOrForbiddenRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2469,6 +2502,7 @@ export interface components {
         };
         /** @description An error response. */
         ConflictRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2511,6 +2545,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeTypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2527,6 +2562,7 @@ export interface components {
         };
         /** @description An error response. */
         EdgeTypeInUseRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2600,6 +2636,7 @@ export interface components {
         };
         /** @description An error response. */
         TypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2616,6 +2653,7 @@ export interface components {
         };
         /** @description An error response. */
         TypeChainUnresolvableRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2635,6 +2673,7 @@ export interface components {
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2651,6 +2690,7 @@ export interface components {
         };
         /** @description An error response. */
         LinkTakenOrTypeAlreadyExistsRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2667,6 +2707,7 @@ export interface components {
         };
         /** @description An error response. */
         CompatibleWithViolationRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2707,6 +2748,7 @@ export interface components {
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2723,6 +2765,7 @@ export interface components {
         };
         /** @description An error response. */
         CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2739,6 +2782,7 @@ export interface components {
         };
         /** @description An error response. */
         LinkTakenRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2778,6 +2822,7 @@ export interface components {
         };
         /** @description An error response. */
         TypeHasSubtypesOrTypeInUseRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2848,6 +2893,7 @@ export interface components {
         };
         /** @description An error response. */
         MissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2899,6 +2945,7 @@ export interface components {
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2915,6 +2962,7 @@ export interface components {
         };
         /** @description An error response. */
         RangeNotSatisfiableRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2945,6 +2993,7 @@ export interface components {
         };
         /** @description An error response. */
         BlobLocationNotFoundOrBlobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -2961,6 +3010,7 @@ export interface components {
         };
         /** @description An error response. */
         CopiesBelowMinimumRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3006,6 +3056,7 @@ export interface components {
         };
         /** @description An error response. */
         HousekeepingJobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3022,6 +3073,7 @@ export interface components {
         };
         /** @description An error response. */
         HousekeepingJobRunningRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3067,6 +3119,7 @@ export interface components {
         };
         /** @description An error response. */
         ConnectorNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3104,6 +3157,7 @@ export interface components {
         };
         /** @description An error response. */
         ConnectorNotFoundOrEndpointNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3147,6 +3201,7 @@ export interface components {
         };
         /** @description An error response. */
         ConnectorNotFoundOrDeliveryNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3163,6 +3218,7 @@ export interface components {
         };
         /** @description An error response. */
         ConnectorHeldRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3232,6 +3288,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3248,6 +3305,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidIdOrInvalidTransitionRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3351,6 +3409,7 @@ export interface components {
         };
         /** @description An error response. */
         ApiKeyNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3387,6 +3446,7 @@ export interface components {
         };
         /** @description An error response. */
         InvalidPropertiesOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3403,6 +3463,7 @@ export interface components {
         };
         /** @description An error response. */
         ConflictOrLinkTakenRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3430,6 +3491,7 @@ export interface components {
         };
         /** @description An error response. */
         NotFoundOrTypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3453,6 +3515,7 @@ export interface components {
         };
         /** @description An error response. */
         OwnerNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3469,6 +3532,7 @@ export interface components {
         };
         /** @description An error response. */
         OwnerExistsRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3500,6 +3564,7 @@ export interface components {
         };
         /** @description An error response. */
         WebhookNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3551,6 +3616,7 @@ export interface components {
         };
         /** @description An error response. */
         RequestTooLargeRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3567,6 +3633,7 @@ export interface components {
         };
         /** @description An error response. */
         RateLimitedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3583,6 +3650,7 @@ export interface components {
         };
         /** @description An error response. */
         WriteContentionRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3599,6 +3667,7 @@ export interface components {
         };
         /** @description An error response. */
         ReadViewChangedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3615,6 +3684,7 @@ export interface components {
         };
         /** @description An error response. */
         IdempotencyKeyInFlightRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3631,6 +3701,7 @@ export interface components {
         };
         /** @description An error response. */
         IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3647,6 +3718,7 @@ export interface components {
         };
         /** @description An error response. */
         StreamCapacityExhaustedRefusal: {
+            /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
@@ -3724,7 +3796,7 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -3762,7 +3834,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3923,7 +3995,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4113,7 +4185,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4183,7 +4255,7 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -4224,7 +4296,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4368,7 +4440,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4571,7 +4643,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4742,7 +4814,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4920,7 +4992,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5091,7 +5163,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5210,7 +5282,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5336,7 +5408,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5473,7 +5545,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5610,7 +5682,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5749,7 +5821,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5917,7 +5989,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6079,7 +6151,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6301,7 +6373,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6436,7 +6508,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6540,7 +6612,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6681,7 +6753,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6816,7 +6888,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6947,7 +7019,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7063,7 +7135,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7189,7 +7261,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7316,7 +7388,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7449,7 +7521,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7550,7 +7622,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -7591,7 +7663,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7734,7 +7806,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7827,7 +7899,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -7865,7 +7937,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8018,7 +8090,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8147,7 +8219,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -8683,7 +8755,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8792,7 +8864,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -9165,7 +9237,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -9188,7 +9260,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeDefinitionPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9293,7 +9365,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9424,7 +9496,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeDefinition"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9547,7 +9619,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9696,7 +9768,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9862,7 +9934,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9970,7 +10042,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10056,7 +10128,7 @@ export interface operations {
                     "application/json": components["schemas"]["TagCountPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10165,7 +10237,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10251,7 +10323,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobOrphanPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10337,7 +10409,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobStorePage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10473,7 +10545,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10615,7 +10687,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10734,7 +10806,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10855,7 +10927,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10971,7 +11043,7 @@ export interface operations {
                     "application/json": components["schemas"]["HousekeepingJobPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11075,7 +11147,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11203,7 +11275,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11310,7 +11382,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11411,7 +11483,7 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11500,7 +11572,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11618,7 +11690,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11754,7 +11826,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11869,7 +11941,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11985,7 +12057,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpointPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12112,7 +12184,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12245,7 +12317,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12385,7 +12457,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12491,7 +12563,7 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12620,7 +12692,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12765,7 +12837,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12914,7 +12986,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13030,7 +13102,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorState"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13166,7 +13238,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13297,7 +13369,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13435,7 +13507,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13576,7 +13648,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13730,7 +13802,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13880,7 +13952,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14054,7 +14126,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14225,7 +14297,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14373,7 +14445,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKeyPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14502,7 +14574,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14596,7 +14668,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -14619,7 +14691,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14739,7 +14811,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14899,7 +14971,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15012,7 +15084,7 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15129,7 +15201,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15259,7 +15331,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidPropertiesOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15360,7 +15432,7 @@ export interface operations {
                     "application/json": components["schemas"]["DriftedPlatformTypePage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15452,7 +15524,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15580,7 +15652,7 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15706,7 +15778,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15848,7 +15920,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15934,7 +16006,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16045,7 +16117,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16146,7 +16218,7 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16250,7 +16322,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16391,7 +16463,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16512,7 +16584,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookDeliveryPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16774,7 +16846,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

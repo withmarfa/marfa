@@ -547,8 +547,7 @@ async function processBulkItem(
         result: { index, outcome: result.outcome, id: result.item.id },
       };
     case "unchanged":
-      // A repeat is the single create door's answer to its own id; a bulk
-      // entry naming one the caller wrote is an upsert onto it instead.
+      // Only `POST /items` is answered `repeat`; a bulk door never is.
       if (result.reason === "repeat") {
         throw new Error("unreachable: a bulk entry answered as a repeat");
       }
