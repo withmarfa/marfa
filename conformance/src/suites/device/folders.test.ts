@@ -6876,7 +6876,11 @@ describe("what frontmatter says", () => {
     });
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
-    put(harness, "Saying.md", "---\ntype: user.quote\n---\nWorth it.\n");
+    put(
+      harness,
+      "Saying.md",
+      "---\ntype: user.quote\ntext: Quoted\n---\nWorth it.\n",
+    );
     // The witness: the parent's own hints still name its title.
     put(harness, "Line.md", "---\ntype: core.highlight\n---\nKept.\n");
     const pushed = await harness.folder.push();
@@ -6886,7 +6890,10 @@ describe("what frontmatter says", () => {
       "a subtype naming only its body took its title field from its parent's hints, which the server's read of the type does not",
     ).toEqual([
       ["core.highlight", { note: "Kept.\n", text: "Line" }],
-      ["user.quote", { comment: "Worth it.\n", title: "Saying" }],
+      [
+        "user.quote",
+        { comment: "Worth it.\n", text: "Quoted", title: "Saying" },
+      ],
     ]);
   });
 

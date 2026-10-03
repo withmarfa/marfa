@@ -6792,7 +6792,12 @@ describe("drains that overlap", () => {
     const { device, server } = harness;
     for (const title of ["first", "second", "third"]) {
       expect(
-        (await device.create({ type: "core.note", properties: { title } })).ok,
+        (
+          await device.create({
+            type: "core.note",
+            properties: { title, body: title },
+          })
+        ).ok,
       ).toBe(true);
     }
     let release = (): void => {};
@@ -6864,7 +6869,7 @@ describe("a create the slice does not hold", () => {
     const { device, server } = harness;
     const created = await device.create({
       type: "core.note",
-      properties: { title: "no tier named" },
+      properties: { title: "no tier named", body: "no tier named" },
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
@@ -6890,7 +6895,7 @@ describe("a create the slice does not hold", () => {
     const created = await device.create({
       type: "core.note",
       tier: "library",
-      properties: { title: "another tier" },
+      properties: { title: "another tier", body: "another tier" },
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
@@ -6901,7 +6906,7 @@ describe("a create the slice does not hold", () => {
     const { edges: _edges, ...row } = wireItem({
       id,
       tier: "library",
-      properties: { title: "another tier" },
+      properties: { title: "another tier", body: "another tier" },
     });
     stream = copyReplay("11", [copyItemEvent("11", "item.created", row)]);
     expect((await device.catchUp()).ok).toBe(true);
