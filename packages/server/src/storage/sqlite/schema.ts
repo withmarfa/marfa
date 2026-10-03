@@ -618,6 +618,14 @@ export const bulkActionJobs = sqliteTable(
     input: text("input").notNull(),
     matched_ids: text("matched_ids").notNull(),
     matched_count: integer("matched_count").notNull().default(0),
+    claim_generation: integer("claim_generation").notNull().default(0),
+    next_offset: integer("next_offset").notNull().default(0),
+    checkpoint_json: text("checkpoint_json")
+      .notNull()
+      .default('{"ids":[],"errors":[]}'),
+    blob_hashes_referenced_count: integer("blob_hashes_referenced_count")
+      .notNull()
+      .default(0),
     processed_count: integer("processed_count").notNull().default(0),
     succeeded_count: integer("succeeded_count").notNull().default(0),
     errored_count: integer("errored_count").notNull().default(0),
@@ -633,6 +641,28 @@ export const bulkActionJobs = sqliteTable(
     index("idx_bulk_action_jobs_status").on(table.status),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
   ],
+);
+
+export const bulkActionJobCarriedItems = sqliteTable(
+  "bulk_action_job_carried_items",
+  {
+    job_id: text("job_id")
+      .notNull()
+      .references(() => bulkActionJobs.id, { onDelete: "cascade" }),
+    item_id: text("item_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.job_id, table.item_id] })],
+);
+
+export const bulkActionJobPurgeHashes = sqliteTable(
+  "bulk_action_job_purge_hashes",
+  {
+    job_id: text("job_id")
+      .notNull()
+      .references(() => bulkActionJobs.id, { onDelete: "cascade" }),
+    hash: text("hash").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.job_id, table.hash] })],
 );
 
 export const rateLimitWindows = sqliteTable(

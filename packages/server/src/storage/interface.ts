@@ -1,3 +1,4 @@
+import type { BulkActionErrorEntry } from "../bulk-actions/types.js";
 import type { ReplayRequirement } from "../middleware/replay-requirements.js";
 import type {
   Item,
@@ -2659,6 +2660,11 @@ export interface BulkActionJobRow {
   processed_count: number;
   succeeded_count: number;
   errored_count: number;
+  /** Private durable cursor and owner fence. */
+  claim_generation: number;
+  next_offset: number;
+  checkpoint_json: string;
+  blob_hashes_referenced_count: number;
   /** Final BulkActionResult envelope, JSON-encoded. Populated on
    *  `completed`. */
   result: string | null;
@@ -2682,10 +2688,17 @@ export interface CreateBulkActionJobInput {
   created_at: string;
 }
 
-export interface BulkActionJobProgress {
-  processed_count: number;
-  succeeded_count: number;
-  errored_count: number;
+export interface BulkActionJobLease {
+  jobId: string;
+  workerId: string;
+  generation: number;
+}
+
+export interface BulkActionCheckpointDelta {
+  succeeded: readonly string[];
+  errors: readonly BulkActionErrorEntry[];
+  carried?: ReadonlySet<string>;
+  blobHashes?: ReadonlySet<string>;
 }
 
 export interface BulkActionJobStore {
@@ -2706,42 +2719,43 @@ export interface BulkActionJobStore {
    * claimed row, or `null` if the queue is empty.
    */
   claimNext(workerId: string, now: string): Promise<BulkActionJobRow | null>;
-  /** Bump progress counts + heartbeat. Idempotent — over-writes
-   *  whatever was there before, doesn't sum. */
-  updateProgress(
-    id: string,
-    progress: BulkActionJobProgress,
-    heartbeatAt: string,
-  ): Promise<void>;
-  /** Terminal `completed`. Writes the result envelope, sets
-   *  `finished_at`, clears `worker_heartbeat_at`. Changes the job only while
-   *  it is `queued` or `in_progress`: a job canceled meanwhile stays
-   *  canceled. */
-  complete(
-    id: string,
-    result: string,
-    finalCounts: BulkActionJobProgress,
-    finishedAt: string,
-  ): Promise<void>;
-  /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
-   *  the job only while it is `queued` or `in_progress`, as `complete` does.
-   *  A job stopped partway passes what it had done, which is written as
-   *  `complete` writes it. */
-  fail(
-    id: string,
-    error: string,
-    finishedAt: string,
-    sofar?: { result: string; counts: BulkActionJobProgress },
-  ): Promise<void>;
+  /** Refresh and read a still-owned cursor inside the chunk transaction. */
+  beginChunk(
+    lease: BulkActionJobLease,
+    expectedOffset: number,
+    now: string,
+  ): Promise<BulkActionJobRow | null>;
+  /** Commit summaries and ledgers at an owned cursor; refusal throws to roll back the chunk. */
+  checkpointChunk(
+    lease: BulkActionJobLease,
+    fromOffset: number,
+    toOffset: number,
+    delta: BulkActionCheckpointDelta,
+    now: string,
+  ): Promise<BulkActionJobRow>;
+  carriedItems(
+    jobId: string,
+    ids: readonly string[],
+  ): Promise<ReadonlySet<string>>;
+  completeOwned(
+    lease: BulkActionJobLease,
+    expectedOffset: number,
+    now: string,
+  ): Promise<boolean>;
+  failOwned(
+    lease: BulkActionJobLease,
+    reason: string,
+    now: string,
+  ): Promise<boolean>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
    *  The worker observes the flag between chunks. */
   cancel(id: string, finishedAt: string): Promise<boolean>;
   /**
-   * Boot-time recovery: any `in_progress` job whose
+   * Periodic recovery: any `in_progress` job whose
    * `worker_heartbeat_at` is older than `staleBeforeIso` is reset to
-   * `queued`. Returns the number of rows reset. Called once on server
-   * boot before the worker loop starts.
+   * `queued`, invalidating its owner and preserving its checkpoint. Returns
+   * the number of rows reset.
    */
   recoverStale(staleBeforeIso: string): Promise<number>;
   /**
@@ -3179,6 +3193,11 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   connectors: ConnectorStore;
   connectorState: ConnectorStateStore;
   inbound: InboundStore;
-  runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
+  /** Refuse further work when the current root transaction ended or became uncertain. */
+  assertTransactionUsable(): void;
+  runInTransaction<T>(
+    fn: () => T | Promise<T>,
+    options?: { retainCommitHooksOnUncertain?: boolean },
+  ): Promise<T>;
   close(): Promise<void>;
 }

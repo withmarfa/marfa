@@ -145,13 +145,13 @@ describe("subscribeAll under a burst", () => {
     await frames.return(undefined);
   });
 
-  it("takes both listeners off the bus when it is closed", async () => {
+  it("takes all live listeners off the bus when it is closed", async () => {
     const before = __listenerCountForTests();
     const frames = subscribeAll();
     const first = frames.next();
     // Attached, and the count is the witness that closing has something
     // to remove.
-    expect(__listenerCountForTests()).toBe(before + 2);
+    expect(__listenerCountForTests()).toBe(before + 3);
 
     emitWake(itemEvent(1));
     await first;
@@ -159,12 +159,12 @@ describe("subscribeAll under a burst", () => {
     expect(__listenerCountForTests()).toBe(before);
   });
 
-  it("takes both listeners off the bus when its signal aborts", async () => {
+  it("takes all live listeners off the bus when its signal aborts", async () => {
     const before = __listenerCountForTests();
     const controller = new AbortController();
     const frames = subscribeAll({ signal: controller.signal });
     const first = frames.next();
-    expect(__listenerCountForTests()).toBe(before + 2);
+    expect(__listenerCountForTests()).toBe(before + 3);
 
     controller.abort();
     expect((await first).done).toBe(true);

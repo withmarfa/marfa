@@ -25,6 +25,10 @@ function makeRow(): BulkActionJobRow {
     input: JSON.stringify({ action: "transition", state: "trashed" }),
     matched_ids: "[]",
     matched_count: 0,
+    claim_generation: 1,
+    next_offset: 0,
+    checkpoint_json: '{"ids":[],"errors":[]}',
+    blob_hashes_referenced_count: 0,
     processed_count: 0,
     succeeded_count: 0,
     errored_count: 0,
@@ -32,7 +36,7 @@ function makeRow(): BulkActionJobRow {
     error: null,
     worker_id: "w",
     worker_heartbeat_at: null,
-    created_at: "2026-01-01T00:00:00.000Z",
+    created_at: new Date().toISOString(),
     started_at: null,
     finished_at: null,
   };
@@ -60,9 +64,8 @@ function makeStubStorage(): StubControls {
       return Promise.resolve(null);
     },
     getById: () => Promise.resolve(makeRow()),
-    complete: () => Promise.resolve(),
-    updateProgress: () => Promise.resolve(),
-    fail: () => Promise.resolve(),
+    completeOwned: () => Promise.resolve(true),
+    failOwned: () => Promise.resolve(true),
   };
   const storage = { bulkActionJobs: jobs as BulkActionJobStore } as Storage;
   return {
@@ -316,9 +319,8 @@ describe("BulkActionWorker.wake", () => {
         return Promise.resolve(null);
       },
       getById: () => Promise.resolve(makeRow()),
-      complete: () => Promise.resolve(),
-      updateProgress: () => Promise.resolve(),
-      fail: () => Promise.resolve(),
+      completeOwned: () => Promise.resolve(true),
+      failOwned: () => Promise.resolve(true),
     };
     const worker = new BulkActionWorker({
       storage: { bulkActionJobs: jobs as BulkActionJobStore } as Storage,

@@ -1,3 +1,4 @@
+import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
 import { setImmediate } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -214,32 +215,26 @@ describe("bulk actions give other requests an event-loop turn", () => {
     const job = (await response.json()) as { id: string };
     let cancellation: Promise<void> | undefined;
     let observed: { status: string; processed: number } | undefined;
-    const progress = ctx.storage.bulkActionJobs.updateProgress.bind(
-      ctx.storage.bulkActionJobs,
-    );
-    vi.spyOn(ctx.storage.bulkActionJobs, "updateProgress").mockImplementation(
-      async (...args) => {
-        await progress(...args);
-        cancellation ??= new Promise((resolve, reject) =>
-          setImmediate(() => {
-            void (async () => {
-              const row = await ctx.storage.bulkActionJobs.getById(job.id);
-              observed = {
-                status: row!.status,
-                processed: row!.processed_count,
-              };
-              const canceled = await request(
-                ctx.app,
-                "DELETE",
-                `/items/bulk-actions/jobs/${job.id}`,
-                { key: ctx.workingKey },
-              );
-              expect(canceled.status).toBe(200);
-            })().then(resolve, reject);
-          }),
-        );
-      },
-    );
+    afterBulkChunkCommit(ctx.storage, () => {
+      cancellation ??= new Promise((resolve, reject) =>
+        setImmediate(() => {
+          void (async () => {
+            const row = await ctx.storage.bulkActionJobs.getById(job.id);
+            observed = {
+              status: row!.status,
+              processed: row!.processed_count,
+            };
+            const canceled = await request(
+              ctx.app,
+              "DELETE",
+              `/items/bulk-actions/jobs/${job.id}`,
+              { key: ctx.workingKey },
+            );
+            expect(canceled.status).toBe(200);
+          })().then(resolve, reject);
+        }),
+      );
+    });
     const worker = new BulkActionWorker({ storage: ctx.storage, chunkSize: 1 });
     expect(await worker.runOnce()).toBe(true);
     await cancellation;
@@ -321,25 +316,19 @@ describe("bulk actions give other requests an event-loop turn", () => {
     expect(response.status).toBe(202);
     const job = (await response.json()) as { id: string };
     let withdrawn: Promise<void> | undefined;
-    const progress = ctx.storage.bulkActionJobs.updateProgress.bind(
-      ctx.storage.bulkActionJobs,
-    );
-    vi.spyOn(ctx.storage.bulkActionJobs, "updateProgress").mockImplementation(
-      async (...args) => {
-        await progress(...args);
-        withdrawn ??= new Promise((resolve, reject) =>
-          setImmediate(() => {
-            void request(ctx.app, "DELETE", `/keys/${credential.id}`, {
-              key: ctx.workingKey,
+    afterBulkChunkCommit(ctx.storage, () => {
+      withdrawn ??= new Promise((resolve, reject) =>
+        setImmediate(() => {
+          void request(ctx.app, "DELETE", `/keys/${credential.id}`, {
+            key: ctx.workingKey,
+          })
+            .then((revoked) => {
+              expect(revoked.status).toBe(200);
             })
-              .then((revoked) => {
-                expect(revoked.status).toBe(200);
-              })
-              .then(resolve, reject);
-          }),
-        );
-      },
-    );
+            .then(resolve, reject);
+        }),
+      );
+    });
     const worker = new BulkActionWorker({ storage: ctx.storage, chunkSize: 1 });
     expect(await worker.runOnce()).toBe(true);
     await withdrawn;
@@ -362,28 +351,22 @@ describe("bulk actions give other requests an event-loop turn", () => {
     expect(response.status).toBe(202);
     const job = (await response.json()) as { id: string };
     let inserted: Promise<string> | undefined;
-    const progress = ctx.storage.bulkActionJobs.updateProgress.bind(
-      ctx.storage.bulkActionJobs,
-    );
-    vi.spyOn(ctx.storage.bulkActionJobs, "updateProgress").mockImplementation(
-      async (...args) => {
-        await progress(...args);
-        inserted ??= new Promise((resolve, reject) =>
-          setImmediate(() => {
-            void itemWrites(ctx.storage)
-              .create({
-                type: "core.note",
-                properties: { body: "latermatch" },
-                source: "yield-fixture",
-                source_id: "later",
-              })
-              .then((item) => {
-                resolve(item.id);
-              }, reject);
-          }),
-        );
-      },
-    );
+    afterBulkChunkCommit(ctx.storage, () => {
+      inserted ??= new Promise((resolve, reject) =>
+        setImmediate(() => {
+          void itemWrites(ctx.storage)
+            .create({
+              type: "core.note",
+              properties: { body: "latermatch" },
+              source: "yield-fixture",
+              source_id: "later",
+            })
+            .then((item) => {
+              resolve(item.id);
+            }, reject);
+        }),
+      );
+    });
     const worker = new BulkActionWorker({ storage: ctx.storage, chunkSize: 1 });
     expect(await worker.runOnce()).toBe(true);
     const later = await inserted;

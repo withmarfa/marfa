@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "./index.js";
 import type { BulkActionJobStore, Storage } from "../interface.js";
+import { jobLease } from "../../bulk-actions/checkpoint.js";
 import { BulkActionWorker } from "../../bulk-actions/worker.js";
 
-const T0 = Date.parse("2026-09-20T12:00:00.000Z");
+const T0 = Date.now();
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
-const counts = { processed_count: 1, succeeded_count: 1, errored_count: 0 };
 
 let tmpDir: string | undefined;
 let storage: Storage | undefined;
@@ -36,6 +36,8 @@ async function inProgressJob(
   });
   const claimed = await jobs.claimNext("worker", at(1));
   expect(claimed?.id).toBe(id);
+  if (!claimed) throw new Error("fixture job did not claim");
+  return jobLease(claimed);
 }
 
 afterEach(async () => {
@@ -48,10 +50,10 @@ afterEach(async () => {
 describe("SqliteBulkActionJobStore terminal states", () => {
   it("leaves a canceled job canceled when the worker then completes it", async () => {
     const jobs = (await open()).bulkActionJobs;
-    await inProgressJob(jobs, "baj_c");
+    const lease = await inProgressJob(jobs, "baj_c");
     expect(await jobs.cancel("baj_c", at(2))).toBe(true);
 
-    await jobs.complete("baj_c", "{}", counts, at(3));
+    expect(await jobs.completeOwned(lease, 0, at(3))).toBe(false);
 
     const row = await jobs.getById("baj_c");
     expect(row?.status).toBe("canceled");
@@ -61,10 +63,10 @@ describe("SqliteBulkActionJobStore terminal states", () => {
 
   it("leaves a canceled job canceled when the worker then fails it", async () => {
     const jobs = (await open()).bulkActionJobs;
-    await inProgressJob(jobs, "baj_f");
+    const lease = await inProgressJob(jobs, "baj_f");
     expect(await jobs.cancel("baj_f", at(2))).toBe(true);
 
-    await jobs.fail("baj_f", "boom", at(3));
+    expect(await jobs.failOwned(lease, "boom", at(3))).toBe(false);
 
     const row = await jobs.getById("baj_f");
     expect(row?.status).toBe("canceled");
@@ -73,18 +75,24 @@ describe("SqliteBulkActionJobStore terminal states", () => {
 
   it("still completes and fails a job that is in progress", async () => {
     const jobs = (await open()).bulkActionJobs;
-    await inProgressJob(jobs, "baj_ok");
-    await jobs.complete("baj_ok", "{}", counts, at(2));
+    const lease = await inProgressJob(jobs, "baj_ok");
+    await jobs.checkpointChunk(
+      lease,
+      0,
+      1,
+      { succeeded: ["a"], errors: [] },
+      at(2),
+    );
     expect((await jobs.getById("baj_ok"))?.status).toBe("completed");
 
-    await inProgressJob(jobs, "baj_bad");
-    await jobs.fail("baj_bad", "boom", at(2));
+    const bad = await inProgressJob(jobs, "baj_bad");
+    await jobs.failOwned(bad, "boom", at(2));
     const failed = await jobs.getById("baj_bad");
     expect(failed?.status).toBe("failed");
     expect(failed?.error).toBe("boom");
   });
 
-  it("keeps a job canceled during its last chunk, with the rows already processed", async () => {
+  it("finishes the last chunk atomically before a later cancellation", async () => {
     const s = await open();
     // The worker acts only for a credential that still stands.
     const key = await s.keys.create(
@@ -103,13 +111,14 @@ describe("SqliteBulkActionJobStore terminal states", () => {
     // Back to queued so the worker claims it itself.
     await s.bulkActionJobs.recoverStale(at(60_000));
 
-    // The cancel lands after the worker's check at the top of the only
-    // chunk, which is the window the store has to close.
     const jobs = s.bulkActionJobs;
-    const updateProgress = jobs.updateProgress.bind(jobs);
-    jobs.updateProgress = async (id, progress, heartbeatAt) => {
-      await updateProgress(id, progress, heartbeatAt);
-      await jobs.cancel(id, at(2));
+    const original = s.runInTransaction.bind(s);
+    let canceled: boolean | undefined;
+    s.runInTransaction = async (fn) => {
+      const result = await original(fn);
+      if ((await jobs.getById("baj_w"))?.status === "completed")
+        canceled = await jobs.cancel("baj_w", at(2));
+      return result;
     };
 
     const worker = new BulkActionWorker({
@@ -119,8 +128,9 @@ describe("SqliteBulkActionJobStore terminal states", () => {
     expect(await worker.runOnce()).toBe(true);
 
     const row = await jobs.getById("baj_w");
-    expect(row?.status).toBe("canceled");
+    expect(canceled).toBe(false);
+    expect(row?.status).toBe("completed");
     expect(row?.processed_count).toBe(1);
-    expect(row?.result).toBeNull();
+    expect(row?.result).not.toBeNull();
   });
 });

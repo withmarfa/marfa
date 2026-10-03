@@ -24,6 +24,7 @@
  * Each row's events are written with the row, inside the chunk's
  * transaction, and reach this process's subscribers once it commits.
  */
+import { originalErrorMessage } from "../storage/sqlite/transaction-control.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { Storage } from "../storage/interface.js";
 import type { Metadata } from "@withmarfa/shared";
@@ -43,6 +44,8 @@ export interface ChunkOutcome {
    *  referenced by the items in this chunk. The worker unions these
    *  across chunks for the final response envelope. */
   blob_hashes?: Set<string>;
+  /** Cascade membership becomes durable with the worker checkpoint. */
+  carried?: ReadonlySet<string>;
 }
 
 export interface RunChunkContext {
@@ -58,7 +61,7 @@ export interface RunChunkContext {
    * set too, and moving it again would refuse a row that is already where
    * the job put it.
    */
-  carried?: Set<string>;
+  carried?: ReadonlySet<string>;
   /** The credential that queued the job, as the worker resolved it for this
    *  chunk; its enforcement override is resolved against the levers as it
    *  is on the door it called. */
@@ -102,8 +105,6 @@ async function runTransitionChunk({
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const alreadyCarried = carriedByJob ?? new Set<string>();
-  // Joined to the job's set only once this chunk's transaction commits: a
-  // chunk rolled back as a whole carried nothing.
   const carriedInChunk = new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
@@ -126,12 +127,13 @@ async function runTransitionChunk({
         }
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
-  for (const id of carriedInChunk) alreadyCarried.add(id);
-  return { succeeded, errors };
+  return { succeeded, errors, carried: carriedInChunk };
 }
 
 async function runPurgeChunk({
@@ -160,9 +162,11 @@ async function runPurgeChunk({
         collectBlobHashes(result.item.properties, blob_hashes);
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors, blob_hashes };
 }
@@ -217,9 +221,11 @@ async function runUpdateTagsChunk({
         });
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors };
 }
@@ -294,9 +300,11 @@ async function runUpdateChunk(
           });
         }
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors };
 }
@@ -320,11 +328,11 @@ function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
     };
   }
   if (err instanceof Error && "code" in err && typeof err.code === "string") {
-    return { id, code: err.code, message: err.message };
+    return { id, code: err.code, message: originalErrorMessage(err) };
   }
   return {
     id,
     code: "internal_error",
-    message: err instanceof Error ? err.message : String(err),
+    message: originalErrorMessage(err),
   };
 }

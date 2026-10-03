@@ -1,3 +1,4 @@
+import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
 import { setImmediate } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -247,44 +248,38 @@ describe("bulk actions retain current source visibility across yields", () => {
       const ids = JSON.parse(queued.matched_ids) as string[];
       const target = (await ctx.storage.items.get(ids[1]!))!;
       let changed: Promise<void> | undefined;
-      const progress = ctx.storage.bulkActionJobs.updateProgress.bind(
-        ctx.storage.bulkActionJobs,
-      );
-      vi.spyOn(ctx.storage.bulkActionJobs, "updateProgress").mockImplementation(
-        async (...args) => {
-          await progress(...args);
-          changed ??= new Promise((resolve, reject) =>
-            setImmediate(() => {
-              void (async () => {
-                if (change === "lever narrowing") {
-                  const filter = {
-                    types: ["core.note"],
-                    sources: ["other-source"],
-                  };
-                  if (mode === "instance")
-                    await writeInstanceConfig(ctx.storage.settings, {
-                      enforcement: { source_filter: filter },
-                    });
-                  else {
-                    const narrowed = await request(
-                      ctx.app,
-                      "PATCH",
-                      `/keys/${key.id}`,
-                      {
-                        key: ctx.workingKey,
-                        body: {
-                          enforcement_override: { source_filter: filter },
-                        },
+      afterBulkChunkCommit(ctx.storage, () => {
+        changed ??= new Promise((resolve, reject) =>
+          setImmediate(() => {
+            void (async () => {
+              if (change === "lever narrowing") {
+                const filter = {
+                  types: ["core.note"],
+                  sources: ["other-source"],
+                };
+                if (mode === "instance")
+                  await writeInstanceConfig(ctx.storage.settings, {
+                    enforcement: { source_filter: filter },
+                  });
+                else {
+                  const narrowed = await request(
+                    ctx.app,
+                    "PATCH",
+                    `/keys/${key.id}`,
+                    {
+                      key: ctx.workingKey,
+                      body: {
+                        enforcement_override: { source_filter: filter },
                       },
-                    );
-                    expect(narrowed.status).toBe(200);
-                  }
-                } else await changeRow(target, change);
-              })().then(resolve, reject);
-            }),
-          );
-        },
-      );
+                    },
+                  );
+                  expect(narrowed.status).toBe(200);
+                }
+              } else await changeRow(target, change);
+            })().then(resolve, reject);
+          }),
+        );
+      });
       const worker = new BulkActionWorker({
         storage: ctx.storage,
         chunkSize: 1,
