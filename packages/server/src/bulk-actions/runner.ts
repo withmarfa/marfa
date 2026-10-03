@@ -24,6 +24,7 @@
  * Each row's events are written with the row, inside the chunk's
  * transaction, and reach this process's subscribers once it commits.
  */
+import { originalErrorMessage } from "../storage/sqlite/transaction-control.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { Storage } from "../storage/interface.js";
 import type { Metadata } from "@withmarfa/shared";
@@ -327,11 +328,11 @@ function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
     };
   }
   if (err instanceof Error && "code" in err && typeof err.code === "string") {
-    return { id, code: err.code, message: err.message };
+    return { id, code: err.code, message: originalErrorMessage(err) };
   }
   return {
     id,
     code: "internal_error",
-    message: err instanceof Error ? err.message : String(err),
+    message: originalErrorMessage(err),
   };
 }
