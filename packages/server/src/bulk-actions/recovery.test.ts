@@ -207,7 +207,6 @@ describe("bulk transaction loss and durable recovery", () => {
     expect(thrown).toBeDefined();
     expect(actual).toEqual([[], [], []]);
     expect(events).toHaveLength(0);
-    // The assertions above disprove the old autocommit claim on this base.
     expect
       .soft(
         rowAttempts,

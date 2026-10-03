@@ -55,9 +55,12 @@ export async function withCommitHooks<T>(
 ): Promise<T> {
   const parent = frames.getStore();
   const frame: Frame = { pending: [], state: "pending" };
-  if (!parent) roots.push(frame);
   try {
-    const result = await open(() => frames.run(frame, async () => await fn()));
+    const result = await open(() => {
+      // BEGIN retries can change writer order before this body is admitted.
+      if (!parent) roots.push(frame);
+      return frames.run(frame, async () => await fn());
+    });
     if (parent) parent.pending.push(...frame.pending);
     else settle(frame, "committed");
     return result;
@@ -79,7 +82,7 @@ export async function withCommitHooks<T>(
     throw error;
   } finally {
     // A lost reconciliation must not retain an unbounded succession of
-    // later frames. Existing subscribers reconnect before a gap is released.
+    // later frames. Signal incomplete live delivery before releasing a gap.
     if (
       roots[0]?.state === "uncertain" &&
       (roots.length >= MAX_HELD_ROOT_FRAMES ||
