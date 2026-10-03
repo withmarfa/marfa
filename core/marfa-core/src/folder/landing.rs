@@ -79,6 +79,15 @@ pub(crate) fn land(
             keep_attributes(target, &beside);
         }
         fill(&mut file, &beside)?;
+        if super::fault::named("sync-failure").is_some_and(|name| {
+            target
+                .file_name()
+                .is_some_and(|file| file.to_string_lossy() == name)
+        }) {
+            return Err(Unlanded::Failed(io::Error::other(
+                "sync refused by fixture",
+            )));
+        }
         file.sync_all()?;
         drop(file);
         save_meanwhile(target);
@@ -91,6 +100,7 @@ pub(crate) fn land(
             return Err(Unlanded::Changed);
         }
         crash_if_asked(target);
+        crash_if_named(target, "crash-before-copy-publish");
         appear_if_asked(target, "create-before-rename")?;
         if found.is_none() {
             rename_new(&beside, target).map_err(|error| {
@@ -151,11 +161,25 @@ pub(crate) fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
 /// Removes `target` where `still` says its bytes are what the caller decided
 /// to remove. Answers whether it did; a target already gone answers `false`.
 pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> {
+    remove_checked(target, still).map_err(|error| match error {
+        RemoveError::Read(error) | RemoveError::Remove(error) => error,
+    })
+}
+
+pub(crate) enum RemoveError {
+    Read(io::Error),
+    Remove(io::Error),
+}
+
+pub(crate) fn remove_checked(
+    target: &Path,
+    still: impl FnOnce(&[u8]) -> bool,
+) -> Result<bool, RemoveError> {
     save_meanwhile(target);
     let found = match std::fs::read(target) {
         Ok(found) => found,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
+        Err(error) => return Err(RemoveError::Read(error)),
     };
     if !still(&found) {
         return Ok(false);
@@ -163,27 +187,38 @@ pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Re
     match std::fs::remove_file(target) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
+        Err(error) => Err(RemoveError::Remove(error)),
     }
 }
 
 /// A crash between a write's record and its rename, where a fixture asks.
 pub(crate) fn crash_if_asked(target: &Path) {
-    if super::fault::named("crash-before-rename").is_some_and(|name| {
+    crash_if_named(target, "crash-before-rename");
+}
+
+pub(crate) fn crash_if_named(target: &Path, fault: &str) {
+    if super::fault::named(fault).is_some_and(|name| {
         target
             .file_name()
             .is_some_and(|file| file.to_string_lossy() == name)
     }) {
-        eprintln!(
-            "crashing before {} lands, as MARFA_TEST_FAULT asks",
-            target.display()
-        );
+        eprintln!("crashing at {} as MARFA_TEST_FAULT asks", target.display());
         std::process::abort();
     }
 }
 
 /// A competing file arriving after the last check, where a debug fixture asks.
 pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
+    #[cfg(unix)]
+    if fault == "create-before-rename"
+        && super::fault::named("symlink-before-rename").is_some_and(|name| {
+            target
+                .file_name()
+                .is_some_and(|file| file.to_string_lossy() == name)
+        })
+    {
+        return std::os::unix::fs::symlink("absent-fixture-target", target);
+    }
     if super::fault::named(fault).is_some_and(|name| {
         target
             .file_name()
@@ -272,7 +307,12 @@ fn beside(dir: &Path) -> io::Result<(File, PathBuf)> {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        match File::options().write(true).create_new(true).open(&path) {
+        match File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(file) => return Ok((file, path)),
             // Left by a crashed process that had this id.
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}

@@ -5,9 +5,11 @@ import {
   cpSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -15738,6 +15740,451 @@ describe("folders on one Mac", () => {
     expect(deletesOf(a.server, alsoGone)).toBe(1);
   });
 
+  function denySourceRemoval(source: string, immutable: boolean): () => void {
+    if (immutable) {
+      execFileSync("chflags", ["uchg", source]);
+      expect(() =>
+        renameSync(source, join(source, "..", "refused-move")),
+      ).toThrow();
+      return () => {
+        if (existsSync(source)) execFileSync("chflags", ["nouchg", source]);
+      };
+    }
+    const parent = join(source, "..");
+    chmodSync(parent, 0o555);
+    expect(() => renameSync(source, join(parent, "refused-move"))).toThrow();
+    return () => chmodSync(parent, 0o755);
+  }
+
+  it("refuses an ordinary source removal denial instead of copying", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000029c1",
+      properties: { title: "Plan", body: "permission refusal\n" },
+    };
+    const control = {
+      id: "01a00000-0000-7000-8000-0000000029c2",
+      properties: { title: "Control", body: "ordinary move\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "ordinary-source-denial",
+      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: control, tags: ["a"] },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await b.folder.pull()).ok).toBe(true);
+    expect((await a.folder.push()).ok).toBe(true);
+    edges.relocate(plan.id, a.settings.id, "Retained/Plan.md");
+    const source = join(a.dir, "Retained/Plan.md");
+    expect((await a.folder.push()).ok).toBe(true);
+    const before = readFileSync(source);
+    const allowRemoval = denySourceRemoval(source, false);
+    try {
+      for (const item of [plan, control]) {
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem(item),
+            { tags: ["b"] },
+          ),
+        );
+      }
+      expect((await a.folder.push()).ok).toBe(true);
+      const refused = await b.folder.push();
+      expect(
+        refused.ok && [
+          refused.value.pull?.taken,
+          refused.value.pull?.unwritten,
+        ],
+      ).toEqual([1, 1]);
+      expect(readFileSync(source)).toEqual(before);
+      expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+      expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
+      expect(read(b, "Control.md")).toContain("ordinary move");
+      const status = await a.folder.status();
+      expect(
+        status.ok &&
+          status.value.files.find((file) => file.path === "Retained/Plan.md")
+            ?.item_id,
+      ).toBe(plan.id);
+      allowRemoval();
+      const retried = await b.folder.pull();
+      expect(retried.ok && retried.value.taken).toBe(1);
+      expect(readFileSync(join(b.dir, "Plan.md"))).toEqual(before);
+      expect(existsSync(source)).toBe(false);
+      const quiet = await b.folder.scan();
+      expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
+        0, 0,
+      ]);
+    } finally {
+      allowRemoval();
+    }
+  });
+
+  it.each([
+    { mode: "protected", later: "remove" },
+    { mode: "cross-volume-control", later: "remove" },
+    { mode: "protected", later: "edit" },
+    { mode: "directory-control", later: "remove" },
+    { mode: "directory-control", later: "edit" },
+  ])(
+    "takes in a readable source and preserves denied-removal ownership ($mode, $later)",
+    async ({ mode, later }) => {
+      const locked = {
+        id: "01a00000-0000-7000-8000-0000000029a1",
+        properties: { title: "Locked", body: "kept source bytes\n" },
+      };
+      const control = {
+        id: "01a00000-0000-7000-8000-0000000029a2",
+        properties: { title: "Control", body: "ordinary move\n" },
+      };
+      const stay = {
+        id: "01a00000-0000-7000-8000-0000000029a3",
+        properties: { title: "Stay", body: "continuation before\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        "protected-source",
+        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [
+            { item: locked, tags: ["a"] },
+            { item: control, tags: ["a"] },
+            { item: stay, tags: ["a"] },
+          ],
+        },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      const sourceKey = "Retained/Locked.md";
+      expect((await a.folder.push()).ok).toBe(true);
+      edges.relocate(locked.id, a.settings.id, sourceKey);
+      const source = join(a.dir, sourceKey);
+      expect((await a.folder.push()).ok).toBe(true);
+      const before = read(a, sourceKey);
+      // Immutable flags are macOS-specific; directory denial exercises retained
+      // ownership through the existing cross-volume copy path on every platform.
+      const immutable =
+        process.platform === "darwin" && mode !== "directory-control";
+      chmodSync(source, 0o750);
+      if (process.platform === "darwin") {
+        const tag = Buffer.from(
+          '<?xml version="1.0"?><plist version="1.0"><array><string>Fixture\n6</string></array></plist>',
+        );
+        execFileSync("xattr", [
+          "-wx",
+          "com.apple.metadata:_kMDItemUserTags",
+          tag.toString("hex"),
+          source,
+        ]);
+        execFileSync("xattr", [
+          "-w",
+          "com.apple.quarantine",
+          "0081;fixture;Marfa;",
+          source,
+        ]);
+      }
+      const sourceIdentity = statSync(source).ino;
+      const allowRemoval = denySourceRemoval(source, immutable);
+      try {
+        expect(read(a, sourceKey)).toBe(before);
+        for (const item of [locked, control]) {
+          edges.events.push(
+            copyItemEvent(
+              String(edges.events.length + 2),
+              "metadata.changed",
+              wireItem(item),
+              { tags: ["b"] },
+            ),
+          );
+        }
+        expect((await a.folder.push()).ok).toBe(true);
+        const sourceState = () =>
+          execFileSync(
+            "sqlite3",
+            [
+              "-json",
+              join(a.dir, ".marfa", "core.sqlite"),
+              "SELECT item_id,identity,content_hash,written_hash,writes,own FROM folder_files WHERE path='Retained/Locked.md'",
+            ],
+            { encoding: "utf8" },
+          );
+        const owned = sourceState();
+        const moved = await withFault(
+          mode === "cross-volume-control" || !immutable
+            ? "cross-volume-move"
+            : "",
+          () => b.folder.push(),
+        );
+        expect(moved.ok, JSON.stringify(moved)).toBe(true);
+        if (!moved.ok) return;
+
+        expect(existsSync(join(b.dir, "Control.md"))).toBe(true);
+        expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
+        expect(read(a, sourceKey)).toBe(before);
+        if (immutable) {
+          expect(
+            execFileSync("ls", ["-lO", source], { encoding: "utf8" }),
+          ).toContain("uchg");
+        } else {
+          expect(statSync(join(source, "..")).mode & 0o222).toBe(0);
+        }
+        expect(moved.value.pull?.taken, owned).toBe(2);
+        expect(moved.value.pull?.unwritten).toBe(0);
+        expect(read(b, "Locked.md")).toBe(before);
+        expect(idIn(b, "Locked.md")).toBe(locked.id);
+        const destination = join(b.dir, "Locked.md");
+        expect(statSync(source).ino).toBe(sourceIdentity);
+        expect(statSync(destination).ino).not.toBe(sourceIdentity);
+        expect(statSync(destination).mode & 0o777).toBe(0o750);
+        if (process.platform === "darwin") {
+          expect(
+            execFileSync("ls", ["-lO", destination], { encoding: "utf8" }),
+          ).not.toContain("uchg");
+          for (const attribute of [
+            "com.apple.metadata:_kMDItemUserTags",
+            "com.apple.quarantine",
+          ]) {
+            expect(
+              execFileSync("xattr", ["-px", attribute, destination]),
+            ).toEqual(execFileSync("xattr", ["-px", attribute, source]));
+          }
+        }
+        execFileSync("sqlite3", [
+          join(a.dir, ".marfa", "core.sqlite"),
+          `INSERT INTO folder_journal(path,item_id,missing_since) VALUES('Retained/Locked.md','${locked.id}','2026-01-01T00:00:00Z')`,
+        ]);
+        const sourceJournal = () =>
+          execFileSync(
+            "sqlite3",
+            [
+              "-json",
+              join(a.dir, ".marfa", "core.sqlite"),
+              "SELECT path,item_id,missing_since FROM folder_journal WHERE path='Retained/Locked.md'",
+            ],
+            { encoding: "utf8" },
+          );
+        const journal = sourceJournal();
+        expect(journal).toContain(locked.id);
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "item.updated",
+            wireItem({
+              ...stay,
+              version: 2,
+              properties: { title: "Stay", body: "continuation after\n" },
+            }),
+            { tags: ["a"] },
+          ),
+        );
+        expect((await a.folder.device().catchUp()).ok).toBe(true);
+        for (let pass = 0; pass < 2; pass++) {
+          const retained = await a.folder.pull();
+          expect(retained.ok, JSON.stringify(retained)).toBe(true);
+          if (!retained.ok) return;
+          expect(retained.value.unwritten).toBe(1);
+          expect(retained.value.unmatched).toBeGreaterThanOrEqual(1);
+          expect(retained.value.let_go).toBe(0);
+          expect(
+            retained.value.flagged.find((file) => file.path === sourceKey)
+              ?.flag,
+          ).toBe("retained");
+          expect(read(a, "Stay.md")).toContain("continuation after");
+          expect(read(a, sourceKey)).toBe(before);
+          expect(statSync(source).ino).toBe(sourceIdentity);
+          expect(sourceState()).toBe(owned);
+          expect(sourceJournal()).toBe(journal);
+          const status = await a.folder.status();
+          expect(
+            status.ok &&
+              status.value.files.find((file) => file.path === sourceKey)
+                ?.item_id,
+          ).toBe(locked.id);
+          expect(
+            status.ok &&
+              status.value.files.find((file) => file.path === sourceKey)
+                ?.status,
+          ).toBe("unmatched");
+          const repeated = await b.folder.pull();
+          expect(repeated.ok && repeated.value.taken).toBe(0);
+        }
+        const visible = await a.folder.pullText();
+        expect(visible.ok && visible.value).toContain(
+          "cannot let it go to another folder",
+        );
+        expect(sourceState()).toBe(owned);
+        expect(sourceJournal()).toBe(journal);
+        allowRemoval();
+        if (later === "edit") {
+          appendFileSync(source, "owner edit\n");
+          const kept = await a.folder.pull();
+          expect(kept.ok && kept.value.let_go).toBe(0);
+          expect(read(a, sourceKey)).toBe(before + "owner edit\n");
+          const scanned = await a.folder.scan();
+          expect(scanned.ok && scanned.value.updated).toBe(1);
+          const queued = await a.folder.device().queue();
+          expect(
+            queued.ok &&
+              queued.value.some(
+                (row) =>
+                  row.item_id === locked.id && row.kind === "update_item",
+              ),
+          ).toBe(true);
+        } else {
+          const released = await a.folder.pull();
+          expect(released.ok && released.value.let_go).toBe(1);
+          expect(existsSync(source)).toBe(false);
+          expect(sourceState().trim()).toBe("");
+          expect(sourceJournal().trim()).toBe("");
+          expect((await a.folder.scan()).ok).toBe(true);
+          const queued = await a.folder.device().queue();
+          expect(
+            queued.ok &&
+              queued.value.filter((row) => row.kind === "delete_item"),
+          ).toEqual([]);
+        }
+        expect(deletesOf(a.server, locked.id)).toBe(0);
+        const quiet = await b.folder.scan();
+        expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
+          0, 0,
+        ]);
+      } finally {
+        allowRemoval();
+      }
+    },
+  );
+
+  it.each([
+    "copy-failure",
+    "attribute-failure",
+    "sync-failure",
+    "create-before-rename",
+    "symlink-before-rename",
+    "crash-before-copy-publish",
+    "crash-after-copy-publish",
+  ])(
+    "preserves a source across copy publication failures (%s)",
+    async (fault) => {
+      const item = {
+        id: "01a00000-0000-7000-8000-0000000029b1",
+        properties: { title: "Locked", body: "complete copy\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        "protected-copy-failure",
+        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { "core.note": [{ item, tags: ["a"] }] },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      const sourceKey = "Retained/Locked.md";
+      expect((await a.folder.push()).ok).toBe(true);
+      edges.relocate(item.id, a.settings.id, sourceKey);
+      const source = join(a.dir, sourceKey);
+      expect((await a.folder.push()).ok).toBe(true);
+      // macOS confirms immutable protection. Other platforms use cross-volume
+      // refusal plus a real directory permission denial to reach the copy path.
+      const immutable = process.platform === "darwin";
+      const target = join(b.dir, "Locked.md");
+      const before = read(a, sourceKey);
+      const allowRemoval = denySourceRemoval(source, immutable);
+      try {
+        edges.events.push(
+          copyItemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem(item),
+            {
+              tags: ["b"],
+            },
+          ),
+        );
+        expect((await a.folder.push()).ok).toBe(true);
+        const crashed = fault.startsWith("crash-");
+        if (crashed) {
+          await expect(
+            withFault(
+              `${immutable ? "" : "cross-volume-move,"}${fault}=Locked.md`,
+              () => b.folder.push(),
+            ),
+          ).rejects.toThrow(/could not be run/);
+        } else {
+          const refused = await withFault(
+            `${immutable ? "" : "cross-volume-move,"}${fault}=Locked.md`,
+            () => b.folder.push(),
+          );
+          expect(
+            refused.ok && [
+              refused.value.pull?.taken,
+              refused.value.pull?.unwritten,
+            ],
+          ).toEqual([0, 1]);
+        }
+        expect(read(a, sourceKey)).toBe(before);
+        if (immutable) {
+          expect(
+            execFileSync("ls", ["-lO", source], { encoding: "utf8" }),
+          ).toContain("uchg");
+        } else {
+          expect(statSync(join(source, "..")).mode & 0o222).toBe(0);
+        }
+        if (fault === "create-before-rename") {
+          expect(read(b, "Locked.md")).toBe("appeared meanwhile\n");
+          rmSync(target);
+        } else if (fault === "symlink-before-rename") {
+          expect(lstatSync(target).isSymbolicLink()).toBe(true);
+          expect(readlinkSync(target)).toBe("absent-fixture-target");
+          rmSync(target);
+        } else if (fault === "crash-after-copy-publish") {
+          expect(read(b, "Locked.md")).toBe(before);
+        } else {
+          expect(existsSync(target)).toBe(false);
+        }
+        const restarted = await b.folder.scan();
+        expect(
+          restarted.ok && [
+            restarted.value.created,
+            restarted.value.updated,
+            restarted.value.missing,
+          ],
+        ).toEqual([0, 0, 0]);
+        expect(
+          readdirSync(b.dir).filter(
+            (name) => name.startsWith(".marfa-") && name.endsWith(".tmp"),
+          ),
+        ).toEqual([]);
+        const retry = await withFault(
+          immutable ? "" : "cross-volume-move",
+          () => b.folder.pull(),
+        );
+        expect(retry.ok && retry.value.taken).toBe(
+          fault === "crash-after-copy-publish" ? 0 : 1,
+        );
+        expect(read(b, "Locked.md")).toContain("complete copy\n");
+        expect(read(a, sourceKey)).toBe(before);
+        expect(idIn(b, "Locked.md")).toBe(item.id);
+        const quiet = await b.folder.scan();
+        expect(quiet.ok && [quiet.value.created, quiet.value.updated]).toEqual([
+          0, 0,
+        ]);
+        const queue = await b.folder.device().queue();
+        expect(
+          queue.ok && queue.value.filter((row) => row.kind === "delete_item"),
+        ).toEqual([]);
+        expect(deletesOf(a.server, item.id)).toBe(0);
+      } finally {
+        allowRemoval();
+      }
+    },
+  );
+
   it("takes in a file another folder let go", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023a1",
@@ -15942,6 +16389,12 @@ describe("folders on one Mac", () => {
     { mode: "already-present", previous: false },
     { mode: "unopposed-move", previous: true },
     { mode: "unopposed-copy", previous: true },
+    { mode: "protected", previous: false },
+    { mode: "protected", previous: true },
+    { mode: "unopposed-protected", previous: true },
+    { mode: "directory-control", previous: false },
+    { mode: "directory-control", previous: true },
+    { mode: "unopposed-directory-control", previous: true },
   ])(
     "preserves ownership for an identical move destination ($mode, previous binding $previous)",
     async ({ mode, previous }) => {
@@ -15993,6 +16446,18 @@ describe("folders on one Mac", () => {
           ),
         );
       }
+      const retained =
+        mode.includes("protected") || mode.includes("directory-control");
+      const immutable =
+        process.platform === "darwin" && mode.includes("protected");
+      const sourceKey =
+        retained && !immutable ? "Retained/photo.png" : "photo.png";
+      const source = join(a.dir, sourceKey);
+      if (sourceKey !== "photo.png") {
+        expect((await a.folder.push()).ok).toBe(true);
+        edges.relocate(photo.id, a.settings.id, sourceKey);
+        expect((await a.folder.push()).ok).toBe(true);
+      }
       edges.events.push(
         copyItemEvent(
           String(edges.events.length + 2),
@@ -16001,23 +16466,38 @@ describe("folders on one Mac", () => {
           { tags: ["b"] },
         ),
       );
-      expect((await a.folder.push()).ok).toBe(true);
-      expect((await b.folder.device().catchUp()).ok).toBe(true);
-      if (mode === "already-present")
-        writeFileSync(join(b.dir, "photo.png"), bytes);
-      const fault =
-        mode === "same-volume"
-          ? "create-before-move=photo.png"
-          : mode === "cross-volume"
-            ? "cross-volume-move,create-before-rename=photo.png"
-            : mode === "unopposed-copy"
-              ? "cross-volume-move"
-              : "";
-      const pulled = await withFault(fault, () => b.folder.pull());
+      const allowRemoval = retained
+        ? denySourceRemoval(source, immutable)
+        : undefined;
+      const pulled = await (async () => {
+        try {
+          expect((await a.folder.push()).ok).toBe(true);
+          expect((await b.folder.device().catchUp()).ok).toBe(true);
+          if (mode === "already-present")
+            writeFileSync(join(b.dir, "photo.png"), bytes);
+          const fault =
+            mode === "same-volume"
+              ? "create-before-move=photo.png"
+              : mode === "cross-volume" ||
+                  mode === "protected" ||
+                  mode === "directory-control"
+                ? `${mode === "cross-volume" ? "cross-volume-move," : ""}create-before-rename=photo.png`
+                : mode === "unopposed-copy"
+                  ? "cross-volume-move"
+                  : "";
+          const copied = retained && !immutable;
+          return await withFault(
+            `${copied ? "cross-volume-move," : ""}${fault}`,
+            () => b.folder.pull(),
+          );
+        } finally {
+          allowRemoval?.();
+        }
+      })();
       expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
       const unopposed = mode.startsWith("unopposed-");
-      if (unopposed) expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
-      else expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+      if (unopposed && !retained) expect(existsSync(source)).toBe(false);
+      else expect(readFileSync(source)).toEqual(bytes);
       expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
       const status = await b.folder.status();
       if (unopposed) {
@@ -16058,7 +16538,7 @@ describe("folders on one Mac", () => {
             reconsidered.value.unchanged,
           ],
         ).toEqual([0, 1]);
-        expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+        expect(readFileSync(source)).toEqual(bytes);
         expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
         const rebound = await b.folder.status();
         expect(

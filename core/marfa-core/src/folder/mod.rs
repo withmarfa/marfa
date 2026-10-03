@@ -18,6 +18,7 @@ pub mod registry;
 pub mod settings;
 mod settings_file;
 mod status;
+mod transfer;
 pub use status::{FileStatus, Paused, StatusReport};
 pub mod state;
 
@@ -2751,13 +2752,16 @@ impl Folder {
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
         let peers = Peers::of(self, None);
+        let mut retained = Vec::new();
         for item in held {
             if !settings.holds_state(item.state) {
                 continue;
             }
             context.same_copy(&*self.core.conn()?)?;
-            if !self.let_go(&item.id, &peers, &context, &mut report)? {
-                work.push((item, true));
+            match self.let_go(&item.id, &peers, &context, &mut report)? {
+                LetGo::Inapplicable => work.push((item, true)),
+                LetGo::Retained => retained.push(item.id),
+                LetGo::Removed => {}
             }
         }
         self.hold_edge_ends(&work, &edge_types, &catalog)?;
@@ -2818,6 +2822,7 @@ impl Folder {
             .iter()
             .filter(|(_, unmatched)| *unmatched)
             .map(|(item, _)| item.id.clone())
+            .chain(retained)
             .collect();
         report.unmatched = unmatched_ids.len();
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
@@ -3403,11 +3408,9 @@ impl Folder {
         if path.exists() {
             return Ok(TakeIn::Inapplicable);
         }
-        // Read again, since fetching other files' bytes since the pull chose
-        // it leaves time for an edit its folder has yet to send.
-        if !std::fs::read(from).is_ok_and(|bytes| state::hash(&bytes) == theirs.content_hash) {
+        let Ok(source) = transfer::Source::open(from, theirs) else {
             return Ok(TakeIn::Inapplicable);
-        }
+        };
         let binding = |identity: Option<String>| state::Bound {
             path: want.to_string(),
             item_id: item.id.clone(),
@@ -3441,27 +3444,29 @@ impl Folder {
         let moved = self.inside(path.parent()).and_then(|()| {
             landing::crash_if_asked(&path);
             landing::appear_if_asked(&path, "create-before-move")?;
-            // Copied where a rename cannot cross volumes, landing whole or
-            // not at all; a source left behind is still its folder's,
-            // which lets it go later.
+            source.check()?;
             let renamed = if fault::named("cross-volume-move").is_some() {
                 Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
             } else {
                 landing::rename_new(from, &path)
             };
             renamed.or_else(|error| {
-                if error.kind() != std::io::ErrorKind::CrossesDevices {
+                if error.kind() != std::io::ErrorKind::CrossesDevices && !source.protected(&error) {
                     return Err(error);
                 }
                 self.land(
                     &path,
-                    |_, beside| std::fs::copy(from, beside).map(drop),
-                    |found| found.is_none(),
+                    |file, _| source.fill(file),
+                    |found| found.is_none() && source.check().is_ok(),
                 )
                 .map_err(std::io::Error::from)
                 .map(|()| {
-                    let _ =
-                        landing::remove(from, |found| state::hash(found) == theirs.content_hash);
+                    landing::crash_if_named(&path, "crash-after-copy-publish");
+                    if source.check().is_ok() {
+                        let _ = landing::remove(from, |found| {
+                            source.check().is_ok() && state::hash(found) == theirs.content_hash
+                        });
+                    }
                 })
             })
         });
@@ -3492,30 +3497,50 @@ impl Folder {
         peers: &Peers<'_>,
         context: &crate::read_view::Context,
         report: &mut PullReport,
-    ) -> Result<bool> {
+    ) -> Result<LetGo> {
         let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
-            return Ok(false);
+            return Ok(LetGo::Inapplicable);
         };
         let path = self.root.join(&bound.path);
         let own = std::fs::read(&path)
             .is_ok_and(|found| bound.written_hash.as_deref() == Some(state::hash(&found).as_str()));
         if !own || !plainly_inside(&self.root, &bound.path) || !peers.filed_elsewhere(item_id) {
-            return Ok(false);
+            return Ok(LetGo::Inapplicable);
         }
+        let Ok(source) = transfer::Source::open(&path, &bound) else {
+            return Ok(LetGo::Inapplicable);
+        };
         // Checked again as it goes, so an edit saved meanwhile stays.
         let conn = self.core.conn()?;
         context.same_copy(&conn)?;
-        let removed = landing::remove(&path, |found| {
-            bound.written_hash.as_deref() == Some(state::hash(found).as_str())
-        })
-        .map_err(|error| CoreError::Store(format!("cannot remove {}: {error}", path.display())))?;
+        let removed = match landing::remove_checked(&path, |found| {
+            source.check().is_ok()
+                && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
+        }) {
+            Ok(removed) => removed,
+            Err(landing::RemoveError::Remove(error)) => {
+                report.unwritten += 1;
+                report.flagged.push(Flagged {
+                    path: bound.path.clone(),
+                    flag: "retained",
+                    reason: format!("cannot let it go to another folder: {error}"),
+                });
+                return Ok(LetGo::Retained);
+            }
+            Err(landing::RemoveError::Read(error)) => {
+                return Err(CoreError::Store(format!(
+                    "cannot read {}: {error}",
+                    path.display()
+                )));
+            }
+        };
         if !removed {
-            return Ok(false);
+            return Ok(LetGo::Inapplicable);
         }
         state::unbind(&conn, &bound.path)?;
         state::journal_clear(&conn, &bound.path)?;
         report.let_go += 1;
-        Ok(true)
+        Ok(LetGo::Removed)
     }
 
     /// Answered by the local list so the folder and a list read one grammar
@@ -4156,6 +4181,12 @@ enum PlacementWrite {
     Done,
     Waiting,
     Refused,
+}
+
+enum LetGo {
+    Inapplicable,
+    Removed,
+    Retained,
 }
 
 enum TakeIn {
