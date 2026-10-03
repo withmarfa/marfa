@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   answers,
-  itemEvent,
-  replay,
+  copyItemEvent,
+  copyReplay,
   refusal,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -49,20 +49,23 @@ describe("a grant refusal waits for the credential", () => {
       });
       const { device, server } = harness;
       let permitted = false;
+      let current = original;
       scriptWrites(server, {
         update: [
-          (request) =>
-            permitted
-              ? answers.updated(
-                  wireItem({
-                    id: ID,
-                    version: 4,
-                    properties: JSON.parse(request.body).properties,
-                  }),
-                )
-              : refusal(403, "forbidden", "The key lacks a grant", { grant }),
+          (request) => {
+            if (!permitted)
+              return refusal(403, "forbidden", "The key lacks a grant", {
+                grant,
+              });
+            current = wireItem({
+              id: ID,
+              version: 4,
+              properties: JSON.parse(request.body).properties,
+            });
+            return answers.updated(current);
+          },
         ],
-        read: [answers.updated(original)],
+        read: [() => answers.updated(current)],
       });
       const write = value(
         await device.update(ID, {
@@ -108,39 +111,44 @@ describe("a grant refusal waits for the credential", () => {
     harness = await hydratedHarness("grant-create");
     const { device, server } = harness;
     let permitted = false;
+    let current: ReturnType<typeof wireItem> | undefined;
     scriptWrites(server, {
       create: [
         (request) => {
+          if (!permitted)
+            return refusal(
+              403,
+              "type_not_permitted",
+              "No write access to core.note",
+              {
+                grant: { kind: "type", name: "core.note", level: "write" },
+              },
+            );
           const sent = JSON.parse(request.body);
-          return permitted
-            ? answers.created(
-                wireItem({
-                  id: sent.id,
-                  version: 1,
-                  properties: sent.properties,
-                }),
-              )
-            : refusal(
-                403,
-                "type_not_permitted",
-                "No write access to core.note",
-                {
-                  grant: { kind: "type", name: "core.note", level: "write" },
-                },
-              );
+          current = wireItem({
+            id: sent.id,
+            version: 1,
+            properties: sent.properties,
+          });
+          return answers.created(current);
         },
       ],
       update: [
-        (request) =>
-          answers.updated(
-            wireItem({
-              id: request.pathname.split("/").at(-1) ?? "",
-              version: 2,
-              properties: JSON.parse(request.body).properties,
-            }),
-          ),
+        (request) => {
+          current = wireItem({
+            id: request.pathname.split("/").at(-1) ?? "",
+            version: 2,
+            properties: JSON.parse(request.body).properties,
+          });
+          return answers.updated(current);
+        },
       ],
-      read: [refusal(404, "item_not_found", "No such item")],
+      read: [
+        () =>
+          current === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(current),
+      ],
     });
     const created = value(
       await device.create({
@@ -189,16 +197,18 @@ describe("a grant refusal waits for the credential", () => {
               version: 5,
               properties: { title: "held", body: "another device" },
             };
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        replay(caughtUpVersion === 4 ? "11" : "12", [
-          itemEvent("11", "item.updated", eventRow),
+        copyReplay(caughtUpVersion === 4 ? "11" : "12", [
+          copyItemEvent("11", "item.updated", eventRow),
           ...(caughtUpVersion === 4
             ? []
-            : [itemEvent("12", "item.updated", caughtUp)]),
+            : [copyItemEvent("12", "item.updated", caughtUp)]),
         ]),
       );
+      let current = wireItem({ ...caughtUp, id: ID });
+      server.copyAnswer("GET", `/items/${ID}`, () => answers.updated(current));
       let sends = 0;
       let permitted = false;
       server.answer("PATCH", /^\/items\/[^/]+$/, (request) => {
@@ -215,13 +225,12 @@ describe("a grant refusal waits for the credential", () => {
             ? { ...answer, headers: { "Idempotency-Replayed": "true" } }
             : answer;
         }
-        return answers.updated(
-          wireItem({
-            id: ID,
-            version: caughtUpVersion + 1,
-            properties: sent.properties,
-          }),
-        );
+        current = wireItem({
+          id: ID,
+          version: caughtUpVersion + 1,
+          properties: sent.properties,
+        });
+        return answers.updated(current);
       });
       value(await device.hydrate(["core.note"], "library"));
       const first = value(

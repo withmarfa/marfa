@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import {
   answers,
   edgeEvent,
-  replay,
+  copyReplay,
   refusal,
   wireEdge,
   writeAnswers,
@@ -64,10 +64,10 @@ it.each([
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay(caughtUpVersion === 2 ? "11" : "12", [
+      copyReplay(caughtUpVersion === 2 ? "11" : "12", [
         edgeEvent("11", "edge.updated", wireEdge(edge(2, 2))),
         ...(caughtUpVersion === 2
           ? []
@@ -75,6 +75,10 @@ it.each([
       ]),
     );
     let sends = 0;
+    let current = edge(caughtUpVersion, caughtUpVersion === 2 ? 2 : 9);
+    server.copyAnswer("GET", `/edges/${EDGE}`, () =>
+      writeAnswers.edge(current, 200),
+    );
     let permitted = !grantBlocked;
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
       sends += 1;
@@ -90,11 +94,11 @@ it.each([
           ? { ...answer, headers: { "Idempotency-Replayed": "true" } }
           : answer;
       }
-      return sent.version === caughtUpVersion
-        ? writeAnswers.edge(edge(3, 3), 200)
-        : answers.edgeVersionConflict(
-            wireEdge(edge(caughtUpVersion, caughtUpVersion === 2 ? 2 : 9)),
-          );
+      if (sent.version !== current.version) {
+        return answers.edgeVersionConflict(wireEdge(current));
+      }
+      current = edge(current.version + 1, 3);
+      return writeAnswers.edge(current, 200);
     });
     value(await device.hydrate(["core.note"], "library"));
     const first = value(
