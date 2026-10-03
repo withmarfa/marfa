@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   rememberEdgeSubject,
   rememberItemSubject,
@@ -718,35 +719,50 @@ export function edgeRoutes(storage: Storage) {
 
     let edge: Edge;
     try {
-      edge = await storage.runInTransaction(async () => {
-        await assertEdgeCanBeCreated(
-          storage.edges,
-          storage.items,
-          {
+      edge = await runAuditedTransaction(
+        storage,
+        async () => {
+          await assertEdgeCanBeCreated(
+            storage.edges,
+            storage.items,
+            {
+              source_id: body.source_id,
+              target_id: body.target_id,
+              edge_type: body.edge_type,
+              properties: body.properties,
+            },
+            mayReadEdgeEnd(c),
+          );
+          const targetSubject = await storage.items.get(body.target_id);
+          if (targetSubject) rememberItemSubject(targetSubject, "read");
+          const created = await storage.edges.createRaw({
+            id: body.id,
             source_id: body.source_id,
             target_id: body.target_id,
             edge_type: body.edge_type,
             properties: body.properties,
+          });
+          // With the edge, so the two commit together or not at all.
+          await publishEdge({
+            type: "edge_created",
+            edge: created,
+            sourceType: sourceItem.type,
+          });
+          return created;
+        },
+        (edge) => ({
+          client_ip: c.get("clientIp") ?? null,
+          key_id: c.get("apiKey")?.id,
+          action: "edge.create",
+          resource_type: "edge",
+          resource_id: edge.id,
+          details: {
+            edge_type: edge.edge_type,
+            source_id: edge.source_id,
+            target_id: edge.target_id,
           },
-          mayReadEdgeEnd(c),
-        );
-        const targetSubject = await storage.items.get(body.target_id);
-        if (targetSubject) rememberItemSubject(targetSubject, "read");
-        const created = await storage.edges.createRaw({
-          id: body.id,
-          source_id: body.source_id,
-          target_id: body.target_id,
-          edge_type: body.edge_type,
-          properties: body.properties,
-        });
-        // With the edge, so the two commit together or not at all.
-        await publishEdge({
-          type: "edge_created",
-          edge: created,
-          sourceType: sourceItem.type,
-        });
-        return created;
-      });
+        }),
+      );
     } catch (err) {
       // The concurrency backstop. The row appeared between the pre-check
       // and the insert, which is the one case the pre-check cannot cover.
@@ -762,18 +778,7 @@ export function edgeRoutes(storage: Storage) {
       rememberEdgeSubject(raced, "write", sourceItem.type);
       return c.json({ edge: raced, acknowledged: true }, 200);
     }
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edge.create",
-      resource_type: "edge",
-      resource_id: edge.id,
-      details: {
-        edge_type: edge.edge_type,
-        source_id: edge.source_id,
-        target_id: edge.target_id,
-      },
-    });
+
     rememberEdgeSubject(edge, "write", sourceItem.type);
     return c.json({ edge }, 201);
   });
@@ -851,27 +856,48 @@ export function edgeRoutes(storage: Storage) {
     // with the edit, so the two commit together or not at all.
     const result = stale
       ? { ok: false as const, current: existing }
-      : await storage.runInTransaction(async () => {
-          const written = await write();
-          if (written.ok) {
-            // A move can change the source, so its type is read for the
-            // edge as it now stands.
-            const sourceTypes = await sourceTypesFor(storage, [
-              written.edge.source_id,
-            ]);
-            rememberEdgeSubject(
-              written.edge,
-              "write",
-              sourceTypes.get(written.edge.source_id),
-            );
-            await publishEdge({
-              type: "edge_updated",
-              edge: written.edge,
-              sourceType: sourceTypes.get(written.edge.source_id),
-            });
-          }
-          return written;
-        });
+      : await runAuditedTransaction(
+          storage,
+          async () => {
+            const written = await write();
+            if (written.ok) {
+              // A move can change the source, so its type is read for the
+              // edge as it now stands.
+              const sourceTypes = await sourceTypesFor(storage, [
+                written.edge.source_id,
+              ]);
+              rememberEdgeSubject(
+                written.edge,
+                "write",
+                sourceTypes.get(written.edge.source_id),
+              );
+              await publishEdge({
+                type: "edge_updated",
+                edge: written.edge,
+                sourceType: sourceTypes.get(written.edge.source_id),
+              });
+            }
+            return written;
+          },
+          (written) =>
+            written.ok
+              ? {
+                  client_ip: c.get("clientIp") ?? null,
+                  key_id: c.get("apiKey")?.id,
+                  action: "edge.update",
+                  resource_type: "edge",
+                  resource_id: id,
+                  details:
+                    ends === null
+                      ? { edge_type: existing.edge_type }
+                      : {
+                          edge_type: existing.edge_type,
+                          source_id: written.edge.source_id,
+                          target_id: written.edge.target_id,
+                        },
+                }
+              : null,
+        );
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
       // the whole current edge so the client can re-apply over it without
@@ -900,21 +926,7 @@ export function edgeRoutes(storage: Storage) {
       );
     }
     const updated = result.edge;
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edge.update",
-      resource_type: "edge",
-      resource_id: id,
-      details:
-        ends === null
-          ? { edge_type: existing.edge_type }
-          : {
-              edge_type: existing.edge_type,
-              source_id: updated.source_id,
-              target_id: updated.target_id,
-            },
-    });
+
     return c.json({ edge: updated }, 200);
   });
 
@@ -929,22 +941,26 @@ export function edgeRoutes(storage: Storage) {
     if (srcItem) requireTypeAccess(c, srcItem, "write");
     requireEdgePermission(c, existing.edge_type, "write");
     rememberEdgeSubject(existing, "write", srcItem?.type);
-    await storage.runInTransaction(async () => {
-      await storage.edges.delete(id);
-      await publishEdge({
-        type: "edge_deleted",
-        edge: existing,
-        sourceType: srcItem?.type,
-      });
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edge.delete",
-      resource_type: "edge",
-      resource_id: id,
-      details: { edge_type: existing.edge_type },
-    });
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        await storage.edges.delete(id);
+        await publishEdge({
+          type: "edge_deleted",
+          edge: existing,
+          sourceType: srcItem?.type,
+        });
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "edge.delete",
+        resource_type: "edge",
+        resource_id: id,
+        details: { edge_type: existing.edge_type },
+      },
+    );
+
     return c.json({ ok: true as const }, 200);
   });
 

@@ -2016,39 +2016,11 @@ export interface AuditLogEntry {
 }
 
 export interface AuditStore {
-  /**
-   * Write an audit row off the critical path. **Never rejects**, whatever
-   * the database does: the write runs under a tracker that logs a failure
-   * and drops it, so a caller cannot be broken by one.
-   *
-   * That is the right contract for almost every audit row, and it is a
-   * contract, not an accident — the guarantee is what lets a route emit one
-   * without a try/catch. What it is not is a guarantee that the row landed,
-   * and awaiting it does not make it one: a try/catch around the await,
-   * built to fail the operation on an unaudited write, is unreachable.
-   * Awaiting is still worth doing where the row has to be issued inside the
-   * caller's transaction, but say so at the call site, because the failure
-   * handling reads as live otherwise.
-   *
-   * Use `logOrThrow` when an unaudited operation must not stand.
-   */
+  /** Remaining credential callers are converted with provider transaction enlistment. */
   log(entry: AuditLogEntry): Promise<void>;
-  /**
-   * Write an audit row and propagate a failure to the caller.
-   *
-   * For the operations where an unaudited success is worse than a loud
-   * failure: removing a platform type, creating the owner. Untracked
-   * deliberately, because the caller is awaiting it, so there is nothing
-   * in flight for shutdown to drain.
-   *
-   * **Propagating is the whole of what this promises.** It is not by
-   * itself a transactional write. Which connection the insert lands on is
-   * decided by the db handle the store was built with and by whatever
-   * request context is installed around the call, neither of which is this
-   * method's to choose. A caller that needs the row to commit or roll back
-   * with its own transaction has to put the store on that transaction.
-   */
-  logOrThrow(entry: AuditLogEntry): Promise<void>;
+  /** Strict insertion on the current storage transaction; id supports commit reconciliation. */
+  logOrThrow(entry: AuditLogEntry, id?: string): Promise<void>;
+  has(id: string): Promise<boolean>;
   /**
    * Resolve once every in-flight `log` write has settled.
    *

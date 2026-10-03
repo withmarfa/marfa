@@ -85,3 +85,13 @@ export function failedEntry(err: unknown): { code: string; message: string } {
     message: "The entry could not be written, and nothing of it was",
   };
 }
+
+export function countOutcomes(
+  results: readonly {
+    outcome: "created" | "updated" | "skipped" | "errored";
+  }[],
+) {
+  const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
+  for (const result of results) counts[result.outcome] += 1;
+  return counts;
+}

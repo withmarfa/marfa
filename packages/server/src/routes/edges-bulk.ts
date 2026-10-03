@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Bulk edge creation — `POST /edges/bulk`.
  *
@@ -9,7 +10,7 @@
  * inside a single batch, which is not the case during a multi-batch
  * migration.
  *
- * One aggregate audit row per call (never N per edge). Every created or
+ * Each committed unit records its audit before commit. Every created or
  * updated edge appends to the event log, unconditionally: the log is what
  * a client rebuilding its state replays, so an edge missing from it is one
  * that client can never learn about. The update half was silent while the
@@ -26,7 +27,12 @@
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
-import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  isValidId,
+  generateId,
+} from "@withmarfa/shared";
 import { BulkResponseSchema } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -42,6 +48,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   bulkAtomicRollback,
+  countOutcomes,
   failedEntry,
   isEntryVerdict,
 } from "./_bulk-rollback.js";
@@ -575,6 +582,7 @@ export function edgesBulkRoutes(storage: Storage) {
       })),
     );
 
+    const operationId = generateId();
     const run = async (): Promise<BulkEdgeResult[]> => {
       const results: BulkEdgeResult[] = [];
       for (const [i, raw] of rawEdges.entries()) {
@@ -605,6 +613,26 @@ export function edgesBulkRoutes(storage: Storage) {
           }
           return processed;
         };
+        const auditedEntry = () =>
+          runAuditedTransaction(storage, entry, ({ result }) =>
+            result.outcome === "created" || result.outcome === "updated"
+              ? {
+                  client_ip: c.get("clientIp") ?? null,
+                  key_id: requireAuth(c).id,
+                  action: "edges.bulk",
+                  resource_type: "edges.bulk",
+                  resource_id: result.id,
+                  details: {
+                    operation_id: operationId,
+                    mode,
+                    atomic: false,
+                    total: rawEdges.length,
+                    index: i,
+                    outcome: result.outcome,
+                  },
+                }
+              : null,
+          );
         let result: BulkEdgeResult;
         const committed = results.some(
           (r) => r.outcome === "created" || r.outcome === "updated",
@@ -612,10 +640,10 @@ export function edgesBulkRoutes(storage: Storage) {
         if (atomic) {
           ({ result } = await entry());
         } else if (!committed) {
-          ({ result } = await storage.runInTransaction(entry));
+          ({ result } = await auditedEntry());
         } else {
           try {
-            ({ result } = await storage.runInTransaction(entry));
+            ({ result } = await auditedEntry());
           } catch (err) {
             result = { index: i, outcome: "errored", error: failedEntry(err) };
           }
@@ -636,23 +664,23 @@ export function edgesBulkRoutes(storage: Storage) {
       return results;
     };
 
-    const results = atomic ? await storage.runInTransaction(run) : await run();
+    const results = atomic
+      ? await runAuditedTransaction(storage, run, (results) => ({
+          client_ip: c.get("clientIp") ?? null,
+          key_id: requireAuth(c).id,
+          action: "edges.bulk",
+          resource_type: "edges.bulk",
+          details: {
+            operation_id: operationId,
+            mode,
+            atomic,
+            total: rawEdges.length,
+            ...countOutcomes(results),
+          },
+        }))
+      : await run();
 
-    const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
-    for (const r of results) counts[r.outcome] += 1;
-
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edges.bulk",
-      resource_type: "edges.bulk",
-      details: {
-        mode,
-        atomic,
-        total: rawEdges.length,
-        ...counts,
-      },
-    });
+    const counts = countOutcomes(results);
 
     return c.json({ counts, results }, 200);
   });

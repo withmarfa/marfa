@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
@@ -230,13 +231,16 @@ export function configRoutes(storage: Storage, instanceId: string) {
     // route cannot set.
     const body: InstanceConfig = rest;
 
-    await writeInstanceConfig(storage.settings, body);
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "config.update",
-      resource_type: "config",
-    });
+    await runAuditedTransaction(
+      storage,
+      () => writeInstanceConfig(storage.settings, body),
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "config.update",
+        resource_type: "config",
+      },
+    );
 
     // Echoed with the identity the read carries, so the two doors answer the
     // same shape and a client can send back what either one gave it.

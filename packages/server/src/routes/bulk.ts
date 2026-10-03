@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * Bulk operations on items.
@@ -14,8 +15,8 @@ import { rememberItemSubject } from "../middleware/replay-requirements.js";
  *                             update_tier / update_properties /
  *                             update_occurred_at).
  *
- * Both endpoints write one aggregate audit entry per call (never N per-item
- * rows), and both append to the event log for every row they write. That
+ * Each committed unit records its audit before commit, and both endpoints
+ * append to the event log for every row they write. That
  * append is unconditional: the log is what a client rebuilding its state
  * replays, so a write missing from it is one that client can never learn
  * about.
@@ -63,6 +64,7 @@ import type { ItemWriteResult } from "../storage/item-write.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   bulkAtomicRollback,
+  countOutcomes,
   failedEntry,
   isEntryVerdict,
 } from "./_bulk-rollback.js";
@@ -600,6 +602,7 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
+    const operationId = generateId();
     const run = async (): Promise<ProcessedBulkItem[]> => {
       // In atomic mode, judge what every entry names before any entry is
       // looked up. The transaction is what undoes a refused page; this pass
@@ -675,7 +678,7 @@ export function bulkRoutes(storage: Storage) {
 
       const out: ProcessedBulkItem[] = [];
       for (const [i, raw] of items.entries()) {
-        const entry = () =>
+        const work = () =>
           processBulkItem(storage, raw, i, {
             key,
             mode,
@@ -683,6 +686,28 @@ export function bulkRoutes(storage: Storage) {
             retype,
             enableFanout,
           });
+        const entry = () =>
+          atomic
+            ? work()
+            : runAuditedTransaction(storage, work, ({ result }) =>
+                result.outcome === "created" || result.outcome === "updated"
+                  ? {
+                      client_ip: c.get("clientIp") ?? null,
+                      key_id: key.id,
+                      action: "items.bulk",
+                      resource_type: "items.bulk",
+                      resource_id: result.id,
+                      details: {
+                        operation_id: operationId,
+                        mode,
+                        atomic: false,
+                        total: items.length,
+                        index: i,
+                        outcome: result.outcome,
+                      },
+                    }
+                  : null,
+              );
         let processed: ProcessedBulkItem;
         const committed = out.some(
           (p) =>
@@ -716,25 +741,23 @@ export function bulkRoutes(storage: Storage) {
     // Atomic: one transaction around the page, each entry a savepoint of
     // it. Best-effort: each entry its own transaction, opened by the write.
     const processed = atomic
-      ? await storage.runInTransaction(run)
+      ? await runAuditedTransaction(storage, run, (processed) => ({
+          client_ip: c.get("clientIp") ?? null,
+          key_id: key.id,
+          action: "items.bulk",
+          resource_type: "items.bulk",
+          details: {
+            operation_id: operationId,
+            mode,
+            atomic,
+            total: items.length,
+            ...countOutcomes(processed.map(({ result }) => result)),
+          },
+        }))
       : await run();
     const results = processed.map((p) => p.result);
 
-    const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
-    for (const r of results) counts[r.outcome] += 1;
-
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "items.bulk",
-      resource_type: "items.bulk",
-      details: {
-        mode,
-        atomic,
-        total: items.length,
-        ...counts,
-      },
-    });
+    const counts = countOutcomes(results);
 
     return c.json({ counts, results }, 200);
   });
@@ -1015,31 +1038,32 @@ export function bulkRoutes(storage: Storage) {
     // to the worker inside the stored input, which is the request body
     // verbatim.
     const apiKeyId = c.get("apiKey")?.id ?? null;
-    const job = await storage.bulkActionJobs.create({
-      id: generateId(),
-      api_key_id: apiKeyId,
-      credential: credentialHandle(c),
-      action,
-      input: JSON.stringify(body),
-      matched_ids: JSON.stringify(matched.map((i) => i.id)),
-      matched_count: matched.length,
-      created_at: new Date().toISOString(),
-    });
-    // Wake the worker rather than leaving the job to be found by the idle
-    // poll, whose backoff widens to a minute while the queue is quiet.
+    const job = await runAuditedTransaction(
+      storage,
+      () =>
+        storage.bulkActionJobs.create({
+          id: generateId(),
+          api_key_id: apiKeyId,
+          credential: credentialHandle(c),
+          action,
+          input: JSON.stringify(body),
+          matched_ids: JSON.stringify(matched.map((i) => i.id)),
+          matched_count: matched.length,
+          created_at: new Date().toISOString(),
+        }),
+      (job) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "items.bulk_action",
+        resource_type: "items.bulk_action",
+        details: {
+          sub_action: action,
+          matched: matched.length,
+          job_id: job.id,
+        },
+      }),
+    );
     notifyBulkJobEnqueued();
-
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "items.bulk_action",
-      resource_type: "items.bulk_action",
-      details: {
-        sub_action: action,
-        matched: matched.length,
-        job_id: job.id,
-      },
-    });
 
     return c.json(jobRowToEnvelope(job), 202);
   });
@@ -1060,16 +1084,31 @@ export function bulkRoutes(storage: Storage) {
   router.openapi(bulkActionCancelRoute, async (c) => {
     requireAuth(c);
     const id = c.req.valid("param").id;
-    const existing = await storage.bulkActionJobs.getById(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
-    }
-    assertJobAuth(c, existing);
-    await storage.bulkActionJobs.cancel(id, new Date().toISOString());
-    const after = await storage.bulkActionJobs.getById(id);
-    // After cancel() either flipped to canceled or the job had already
-    // reached a terminal state — either way, surface the row as-of-now.
-    return c.json(jobRowToEnvelope(after ?? existing), 200);
+    const { after } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const existing = await storage.bulkActionJobs.getById(id);
+        if (!existing)
+          throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+        assertJobAuth(c, existing);
+        await storage.bulkActionJobs.cancel(id, new Date().toISOString());
+        const after = await storage.bulkActionJobs.getById(id);
+        if (!after)
+          throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+        return { after, changed: after.status !== existing.status };
+      },
+      ({ changed }) =>
+        changed
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: requireAuth(c).id,
+              action: "items.bulk_action.cancel",
+              resource_type: "items.bulk_action",
+              resource_id: id,
+            }
+          : null,
+    );
+    return c.json(jobRowToEnvelope(after), 200);
   });
 
   return router;

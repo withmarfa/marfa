@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   ITEM_NOT_FOUND,
   ITEM_NOT_FOUND_ON_WRITE,
@@ -1435,43 +1436,71 @@ export function itemRoutes(storage: Storage) {
     // decided there too, so two sends of one key land on one row. What the
     // answer reads is read inside it as well, so a write that committed is
     // never answered with a failure.
-    const { result, hydrated } = await storage.runInTransaction(async () => {
-      const result = await writeItem(
-        storage,
-        { kind: "credential", key },
-        {
-          op: "put",
-          door: "item",
-          type,
-          properties: body.properties,
-          ...(body.id !== undefined && { id: body.id }),
-          ...(body.state !== undefined && { state: body.state as ItemState }),
-          ...(body.tier !== undefined && { tier: body.tier }),
-          ...(body.occurred_at !== undefined && {
-            occurred_at: body.occurred_at,
-          }),
-          ...(body.source !== undefined && { source: body.source }),
-          ...(body.source_id !== undefined && { source_id: body.source_id }),
-          ...(body.version !== undefined && { version: body.version }),
-          ...(body.capture_latitude !== undefined && {
-            capture_latitude: body.capture_latitude,
-          }),
-          ...(body.capture_longitude !== undefined && {
-            capture_longitude: body.capture_longitude,
-          }),
-          ...(body.tags !== undefined && { tags: body.tags }),
-          ...(body.edges !== undefined && { edges: body.edges }),
-          blob_proof: requestBlobProof(c, storage),
-        },
-      );
-      return {
-        result,
-        hydrated:
-          result.outcome === "updated"
-            ? await hydrateEdgesForItem(storage, key, result.item.id)
-            : undefined,
-      };
-    });
+    const { result, hydrated } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const result = await writeItem(
+          storage,
+          { kind: "credential", key },
+          {
+            op: "put",
+            door: "item",
+            type,
+            properties: body.properties,
+            ...(body.id !== undefined && { id: body.id }),
+            ...(body.state !== undefined && { state: body.state as ItemState }),
+            ...(body.tier !== undefined && { tier: body.tier }),
+            ...(body.occurred_at !== undefined && {
+              occurred_at: body.occurred_at,
+            }),
+            ...(body.source !== undefined && { source: body.source }),
+            ...(body.source_id !== undefined && { source_id: body.source_id }),
+            ...(body.version !== undefined && { version: body.version }),
+            ...(body.capture_latitude !== undefined && {
+              capture_latitude: body.capture_latitude,
+            }),
+            ...(body.capture_longitude !== undefined && {
+              capture_longitude: body.capture_longitude,
+            }),
+            ...(body.tags !== undefined && { tags: body.tags }),
+            ...(body.edges !== undefined && { edges: body.edges }),
+            blob_proof: requestBlobProof(c, storage),
+          },
+        );
+        return {
+          result,
+          hydrated:
+            result.outcome === "updated"
+              ? await hydrateEdgesForItem(storage, key, result.item.id)
+              : undefined,
+        };
+      },
+      ({ result }) =>
+        result.outcome === "updated"
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: key.id,
+              action: "item.update",
+              resource_type: "item",
+              resource_id: result.item.id,
+              details: {
+                type: result.item.type,
+                idempotent: true,
+                source: result.item.source,
+                source_id: body.source_id,
+              },
+            }
+          : result.outcome === "created"
+            ? {
+                client_ip: c.get("clientIp") ?? null,
+                key_id: key.id,
+                action: "item.create",
+                resource_type: "item",
+                resource_id: result.item.id,
+                details: { type: result.item.type },
+              }
+            : null,
+    );
 
     switch (result.outcome) {
       case "unchanged":
@@ -1488,19 +1517,7 @@ export function itemRoutes(storage: Storage) {
         return c.json(result.conflict, 409);
       case "updated": {
         const { item: updatedItem, metadata: updatedMetadata } = result;
-        void storage.audit.log({
-          client_ip: c.get("clientIp") ?? null,
-          key_id: key.id,
-          action: "item.update",
-          resource_type: "item",
-          resource_id: updatedItem.id,
-          details: {
-            type: updatedItem.type,
-            idempotent: true,
-            source: updatedItem.source,
-            source_id: body.source_id,
-          },
-        });
+
         return c.json(
           {
             item: { ...updatedItem, edges: hydrated ?? {} },
@@ -1535,14 +1552,6 @@ export function itemRoutes(storage: Storage) {
       ),
     };
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "item.create",
-      resource_type: "item",
-      resource_id: item.id,
-      details: { type: item.type },
-    });
     return c.json(
       {
         item: itemWithEdges,
@@ -2006,39 +2015,52 @@ export function itemRoutes(storage: Storage) {
     // that disagrees is refused unless `retype` asks to move the row, which
     // needs write on the type entered as well as the one left. The edges the
     // answer carries are read inside the write's transaction.
-    const { result, hydrated } = await storage.runInTransaction(async () => {
-      const result = await writeItem(
-        storage,
-        { kind: "credential", key },
-        {
-          op: "update",
-          id,
-          ...(body.type !== undefined && { declared_type: body.type }),
-          ...(body.retype === true && { retype: true }),
-          ...(hasProperties && { properties: body.properties }),
-          ...(body.properties_mode !== undefined && {
-            properties_mode: body.properties_mode,
-          }),
-          ...(hasTier && { tier: body.tier }),
-          ...(hasOccurredAt && { occurred_at: body.occurred_at }),
-          ...(hasSourceId && { source_id: body.source_id }),
-          ...(hasEdges && { edges: body.edges }),
-          version: body.version,
-          ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
-          // The key that makes a re-executed write produce one keep-both
-          // sibling rather than two.
-          ...(idempotencyKey !== null && { idempotency_key: idempotencyKey }),
-          blob_proof: requestBlobProof(c, storage),
-        },
-      );
-      return {
-        result,
-        hydrated:
-          result.outcome === "updated"
-            ? await hydrateEdgesForItem(storage, key, id)
-            : undefined,
-      };
-    });
+    const { result, hydrated } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const result = await writeItem(
+          storage,
+          { kind: "credential", key },
+          {
+            op: "update",
+            id,
+            ...(body.type !== undefined && { declared_type: body.type }),
+            ...(body.retype === true && { retype: true }),
+            ...(hasProperties && { properties: body.properties }),
+            ...(body.properties_mode !== undefined && {
+              properties_mode: body.properties_mode,
+            }),
+            ...(hasTier && { tier: body.tier }),
+            ...(hasOccurredAt && { occurred_at: body.occurred_at }),
+            ...(hasSourceId && { source_id: body.source_id }),
+            ...(hasEdges && { edges: body.edges }),
+            version: body.version,
+            ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
+            // The key that makes a re-executed write produce one keep-both
+            // sibling rather than two.
+            ...(idempotencyKey !== null && { idempotency_key: idempotencyKey }),
+            blob_proof: requestBlobProof(c, storage),
+          },
+        );
+        return {
+          result,
+          hydrated:
+            result.outcome === "updated"
+              ? await hydrateEdgesForItem(storage, key, id)
+              : undefined,
+        };
+      },
+      ({ result }) =>
+        result.outcome === "updated"
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: key.id,
+              action: "item.update",
+              resource_type: "item",
+              resource_id: id,
+            }
+          : null,
+    );
 
     if (result.outcome === "conflict" || result.outcome === "stale") {
       // Stamped here because this refusal is returned rather than thrown, so
@@ -2058,13 +2080,6 @@ export function itemRoutes(storage: Storage) {
     const resolution = result.item.conflict_resolution;
     const resolvedItem = rowOf(result.item);
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "item.update",
-      resource_type: "item",
-      resource_id: id,
-    });
     return c.json(
       {
         item: { ...resolvedItem, edges: hydrated ?? {} },
@@ -2090,10 +2105,24 @@ export function itemRoutes(storage: Storage) {
     // unconditionally, which is the act the parameter exists to guard.
     refuseUnknownQueryParams(c.req.raw.url, deleteItemRoute.request.query);
     const { version } = c.req.valid("query");
-    const result = await writeItem(
+    const result = await runAuditedTransaction(
       storage,
-      { kind: "credential", key },
-      { op: "delete", id, ...(version !== undefined && { version }) },
+      () =>
+        writeItem(
+          storage,
+          { kind: "credential", key },
+          { op: "delete", id, ...(version !== undefined && { version }) },
+        ),
+      (result) =>
+        result.outcome !== "stale"
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: key.id,
+              action: "item.delete",
+              resource_type: "item",
+              resource_id: id,
+            }
+          : null,
     );
     if (result.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this
@@ -2101,13 +2130,7 @@ export function itemRoutes(storage: Storage) {
       c.header("X-Error-Code", result.conflict.error.code);
       return c.json(result.conflict, 409);
     }
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "item.delete",
-      resource_type: "item",
-      resource_id: id,
-    });
+
     return c.json({ ok: true as const }, 200);
   });
 
@@ -2148,32 +2171,44 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { metadata } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-      );
-      requireTypeAccess(c, item.type, "write");
-      // The metadata layer reaches the same row the properties doors
-      // guard, so it answers to the same row-level rule.
-
-      if (tags.length > MAX_TAGS_PER_ITEM) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    const { metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () =>
+            new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-      }
+        requireTypeAccess(c, item.type, "write");
+        // The metadata layer reaches the same row the properties doors
+        // guard, so it answers to the same row-level rule.
 
-      const written = await storage.metadata.set(id, tags);
-      // With the write, so the change and its event commit together.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: written,
-      });
-      return { metadata: written };
-    });
+        if (tags.length > MAX_TAGS_PER_ITEM) {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+          );
+        }
+
+        const written = await storage.metadata.set(id, tags);
+        // With the write, so the change and its event commit together.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: written,
+        });
+        return { metadata: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: requireAuth(c).id,
+        action: "item.metadata.set",
+        resource_type: "item",
+        resource_id: id,
+        details: { tags },
+      },
+    );
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
@@ -2190,50 +2225,62 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { metadata } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-      );
-      requireTypeAccess(c, item.type, "write");
-      // The metadata layer reaches the same row the properties doors
-      // guard, so it answers to the same row-level rule.
-
-      // Not subsumed by the projection below, though it reads as though it
-      // should be: the projection counts a deduplicated set, so a body of 101
-      // copies of one tag projects to one and passes it. This bounds what a
-      // caller may send, that one bounds what the item may hold, and they are
-      // different questions with different messages.
-      if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    const { metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () =>
+            new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-      }
+        requireTypeAccess(c, item.type, "write");
+        // The metadata layer reaches the same row the properties doors
+        // guard, so it answers to the same row-level rule.
 
-      // No projection here. Reading the metadata row, unioning the incoming
-      // tags into it and refusing over the bound would read in one
-      // transaction and write in another, so it would bound nothing under
-      // concurrency, and it would cost an unconditional read on every
-      // successful request to duplicate a refusal the store makes inside
-      // the transaction that computes the set, with the same status, code
-      // and message, so nothing on the wire could tell the two apart.
-      //
-      // What is still checked above is what a caller may *send*, which is a
-      // different question and one the store cannot answer: a body of a
-      // hundred and one copies of one tag projects to one and is inside the
-      // bound.
+        // Not subsumed by the projection below, though it reads as though it
+        // should be: the projection counts a deduplicated set, so a body of 101
+        // copies of one tag projects to one and passes it. This bounds what a
+        // caller may send, that one bounds what the item may hold, and they are
+        // different questions with different messages.
+        if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+          );
+        }
 
-      const written = await storage.metadata.merge(id, tags);
-      // With the write, so the change and its event commit together.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: written,
-      });
-      return { metadata: written };
-    });
+        // No projection here. Reading the metadata row, unioning the incoming
+        // tags into it and refusing over the bound would read in one
+        // transaction and write in another, so it would bound nothing under
+        // concurrency, and it would cost an unconditional read on every
+        // successful request to duplicate a refusal the store makes inside
+        // the transaction that computes the set, with the same status, code
+        // and message, so nothing on the wire could tell the two apart.
+        //
+        // What is still checked above is what a caller may *send*, which is a
+        // different question and one the store cannot answer: a body of a
+        // hundred and one copies of one tag projects to one and is inside the
+        // bound.
+
+        const written = await storage.metadata.merge(id, tags);
+        // With the write, so the change and its event commit together.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: written,
+        });
+        return { metadata: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: requireAuth(c).id,
+        action: "item.metadata.merge",
+        resource_type: "item",
+        resource_id: id,
+        details: { tags },
+      },
+    );
 
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
@@ -2251,36 +2298,41 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { metadata } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-      );
-      requireTypeAccess(c, item.type, "write");
-      // The metadata layer reaches the same row the properties doors
-      // guard, so it answers to the same row-level rule.
+    const { metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () =>
+            new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+        );
+        requireTypeAccess(c, item.type, "write");
+        // The metadata layer reaches the same row the properties doors
+        // guard, so it answers to the same row-level rule.
 
-      // The resulting set is bounded by the store, inside the transaction that
-      // computes it. See the sibling door above for why there is no
-      // projection here.
-      const written = await storage.metadata.addTags(id, tags);
-      // With the write, so the change and its event commit together.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: written,
-      });
-      return { metadata: written };
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "item.tag",
-      resource_type: "item",
-      resource_id: id,
-      details: { tags },
-    });
+        // The resulting set is bounded by the store, inside the transaction that
+        // computes it. See the sibling door above for why there is no
+        // projection here.
+        const written = await storage.metadata.addTags(id, tags);
+        // With the write, so the change and its event commit together.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: written,
+        });
+        return { metadata: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "item.tag",
+        resource_type: "item",
+        resource_id: id,
+        details: { tags },
+      },
+    );
+
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
@@ -2302,10 +2354,24 @@ export function itemRoutes(storage: Storage) {
     // version, where one is named, against the row inside the purge's own
     // transaction: a check before it would let a write land between the two
     // and be destroyed unseen.
-    const outcome = await writeItem(
+    const outcome = await runAuditedTransaction(
       storage,
-      { kind: "credential", key },
-      { op: "purge", id, ...(version !== undefined && { version }) },
+      () =>
+        writeItem(
+          storage,
+          { kind: "credential", key },
+          { op: "purge", id, ...(version !== undefined && { version }) },
+        ),
+      (result) =>
+        result.outcome !== "stale"
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: key.id,
+              action: "item.purge",
+              resource_type: "item",
+              resource_id: id,
+            }
+          : null,
     );
     if (outcome.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this
@@ -2313,13 +2379,7 @@ export function itemRoutes(storage: Storage) {
       c.header("X-Error-Code", outcome.conflict.error.code);
       return c.json(outcome.conflict, 409);
     }
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "item.purge",
-      resource_type: "item",
-      resource_id: id,
-    });
+
     return c.json({ ok: true as const }, 200);
   });
 
@@ -2337,32 +2397,37 @@ export function itemRoutes(storage: Storage) {
 
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { metadata } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-      );
-      requireTypeAccess(c, item.type, "write");
-      // The metadata layer reaches the same row the properties doors
-      // guard, so it answers to the same row-level rule.
-      const written = await storage.metadata.removeTag(id, tag);
-      // With the write, so the change and its event commit together.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: written,
-      });
-      return { metadata: written };
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "item.untag",
-      resource_type: "item",
-      resource_id: id,
-      details: { tag },
-    });
+    const { metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () =>
+            new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+        );
+        requireTypeAccess(c, item.type, "write");
+        // The metadata layer reaches the same row the properties doors
+        // guard, so it answers to the same row-level rule.
+        const written = await storage.metadata.removeTag(id, tag);
+        // With the write, so the change and its event commit together.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: written,
+        });
+        return { metadata: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "item.untag",
+        resource_type: "item",
+        resource_id: id,
+        details: { tag },
+      },
+    );
+
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,

@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * What a connector keeps on the instance rather than beside itself, so a
  * process can run anywhere and restart empty.
@@ -490,15 +491,18 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKeyOrOperator(connector.key_id, key);
-    const cleared = await storage.connectorState.clear(connector.source);
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "connector_state.clear",
-      resource_type: "connector",
-      resource_id: connector.id,
-      details: { source: connector.source, ...cleared },
-    });
+    await runAuditedTransaction(
+      storage,
+      () => storage.connectorState.clear(connector.source),
+      (cleared) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "connector_state.clear",
+        resource_type: "connector",
+        resource_id: connector.id,
+        details: { source: connector.source, ...cleared },
+      }),
+    );
     return c.json({ ok: true as const }, 200);
   });
 
