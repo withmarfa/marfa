@@ -60,7 +60,7 @@ A stop is `SIGTERM`, which `docker stop` sends and which a container runtime fol
 
 1. It tells every open event stream the instance is stopping, with a closing `stream_incomplete` frame whose `reason` is `server_stopping`. A client reconnects from the cursor in the frame, to the instance once it is back.
 2. In the same step it stops taking requests, and waits at most two seconds for those in flight, and at most four seconds for the bulk action and the housekeeping runs in flight, the webhook deliveries among them. A delivery still running when the wait ends is retried after the next start.
-3. It closes the database, which moves every write out of the log into the database file unless Litestream holds the log, in which case the writes stay in the log and the next start applies them, and flushes its telemetry.
+3. It closes the database, which moves every write out of the log into the database file unless another connection holds the log, as Litestream does and as a copy's read transaction does, in which case the writes stay in the log and the next start applies them, and flushes its telemetry.
 
 The worst case is under eight seconds, and a stop that completes exits `0`. A stop that does not, because the server or the database would not close in time, exits `1` with a warning in the log naming the step.
 

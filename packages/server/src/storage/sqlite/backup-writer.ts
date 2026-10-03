@@ -7,10 +7,9 @@
  * holds, and prints each number once its insert has committed. A number
  * printed is a write acknowledged.
  */
-import { parseArgs } from "node:util";
 import { createConnection } from "./connection.js";
 
-const directory = parseArgs({ allowPositionals: true }).positionals[0];
+const directory = process.argv[2];
 if (directory === undefined) throw new Error("usage: backup-writer <dir>");
 
 const { raw } = await createConnection(`${directory}/marfa.db`);

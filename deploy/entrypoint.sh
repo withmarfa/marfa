@@ -82,7 +82,7 @@ else
   # of a new instance, a fresh start rather than a failure.
   litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
 
-  supervise litestream replicate -config /etc/litestream.yml -exec "/bin/sh $0 run-server" || code=$?
+  supervise litestream replicate -config /etc/litestream.yml -exec "/bin/sh \"$0\" run-server" || code=$?
 fi
 
 if [ -e "$MARFA_RUN_DIR/refused-database" ]; then

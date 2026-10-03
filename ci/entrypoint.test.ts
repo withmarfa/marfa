@@ -81,7 +81,7 @@ function start(options: { body: string; bucket?: boolean }): Run {
       'while [ $# -gt 0 ]; do if [ "$1" = -exec ]; then command=$2; break; fi; shift; done',
       "signalled=0",
       `trap 'signalled=1; kill -TERM "$child" 2>/dev/null' TERM INT`,
-      'sh -c "$command" &',
+      'sh -c "exec $command" &',
       "child=$!",
       'wait "$child"; status=$?',
       'if [ "$signalled" = 1 ]; then wait "$child"; status=$?; fi',
@@ -174,6 +174,25 @@ describe("deploy/entrypoint.sh", () => {
       const run = start({ bucket: true, body: `exit ${String(status)}` });
       expect(await run.exited).toBe(1);
     }
+  });
+
+  it("hands the stop signal through Litestream and the entrypoint's own server layer to the server, which ends the container 0", async () => {
+    const run = start({
+      bucket: true,
+      body: [
+        `trap 'exit 0' TERM`,
+        `echo ready > "$marker/ready"`,
+        "while :; do sleep 0.1; done",
+      ].join("\n"),
+    });
+    for (let i = 0; i < 100 && !existsSync(join(run.dir, "ready")); i += 1) {
+      await pause(50);
+    }
+    expect(existsSync(join(run.dir, "ready"))).toBe(true);
+
+    run.child.kill("SIGTERM");
+
+    expect(await run.exited).toBe(0);
   });
 
   it("ends 0 under Litestream when the server stops cleanly", async () => {

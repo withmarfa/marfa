@@ -51,9 +51,13 @@ interface Writer {
 }
 
 async function startWriter(directory: string): Promise<Writer> {
-  const child = spawn("node", ["--import", "tsx", WRITER, directory], {
-    stdio: ["ignore", "pipe", "inherit"],
-  });
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", WRITER, directory],
+    {
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
   writers.push(child);
   let acked = 0;
   let partial = "";
