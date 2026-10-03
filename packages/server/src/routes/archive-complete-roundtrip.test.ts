@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { Item, Version } from "@withmarfa/shared";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { itemWrites } from "../storage/item-writes.js";
 import {
   closeTestContexts,
@@ -24,6 +25,9 @@ async function context() {
   contexts.push(ctx);
   return ctx;
 }
+afterEach(() => {
+  __resetEventLogForTests();
+});
 afterAll(() => closeTestContexts(contexts));
 
 async function sql(
@@ -87,6 +91,7 @@ async function exported(ctx: TestContext, query = "", key = ctx.workingKey) {
 }
 
 function restore(ctx: TestContext, archive: Buffer) {
+  initEventLog(ctx.storage.eventLog);
   return ctx.app.request("/admin/restore-archive", {
     method: "POST",
     headers: {
@@ -300,6 +305,7 @@ describe("complete archive round trips", () => {
       },
     );
     expect(canRead.status).toBe(200);
+    expect(Buffer.from(await canRead.arrayBuffer())).toEqual(readableBytes);
     expect(cannotRead.status).toBe(404);
     const archive = await exported(source, "&type=core.note");
     const entries = await unpack(archive);
@@ -310,8 +316,10 @@ describe("complete archive round trips", () => {
     expect(await target.storage.versions.all(item.id)).toEqual(
       await source.storage.versions.all(item.id),
     );
-    expect(await target.blobs.disk.get(hashes[0]!)).not.toBeNull();
-    expect(await target.blobs.disk.get(hashes[1]!)).toBeNull();
+    expect(await target.blobs.disk.has(hashes[0]!)).toEqual({
+      size_bytes: readableBytes.length,
+    });
+    expect(await target.blobs.disk.has(hashes[1]!)).toBeNull();
   });
 
   it.each(["created_at", "updated_at"])(
@@ -689,5 +697,39 @@ describe("complete archive round trips", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await target.storage.items.get(item.id)).toEqual(selected);
     expect(await target.storage.versions.all(item.id)).toEqual(earlier);
+  });
+
+  it("preserves dates and history for explicitly exported trashed items", async () => {
+    const source = await context();
+    const target = await context();
+    const item = await note(source);
+    await seedHistory(source, item, 1);
+    const trashed = await request(source.app, "DELETE", `/items/${item.id}`, {
+      key: source.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+    await sql(
+      source,
+      "UPDATE items SET created_at = ?, updated_at = ? WHERE id = ?",
+      [createdAt, updatedAt, item.id],
+    );
+    const archived = await source.storage.items.getIncludingTrashed(item.id);
+    expect(archived!.state).toBe("trashed");
+    expect(await source.storage.items.get(item.id)).toBeNull();
+    const history = await source.storage.versions.all(item.id);
+    expect(history).toHaveLength(1);
+    const response = await restore(
+      target,
+      await exported(source, "&state=any"),
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await target.storage.items.getIncludingTrashed(item.id)).toEqual(
+      archived,
+    );
+    expect(await target.storage.versions.all(item.id)).toEqual(history);
+    const event = (await target.storage.eventLog.getAfter(0n, 100)).find(
+      (entry) => entry.item_id === item.id,
+    );
+    expect(JSON.parse(event!.payload).item).toEqual(archived);
   });
 });

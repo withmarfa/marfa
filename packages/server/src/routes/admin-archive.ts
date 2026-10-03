@@ -13,8 +13,7 @@
  * items. Edges restore in a second pass, only where both endpoints
  * resolve in the target database — a hand-edited archive cannot plant a
  * reference to an item it does not carry. A row comes back at the version
- * it was archived at; version history, created_at and updated_at are
- * re-stamped, not carried.
+ * it was archived at, with its original dates and readable item history.
  *
  * Paired with GET /export?format=archive.
  */
@@ -37,7 +36,7 @@ import {
   SYSTEM_DEFAULT_STATE,
 } from "@withmarfa/shared";
 import { publish, publishEdge } from "../pubsub.js";
-import type { Edge, Item, Metadata } from "@withmarfa/shared";
+import type { Edge, Item, Metadata, Version } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -45,10 +44,14 @@ import {
   operatorOnly,
   requireAuth,
 } from "../middleware/auth.js";
-import { writeItem } from "../storage/item-write.js";
+import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
 import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type { AuditLogEntry, Storage } from "../storage/interface.js";
+import type {
+  ArchivedDates,
+  AuditLogEntry,
+  Storage,
+} from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { HashingTransform } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -62,11 +65,7 @@ import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 import { blobPrincipal } from "./_blob-reach.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
-
-const MAX_ARCHIVE_ITEMS = 5000;
-// Edges routinely outnumber items; a 4x multiple keeps the cap
-// proportionate without letting a hand-built archive flood the table.
-const MAX_ARCHIVE_EDGES = 20000;
+import { archiveDates, archiveVersions } from "./admin-archive-history.js";
 
 function archiveScalarRefusal(
   kind: "item" | "edge",
@@ -185,7 +184,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: {
@@ -257,7 +256,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, and nothing was written. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops before items or blobs are written; earlier type registrations remain audited.",
+        "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, or an imported snapshot ID already exists. A snapshot collision rolls back the row transaction; earlier audited type and blob preparation remains. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops before items or blobs are written; earlier type registrations remain audited.",
     },
   },
 });
@@ -588,6 +587,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       item: Record<string, unknown>;
       metadata?: unknown;
       lending_blobs?: unknown;
+      versions?: unknown;
     }[] = [];
     for (const line of itemLines) {
       try {
@@ -595,6 +595,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           item: Record<string, unknown>;
           metadata?: unknown;
           lending_blobs?: unknown;
+          versions?: unknown;
         };
         items.push(parsed);
       } catch {
@@ -617,21 +618,31 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    if (items.length > MAX_ARCHIVE_ITEMS) {
-      return refuse(
-        new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Maximum ${String(MAX_ARCHIVE_ITEMS)} items per archive`,
-        ),
-      );
-    }
-    if (edges.length > MAX_ARCHIVE_EDGES) {
-      return refuse(
-        new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
-        ),
-      );
+    const preparedItems: {
+      entry: (typeof items)[number];
+      dates: ArchivedDates;
+      history: Version[];
+    }[] = [];
+    const edgeDates: ArchivedDates[] = [];
+    const seenSnapshotIds = new Set<string>();
+    try {
+      for (const [index, entry] of items.entries()) {
+        preparedItems.push({
+          entry,
+          dates: archiveDates("item", entry.item, index),
+          history: archiveVersions(
+            entry.item,
+            entry.versions,
+            index,
+            seenSnapshotIds,
+          ),
+        });
+      }
+      for (const [index, edge] of edges.entries()) {
+        edgeDates.push(archiveDates("edge", edge, index));
+      }
+    } catch (err) {
+      return refuse(err);
     }
 
     // Registrations publish outside the rows' transaction, so scalar
@@ -781,13 +792,14 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           const resolvableIds = new Set<string>();
 
           for (const {
-            item,
-            metadata: meta,
-            lending_blobs: lending,
-          } of items) {
+            entry: { item, metadata: meta, lending_blobs: lending },
+            dates,
+            history,
+          } of preparedItems) {
             const archiveId = typeof item.id === "string" ? item.id : undefined;
+            let created: Item;
             try {
-              const { item: created } = await writeItem(
+              ({ item: created } = await writeItem(
                 storage,
                 { kind: "platform" },
                 {
@@ -824,39 +836,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                 // Announced below with the extensions it carries, which a
                 // second write sets.
                 { announce: false },
-              );
-              imported++;
-              resolvableIds.add(created.id);
-
-              // One write for the whole set, not one per namespace. Each
-              // `setExtension` rewrites the same JSON column and bumps the
-              // item's modification time beside it, so writing them
-              // separately cost namespaces times items on the one path
-              // whose purpose is moving a lot of rows at once. What is
-              // stored is identical either way.
-              const extensions = archiveExtensions(meta);
-              const { extensions: stored, updated_at } =
-                await storage.metadata.setExtensions(created.id, extensions);
-              restoredItems.push({
-                // The extensions write bumps the item's modification time,
-                // and `created` was read before it ran. Announcing that
-                // frame would publish an `updated_at` the row does not
-                // carry: a client watermarking on it re-fetches on its next
-                // catch-up, and one comparing it against a later read sees
-                // a change nothing told it about.
-                item: updated_at ? { ...created, updated_at } : created,
-                metadata: {
-                  item_id: created.id,
-                  // `archiveTags` answers `undefined` for "the archive named
-                  // none", which is what `create` wants and what a `Metadata`
-                  // cannot hold — an item with no tags carries an empty list.
-                  tags: archiveTags(meta) ?? [],
-                  extensions: stored,
-                },
-              });
+              ));
             } catch (err) {
-              // A link held by another row names the same vendor record, as a
-              // natural key held does.
               if (
                 err instanceof MarfaError &&
                 (err.code === ErrorCode.DUPLICATE_SOURCE ||
@@ -864,18 +845,49 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                   err.code === ErrorCode.LINK_TAKEN)
               ) {
                 duplicates++;
-                // A duplicate leaves the existing row untouched — its tags
-                // and extensions are the live state, not the archive's.
                 if (
                   err.code === ErrorCode.CONFLICT &&
                   archiveId !== undefined
                 ) {
                   resolvableIds.add(archiveId);
                 }
-              } else {
-                throw err;
+                continue;
               }
+              throw err;
             }
+            imported++;
+            resolvableIds.add(created.id);
+
+            // History conflicts must escape the create-only duplicate catch:
+            // an existing snapshot ID belongs to a different recorded past.
+            // One write for the whole set, not one per namespace. Each
+            // `setExtension` rewrites the same JSON column and bumps the
+            // item's modification time beside it, so writing them
+            // separately cost namespaces times items on the one path
+            // whose purpose is moving a lot of rows at once. What is
+            // stored is identical either way.
+            const extensions = archiveExtensions(meta);
+            const { extensions: stored } = await storage.metadata.setExtensions(
+              created.id,
+              extensions,
+            );
+            const finalized = await finalizeArchiveItem(
+              storage,
+              created.id,
+              dates,
+              history,
+            );
+            restoredItems.push({
+              item: finalized,
+              metadata: {
+                item_id: created.id,
+                // `archiveTags` answers `undefined` for "the archive named
+                // none", which is what `create` wants and what a `Metadata`
+                // cannot hold — an item with no tags carries an empty list.
+                tags: archiveTags(meta) ?? [],
+                extensions: stored,
+              },
+            });
           }
 
           // Second pass, after every item the archive carries exists: an
@@ -885,7 +897,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           const endpointResolves = async (id: string): Promise<boolean> =>
             resolvableIds.has(id) || (await storage.items.get(id)) !== null;
 
-          for (const edge of edges) {
+          for (const [index, edge] of edges.entries()) {
             const sourceId = edge.source_id;
             const targetId = edge.target_id;
             const edgeType = edge.edge_type;
@@ -950,6 +962,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
               throw err;
             }
             const restored = await storage.edges.createRaw({
+              ...edgeDates[index],
               ...(edgeId !== undefined && { id: edgeId }),
               // Same rule as the item path above. Both doors move together
               // or the hole stays reachable through the other one.
@@ -973,7 +986,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           // to resolve it.
           //
           // Fan-out is declined, as it is on every other door that writes in
-          // bulk: a restore carries up to `MAX_ARCHIVE_ITEMS` rows, and
+          // bulk: a restore can carry every row in an instance, and
           // driving outbound work per row per subscribed connection would
           // push an archive's worth of writes back out to whatever an
           // installed connection is joined to. The flag governs only the

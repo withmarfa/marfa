@@ -191,7 +191,7 @@
     }
   },
   "routes/admin-archive.ts": {
-    "boundary": "Audited bounded blob preparation and final item/edge restore unit; external I/O completes first; external-audit.test.ts.",
+    "boundary": "Audited blob preparation and final item/metadata/history/edge restore unit; date and history finalization joins the row transaction. Native failure coverage in external-audit.test.ts and archive-complete-roundtrip.test.ts.",
     "calls": {
       "BlobRegistry.recordLocation": 1,
       "BlobRegistry.recordUploader": 1,
@@ -199,7 +199,8 @@
       "EdgeStore.createRaw": 1,
       "MetadataStore.setExtensions": 1,
       "runAuditedTransaction": 2,
-      "writeItem": 1
+      "writeItem": 1,
+      "finalizeArchiveItem": 1
     }
   },
   "routes/admin-platform-types.ts": {
@@ -425,7 +426,9 @@
       "ItemStore.restoreBeneath": 2,
       "ItemStore.transition": 1,
       "ItemStore.update": 1,
-      "MetadataStore.set": 1
+      "MetadataStore.set": 1,
+      "ItemStore.restoreDates": 1,
+      "VersionStore.restore": 1
     }
   },
   "storage/retention.ts": {

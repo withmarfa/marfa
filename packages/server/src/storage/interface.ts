@@ -621,7 +621,11 @@ export type StoredCreateItemInput = CreateItemInput &
   RestoredRowInput &
   BlobProofInput;
 
-export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
+export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
+
+export type StoredCreateEdgeInput = CreateEdgeInput &
+  RestoredRowInput &
+  ArchivedDates;
 /**
  * The store's update input, which differs from the door's in one field.
  *
@@ -659,6 +663,8 @@ export interface CascadeRoot {
 }
 
 export interface ItemStore {
+  /** Archive finalization after metadata writes; never changes the version. */
+  restoreDates(id: string, dates: ArchivedDates): Promise<void>;
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
   /**
@@ -984,6 +990,8 @@ export interface VersionPageInput {
 }
 
 export interface VersionStore {
+  /** Replays validated snapshots exactly within the caller's restore transaction. */
+  restore(snapshots: readonly Version[]): Promise<void>;
   create(
     itemId: string,
     version: number,
@@ -3101,6 +3109,7 @@ export type ItemWriteMethod = keyof Pick<
   | "purge"
   | "restore"
   | "restoreBeneath"
+  | "restoreDates"
   | "transition"
   | "purgeTrashedOlderThan"
   | "purgeRevokedAppGrantsOlderThan"

@@ -48,6 +48,7 @@ import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
   ItemStatsAxis,
+  ArchivedDates,
   StoredCreateItemInput,
   StoredUpdateItemInput,
 } from "../interface.js";
@@ -590,6 +591,12 @@ export class SqliteItemStore implements ItemStore {
     private versionStore: SqliteVersionStore,
     private searchStore: SqliteSearchStore,
   ) {}
+
+  async restoreDates(id: string, dates: ArchivedDates): Promise<void> {
+    if (dates.created_at === undefined && dates.updated_at === undefined)
+      return;
+    await this.db.update(items).set(dates).where(eq(items.id, id)).run();
+  }
 
   async create(input: StoredCreateItemInput): Promise<Item> {
     if (input.occurred_at !== undefined) {

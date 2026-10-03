@@ -14,6 +14,7 @@ import {
   requireAuth,
   getTypeFilter,
   readsSomeType,
+  typeReader,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
@@ -58,7 +59,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export data",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
@@ -430,6 +431,7 @@ async function handleArchiveExport(
   filter: ExportFilter,
 ): Promise<Response> {
   const callerKey = requireAuth(c);
+  const readsHistory = typeReader(c);
 
   const lines: string[] = [];
   const edgeLines: string[] = [];
@@ -465,10 +467,28 @@ async function handleArchiveExport(
         // Which of the row's digests lend its reach, so a restore credits
         // those and no others.
         const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
+        const versions = [];
+        let historyCursor: string | undefined;
+        do {
+          const history = await storage.versions.list(item.id, {
+            reads: readsHistory,
+            limit: 200,
+            cursor: historyCursor,
+          });
+          for (const snapshot of history.data) {
+            // A concurrent write may have snapshotted the row selected above.
+            // That snapshot belongs to the next current version, not this one.
+            if (snapshot.version >= item.version) continue;
+            versions.push(snapshot);
+            collectBlobHashes(snapshot.properties, blobHashes);
+          }
+          historyCursor = history.next_cursor ?? undefined;
+        } while (historyCursor);
         lines.push(
           JSON.stringify({
             item,
             metadata,
+            versions,
             lending_blobs: lendingBlobs,
           }),
         );

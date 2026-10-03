@@ -83,19 +83,19 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
     Reason: restored dates describe the original record, and resetting a version can make an old write precondition match unrelated content.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`.
+    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`.
 
-35. When exporting an archive, the server MUST include every stored snapshot of each selected item that the exporting credential can read under that snapshot's historical type permissions.
+35. When exporting an archive, the server MUST include every stored snapshot below each selected item's recorded current version that the exporting credential can read under that snapshot's historical type permissions.
 
-    Reason: a current type grant does not grant access to an item's earlier type, and one page of history is not complete history.
+    Reason: a current type grant does not grant access to an item's earlier type, and one page of history is not complete history. A concurrent write may snapshot the selected current version after selection; that snapshot belongs to the next version and cannot be included beside the selected row.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves every snapshot across history pages and leaves duplicate live history untouched`, `› exports snapshots by their historical type permissions`.
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves every snapshot across history pages and leaves duplicate live history untouched`, `› exports snapshots by their historical type permissions`, `› fences exported history below the selected row's version during a concurrent patch`.
 
 36. When restoring an item's archived history, the server MUST preserve each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at` exactly, without validating historical properties against the current type schema.
 
     Reason: changing a type schema does not rewrite the past.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps historical properties after the current type changes their shape`; `packages/server/src/storage/archive-history-storage.test.ts › stores every historical field exactly without requiring the historical type's current schema`.
+    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps historical properties after the current type changes their shape`; `packages/server/src/storage/archive-history-storage.test.ts › stores every historical field exactly without requiring the historical type's current schema`.
 
 37. When a readable archived snapshot references a blob, the archive MUST include its bytes if and only if the exporting credential could read that blob through the blob doors.
 

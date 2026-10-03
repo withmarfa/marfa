@@ -6,8 +6,8 @@
  * a restore actually reconstructs what an export claims to carry, which is
  * the property a backup exists for.
  *
- * Scoped to this file's credential-stamped `source` throughout, so the export
- * stays inside the restore caps and other files' rows never enter the archive.
+ * Scoped to this file's credential-stamped `source` throughout, so other
+ * files' rows never enter the archive.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -56,6 +56,17 @@ describe("export → purge → restore round trip", () => {
     });
     expect(ext.ok).toBe(true);
 
+    const changed = await client.updateItem(itemId, {
+      version: seeded.data.item.version,
+      properties: { body: "The version kept in the archive" },
+    });
+    expect(changed.ok).toBe(true);
+    const archivedItem = await client.getItem(itemId);
+    expect(archivedItem.ok).toBe(true);
+    const history = await client.getVersions(itemId);
+    expect(history.ok).toBe(true);
+    expect(history.data.data).toHaveLength(1);
+
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.ok).toBe(true);
     expect(archive.data.byteLength).toBeGreaterThan(0);
@@ -76,6 +87,10 @@ describe("export → purge → restore round trip", () => {
     // metadata came back with the item rather than being dropped.
     const back = await client.getItem(itemId);
     expect(back.ok).toBe(true);
+    expect(back.data.item).toEqual(archivedItem.data.item);
+    const restoredHistory = await client.getVersions(itemId);
+    expect(restoredHistory.ok).toBe(true);
+    expect(restoredHistory.data).toEqual(history.data);
     expect(back.data.item.type).toBe("core.note");
     expect(back.data.item.source_id).toBe(`rt-meta-${ctx.runId}`);
     expect([...back.data.metadata.tags].sort()).toEqual([
@@ -133,7 +148,7 @@ describe("export → purge → restore round trip", () => {
     });
     expect(outbound.ok).toBe(true);
     const forward = outbound.data.data.find((e) => e.id === edgeId);
-    expect(forward).toBeDefined();
+    expect(forward).toEqual(edge.data.edge);
     expect(forward?.target_id).toBe(b.data.item.id);
     expect(forward?.properties).toEqual({ context: "round trip" });
 

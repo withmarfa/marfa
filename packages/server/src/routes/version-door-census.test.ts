@@ -194,7 +194,7 @@ const OWN_RULE: Record<string, string> = {
  * Every module calling a version store read that takes no reader, and why.
  * The reads are taken from the `VersionStore` interface itself, so a read
  * added there is watched here: every method but `list`, which takes the
- * reader, and the two writes.
+ * reader, and the writes.
  */
 const UNFILTERED_READERS: Record<string, string> = {
   "storage/sqlite/item-store.ts":
@@ -206,7 +206,7 @@ const UNFILTERED_READERS: Record<string, string> = {
 };
 
 const READER_TAKING = new Set(["list"]);
-const WRITES = new Set(["create", "deleteByIds"]);
+const WRITES = new Set(["create", "restore", "deleteByIds"]);
 
 function unfilteredReads(): string[] {
   const source = readFileSync(

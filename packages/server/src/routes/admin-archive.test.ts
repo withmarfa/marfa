@@ -224,19 +224,21 @@ describe("POST /admin/restore-archive", () => {
       return paths;
     };
 
-    // Refused after its entries were read: more items than the door takes,
+    // Refused after its entries were read: an invalid archived date,
     // with a blob entry ahead of them. The blob's spool goes with the
     // refusal and the bytes never reach the store.
     const refused = makeBlobData("spooled then refused");
     const refusal = await postArchive(
       await buildArchive(
         manifestFor(refused),
-        Array.from({ length: 5001 }, () => noteLine(refused)),
+        [noteLine(refused, { created_at: "not-a-date" })],
         [refused],
       ),
     );
     expect(refusal.status).toBe(400);
-    expect((await errorOf(refusal)).message).toContain("Maximum 5000 items");
+    expect((await errorOf(refusal)).message).toContain(
+      "created_at must be a valid instant",
+    );
     // The body's spool and the blob entry's.
     const refusedSpools = spoolsMinted();
     expect(refusedSpools).toHaveLength(2);
@@ -244,7 +246,7 @@ describe("POST /admin/restore-archive", () => {
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
 
-    // The same shape under the cap restores, and its spools are consumed:
+    // A valid row restores, and its spools are consumed:
     // the blob's moved into place, the body's removed.
     const kept = makeBlobData("spooled then kept");
     const fine = await buildArchive(
