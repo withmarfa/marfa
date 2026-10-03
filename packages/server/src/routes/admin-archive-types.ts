@@ -18,14 +18,11 @@ import {
   isCoreEdgeType,
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
-  registerEdgeTypeSchema,
   getEdgeTypeSchema,
-  unregisterEdgeTypeSchema,
   validateTypeSchema,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
-import { writeTypesInTransaction } from "./_type-write.js";
 import type { Storage, TypeProvenance } from "../storage/interface.js";
 import {
   EdgeTypeRequestSchema,
@@ -367,36 +364,29 @@ export async function registerArchiveTypes(
       // The parent is asked in the transaction that writes the type, as
       // `POST /types` asks it, so a parent deleted meanwhile is not inherited
       // from, and a delete waiting on this write finds the child.
-      const wrote = await writeTypesInTransaction(
-        storage,
-        [schema.id],
-        async () => {
-          if (schema.parent && !getTypeSchema(schema.parent)) return false;
-          if (schema.parent) {
-            assertParentChainResolves(schema.id, schema.parent);
-            // Checked again now its parent is registered: the first pass ran
-            // before the batch's own parents were, so it could not see what a
-            // child inherits from one of them, a second thumbnail among it.
-            const inherited = validateTypeSchema(schema);
-            if (!inherited.success) {
-              throw new MarfaError(
-                ErrorCode.INVALID_SCHEMA,
-                `Archive carries an invalid type schema for "${schema.id}"`,
-                { errors: inherited.errors },
-              );
-            }
+      const wrote = await storage.runInTransaction(async () => {
+        if (schema.parent && !getTypeSchema(schema.parent)) return false;
+        if (schema.parent) {
+          assertParentChainResolves(schema.id, schema.parent);
+          // Checked again now its parent is registered: the first pass ran
+          // before the batch's own parents were, so it could not see what a
+          // child inherits from one of them, a second thumbnail among it.
+          const inherited = validateTypeSchema(schema);
+          if (!inherited.success) {
+            throw new MarfaError(
+              ErrorCode.INVALID_SCHEMA,
+              `Archive carries an invalid type schema for "${schema.id}"`,
+              { errors: inherited.errors },
+            );
           }
-          // `types.create` registers into the registry as part of the write,
-          // so nothing here calls it directly.
-          //
-          // Provenance is passed rather than defaulted: the column defaults to
-          // `user`, the one the consent screen offers a read-and-write wildcard
-          // over, so defaulting would turn a row recorded as `unknown` into the
-          // person's own on a round trip.
-          await storage.types.create(schema, entry.provenance);
-          return true;
-        },
-      );
+        }
+        // Provenance is passed rather than defaulted: the column defaults to
+        // `user`, the one the consent screen offers a read-and-write wildcard
+        // over, so defaulting would turn a row recorded as `unknown` into the
+        // person's own on a round trip.
+        await storage.types.create(schema, entry.provenance);
+        return true;
+      });
       if (!wrote) continue;
       written.push(entry);
       pending.splice(i, 1);
@@ -415,27 +405,19 @@ export async function registerArchiveTypes(
   // write lock, with the row written before the registry holds the name, as
   // the route does.
   for (const schema of edgeTypesToWrite) {
-    try {
-      await storage.runInTransaction(async () => {
-        // An id registered since the rows were read was registered by a
-        // request that wrote its own row, and registering over it would put
-        // this archive's schema in its place.
-        if (getEdgeTypeSchema(schema.id)) {
-          throw new MarfaError(
-            ErrorCode.CONFLICT,
-            `Archive carries "${schema.id}", which was registered while the restore ran`,
-          );
-        }
-        assertEdgeNamesFree(schema.id, schema.reverse_name);
-        await storage.edgeTypes.create(schema);
-        registerEdgeTypeSchema(schema);
-      });
-    } catch (err) {
-      if (getEdgeTypeSchema(schema.id) === schema) {
-        unregisterEdgeTypeSchema(schema.id);
+    await storage.runInTransaction(async () => {
+      // An id registered since the rows were read was registered by a
+      // request that wrote its own row, and registering over it would put
+      // this archive's schema in its place.
+      if (getEdgeTypeSchema(schema.id)) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `Archive carries "${schema.id}", which was registered while the restore ran`,
+        );
       }
-      throw err;
-    }
+      assertEdgeNamesFree(schema.id, schema.reverse_name);
+      await storage.edgeTypes.create(schema);
+    });
   }
 
   return {

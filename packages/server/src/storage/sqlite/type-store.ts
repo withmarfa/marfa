@@ -1,8 +1,11 @@
+import { projectPlatformRows } from "../platform-family.js";
 import {
   listTypes,
   getTypeSchema,
   registerTypeSchema,
   unregisterTypeSchema,
+  removePlatformRegistryType,
+  stagePlatformRegistryType,
   MarfaError,
   ErrorCode,
 } from "@withmarfa/shared";
@@ -53,14 +56,22 @@ export class SqliteTypeStore implements TypeStore {
       // purges left were the deleted type's.
       await forgetType(tx, schema.id);
       await buildTypeLinks(tx, schema.id, schema.link_field);
+      if (provenance?.origin === "platform") {
+        for (const row of projectPlatformRows([{ schema, origin: "platform" }]))
+          stagePlatformRegistryType(schema, row.family);
+      } else registerTypeSchema(schema);
     });
-    registerTypeSchema(schema);
     return schema;
   }
 
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.transaction(async (tx) => {
+      const stored = await tx
+        .select({ origin: types.origin, family: types.family })
+        .from(types)
+        .where(eq(types.id, id))
+        .get();
       const written = await tx.run(sql`
         UPDATE types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
         WHERE id = ${id}
@@ -76,26 +87,26 @@ export class SqliteTypeStore implements TypeStore {
       if (getTypeSchema(id)?.link_field !== schema.link_field) {
         await rebuildTypeLinks(tx, id, schema.link_field);
       }
+      if (stored?.origin === "platform") {
+        for (const row of projectPlatformRows([
+          {
+            schema,
+            origin: "platform",
+            family: stored.family as LoadedType["family"],
+          },
+        ]))
+          stagePlatformRegistryType(schema, row.family);
+      } else registerTypeSchema(schema);
     });
-    registerTypeSchema(schema);
     return schema;
   }
 
   async delete(id: string): Promise<void> {
-    const schema = getTypeSchema(id);
-    try {
-      await this.db.transaction(async (tx) => {
-        await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
-        // Before the commit, so a write that asks the registry inside a
-        // transaction of its own, which cannot open until this one ends,
-        // never finds the type the commit removed.
-        unregisterTypeSchema(id);
-        await forgetType(tx, id);
-      });
-    } catch (err) {
-      if (schema) registerTypeSchema(schema);
-      throw err;
-    }
+    await this.db.transaction(async (tx) => {
+      await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
+      unregisterTypeSchema(id);
+      await forgetType(tx, id);
+    });
   }
 
   async listRegistered(): Promise<TypeSchema[]> {
@@ -181,19 +192,14 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   async deletePlatformType(id: string): Promise<boolean> {
-    const deleted = await this.db
-      .delete(types)
-      .where(and(eq(types.id, id), eq(types.origin, "platform")))
-      .returning({ id: types.id });
-    // The row is only half of what makes a type resolve. The other half is
-    // the in-process registry, filled from the rows at boot, and `delete`
-    // above evicts it for exactly this reason. Leaving it here made the
-    // removal a promise rather than an act: `GET /types` kept listing the
-    // identifier, `GET /types/{id}` kept answering 200, and a write against
-    // it kept validating, all until somebody restarted the process — while
-    // the route that did the deleting reported success.
-    if (deleted.length > 0) unregisterTypeSchema(id);
-    return deleted.length > 0;
+    return this.db.transaction(async (tx) => {
+      const deleted = await tx
+        .delete(types)
+        .where(and(eq(types.id, id), eq(types.origin, "platform")))
+        .returning({ id: types.id });
+      if (deleted.length > 0) removePlatformRegistryType(id);
+      return deleted.length > 0;
+    });
   }
 
   async countRegistered(): Promise<number> {

@@ -4,8 +4,6 @@ import {
   ErrorCode,
   MarfaError,
   isCoreEdgeType,
-  registerEdgeTypeSchema,
-  unregisterEdgeTypeSchema,
   isValidEdgeTypeIdentifier,
   edgeNameHolder,
   getEdgeTypeSchema,
@@ -442,33 +440,19 @@ export function edgeTypeRoutes(storage: Storage) {
       );
     }
 
-    // Claimed under the write lock, so two registrations in flight cannot
-    // both take a name, and the row is written before the registry holds
-    // the name: an edge write asks the table, and a name the registry held
-    // first would pass the door's own check and be refused at the row.
-    // The claim is given back if the transaction does not commit.
-    const claim: { schema?: EdgeTypeSchema } = {};
-    let schema: EdgeTypeSchema;
-    try {
-      schema = await storage.runInTransaction(async () => {
-        if (getEdgeTypeSchema(body.id)) {
-          throw new MarfaError(
-            ErrorCode.CONFLICT,
-            `Edge type ${body.id} already exists`,
-          );
-        }
-        // Builds the schema and checks its names against every other
-        // type's, so it runs under the lock with the claim.
-        const built = edgeTypeFromRequest(body);
-        await storage.edgeTypes.create(built);
-        registerEdgeTypeSchema(built);
-        claim.schema = built;
-        return built;
-      });
-    } catch (err) {
-      if (claim.schema) unregisterEdgeTypeSchema(claim.schema.id);
-      throw err;
-    }
+    // Names are checked under the writer lock so concurrent registrations
+    // cannot both take the same forward or reverse name.
+    const schema = await storage.runInTransaction(async () => {
+      if (getEdgeTypeSchema(body.id)) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `Edge type ${body.id} already exists`,
+        );
+      }
+      const built = edgeTypeFromRequest(body);
+      await storage.edgeTypes.create(built);
+      return built;
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -524,7 +508,6 @@ export function edgeTypeRoutes(storage: Storage) {
       }
       await storage.edgeTypes.delete(id);
     });
-    unregisterEdgeTypeSchema(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

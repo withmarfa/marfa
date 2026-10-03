@@ -1,3 +1,4 @@
+import { publishBootRegistry } from "./registry-context.js";
 import { assertTransactionUsable } from "./transaction-control.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
@@ -38,11 +39,8 @@ import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
 import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
 import { sqliteStoredValueCounts } from "./stored-value-counts.js";
 import {
-  registerEdgeTypeSchema,
   isCoreEdgeType,
   edgeNameCollisions,
-  registerTypeSchema,
-  seedPlatformTypes as seedPlatformRegistry,
   shippedPlatformTypes,
 } from "@withmarfa/shared";
 
@@ -80,10 +78,6 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   // Awaited for the same reason as the type warmup below: a registry filled
   // after storage is handed back is a registry some request can miss.
   const loadedEdgeTypes = await edgeTypeStore.list();
-  for (const schema of loadedEdgeTypes) {
-    if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema);
-  }
-  reportEdgeNameCollisions(edgeNameCollisions());
 
   // Awaited rather than fire-and-forget: the platform vocabulary is seeded
   // data, so returning storage before the registry is filled opens a window
@@ -129,11 +123,14 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       sqliteStoredValueCounts(async (sql) => (await raw.execute(sql)).rows),
     ),
   );
-  for (const row of loadedTypes) {
-    if (row.origin === "platform") continue;
-    registerTypeSchema(row.schema);
-  }
-  seedPlatformRegistry(platformRows);
+  publishBootRegistry({
+    platform: platformRows,
+    custom: loadedTypes
+      .filter((row) => row.origin !== "platform")
+      .map((row) => row.schema),
+    edges: loadedEdgeTypes.filter((schema) => !isCoreEdgeType(schema.id)),
+  });
+  reportEdgeNameCollisions(edgeNameCollisions());
 
   const storage = {
     items: itemStore,

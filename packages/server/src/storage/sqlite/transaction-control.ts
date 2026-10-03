@@ -1,11 +1,22 @@
+import type { RegistrySnapshot } from "@withmarfa/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 type Usability = "usable" | "ended" | "poisoned";
 export type TransactionOutcome =
   "active" | "rolled_back" | "committed" | "unknown";
 
+export interface StructuralParticipant {
+  readonly changed: boolean;
+  prepare(): void;
+  committed(): void;
+  rolledBack(): void;
+  unavailable(): void;
+  uncertain(load: () => Promise<RegistrySnapshot>): Promise<void>;
+}
+
 /** Shared by the root transaction and every savepoint, including native cleanup. */
 export class TransactionControl {
+  participant?: StructuralParticipant;
   state: Usability = "usable";
   begun = false;
   outcome: TransactionOutcome = "active";

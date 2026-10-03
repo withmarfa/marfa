@@ -1,14 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestContext, request, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import {
-  getTypeSchema,
-  registerTypeSchema,
-  unregisterTypeSchema,
-} from "@withmarfa/shared";
-import type { TypeSchema } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
-import { writeTypesInTransaction } from "./_type-write.js";
+import { getTypeSchema } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -361,7 +354,7 @@ describe("the registry follows a type write that does not commit", () => {
   it("takes back a registration whose transaction rolls back", async () => {
     const id = `acme.ref_rollback_create_${RUN}`;
     await expect(
-      writeTypesInTransaction(ctx.storage, [id], async () => {
+      ctx.storage.runInTransaction(async () => {
         await ctx.storage.types.create({ id, version: 1, fields: {} });
         expect(getTypeSchema(id)).toBeDefined();
         throw new Error("after the write");
@@ -376,7 +369,7 @@ describe("the registry follows a type write that does not commit", () => {
     await registerType(id);
     const before = getTypeSchema(id);
     await expect(
-      writeTypesInTransaction(ctx.storage, [id], async () => {
+      ctx.storage.runInTransaction(async () => {
         await ctx.storage.types.update(id, {
           id,
           version: 1,
@@ -386,56 +379,6 @@ describe("the registry follows a type write that does not commit", () => {
       }),
     ).rejects.toThrow("after the write");
     expect(getTypeSchema(id)).toBe(before);
-  });
-});
-
-describe("writeTypesInTransaction — the repair after a failed commit", () => {
-  // The repair runs once the lock is released, so another writer can land
-  // between the rollback and it. A storage whose transaction runs the work,
-  // lets that writer in, then fails stands in for that interleaving.
-  function failingAfter(between: () => void): Storage {
-    return {
-      ...ctx.storage,
-      runInTransaction: async <T>(fn: () => T | Promise<T>): Promise<T> => {
-        await fn();
-        between();
-        throw new Error("the commit failed");
-      },
-    };
-  }
-
-  it("leaves a later writer's entry where it finds one", async () => {
-    const id = `acme.ref_repair_later_${RUN}`;
-    const theirs: TypeSchema = { id, version: 2, fields: {} };
-    await expect(
-      writeTypesInTransaction(
-        failingAfter(() => {
-          registerTypeSchema(theirs);
-        }),
-        [id],
-        () => {
-          registerTypeSchema({ id, version: 1, fields: {} });
-          return Promise.resolve();
-        },
-      ),
-    ).rejects.toThrow("the commit failed");
-    expect(getTypeSchema(id)).toBe(theirs);
-    unregisterTypeSchema(id);
-  });
-
-  it("takes back its own entry where nothing has moved it since", async () => {
-    const id = `acme.ref_repair_own_${RUN}`;
-    await expect(
-      writeTypesInTransaction(
-        failingAfter(() => undefined),
-        [id],
-        () => {
-          registerTypeSchema({ id, version: 1, fields: {} });
-          return Promise.resolve();
-        },
-      ),
-    ).rejects.toThrow("the commit failed");
-    expect(getTypeSchema(id)).toBeUndefined();
   });
 });
 

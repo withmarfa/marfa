@@ -1,3 +1,7 @@
+import { assertRegistryReady } from "./registry-context.js";
+import { projectPlatformRows } from "../platform-family.js";
+import { toLoadedTypes } from "../loaded-types.js";
+import type { RegistrySnapshot, EdgeTypeSchema } from "@withmarfa/shared";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
@@ -10,7 +14,7 @@ import {
   type Transaction,
   type TransactionMode,
 } from "@libsql/client";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, isCoreEdgeType } from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
@@ -451,6 +455,7 @@ function transactionConnections(url: string): {
 
   const begin = async (mode: TransactionMode): Promise<Transaction> => {
     refuseOnceShut();
+    if (mode === "write") assertRegistryReady();
     let leave: () => void = () => undefined;
     if (mode === "write") {
       const turn = lastWriter;
@@ -466,6 +471,7 @@ function transactionConnections(url: string): {
       try {
         await awaitTurn(turn);
         refuseOnceShut();
+        assertRegistryReady();
       } catch (err) {
         leave();
         throw err;
@@ -487,10 +493,11 @@ function transactionConnections(url: string): {
       new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
     const finish = (sound: boolean) => {
       open = false;
+      if (control.outcome === "rolled_back") control.participant?.rolledBack();
       handBack(conn, sound);
       leave();
     };
-    const discard = async () => {
+    const discard = async (holdWriter = false) => {
       // The native connection can outlive close while prepared statements refer
       // to it. This public cleanup path also rolls back an open transaction in
       // its finally block, before the connection is discarded.
@@ -500,12 +507,80 @@ function transactionConnections(url: string): {
       } catch (error) {
         control.diagnose(error);
       }
-      finish(false);
+      if (holdWriter) {
+        open = false;
+        handBack(conn, false);
+      } else finish(false);
+    };
+    const loadRegistry = async (): Promise<RegistrySnapshot> => {
+      const reader = createClient({ url });
+      let reading = false;
+      try {
+        await reader.execute("BEGIN TRANSACTION READONLY");
+        reading = true;
+        const rows = (
+          await reader.execute("SELECT id, schema, origin, family FROM types")
+        ).rows.map((row) => {
+          if (
+            typeof row.id !== "string" ||
+            typeof row.schema !== "string" ||
+            typeof row.origin !== "string" ||
+            (row.family !== null && typeof row.family !== "string")
+          )
+            throw new Error("Stored registry row is unavailable");
+          return {
+            id: row.id,
+            schema: row.schema,
+            origin: row.origin,
+            family: row.family,
+          };
+        });
+        for (const row of rows) {
+          const schema: unknown = JSON.parse(row.schema);
+          if (
+            !schema ||
+            typeof schema !== "object" ||
+            !("id" in schema) ||
+            schema.id !== row.id
+          )
+            throw new Error("Stored registry schema is unavailable");
+        }
+        const loaded = toLoadedTypes(rows);
+        const edges = (
+          await reader.execute("SELECT schema FROM edge_types")
+        ).rows
+          .map((row) => {
+            if (typeof row.schema !== "string")
+              throw new Error("Stored edge registry schema is unavailable");
+            return JSON.parse(row.schema) as EdgeTypeSchema;
+          })
+          .filter((schema) => !isCoreEdgeType(schema.id));
+        await reader.execute("COMMIT");
+        reading = false;
+        return {
+          platform: projectPlatformRows(loaded),
+          custom: loaded
+            .filter((row) => row.origin !== "platform")
+            .map((row) => row.schema),
+          edges,
+        };
+      } finally {
+        try {
+          if (reading) await reader.executeMultiple("ROLLBACK");
+        } catch (cleanup) {
+          control.diagnose(cleanup);
+        } finally {
+          reader.close();
+        }
+      }
     };
     const end = async (statement: "COMMIT" | "ROLLBACK") => {
+      if (statement === "COMMIT") control.participant?.prepare();
       open = false;
       try {
         await conn.execute(statement);
+        control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
+        if (statement === "COMMIT") control.participant?.committed();
       } catch (error) {
         control.invalidate(
           control.callbackCause ?? error,
@@ -513,11 +588,25 @@ function transactionConnections(url: string): {
           "unknown",
         );
         control.diagnose(error);
-        await discard();
+        const structural =
+          statement === "COMMIT" && control.participant?.changed
+            ? control.participant
+            : undefined;
+        structural?.unavailable();
+        await discard(Boolean(structural));
+        if (structural) {
+          control.outcome = "unknown";
+          try {
+            await structural.uncertain(loadRegistry);
+          } catch (reconstruction) {
+            control.diagnose(reconstruction);
+          } finally {
+            leave();
+          }
+        }
         control.assertUsable();
         throw error;
       }
-      control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
       finish(control.state === "usable");
     };
     const probeState = async (): Promise<"active" | "ended" | "unknown"> => {
