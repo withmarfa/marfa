@@ -98,6 +98,66 @@ function uniqueSuffix(): string {
   return `${String(counter)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+describe("archive registration counts", () => {
+  it.each(["types", "edge-types"] as const)(
+    "restores more than 200 %s registered and exported through their routes",
+    async (kind) => {
+      const source = await newContext();
+      const suffix = uniqueSuffix();
+      const ids: string[] = [];
+      for (let index = 0; index < 201; index += 1) {
+        const id = `user.archive_many_${suffix}_${String(index)}`;
+        ids.push(id);
+        const body =
+          kind === "types"
+            ? {
+                id,
+                label: "Fixture",
+                description: "An archive registration fixture.",
+                fields: { body: { type: "string" } },
+              }
+            : {
+                id,
+                cardinality: "many-to-many",
+                source_type_constraints: ["*"],
+                target_type_constraints: ["*"],
+                cascade_on_delete: "orphan",
+                property_schema: {},
+              };
+        const registered = await request(source.app, "POST", `/${kind}`, {
+          key: source.workingKey,
+          body,
+        });
+        expect(registered.status, await registered.clone().text()).toBe(201);
+        await registered.arrayBuffer();
+      }
+      const archive = await exportArchive(source);
+      const entries = await extractArchive(archive);
+      const manifest = JSON.parse(
+        entries.get("manifest.json")?.toString() ?? "null",
+      ) as { type_count: number; edge_type_count: number };
+      expect(
+        kind === "types" ? manifest.type_count : manifest.edge_type_count,
+      ).toBe(201);
+
+      const destination = await newContext();
+      const response = await restore(destination, archive);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const result = (await response.json()) as RestoreResult;
+      expect(
+        kind === "types"
+          ? result.types_registered
+          : result.edge_types_registered,
+      ).toBe(201);
+      const stored =
+        kind === "types"
+          ? await destination.storage.types.listRegistered()
+          : await destination.storage.edgeTypes.list();
+      expect(stored.map((schema) => schema.id).sort()).toEqual(ids.sort());
+    },
+  );
+});
+
 /** Export the instance as an archive, through the working key. */
 async function exportArchive(ctx: TestContext): Promise<Buffer> {
   const res = await request(ctx.app, "GET", `/export?format=archive`, {

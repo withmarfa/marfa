@@ -73,11 +73,11 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 ## Complete archive restoration
 
-33. When an operator restores an archive produced by the same server build, the server MUST accept its item and edge counts without a separate restore count limit.
+33. When an operator restores an archive produced by the same server build, the server MUST accept its item, edge, type-registration and edge-type-registration counts without a separate restore count limit.
 
     Reason: an export that the same build cannot restore is not a usable backup. Resource protection is independent of the number of rows an export carries.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › restores an actual export with $items items and $edges edges`.
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › restores an actual export with $items items and $edges edges`; `packages/server/src/routes/archive-type-registrations.test.ts › restores more than 200 %s registered and exported through their routes`.
 
 34. When an archive creates an item or edge, the server MUST preserve its recorded `created_at` and `updated_at` instants in canonical UTC millisecond form and its current `version` exactly.
 
