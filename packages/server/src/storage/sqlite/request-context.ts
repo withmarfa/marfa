@@ -57,8 +57,6 @@ import {
  * the *unwrapped* base db (`storage.betterAuthDb`). Auth runs its own
  * context-management (cookies, sessions) outside the request middleware
  * and would be confused by a substituted db.
- *
- * Without a wrapped transaction scope, queries use the base database.
  */
 
 /**

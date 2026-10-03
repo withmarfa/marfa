@@ -149,7 +149,6 @@ it.each(["before", "after"] as const)(
       "Storage registry state is unavailable",
     );
     const second = ctx.storage.runInTransaction(() => undefined);
-    // Enqueueing after readiness is fenced fails promptly rather than accumulating work.
     await expect(second).rejects.toThrow(
       "Storage registry state is unavailable",
     );

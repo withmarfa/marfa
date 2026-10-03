@@ -27,8 +27,6 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
   ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
 );
 
-/** Custom edge types registered on this instance, keyed by id. One bucket:
- *  a registration is visible to every caller. */
 const _customRegistry = registryMapFacet("edges");
 
 /**

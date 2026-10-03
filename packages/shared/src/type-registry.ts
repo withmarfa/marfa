@@ -245,9 +245,6 @@ function resolveSchema(typeId: string): TypeSchema | undefined {
   return _coreRegistry.get(typeId) ?? _customRegistry.get(typeId);
 }
 
-// Mutable behind the readonly exports below, so `seedPlatformTypes` can refill
-// them in place without invalidating references consumers captured at import.
-
 /** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
 export const SYSTEM_TYPE_IDS: ReadonlySet<string> = registrySystemIds;
 
@@ -413,7 +410,6 @@ export function registerTypeSchema(schema: TypeSchema): void {
   stageRegistryType(schema);
 }
 
-/** Removes a custom type from the selected registry view. */
 export function unregisterTypeSchema(id: string): void {
   removeRegistryType(id);
 }
@@ -894,11 +890,6 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
     .nullish()
     .transform((value) => (value === null ? undefined : value));
 }
-
-// Cache generated Zod schemas to avoid re-creation on every validation call.
-// Two caches: one for the default permissive shape, one for strict — strict
-// mode flips z.looseObject (passes unknown properties) to z.strictObject
-// (rejects them). Keyed on the type id: one registry, one shape per id.
 
 function zodCacheKey(typeId: string): string {
   return typeId;
