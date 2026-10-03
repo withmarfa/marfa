@@ -599,9 +599,18 @@ export function copyHeldLog(
   };
 }
 
-export function certifiedRead(answer: Answer): Answer {
+export function certifiedRead(
+  answer: Answer,
+  expectedContract?: string,
+): Answer {
   if (answer.kind === "gated")
-    return { ...answer, then: certifiedRead(answer.then) };
+    return { ...answer, then: certifiedRead(answer.then, expectedContract) };
+  if (
+    answer.kind === "json" &&
+    answer.contract !== undefined &&
+    answer.contract !== expectedContract
+  )
+    return answer;
   if (
     answer.kind !== "json" ||
     !(

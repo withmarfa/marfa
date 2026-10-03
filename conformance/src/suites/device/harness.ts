@@ -24,7 +24,7 @@ import {
   refusal,
   edgesPage,
   copyHeadRead,
-  copyLiveReplay,
+  copyReplay,
   SCRIPTED_READ_VIEW,
   itemsPage,
   typeCatalog,
@@ -208,17 +208,28 @@ export function scriptHydration(
         request.headers["last-event-id"] !== undefined ||
         request.headers["x-marfa-read-view"] !== undefined
       )
-        throw new Error("invalid copy bootstrap request");
+        return refusal(
+          400,
+          "validation_error",
+          "invalid copy bootstrap request",
+        );
       return copyHeadRead(options.head);
     },
     (request) => {
+      const cursor = request.headers["last-event-id"];
+      const fence = request.headers["x-marfa-read-view"];
+      if (request.query.toString() !== "edges=all&copy=1")
+        return refusal(400, "validation_error", "invalid copy stream query");
+      if (cursor === undefined && fence === undefined)
+        return copyHeadRead(options.head);
       if (
-        request.query.toString() !== "edges=all&copy=1" ||
-        request.headers["last-event-id"] !== options.head ||
-        request.headers["x-marfa-read-view"] !== SCRIPTED_READ_VIEW
+        cursor === undefined ||
+        !/^(0|[1-9][0-9]*)$/.test(cursor) ||
+        BigInt(cursor) > 9223372036854775807n ||
+        fence !== SCRIPTED_READ_VIEW
       )
-        throw new Error("invalid copy replay request");
-      return copyLiveReplay(options.head, []);
+        return refusal(400, "validation_error", "invalid copy replay request");
+      return copyReplay(options.head, []);
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());

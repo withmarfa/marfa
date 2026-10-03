@@ -105,6 +105,22 @@ describe("certified read views", () => {
     },
   );
 
+  it("refuses a certified page without explicit termination while retaining unsent work", async () => {
+    const h = await prepared();
+    const before = await h.device.queue();
+    h.server.copyAnswer("GET", "/items", {
+      kind: "json",
+      status: 200,
+      body: { data: [] },
+    });
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const rebuilt = await h.device.hydrate(["core.note"], "library");
+    expect(rebuilt.ok).toBe(false);
+    if (!rebuilt.ok) expect(rebuilt.refusal.code).toBe("copy_expired");
+    expect((await h.device.list()).ok).toBe(false);
+    expect(await h.device.queue()).toEqual(before);
+  });
+
   it("requires the actual live marker even when the announced head is already held", async () => {
     harness = await startHarness("read-view-live");
     const { server, device } = harness;

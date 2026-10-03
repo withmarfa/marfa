@@ -20,11 +20,12 @@ import {
   snapshotType,
   answers,
   connected,
-  heldLog,
-  itemEvent,
+  copyHeldLog,
+  copyLiveReplay,
+  copyItemEvent,
   refusal,
-  replay,
-  streamCursor,
+  copyReplay,
+  copyStreamCursor,
   wireItem,
   wireType,
   writeAnswers,
@@ -83,23 +84,23 @@ describe("the working copy holds one slice", () => {
     harness = await startHarness("slice-types");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("13", [
+      copyReplay("13", [
         // The control. A row of a declared type has to land, or every
         // assertion below passes against a device that applied nothing at all.
-        itemEvent(
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "note", type: "core.note" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.created",
           wireItem({ id: "image", type: "core.file.image" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "13",
           "item.created",
           wireItem({ id: "bookmark", type: "core.bookmark" }),
@@ -137,18 +138,18 @@ describe("the working copy holds one slice", () => {
     harness = await startHarness("slice-tier");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
+      copyReplay("12", [
         // The control, again: without a library row landing, an empty copy
         // would satisfy the assertion about the feed row.
-        itemEvent(
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "library-row", tier: "library" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.created",
           wireItem({ id: "feed-row", tier: "feed" }),
@@ -260,11 +261,11 @@ describe("the working copy holds one slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent("11", "item.created", wireItem({ id: "newest" })),
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "newest" })),
       ]),
     );
 
@@ -289,20 +290,18 @@ describe("the working copy holds one slice", () => {
   it("holds the thumbnail an item carries", async () => {
     harness = await startHarness("thumbnail");
     const { server, device } = harness;
-    // A registered type declaring a thumbnail, answered before the
-    // hydration's own catalog, which it replaces for the one read a
-    // hydration makes.
-    server.answer("GET", "/types", {
+    const catalog = {
       kind: "json",
       status: 200,
       body: {
         data: [...SCRIPTED_TYPES, snapshotType()],
         next_cursor: null,
       },
-    });
+    } as const;
     const image = pngOf("unicornsXYZ");
     scriptHydration(server, {
       head: "10",
+      catalog,
       rows: {
         "user.snapshot": [
           {
@@ -390,7 +389,7 @@ describe("the working copy holds one slice", () => {
       },
     });
     let reads = 0;
-    server.answer("GET", "/types", () => {
+    server.copyAnswer("GET", "/types", () => {
       reads += 1;
       return {
         kind: "json",
@@ -401,11 +400,11 @@ describe("the working copy holds one slice", () => {
         },
       };
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
-        itemEvent(
+      copyHeldLog([
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({
@@ -472,7 +471,7 @@ describe("the working copy holds one slice", () => {
         body: { data: [...SCRIPTED_TYPES, photo(false)], next_cursor: null },
       },
     });
-    server.answer("GET", "/types", () => {
+    server.copyAnswer("GET", "/types", () => {
       reads += 1;
       return {
         kind: "json",
@@ -483,11 +482,11 @@ describe("the working copy holds one slice", () => {
         },
       };
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
-        itemEvent(
+      copyHeldLog([
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({
@@ -560,22 +559,22 @@ describe("the working copy holds one slice", () => {
       // `cover` becomes the thumbnail after the device's second read: the
       // one the stream opened with and the one `icon` sent it to.
       let reads = 0;
-      server.answer("GET", "/types", () => {
+      server.copyAnswer("GET", "/types", () => {
         reads += 1;
         return photos(reads > 2);
       });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        heldLog([
-          itemEvent(
+        copyHeldLog([
+          copyItemEvent(
             "11",
             "item.created",
             photo("first", { title: "First", body: "as sent", icon }),
           ),
           // `icon` comes first, and the device has read the catalog again
           // for it already.
-          itemEvent(
+          copyItemEvent(
             "12",
             "item.created",
             photo("second", {
@@ -611,16 +610,16 @@ describe("the working copy holds one slice", () => {
       // The type declares `cover` its thumbnail only after the device's
       // third read, which the third stream opened with.
       let reads = 0;
-      server.answer("GET", "/types", () => {
+      server.copyAnswer("GET", "/types", () => {
         reads += 1;
         return photos(reads > 3);
       });
-      const first = itemEvent(
+      const first = copyItemEvent(
         "11",
         "item.created",
         photo("first", { title: "First", body: "as sent", cover: icon }),
       );
-      const second = itemEvent(
+      const second = copyItemEvent(
         "12",
         "item.created",
         photo("second", { title: "Second", body: "zebraword", cover }),
@@ -629,17 +628,16 @@ describe("the working copy holds one slice", () => {
       // it as the text it still is and ends; the third, on a catalog read
       // just before the type declared it, carries an item written after.
       let opened = 0;
-      server.answer("GET", "/events", (request) => {
+      server.copyAnswer("GET", "/events", (request) => {
         opened += 1;
         const after = BigInt(request.headers["last-event-id"] ?? "0");
         const log = opened <= 2 ? [first] : [first, second];
         return {
-          kind: "sse",
+          ...copyLiveReplay(
+            opened <= 2 ? "11" : "12",
+            log.filter((frame) => BigInt(frame.id ?? "0") > after),
+          ),
           hold: opened !== 2,
-          frames: [
-            connected,
-            ...log.filter((frame) => BigInt(frame.id ?? "0") > after),
-          ],
         };
       });
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
@@ -662,20 +660,20 @@ describe("the working copy holds one slice", () => {
       const { server, device } = harness;
       scriptHydration(server, { head: "10", catalog: photos(false) });
       let reads = 0;
-      server.answer("GET", "/types", () => {
+      server.copyAnswer("GET", "/types", () => {
         reads += 1;
         return photos(reads > 2);
       });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        replay("12", [
-          itemEvent(
+        copyReplay("12", [
+          copyItemEvent(
             "11",
             "item.created",
             photo("first", { title: "First", body: "as sent", icon }),
           ),
-          itemEvent(
+          copyItemEvent(
             "12",
             "item.created",
             photo("second", {
@@ -721,11 +719,11 @@ describe("the working copy holds one slice", () => {
       harness = await startHarness("thumbnail-applied");
       const { server, device } = harness;
       scriptHydration(server, { head: "10", catalog });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        replay("11", [
-          itemEvent(
+        copyReplay("11", [
+          copyItemEvent(
             "11",
             "item.created",
             wireItem({
@@ -763,8 +761,17 @@ describe("the working copy holds one slice", () => {
       if (!created.ok) return;
       const id = created.value.item_id ?? "";
       // The server's row carries a title and an image the local one did
-      // not, so what the index holds afterwards is what the answer wrote.
+      // not; the certified read after the receipt supplies the indexed baseline.
       scriptWrites(server, {
+        read: [
+          answers.updated(
+            wireItem({
+              id,
+              type: "user.snapshot",
+              properties: { title: pngOf("zebraword"), thumbnail: image },
+            }),
+          ),
+        ],
         create: [
           answers.created(
             wireItem({
@@ -777,7 +784,7 @@ describe("the working copy holds one slice", () => {
       });
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
-      // The witness: the answer's row was written and indexed, an image in
+      // The witness: the certified row was written and indexed, an image in
       // its title found as the text it is there.
       expect(await found("zebraword")).toEqual([id]);
       expect(
@@ -948,11 +955,11 @@ describe("the working copy holds one slice", () => {
       });
       // Another device's write brings the image; this device's edit of the
       // title, not yet sent, is laid back over it.
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        replay("11", [
-          itemEvent(
+        copyReplay("11", [
+          copyItemEvent(
             "11",
             "item.updated",
             wireItem({
@@ -999,7 +1006,7 @@ describe("the working copy holds one slice", () => {
     // A blob the server holds no bytes for is absent bytes too, not a
     // missing item.
     const unheld = hashOf(Buffer.from("never uploaded\n"));
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/blobs/${unheld}/url`,
       refusal(404, "blob_not_found", "no blob with this hash"),
@@ -1049,13 +1056,13 @@ describe("the working copy holds one slice", () => {
     const bytes = Buffer.from("behind a link that has expired\n");
     const hash = hashOf(bytes);
     const hex = hash.slice("sha256:".length);
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/blobs/${hash}/url`,
       writeAnswers.link(`${server.url}/links/${hex}`),
     );
     // An object store refusing a signature that has run out.
-    server.answer("GET", `/links/${hex}`, {
+    server.copyAnswer("GET", `/links/${hex}`, {
       kind: "bytes",
       status: 403,
       body: Buffer.from("<Error><Code>AccessDenied</Code></Error>"),
@@ -1086,12 +1093,12 @@ describe("the working copy holds one slice", () => {
     // A link spelled the way an object store signs one, which a device that
     // rebuilt the URL would spell differently.
     const link = `/links/${hex}?X-Sig=a%2Fb%3D&Expires=1`;
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/blobs/${hash}/url`,
       writeAnswers.link(`${server.url}${link}`),
     );
-    server.answer("GET", `/links/${hex}`, {
+    server.copyAnswer("GET", `/links/${hex}`, {
       kind: "bytes",
       status: 200,
       body: bytes,
@@ -1309,14 +1316,13 @@ describe("the working copy belongs to one server", () => {
     // last folds the journal into the file, and a reader must not. The
     // hydration's head read is still the answer at the front, so the follow
     // reads it, waits, and asks again for this one.
-    harness.server.answer("GET", "/events", {
-      kind: "sse",
-      hold: true,
-      frames: [
-        connected,
-        itemEvent("11", "item.created", wireItem({ id: "journaled" })),
-      ],
-    });
+    harness.server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeldLog([
+        copyItemEvent("11", "item.created", wireItem({ id: "journaled" })),
+      ]),
+    );
     const dying = harness.device.holdFollow(20);
     try {
       await vi.waitFor(() => expect(dying.stdout).toContain('"cursor":"11"'), {
@@ -1602,7 +1608,6 @@ describe("who may read a store", () => {
       const neighbour = device.reopen({
         store: join(dirname(device.store), "core.db"),
       });
-      scriptHydration(server, { head: "10" });
       const hydrated = await neighbour.hydrate(["core.note"], "library");
       expect(
         hydrated.ok,
@@ -1828,12 +1833,12 @@ describe("the working copy says what it is", () => {
   it("refuses a read after an interrupted hydration", async () => {
     harness = await startHarness("interrupted");
     const { server, device } = harness;
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("10")],
+      frames: [connected, copyStreamCursor("10")],
     });
-    server.answer("GET", "/types", {
+    server.copyAnswer("GET", "/types", {
       kind: "json",
       status: 200,
       body: {
@@ -1852,7 +1857,7 @@ describe("the working copy says what it is", () => {
     scriptKey(server);
     // The snapshot dies partway: the first page lands, the second never
     // answers, which is what a device meets when a hydration is interrupted.
-    server.answer("GET", "/items", { kind: "drop" });
+    server.copyAnswer("GET", "/items", { kind: "drop" });
 
     const hydrated = await device.hydrate(["core.note"], "library");
     expect(
@@ -1889,7 +1894,7 @@ describe("the working copy says what it is", () => {
     // Queued behind the snapshot the first hydration takes: the server
     // hands out its answers in order, so the second hydration is the one
     // that dies partway.
-    server.answer("GET", "/items", { kind: "drop" });
+    server.copyAnswer("GET", "/items", { kind: "drop" });
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const before = await device.status();
@@ -1914,17 +1919,9 @@ describe("the working copy says what it is", () => {
       after.value.hydration,
       "an interrupted re-hydration reported itself as a copy that aged out, so a caller is told to wait for a log it will never catch rather than to run the hydration again",
     ).toBe("in_progress");
-    // The witness that this store really is the shape `expired` describes:
-    // the slice is still declared and the cursor is gone, so the two words
-    // are separated by the marker and not by the store being different.
-    expect(
-      after.value.slice_types,
-      "the interrupted re-hydration cleared the slice too, so this store is not the one the two words compete over",
-    ).toContain("core.note");
-    expect(
-      after.value.event_cursor ?? null,
-      "the interrupted re-hydration left a cursor, so the same",
-    ).toBeNull();
+    expect(after.value.slice_types).toContain("core.note");
+    expect(after.value.event_cursor).toBe("10");
+    expect((await device.list()).ok).toBe(false);
   });
 });
 
@@ -2157,11 +2154,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
 describe("a local search narrows as a list does", () => {
   it("narrows a local search by type and tags as a list does", async () => {
     harness = await startHarness("search-narrowing");
-    // A subtype by declared parent alone: its name shares no prefix with
-    // `core.file`, so only the parent puts it in that subtree. Answered
-    // before the hydration's own catalog, which it replaces for the one read
-    // a hydration makes.
-    harness.server.answer("GET", "/types", {
+    const catalog = {
       kind: "json",
       status: 200,
       body: {
@@ -2171,9 +2164,10 @@ describe("a local search narrows as a list does", () => {
         ],
         next_cursor: null,
       },
-    });
+    } as const;
     scriptHydration(harness.server, {
       head: "10",
+      catalog,
       rows: {
         "core.note": [
           {

@@ -213,13 +213,7 @@ export class ScriptedServer {
           )
         )
           return answer;
-        if (
-          answer.kind === "json" &&
-          answer.contract !== undefined &&
-          answer.contract !== BUILT_FOR
-        )
-          return answer;
-        return certifiedRead(answer);
+        return certifiedRead(answer, BUILT_FOR);
       }),
     );
   }
