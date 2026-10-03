@@ -22,7 +22,7 @@ const READS: Record<string, string> = {
   SearchStore: "search",
   KeyStore: "list get validate count",
   BlobRegistry:
-    "get listAll readableThrough lendingHashesOf uploadedBy count listStores listLocations copyDeletionPending listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
+    "get listAll readableThrough lendingHashesOf uploadedBy count listStores listLocations listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
   WebhookStore: "checkpoint listAfter list get count",
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
@@ -54,7 +54,7 @@ const WRITES: Record<string, string> = {
   SearchStore: "index setTags remove",
   KeyStore: "create update revoke updateLastUsed deleteRevokedKeysOlderThan",
   BlobRegistry:
-    "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
+    "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion beginCopyDeletionAttempt settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
   WebhookStore: "acknowledge create update delete",
   WebhookDeliveryStore:
     "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cleanup",

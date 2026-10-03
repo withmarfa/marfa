@@ -1293,7 +1293,8 @@ export interface BlobRegistry {
   listLocations(hash: string): Promise<BlobLocation[]>;
   /** Durable cleanup intent, written with the location removal and its audit. */
   queueCopyDeletion(hash: string, storeId: string): Promise<void>;
-  copyDeletionPending(hash: string, storeId: string): Promise<boolean>;
+  /** Move a pending intent to the retry tail before I/O; caller holds the per-hash lock. */
+  beginCopyDeletionAttempt(hash: string, storeId: string): Promise<boolean>;
   listPendingCopyDeletions(
     limit: number,
   ): Promise<{ hash: string; store_id: string }[]>;

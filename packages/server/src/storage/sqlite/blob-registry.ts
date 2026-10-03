@@ -39,6 +39,10 @@ import type { SqliteTxContext } from "./request-context.js";
 import { collectBlobHashes } from "../blob-utils.js";
 import { scanPendingPropertyPatches } from "./bulk-action-job-store.js";
 
+// Enqueue and each attempt move to the durable tail; a failed first deletion
+// cannot monopolize a bounded cleanup page, including after a restart.
+const nextCopyDeletionOrder = sql`(SELECT COALESCE(MAX(${blobCopyDeletions.retry_order}), 0) + 1 FROM ${blobCopyDeletions})`;
+
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
 
@@ -234,23 +238,26 @@ export class SqliteBlobRegistry implements BlobRegistry {
   async queueCopyDeletion(hash: string, storeId: string): Promise<void> {
     await this.db
       .insert(blobCopyDeletions)
-      .values({ hash, store_id: storeId })
+      .values({ hash, store_id: storeId, retry_order: nextCopyDeletionOrder })
       .onConflictDoNothing()
       .run();
   }
 
-  async copyDeletionPending(hash: string, storeId: string): Promise<boolean> {
-    const row = await this.db
-      .select()
-      .from(blobCopyDeletions)
+  async beginCopyDeletionAttempt(
+    hash: string,
+    storeId: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(blobCopyDeletions)
+      .set({ retry_order: nextCopyDeletionOrder })
       .where(
         and(
           eq(blobCopyDeletions.hash, hash),
           eq(blobCopyDeletions.store_id, storeId),
         ),
       )
-      .get();
-    return row !== undefined;
+      .run();
+    return result.rowsAffected > 0;
   }
 
   async listPendingCopyDeletions(
@@ -264,7 +271,11 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .from(blobCopyDeletions)
       .innerJoin(blobStores, eq(blobCopyDeletions.store_id, blobStores.id))
       .where(isNull(blobStores.detached_at))
-      .orderBy(blobCopyDeletions.hash, blobCopyDeletions.store_id)
+      .orderBy(
+        blobCopyDeletions.retry_order,
+        blobCopyDeletions.hash,
+        blobCopyDeletions.store_id,
+      )
       .limit(limit)
       .all();
   }

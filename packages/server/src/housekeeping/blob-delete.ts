@@ -167,7 +167,7 @@ export async function finishCopyDeletion(
   store: BlobStore,
   hash: string,
 ): Promise<void> {
-  if (!(await storage.blobs.copyDeletionPending(hash, store.id))) return;
+  if (!(await storage.blobs.beginCopyDeletionAttempt(hash, store.id))) return;
   await store.delete(hash);
   await storage.blobs.settleCopyDeletion(hash, store.id);
 }

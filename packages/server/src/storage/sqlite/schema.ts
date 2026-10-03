@@ -437,8 +437,16 @@ export const blobCopyDeletions = sqliteTable(
   {
     hash: text("hash").notNull(),
     store_id: text("store_id").notNull(),
+    retry_order: integer("retry_order").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.hash, table.store_id] })],
+  (table) => [
+    primaryKey({ columns: [table.hash, table.store_id] }),
+    index("idx_blob_copy_deletions_retry").on(
+      table.retry_order,
+      table.hash,
+      table.store_id,
+    ),
+  ],
 );
 
 // Every credential that has sent a blob's bytes, by the principal

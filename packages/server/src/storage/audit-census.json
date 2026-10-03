@@ -81,6 +81,7 @@
   "housekeeping/blob-delete.ts": {
     "boundary": "Audited logical copy deletion/purge claims and settlements, external bytes outside writer; external-audit.test.ts.",
     "calls": {
+      "BlobRegistry.beginCopyDeletionAttempt": 1,
       "BlobRegistry.claimOrphanPurge": 1,
       "BlobRegistry.dropLocationKeeping": 1,
       "BlobRegistry.queueCopyDeletion": 1,
