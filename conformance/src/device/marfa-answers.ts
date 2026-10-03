@@ -168,6 +168,58 @@ export function wireType(
   };
 }
 
+const FILE_FIELDS = {
+  blob_ref: {
+    type: "string",
+    description: "Reference to the binary content (sha256:<hex>)",
+    required: true,
+  },
+  mime_type: {
+    type: "string",
+    description: "MIME type",
+    required: true,
+  },
+  title: {
+    type: "string",
+    description: "Filename or title",
+  },
+  description: {
+    type: "string",
+    description: "What the file contains",
+  },
+  url: {
+    type: "url",
+    description: "Web address",
+  },
+  source_url: {
+    type: "url",
+    description: "Where the file was sourced from",
+  },
+  author: {
+    type: "string",
+    description: "Who created the file",
+  },
+  language: {
+    type: "string",
+    description: "BCP 47 language code",
+    format: "bcp47",
+  },
+  notes: {
+    type: "string",
+    description: "Personal annotations",
+  },
+  extracted_text: {
+    type: "string",
+    description:
+      "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)",
+  },
+  executable: {
+    type: "boolean",
+    description:
+      "Whether the file may be run as a program; absent means it may not",
+  },
+};
+
 /**
  * The types the device fixtures declare, as one list.
  *
@@ -224,8 +276,41 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
       note: { type: "string", description: "User annotation on the highlight" },
     },
   }),
-  wireType("core.file", { titleField: "title" }),
-  wireType("core.file.image", { parent: "core.file", titleField: "title" }),
+  wireType("core.file", {
+    titleField: "title",
+    fields: FILE_FIELDS,
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
+  wireType("core.file.image", {
+    parent: "core.file",
+    titleField: "title",
+    fields: {
+      ...FILE_FIELDS,
+      width: {
+        type: "integer",
+        description:
+          "Width in pixels (server enrichment: derived from the file when the client does not supply it)",
+      },
+      height: {
+        type: "integer",
+        description:
+          "Height in pixels (server enrichment: derived from the file when the client does not supply it)",
+      },
+      latitude: {
+        type: "number",
+        description: "Subject latitude",
+      },
+      longitude: {
+        type: "number",
+        description: "Subject longitude",
+      },
+      altitude: {
+        type: "number",
+        description: "Altitude in meters",
+      },
+    },
+    mergePolicy: { fields: {}, default: "last_writer_wins" },
+  }),
   wireType("core.bookmark", {
     titleField: "title",
     bodyField: "body",

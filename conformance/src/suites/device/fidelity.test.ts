@@ -2108,6 +2108,20 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches the file field definitions that local admission reads", async () => {
+    const registry = await client.rawRequest("/types");
+    expect(registry.ok, JSON.stringify(registry.error)).toBe(true);
+    const rows = (registry.data as { data: Array<Record<string, unknown>> })
+      .data;
+    for (const id of ["core.file", "core.file.image"]) {
+      const real = rows.find((row) => row.id === id);
+      expect(real, `the server does not hold ${id}`).toBeDefined();
+      expect(scriptedType(id).fields).toEqual(real?.fields);
+      expect(scriptedType(id).fields).not.toHaveProperty("body");
+    }
+    expect(scriptedType("core.note").fields).toHaveProperty("body");
+  });
+
   it("matches the type registry a device resolves a subtree with", async () => {
     const registry = await client.rawRequest("/types");
     expect(registry.ok).toBe(true);
