@@ -1450,9 +1450,11 @@ fn settle(
             })
         }
         Classified::Block(reason) | Classified::BlockQueue(reason) => {
-            let conn = core.conn()?;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            same_attempt(&tx, row)?;
             store::record_verdict(
-                &conn,
+                &tx,
                 &row.id,
                 &store::Answered {
                     verdict: Verdict::Blocked,
@@ -1461,6 +1463,12 @@ fn settle(
                     conflicted_copy_id: None,
                 },
             )?;
+            if reason != BlockedReason::CredentialRefused {
+                // The later edit read this failed edit's optimistic fields.
+                // Correct its unsent base, without adopting any server data.
+                move_edits_back(&tx, row)?;
+            }
+            tx.commit()?;
             Ok(Settled {
                 stops_the_drain: matches!(class, Classified::BlockQueue(_)),
                 ..Settled::plain(
@@ -1555,9 +1563,11 @@ fn finish_counted(
     if refusals < store::CEILING {
         return Ok(Settled::plain(None, None, refusals));
     }
-    let conn = core.conn()?;
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    same_attempt(&tx, row)?;
     store::record_verdict(
-        &conn,
+        &tx,
         &row.id,
         &store::Answered {
             verdict: Verdict::Dead,
@@ -1566,6 +1576,10 @@ fn finish_counted(
             conflicted_copy_id: None,
         },
     )?;
+    // Dead does not establish that this edit landed. Followers cannot treat
+    // its optimistic value as content read from their newer server version.
+    move_edits_back(&tx, row)?;
+    tx.commit()?;
     Ok(Settled::plain(Some(Verdict::Dead), None, refusals))
 }
 
@@ -2046,6 +2060,106 @@ mod tests {
                 expected,
                 "an edit that read {read} and carries {sent}, against an answer holding {row}"
             );
+        }
+    }
+
+    #[test]
+    fn failed_verdicts_restore_unsent_followers_base_without_reading_or_rewriting_sent_work() {
+        for kind in [WriteKind::UpdateItem, WriteKind::UpdateEdge] {
+            for code in [
+                "ancestor_unavailable",
+                "version_conflict",
+                "idempotency_key_reused",
+                "unauthorized",
+                "dead",
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                // No server and no read view: this is a correction of what a
+                // queued edit read, not adoption of a server baseline.
+                let core = Core::open(dir.path().join("copy.sqlite"), None).unwrap();
+                let (ahead, follows, apart, sent, sent_before, key) = {
+                    let conn = core.conn().unwrap();
+                    let queue = |base, properties: serde_json::Value| {
+                        let body = json!({"version": base, "properties": properties}).to_string();
+                        store::enqueue(
+                            &conn,
+                            &store::NewWrite {
+                                payload: &body,
+                                ..write(
+                                    kind,
+                                    "mine",
+                                    (kind == WriteKind::UpdateEdge).then_some("edge"),
+                                    Some(base),
+                                    &[],
+                                )
+                            },
+                        )
+                        .unwrap()
+                    };
+                    let ahead = queue(1, json!({"body": "first"}));
+                    let follows = queue(2, json!({"body": "second", "title": "held"}));
+                    let apart = queue(2, json!({"title": "other"}));
+                    let sent = queue(2, json!({"body": "already sent"}));
+                    store::record_read(
+                        &conn,
+                        &follows.id,
+                        &json!({"properties": {"body": "first", "title": "held"}}),
+                    )
+                    .unwrap();
+                    store::mark_sent(&conn, &ahead.id).unwrap();
+                    store::mark_sent(&conn, &sent.id).unwrap();
+                    if code == "dead" {
+                        for _ in 1..store::CEILING {
+                            store::count_refusal(&conn, &ahead.id).unwrap();
+                        }
+                    }
+                    let sent_before = store::queued_write(&conn, &sent.id).unwrap().unwrap();
+                    let key = follows.idempotency_key.clone();
+                    (ahead, follows, apart, sent, sent_before, key)
+                };
+                let answer = if code == "dead" {
+                    Err(CoreError::Decoding("unreadable receipt".into()))
+                } else {
+                    Ok(Answer {
+                        status: match code {
+                            "unauthorized" => 401,
+                            "idempotency_key_reused" => 422,
+                            _ => 409,
+                        },
+                        code: code.into(),
+                        body: "{}".into(),
+                        retry_after_seconds: None,
+                        replayed: false,
+                        contract_named: true,
+                    })
+                };
+                settle(&core, &ahead, &answer, classify(&answer), Shape::Item).unwrap();
+                let conn = core.conn().unwrap();
+                let expected = if code == "unauthorized" { 2 } else { 1 };
+                assert_eq!(
+                    based_on(&conn, &follows.id),
+                    (Some(expected), Some(expected)),
+                    "{kind:?} {code}"
+                );
+                assert_eq!(based_on(&conn, &apart.id), (Some(2), Some(2)));
+                assert_eq!(
+                    store::queued_write(&conn, &sent.id).unwrap().unwrap(),
+                    sent_before
+                );
+                let current = store::queued_write(&conn, &follows.id).unwrap().unwrap();
+                assert_eq!(current.idempotency_key, key);
+                let properties = if code == "unauthorized" {
+                    json!({"body": "second", "title": "held"})
+                } else {
+                    json!({"body": "second"})
+                };
+                assert_eq!(current.body["properties"], properties);
+                assert_eq!(
+                    store::payload_of(&conn, &ahead.id).unwrap(),
+                    ahead.body.to_string()
+                );
+                assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+            }
         }
     }
 
