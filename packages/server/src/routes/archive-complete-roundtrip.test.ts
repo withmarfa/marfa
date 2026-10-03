@@ -451,4 +451,169 @@ describe("complete archive round trips", () => {
     expect((await target.storage.metadata.get(item.id)).extensions).toEqual({});
     expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
   });
+
+  it.each(["created_at", "updated_at"])(
+    "refuses malformed edge %s even when its endpoints are missing",
+    async (field) => {
+      const source = await context();
+      const target = await context();
+      const a = await note(source);
+      const b = await note(source, "edge target");
+      const edge = await source.storage.edges.createRaw({
+        source_id: a.id,
+        target_id: b.id,
+        edge_type: "references",
+      });
+      const archive = await exported(source);
+      const entries = await unpack(archive);
+      const row = JSON.parse(entries.get("edges.ndjson")!.toString()) as {
+        edge: Record<string, unknown>;
+      };
+      expect(row.edge.id).toBe(edge.id);
+      row.edge[field] = "not-a-date";
+      row.edge.target_id = idAt(999);
+      entries.set("edges.ndjson", Buffer.from(JSON.stringify(row) + "\n"));
+      const response = await restore(target, await pack(entries));
+      expect(response.status, await response.clone().text()).toBe(400);
+      expect((await target.storage.items.list({})).data).toHaveLength(0);
+      expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
+    },
+  );
+
+  it.each(["id", "version"] as const)(
+    "refuses duplicate history %s values before row writes",
+    async (field) => {
+      const source = await context();
+      const target = await context();
+      const item = await note(source);
+      await seedHistory(source, item, 2);
+      const entries = await unpack(await exported(source));
+      const row = JSON.parse(entries.get("items.ndjson")!.toString()) as {
+        item: Item;
+        versions: Version[];
+      };
+      row.versions = await source.storage.versions.all(item.id);
+      expect(row.versions[0]![field]).not.toBe(row.versions[1]![field]);
+      row.versions[1] = {
+        ...row.versions[1]!,
+        [field]: row.versions[0]![field],
+      };
+      entries.set("items.ndjson", Buffer.from(JSON.stringify(row) + "\n"));
+      const response = await restore(target, await pack(entries));
+      expect(response.status, await response.clone().text()).toBe(400);
+      expect(await target.storage.items.get(item.id)).toBeNull();
+      expect(await target.storage.versions.all(item.id)).toHaveLength(0);
+      expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
+    },
+  );
+
+  it("keeps historical properties after the current type changes their shape", async () => {
+    const source = await context();
+    const target = await context();
+    const type = "user.archive_history_schema";
+    const schema = {
+      id: type,
+      label: "History schema",
+      description: "A history fixture.",
+      version: 1,
+      fields: {
+        value: {
+          type: "string" as const,
+          required: true,
+          description: "Original text.",
+        },
+      },
+    };
+    await source.storage.types.create(schema);
+    const item = await itemWrites(source.storage).create({
+      type,
+      properties: { value: "original text" },
+    });
+    await source.storage.types.update(type, {
+      ...schema,
+      version: 2,
+      fields: {
+        value: {
+          type: "number",
+          required: true,
+          description: "Current number.",
+        },
+      },
+    });
+    await itemWrites(source.storage).update(item.id, {
+      properties: { value: 42 },
+    });
+    const history = await source.storage.versions.all(item.id);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.properties).toEqual({ value: "original text" });
+    expect((await source.storage.items.get(item.id))!.properties).toEqual({
+      value: 42,
+    });
+    expect((await source.storage.types.get(type))!.fields.value!.type).toBe(
+      "number",
+    );
+    const response = await restore(target, await exported(source));
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await target.storage.versions.all(item.id)).toEqual(history);
+    expect((await target.storage.items.get(item.id))!.properties).toEqual({
+      value: 42,
+    });
+  });
+
+  it("rolls back earlier snapshots and row writes when a native history insert fails", async () => {
+    const source = await context();
+    const target = await context();
+    const item = await note(source);
+    await seedHistory(source, item, 2);
+    await source.storage.metadata.setExtension(item.id, "roundtrip", {
+      retained: true,
+    });
+    const entries = await unpack(await exported(source));
+    const row = JSON.parse(entries.get("items.ndjson")!.toString()) as {
+      item: Item;
+      versions: Version[];
+    };
+    row.versions = await source.storage.versions.all(item.id);
+    expect(row.versions.map((version) => version.version)).toEqual([1, 2]);
+    entries.set("items.ndjson", Buffer.from(JSON.stringify(row) + "\n"));
+    await sql(
+      target,
+      "CREATE TRIGGER refuse_second_snapshot BEFORE INSERT ON versions WHEN NEW.version = 2 BEGIN SELECT RAISE(ABORT, 'test history write failure'); END",
+    );
+    const response = await restore(target, await pack(entries));
+    expect(response.status, await response.clone().text()).toBe(500);
+    expect(await target.storage.items.get(item.id)).toBeNull();
+    expect(await target.storage.versions.all(item.id)).toHaveLength(0);
+    expect((await target.storage.metadata.get(item.id)).extensions).toEqual({});
+    expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
+  });
+
+  it("refuses a snapshot ID already held by unrelated history without treating it as a duplicate item", async () => {
+    const source = await context();
+    const target = await context();
+    const item = await note(source);
+    const unrelated = await note(target, "unrelated existing row");
+    await seedHistory(source, item, 1);
+    await seedHistory(target, unrelated, 1);
+    const existing = await target.storage.items.get(unrelated.id);
+    const existingHistory = await target.storage.versions.all(unrelated.id);
+    const entries = await unpack(await exported(source));
+    const row = JSON.parse(entries.get("items.ndjson")!.toString()) as {
+      item: Item;
+      versions: Version[];
+    };
+    row.versions = await source.storage.versions.all(item.id);
+    expect(row.versions[0]!.id).toBe(existingHistory[0]!.id);
+    expect(item.id).not.toBe(unrelated.id);
+    entries.set("items.ndjson", Buffer.from(JSON.stringify(row) + "\n"));
+    const response = await restore(target, await pack(entries));
+    expect(response.status, await response.clone().text()).toBe(409);
+    expect(await target.storage.items.get(item.id)).toBeNull();
+    expect(await target.storage.versions.all(item.id)).toHaveLength(0);
+    expect(await target.storage.items.get(unrelated.id)).toEqual(existing);
+    expect(await target.storage.versions.all(unrelated.id)).toEqual(
+      existingHistory,
+    );
+    expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
+  });
 });
