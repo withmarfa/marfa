@@ -3,7 +3,8 @@ import {
   answers,
   refusal,
   wireItem,
-  writeAnswers,
+  withMetadata,
+  wireEdge,
 } from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
 import { hydratedHarness, scriptWrites } from "./harness.js";
@@ -77,7 +78,18 @@ async function drainAgainst(
     edit.ok,
     `the fixture could not queue the write it is about to drain: ${JSON.stringify(edit)}`,
   ).toBe(true);
-  scriptWrites(harness.server, writes);
+  scriptWrites(harness.server, {
+    read: [
+      answers.updated(
+        wireItem({
+          id: HELD.id,
+          version: 4,
+          properties: { title: "edited", body: "held" },
+        }),
+      ),
+    ],
+    ...writes,
+  });
   const reports: DrainReport[] = [];
   for (let attempt = 0; attempt < times; attempt += 1) {
     const drained = await harness.device.drain();
@@ -150,14 +162,21 @@ describe("an environmental failure retries and is never counted", () => {
       });
       expect(queued.ok, JSON.stringify(queued)).toBe(true);
     }
+    const current = new Map<string, Record<string, unknown>>();
+    server.copyAnswer("GET", /^\/items\/[^/]+$/, (request) => {
+      const row = current.get(request.pathname.split("/").at(-1) ?? "");
+      return row
+        ? { kind: "json", status: 200, body: withMetadata(row) }
+        : refusal(404, "item_not_found", "not found");
+    });
     const took = (request: { body: string }) => {
       const sent = JSON.parse(request.body) as {
         id: string;
         properties: Record<string, unknown>;
       };
-      return answers.created(
-        wireItem({ id: sent.id, properties: sent.properties }),
-      );
+      const row = wireItem({ id: sent.id, properties: sent.properties });
+      current.set(sent.id, row);
+      return answers.created(row);
     };
     scriptWrites(server, {
       create: [
@@ -461,16 +480,29 @@ describe("the class that is neither retries and is counted", () => {
         })
       ).ok,
     ).toBe(true);
-    // A state this build does not know: the server took the write, and the
-    // copy cannot hold the row it answered.
+    const createdRows = new Map<string, Record<string, unknown>>();
     scriptWrites(server, {
       update: [
-        answers.updated(wireItem({ id: HELD.id, version: 4, state: "frozen" })),
+        answers.updated({
+          ...wireItem({ id: HELD.id, version: 4 }),
+          id: undefined,
+        }),
+      ],
+      read: [
+        (request) => ({
+          kind: "json",
+          status: 200,
+          body: withMetadata(
+            createdRows.get(request.pathname.split("/").at(-1) ?? "")!,
+          ),
+        }),
       ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as { id: string };
-          return answers.created(wireItem({ id: sent.id }));
+          const row = wireItem({ id: sent.id });
+          createdRows.set(sent.id, row);
+          return answers.created(row);
         },
       ],
     });
@@ -763,6 +795,10 @@ describe("the ceiling, and releasing what it stopped", () => {
     scriptWrites(harness.server, {
       create: [{ kind: "drop" }, answers.created(wireItem({ id, version: 1 }))],
       update: [answers.updated(wireItem({ id, version: 2 }))],
+      read: [
+        answers.updated(wireItem({ id, version: 1 })),
+        answers.updated(wireItem({ id, version: 2 })),
+      ],
     });
     // The create fails to reach the server, so the update is held.
     expect((await harness.device.drain()).ok).toBe(true);
@@ -1000,6 +1036,13 @@ describe("the ceiling, and releasing what it stopped", () => {
     // the claim would make it.
     let claimed = false;
     const minted = new Map<string, string>();
+    const current = new Map<string, Record<string, unknown>>();
+    const edgeRows = new Map<string, Record<string, unknown>>();
+    server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => ({
+      kind: "json",
+      status: 200,
+      body: { edge: edgeRows.get(request.pathname.split("/").at(-1) ?? "") },
+    }));
     scriptWrites(server, {
       create: [
         (request) => {
@@ -1041,17 +1084,17 @@ describe("the ceiling, and releasing what it stopped", () => {
             minted.get(key) ??
             `01a00000-0000-7000-8000-0000000000${String(10 + minted.size)}`;
           minted.set(key, id);
-          return answers.created(
-            wireItem({
-              id,
-              version: 1,
-              properties: sent.properties,
-              ...(sent.source === undefined ? {} : { source: sent.source }),
-              ...(sent.source_id === undefined
-                ? {}
-                : { source_id: sent.source_id }),
-            }),
-          );
+          const row = wireItem({
+            id,
+            version: 1,
+            properties: sent.properties,
+            ...(sent.source === undefined ? {} : { source: sent.source }),
+            ...(sent.source_id === undefined
+              ? {}
+              : { source_id: sent.source_id }),
+          });
+          current.set(id, row);
+          return answers.created(row);
         },
       ],
       update: [
@@ -1060,16 +1103,23 @@ describe("the ceiling, and releasing what it stopped", () => {
             version: number;
             properties: Record<string, unknown>;
           };
-          return answers.updated(
-            wireItem({
-              id: request.pathname.split("/").at(-1) ?? "",
-              version: sent.version + 1,
-              properties: sent.properties,
-            }),
-          );
+          const row = wireItem({
+            id: request.pathname.split("/").at(-1) ?? "",
+            version: sent.version + 1,
+            properties: sent.properties,
+          });
+          current.set(request.pathname.split("/").at(-1) ?? "", row);
+          return answers.updated(row);
         },
       ],
-      read: [refusal(404, "item_not_found", "no such item")],
+      read: [
+        (request) => {
+          const row = current.get(request.pathname.split("/").at(-1) ?? "");
+          return row
+            ? { kind: "json", status: 200, body: withMetadata(row) }
+            : refusal(404, "item_not_found", "no such item");
+        },
+      ],
       edges: [
         (request) => {
           const sent = JSON.parse(request.body) as {
@@ -1078,18 +1128,25 @@ describe("the ceiling, and releasing what it stopped", () => {
             target_id?: string;
             version?: number;
           };
-          return request.method === "POST"
-            ? writeAnswers.edge({
-                id: sent.id ?? "",
-                source_id: sent.source_id ?? "",
-                target_id: sent.target_id ?? "",
-              })
-            : writeAnswers.edge({
-                id: request.pathname.split("/").at(-1) ?? "",
-                source_id: minted.get("a.md") ?? "",
-                target_id: HELD.id,
-                version: (sent.version ?? 0) + 1,
-              });
+          const row =
+            request.method === "POST"
+              ? wireEdge({
+                  id: sent.id ?? "",
+                  source_id: sent.source_id ?? "",
+                  target_id: sent.target_id ?? "",
+                })
+              : wireEdge({
+                  id: request.pathname.split("/").at(-1) ?? "",
+                  source_id: minted.get("a.md") ?? "",
+                  target_id: HELD.id,
+                  version: (sent.version ?? 0) + 1,
+                });
+          edgeRows.set(String(row.id), row);
+          return {
+            kind: "json",
+            status: request.method === "POST" ? 201 : 200,
+            body: { edge: row },
+          };
         },
       ],
     });
@@ -1467,7 +1524,7 @@ describe("withdrawing a write that can never be sent", () => {
   });
 
   /**
-   * A create stopped on a row it cannot read (`queue-and-verdicts.md` 39),
+   * An ordinary create blocked by a scripted ancestor refusal,
    * with an edit of its row held for it.
    */
   async function createHeldFor(label: string): Promise<{
@@ -1477,34 +1534,33 @@ describe("withdrawing a write that can never be sent", () => {
     local: string;
   }> {
     const own = await hydratedHarness(label, { rows: held() });
-    const GONE = "01a00000-0000-7000-8000-0000000000c9";
     const created = await own.device.create({
       type: "core.note",
       properties: { title: "mine", body: "mine" },
       source: "notes",
-      sourceId: "gone.md",
       version: 0,
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) throw new Error("unreachable: the assertion above threw");
     const local = created.value.item_id ?? "";
     scriptWrites(own.server, {
+      // The server does not produce this refusal for an unkeyed create;
+      // device.md lists it as a classifier/withdraw fixture, not wire fidelity.
       create: [
         answers.ancestorUnavailable(
           {
-            id: GONE,
+            id: local,
             version: 2,
             properties: { title: "gone" },
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
-            source_id: "gone.md",
+            source_id: null,
             type: "core.note",
           },
           0,
         ),
       ],
-      // Neither the row the key resolved nor the one minted here is one
-      // the server holds.
+      // The blocked local create has no server row.
       read: [refusal(404, "item_not_found", "Item not found")],
     });
     expect((await own.device.drain()).ok).toBe(true);
