@@ -7,7 +7,11 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { BulkActionWorker } from "./worker.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import {
+  initEventLog,
+  __resetEventLogForTests,
+  __listenerCountForTests,
+} from "../pubsub.js";
 import { sqliteRequestContext } from "../storage/sqlite/request-context.js";
 import type { BulkActionResult, BulkActionInput } from "./types.js";
 
@@ -495,20 +499,24 @@ it("unreadable reconciliation ends an already live subscriber explicitly while l
       if (fault.fired) throw new Error("state unavailable witness");
       return get(id);
     });
+  const listenersBefore = __listenerCountForTests();
   const response = await request(ctx.app, "GET", "/events", {
     key: ctx.workingKey,
     headers: { "Last-Event-ID": String(cursor) },
   });
-  const { text } = await readSseWriting(
+  const { text, closed } = await readSseWriting(
     response,
     "event: stream_live",
     async () => {
+      expect(__listenerCountForTests()).toBe(listenersBefore + 3);
       expect(await worker().runOnce()).toBe(true);
       blocked.mockRestore();
       await patch(ids[1]!);
     },
-    (seen) => seen.includes("stream_incomplete"),
+    { untilClosed: true },
   );
+  expect(closed).toBe(true);
+  expect(__listenerCountForTests()).toBe(listenersBefore);
   expect(text).toContain('"reason":"live_delivery_failed"');
   expect(text).not.toContain(ids[1]!);
   expect((await events(cursor)).map((e) => e.item_id)).toEqual(ids);
