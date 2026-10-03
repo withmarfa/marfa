@@ -64,9 +64,8 @@ function makeStubStorage(): StubControls {
       return Promise.resolve(null);
     },
     getById: () => Promise.resolve(makeRow()),
-    complete: () => Promise.resolve(),
-    updateProgress: () => Promise.resolve(),
-    fail: () => Promise.resolve(),
+    completeOwned: () => Promise.resolve(true),
+    failOwned: () => Promise.resolve(true),
   };
   const storage = { bulkActionJobs: jobs as BulkActionJobStore } as Storage;
   return {
@@ -320,9 +319,8 @@ describe("BulkActionWorker.wake", () => {
         return Promise.resolve(null);
       },
       getById: () => Promise.resolve(makeRow()),
-      complete: () => Promise.resolve(),
-      updateProgress: () => Promise.resolve(),
-      fail: () => Promise.resolve(),
+      completeOwned: () => Promise.resolve(true),
+      failOwned: () => Promise.resolve(true),
     };
     const worker = new BulkActionWorker({
       storage: { bulkActionJobs: jobs as BulkActionJobStore } as Storage,

@@ -2,7 +2,10 @@ import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
-import { afterCommit } from "./storage/commit-hooks.js";
+import {
+  afterCommit,
+  onCommitDeliveryUncertain,
+} from "./storage/commit-hooks.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -198,7 +201,8 @@ export function __resetEventLogForTests(): void {
 export function __listenerCountForTests(): number {
   return (
     emitter.listenerCount("ITEM_CHANGED") +
-    emitter.listenerCount("EDGE_CHANGED")
+    emitter.listenerCount("EDGE_CHANGED") +
+    emitter.listenerCount("LIVE_DELIVERY_FAILED")
   );
 }
 
@@ -495,6 +499,13 @@ export async function* subscribeAll(
   const queue: LiveFrame[] = [];
   let wake: (() => void) | undefined;
   let ended = options?.signal?.aborted === true;
+  let failure: Error | undefined;
+  const onFailure = (): void => {
+    failure = new Error(
+      "A transaction commit could not be reconciled for live delivery",
+    );
+    wake?.();
+  };
   const push = (frame: LiveFrame): void => {
     queue.push(frame);
     wake?.();
@@ -511,11 +522,13 @@ export async function* subscribeAll(
     ended = true;
     wake?.();
   };
+  emitter.on("LIVE_DELIVERY_FAILED", onFailure);
   emitter.on("ITEM_CHANGED", onItem);
   emitter.on("EDGE_CHANGED", onEdge);
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     for (;;) {
+      if (failure) throw failure;
       if (ended) return;
       if (queue.length === 0) {
         await new Promise<void>((resolve) => {
@@ -527,6 +540,7 @@ export async function* subscribeAll(
       yield queue.splice(0);
     }
   } finally {
+    emitter.off("LIVE_DELIVERY_FAILED", onFailure);
     emitter.off("ITEM_CHANGED", onItem);
     emitter.off("EDGE_CHANGED", onEdge);
     options?.signal?.removeEventListener("abort", onAbort);
@@ -534,3 +548,7 @@ export async function* subscribeAll(
 }
 
 export { isEdgeEvent };
+
+onCommitDeliveryUncertain(() => {
+  emitter.emit("LIVE_DELIVERY_FAILED");
+});

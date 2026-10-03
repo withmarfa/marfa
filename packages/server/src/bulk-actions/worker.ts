@@ -13,8 +13,8 @@
  * check between chunks). Tests drive `runOnce()` directly without
  * starting the timer.
  *
- * Restart recovery: on `start()`, jobs whose `worker_heartbeat_at` is
- * older than `staleAfterMs` are reset to `queued`. Default 60s.
+ * Recovery checks run at startup, idle polls and committed chunk boundaries.
+ * A recovered owner resumes at its durable cursor. Default stale age 60s.
  */
 import {
   ErrorCode,
@@ -27,7 +27,7 @@ import type { ApiKey } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import type {
-  BulkActionJobProgress,
+  BulkActionJobLease,
   BulkActionJobRow,
   BulkActionJobStore,
   Storage,
@@ -37,40 +37,19 @@ import { resolveLiveCredential } from "../auth/live-credential.js";
 import { yieldBulkWork } from "./yield.js";
 import { sourceHiddenItemIds } from "./source-visibility.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import type {
-  BulkActionErrorEntry,
-  BulkActionInput,
-  BulkActionResult,
-} from "./types.js";
+import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 
-interface JobSummary {
-  result: BulkActionResult;
-  counts: BulkActionJobProgress;
-}
+import { BulkActionLeaseLost, jobLease, ownsJob } from "./checkpoint.js";
+import {
+  originalErrorMessage,
+  reconcileCommitHooks,
+} from "../storage/sqlite/transaction-control.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const DEFAULT_MAX_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_POLL_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_STALE_AFTER_MS = 60_000;
-/** Cap the `ids` array in the response envelope to match the existing
- *  `BulkActionResponse` shape (server emits ids only when small enough
- *  to be useful). Mirrors `routes/bulk.ts:860`. */
-const RESPONSE_IDS_CAP = 100;
-/**
- * Cap the `errors` array for the same reason `ids` is capped, and the reason
- * is now sharper than symmetry.
- *
- * `errored` beside it is the true count, so nothing is lost by truncating the
- * list; what is lost by not truncating it is the job row. Until property
- * patches were judged per row, the only per-row error this action produced
- * was a version conflict, which needs a concurrent writer per row. A patch
- * the type refuses fails *every* matched row, so one mistyped call against a
- * fifty-thousand-row match set serialized fifty thousand entries into the
- * row and returned them whole on every terminal poll — and the kits poll
- * transparently, so a caller would not have asked for it.
- */
-const RESPONSE_ERRORS_CAP = 100;
 
 export interface BulkActionWorkerOptions {
   storage: Storage;
@@ -88,7 +67,7 @@ export interface BulkActionWorkerOptions {
    *  `pollIntervalMs` and `maxPollIntervalMs`. Default 2 (geometric). */
   pollBackoffMultiplier?: number;
   /** A job whose worker_heartbeat_at is older than this is recovered
-   *  on boot. Default 60s. */
+   *  at a recovery check. Default 60s. */
   staleAfterMs?: number;
   /** Identifier written to `worker_id`. Default randomly generated.
    *  Tests pass a fixed value for assertions. */
@@ -116,6 +95,7 @@ export class BulkActionWorker {
    *  `pollBackoffMultiplier` on each empty poll up to `maxPollIntervalMs`,
    *  and resets to `pollIntervalMs` whenever a job is claimed. */
   private currentPollMs: number;
+  private lastRecoveryAt = Number.NEGATIVE_INFINITY;
 
   constructor(options: BulkActionWorkerOptions) {
     this.storage = options.storage;
@@ -157,17 +137,18 @@ export class BulkActionWorker {
   }
 
   /** Reset `in_progress` jobs with stale heartbeats back to `queued`.
-   *  Called on `start()`; exposed so tests can drive directly. */
+   *  Called throughout the worker loop; exposed so tests can drive directly. */
   async recoverStale(): Promise<number> {
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.staleAfterMs,
-    ).toISOString();
+    const now = this.nowFn().getTime();
+    this.lastRecoveryAt = now;
+    const cutoff = new Date(now - this.staleAfterMs).toISOString();
     return this.jobs.recoverStale(cutoff);
   }
 
   /** Claim + run at most one job. Returns true if a job ran, false if
    *  the queue was empty. Tests drive this directly. */
   async runOnce(): Promise<boolean> {
+    await this.maybeRecoverStale();
     const now = this.nowFn().toISOString();
     const job = await this.jobs.claimNext(this.workerId, now);
     if (!job) return false;
@@ -177,12 +158,23 @@ export class BulkActionWorker {
       // executeJob handles its own errors; reaching here means something
       // outside the chunk loop went wrong (e.g. JSON parse of `input`).
       // Mark the job failed so it doesn't get stuck in_progress.
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = originalErrorMessage(err);
       log("error", "bulk_action_worker.job_unhandled_error", {
         jobId: job.id,
         error: reason,
       });
-      await this.jobs.fail(job.id, reason, this.nowFn().toISOString());
+      try {
+        await this.jobs.failOwned(
+          jobLease(job),
+          reason,
+          this.nowFn().toISOString(),
+        );
+      } catch (failure) {
+        log("error", "bulk_action_worker.failure_state_uncertain", {
+          jobId: job.id,
+          error: originalErrorMessage(failure),
+        });
+      }
     }
     return true;
   }
@@ -264,169 +256,191 @@ export class BulkActionWorker {
     }
   }
 
-  private async executeJob(job: BulkActionJobRow): Promise<void> {
-    const matchedIds = JSON.parse(job.matched_ids) as string[];
-    const input = JSON.parse(job.input) as BulkActionInput;
+  private async maybeRecoverStale(): Promise<void> {
+    const interval = Math.max(1, Math.min(this.staleAfterMs / 4, 10_000));
+    if (this.nowFn().getTime() - this.lastRecoveryAt >= interval)
+      await this.recoverStale();
+  }
 
-    const accSucceeded: string[] = [];
-    const accErrors: BulkActionErrorEntry[] = [];
-    const accBlobHashes = new Set<string>();
-    const carried = new Set<string>();
-    let processed = 0;
+  private async readDurableState(
+    lease: BulkActionJobLease,
+  ): Promise<BulkActionJobRow | null> {
+    // A new root transaction obtains a usable connection and a fresh snapshot
+    // after the rejected transaction's cleanup, including uncertain commits.
+    return this.storage.runInTransaction(() => this.jobs.getById(lease.jobId));
+  }
 
-    // What the job has done so far, as `complete` records it and as a job
-    // stopped for its credential keeps it.
-    const summarize = (): JobSummary => ({
-      result: {
-        action: input.action,
-        matched: matchedIds.length,
-        succeeded: accSucceeded.length,
-        errored: accErrors.length,
-        dry_run: false,
-        ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
-          ? { ids: accSucceeded }
-          : {}),
-        // Truncated rather than omitted past the cap: a caller with one bad
-        // patch wants to see what the refusal says, and one entry says it as
-        // well as fifty thousand. `errored` carries the count either way.
-        ...(accErrors.length > 0
-          ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
-          : {}),
-        ...(input.action === "purge"
-          ? { blob_hashes_referenced: accBlobHashes.size }
-          : {}),
-      },
-      counts: {
-        processed_count: processed,
-        succeeded_count: accSucceeded.length,
-        errored_count: accErrors.length,
-      },
-    });
-
-    for (let i = 0; i < matchedIds.length; i += this.chunkSize) {
-      // Cancellation check between chunks. Cheap (single SELECT by id)
-      // and only adds at most chunkSize / matchedCount latency to a
-      // cancel request observing.
-      const current = await this.jobs.getById(job.id);
-      if (!current || current.status === "canceled") {
-        // Canceled mid-run. Don't overwrite the row's status — the
-        // cancel route already set it. Just return.
-        log("info", "bulk_action_worker.canceled_mid_run", {
-          jobId: job.id,
-          processed,
-          matched: matchedIds.length,
-        });
-        return;
-      }
-
-      // The credential is asked again before every chunk, because the job
-      // runs after the request that queued it: a key revoked or narrowed
-      // since is answered as the next request bearing it would be.
-      const credential = await resolveLiveCredential(
-        this.storage,
-        job.api_key_id,
-        { tokenOutlivesExpiry: true },
-      );
-      if (!credential) {
-        await this.stopForCredential(
-          job.id,
-          "The credential that queued this job no longer authenticates, so the job wrote nothing further.",
-          summarize(),
-        );
-        return;
-      }
-      if (
-        input.action === "purge" &&
-        !hasPermission(credential.permissions, "items.purge")
-      ) {
-        await this.stopForCredential(
-          job.id,
-          "The credential that queued this job no longer holds items.purge, so the job purged nothing further.",
-          summarize(),
-        );
-        return;
-      }
-
-      const slice = matchedIds.slice(i, i + this.chunkSize);
-      let permitted = slice;
-      let refused: BulkActionErrorEntry[] = [];
-      let outcome: ChunkOutcome;
-      const carriedInChunk = new Set(carried);
-      try {
-        // Current source visibility and chunk writes share a transaction snapshot.
-        outcome = await this.storage.runInTransaction(async () => {
-          ({ permitted, refused } = await this.splitByWriteAccess(
-            credential.key,
-            slice,
-          ));
-          return permitted.length > 0
-            ? runChunk({
-                storage: this.storage,
-                input,
-                ids: permitted,
-                carried: carriedInChunk,
-                credential,
-              })
-            : { succeeded: [], errors: [] };
-        });
-        for (const id of carriedInChunk) carried.add(id);
-      } catch (err) {
-        // Whole-chunk failure inside the transaction — a database error,
-        // say. Annotate every id and continue to the next
-        // chunk — best-effort semantics match the synchronous endpoint.
-        const reason = err instanceof Error ? err.message : String(err);
-        outcome = {
-          succeeded: [],
-          errors: permitted.map((id) => ({
-            id,
-            code: "internal_error",
-            message: reason,
-          })),
-        };
-      }
-
-      accErrors.push(...refused);
-      accSucceeded.push(...outcome.succeeded);
-      accErrors.push(...outcome.errors);
-      if (outcome.blob_hashes) {
-        for (const h of outcome.blob_hashes) accBlobHashes.add(h);
-      }
-      processed += slice.length;
-
-      await this.jobs.updateProgress(
-        job.id,
-        {
-          processed_count: processed,
-          succeeded_count: accSucceeded.length,
-          errored_count: accErrors.length,
-        },
-        this.nowFn().toISOString(),
-      );
-      if (processed < matchedIds.length) await yieldBulkWork();
-    }
-
-    const { result, counts } = summarize();
-    await this.jobs.complete(
-      job.id,
-      JSON.stringify(result),
-      counts,
-      this.nowFn().toISOString(),
+  private isCommittedSlice(
+    job: BulkActionJobRow | null,
+    lease: BulkActionJobLease,
+    toOffset: number,
+  ): boolean {
+    return (
+      job !== null &&
+      job.worker_id === lease.workerId &&
+      job.claim_generation === lease.generation &&
+      job.next_offset === toOffset &&
+      (job.status === "in_progress" || job.status === "completed")
     );
   }
 
-  /** End a job whose credential no longer allows what it was queued for.
-   *  The rows earlier chunks wrote stay written, as a cancel leaves them,
-   *  and the job keeps the result it had gathered. */
-  private async stopForCredential(
-    jobId: string,
-    reason: string,
-    sofar: JobSummary,
-  ): Promise<void> {
-    await this.jobs.fail(jobId, reason, this.nowFn().toISOString(), {
-      result: JSON.stringify(sofar.result),
-      counts: sofar.counts,
-    });
-    log("info", "bulk_action_worker.credential_withdrawn", { jobId, reason });
+  private async executeJob(job: BulkActionJobRow): Promise<void> {
+    const matchedIds = JSON.parse(job.matched_ids) as string[];
+    const input = JSON.parse(job.input) as BulkActionInput;
+    const lease = jobLease(job);
+    let offset = job.next_offset;
+    if (offset === matchedIds.length) {
+      await this.jobs.completeOwned(lease, offset, this.nowFn().toISOString());
+      return;
+    }
+
+    while (offset < matchedIds.length) {
+      await this.maybeRecoverStale();
+      const slice = matchedIds.slice(offset, offset + this.chunkSize);
+      const toOffset = offset + slice.length;
+      let permitted = slice;
+      let refused: BulkActionErrorEntry[] = [];
+      let committed: BulkActionJobRow | null;
+      try {
+        committed = await this.storage.runInTransaction(
+          async () => {
+            const current = await this.jobs.beginChunk(
+              lease,
+              offset,
+              this.nowFn().toISOString(),
+            );
+            if (!current) throw new BulkActionLeaseLost();
+            // Resolving after the writer turn also observes credential mutations
+            // queued ahead of this chunk, including enforcement overrides.
+            const credential = await resolveLiveCredential(
+              this.storage,
+              job.api_key_id,
+              { tokenOutlivesExpiry: true },
+            );
+            if (
+              !credential ||
+              (input.action === "purge" &&
+                !hasPermission(credential.permissions, "items.purge"))
+            ) {
+              const reason = !credential
+                ? "The credential that queued this job no longer authenticates, so the job wrote nothing further."
+                : "The credential that queued this job no longer holds items.purge, so the job purged nothing further.";
+              await this.jobs.failOwned(
+                lease,
+                reason,
+                this.nowFn().toISOString(),
+              );
+              log("info", "bulk_action_worker.credential_withdrawn", {
+                jobId: job.id,
+                reason,
+              });
+              return null;
+            }
+            ({ permitted, refused } = await this.splitByWriteAccess(
+              credential.key,
+              slice,
+            ));
+            const carried = await this.jobs.carriedItems(job.id, slice);
+            const outcome: ChunkOutcome =
+              permitted.length > 0
+                ? await runChunk({
+                    storage: this.storage,
+                    input,
+                    ids: permitted,
+                    carried,
+                    credential,
+                  })
+                : { succeeded: [], errors: [] };
+            return this.jobs.checkpointChunk(
+              lease,
+              offset,
+              toOffset,
+              {
+                succeeded: outcome.succeeded,
+                errors: [...refused, ...outcome.errors],
+                carried: outcome.carried,
+                blobHashes: outcome.blob_hashes,
+              },
+              this.nowFn().toISOString(),
+            );
+          },
+          { retainCommitHooksOnUncertain: true },
+        );
+      } catch (error) {
+        if (error instanceof BulkActionLeaseLost) return;
+        let durable: BulkActionJobRow | null;
+        try {
+          durable = await this.readDurableState(lease);
+        } catch (failure) {
+          reconcileCommitHooks(error, "unknown");
+          log("error", "bulk_action_worker.checkpoint_state_uncertain", {
+            jobId: job.id,
+            error: originalErrorMessage(error),
+            reconciliation: originalErrorMessage(failure),
+          });
+          return;
+        }
+        if (this.isCommittedSlice(durable, lease, toOffset)) {
+          reconcileCommitHooks(error, "committed");
+          committed = durable;
+        } else {
+          const oldCursor = durable?.next_offset === offset;
+          reconcileCommitHooks(error, oldCursor ? "rolled_back" : "unknown");
+          if (!ownsJob(durable, lease) || durable.next_offset !== offset)
+            return;
+          const reason = originalErrorMessage(error);
+          // The fresh writer snapshot at the old cursor proves that none of
+          // the chunk committed. Its failure checkpoint must land before the
+          // next slice is attempted, under the same owner and expected cursor.
+          try {
+            committed = await this.storage.runInTransaction(async () => {
+              if (
+                !(await this.jobs.beginChunk(
+                  lease,
+                  offset,
+                  this.nowFn().toISOString(),
+                ))
+              )
+                throw new BulkActionLeaseLost();
+              return this.jobs.checkpointChunk(
+                lease,
+                offset,
+                toOffset,
+                {
+                  succeeded: [],
+                  errors: [
+                    ...refused,
+                    ...permitted.map((id) => ({
+                      id,
+                      code: "internal_error",
+                      message: reason,
+                    })),
+                  ],
+                },
+                this.nowFn().toISOString(),
+              );
+            });
+          } catch (failure) {
+            if (failure instanceof BulkActionLeaseLost) return;
+            try {
+              const state = await this.readDurableState(lease);
+              if (!this.isCommittedSlice(state, lease, toOffset)) return;
+              committed = state;
+            } catch (reconciliation) {
+              log("error", "bulk_action_worker.failure_checkpoint_uncertain", {
+                jobId: job.id,
+                error: originalErrorMessage(failure),
+                reconciliation: originalErrorMessage(reconciliation),
+              });
+              return;
+            }
+          }
+        }
+      }
+      if (!committed) return;
+      offset = committed.next_offset;
+      if (offset < matchedIds.length) await yieldBulkWork();
+    }
   }
 
   /**

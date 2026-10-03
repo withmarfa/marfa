@@ -9,7 +9,6 @@ import { and, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import type {
   BulkActionCheckpointDelta,
   BulkActionJobLease,
-  BulkActionJobProgress,
   BulkActionJobRow,
   BulkActionJobStatus,
   BulkActionJobStore,
@@ -39,8 +38,7 @@ const openJob = inArray(bulkActionJobs.status, [
  * statement rather than per row, and SQLite takes one writer at a time:
  * the second loop's statement therefore begins after the first one's claim
  * committed, and its subquery picks the next queued row. The lone failure
- * mode — a process that crashes mid-execution — is covered by
- * `recoverStale` on boot.
+ * mode, an abandoned owner, is recovered by periodic `recoverStale` checks.
  */
 export class SqliteBulkActionJobStore implements BulkActionJobStore {
   constructor(private db: DrizzleDb) {}
@@ -289,63 +287,6 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         .run();
       return result.rowsAffected > 0;
     });
-  }
-
-  async updateProgress(
-    id: string,
-    progress: BulkActionJobProgress,
-    heartbeatAt: string,
-  ): Promise<void> {
-    await this.db
-      .update(bulkActionJobs)
-      .set({
-        processed_count: progress.processed_count,
-        succeeded_count: progress.succeeded_count,
-        errored_count: progress.errored_count,
-        worker_heartbeat_at: heartbeatAt,
-      })
-      .where(eq(bulkActionJobs.id, id))
-      .run();
-  }
-
-  async complete(
-    id: string,
-    result: string,
-    finalCounts: BulkActionJobProgress,
-    finishedAt: string,
-  ): Promise<void> {
-    await this.db
-      .update(bulkActionJobs)
-      .set({
-        status: "completed",
-        result,
-        processed_count: finalCounts.processed_count,
-        succeeded_count: finalCounts.succeeded_count,
-        errored_count: finalCounts.errored_count,
-        finished_at: finishedAt,
-        worker_heartbeat_at: null,
-      })
-      .where(and(eq(bulkActionJobs.id, id), openJob))
-      .run();
-  }
-
-  async fail(
-    id: string,
-    error: string,
-    finishedAt: string,
-    sofar?: { result: string; counts: BulkActionJobProgress },
-  ): Promise<void> {
-    await this.db
-      .update(bulkActionJobs)
-      .set({
-        status: "failed",
-        error,
-        ...(sofar ? { result: sofar.result, ...sofar.counts } : {}),
-        finished_at: finishedAt,
-        worker_heartbeat_at: null,
-      })
-      .where(and(eq(bulkActionJobs.id, id), openJob))
-      .run();
   }
 
   async cancel(id: string, finishedAt: string): Promise<boolean> {

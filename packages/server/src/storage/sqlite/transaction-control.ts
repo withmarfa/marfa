@@ -12,6 +12,10 @@ export class TransactionControl {
   callbackCause: unknown;
   private failure: TransactionFailure | undefined;
   private pendingDiagnostics: string[] = [];
+  private settled: Exclude<TransactionOutcome, "active"> | undefined;
+  private readonly settlementCallbacks: ((
+    outcome: Exclude<TransactionOutcome, "active">,
+  ) => void)[] = [];
 
   invalidate(
     cause: unknown,
@@ -33,6 +37,21 @@ export class TransactionControl {
     if (this.failure) this.failure.addDiagnostic(cause);
     else if (this.pendingDiagnostics.length < 4)
       this.pendingDiagnostics.push(originalErrorMessage(cause));
+  }
+
+  onReconciled(
+    callback: (outcome: Exclude<TransactionOutcome, "active">) => void,
+  ): void {
+    if (this.settled) callback(this.settled);
+    else this.settlementCallbacks.push(callback);
+  }
+
+  reconcile(outcome: Exclude<TransactionOutcome, "active">): void {
+    if (this.settled) return;
+    this.settled = outcome;
+    this.outcome = outcome;
+    for (const callback of this.settlementCallbacks.splice(0))
+      callback(outcome);
   }
 
   assertUsable(): void {
@@ -78,4 +97,11 @@ export const transactionControl = new AsyncLocalStorage<TransactionControl>();
 
 export function assertTransactionUsable(): void {
   transactionControl.getStore()?.assertUsable();
+}
+
+export function reconcileCommitHooks(
+  error: unknown,
+  outcome: Exclude<TransactionOutcome, "active">,
+): void {
+  if (error instanceof TransactionFailure) error.control.reconcile(outcome);
 }

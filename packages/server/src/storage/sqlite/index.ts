@@ -172,10 +172,14 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
      * becomes a savepoint of it, as the stores' own transactions do.
      */
     assertTransactionUsable,
-    async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
+    async runInTransaction<T>(
+      fn: () => T | Promise<T>,
+      options?: { retainCommitHooksOnUncertain?: boolean },
+    ): Promise<T> {
       return await withCommitHooks(
         (body) => db.transaction(async () => await body()),
         fn,
+        options?.retainCommitHooksOnUncertain,
       );
     },
     betterAuthDb: baseDb,

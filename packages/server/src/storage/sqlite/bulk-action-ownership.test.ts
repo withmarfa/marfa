@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createClient } from "@libsql/client";
+import { SCHEMA_SQL } from "./connection.js";
 import { createSqliteStorage } from "./index.js";
 import {
   BulkActionLeaseLost,
@@ -251,3 +253,87 @@ it("completes an owned empty job and fails from the durable summary only", async
   });
   expect(await jobs.completeOwned(lease, 1, at(6))).toBe(false);
 });
+
+it("reopens committed ownership, cursor, carry and hash ledgers without resetting them", async () => {
+  const lease = await create();
+  await storage.runInTransaction(() =>
+    storage.bulkActionJobs.checkpointChunk(
+      lease,
+      0,
+      1,
+      {
+        succeeded: ["0"],
+        errors: [],
+        carried: new Set(["child"]),
+        blobHashes: new Set(["shared"]),
+      },
+      at(2),
+    ),
+  );
+  await storage.close();
+  storage = await createSqliteStorage(join(directory, "test.db"));
+  expect(await storage.bulkActionJobs.getById("job")).toMatchObject({
+    worker_id: lease.workerId,
+    claim_generation: lease.generation,
+    next_offset: 1,
+    processed_count: 1,
+    succeeded_count: 1,
+    blob_hashes_referenced_count: 1,
+  });
+  expect(await storage.bulkActionJobs.carriedItems("job", ["child"])).toEqual(
+    new Set(["child"]),
+  );
+  expect(await storage.bulkActionJobs.recoverStale(at(3))).toBe(1);
+  const row = await storage.bulkActionJobs.claimNext("replacement", at(4));
+  expect(row?.next_offset).toBe(1);
+  const done = await storage.bulkActionJobs.checkpointChunk(
+    jobLease(row!),
+    1,
+    3,
+    {
+      succeeded: ["1", "2"],
+      errors: [],
+      blobHashes: new Set(["shared", "new"]),
+    },
+    at(5),
+  );
+  expect(JSON.parse(done.result!)).toMatchObject({
+    ids: ["0", "1", "2"],
+    blob_hashes_referenced: 2,
+  });
+});
+
+it.each(["checkpoint columns", "carried ledger", "hash ledger"] as const)(
+  "refuses an existing database missing its durable %s",
+  async (missing) => {
+    const path = join(directory, "older.db");
+    let sql = SCHEMA_SQL;
+    if (missing === "checkpoint columns")
+      sql = sql.replace(
+        /\n\t`(?:claim_generation|next_offset|checkpoint_json|blob_hashes_referenced_count)`[^\n]+/g,
+        "",
+      );
+    else {
+      const table =
+        missing === "carried ledger"
+          ? "bulk_action_job_carried_items"
+          : "bulk_action_job_purge_hashes";
+      sql = sql.replace(
+        new RegExp(
+          "CREATE TABLE IF NOT EXISTS `" + table + "` \\([\\s\\S]*?\\);\\n",
+          "g",
+        ),
+        "",
+      );
+    }
+    expect(sql).not.toBe(SCHEMA_SQL);
+    const raw = createClient({ url: `file:${path}` });
+    await raw.executeMultiple(sql);
+    raw.close();
+    await expect(createSqliteStorage(path)).rejects.toThrow(
+      missing === "checkpoint columns"
+        ? /bulk_action_jobs table lacks claim_generation/
+        : /file lacks the bulk_action_job_/,
+    );
+  },
+);

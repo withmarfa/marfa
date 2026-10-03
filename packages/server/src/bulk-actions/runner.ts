@@ -43,6 +43,8 @@ export interface ChunkOutcome {
    *  referenced by the items in this chunk. The worker unions these
    *  across chunks for the final response envelope. */
   blob_hashes?: Set<string>;
+  /** Cascade membership becomes durable with the worker checkpoint. */
+  carried?: ReadonlySet<string>;
 }
 
 export interface RunChunkContext {
@@ -58,7 +60,7 @@ export interface RunChunkContext {
    * set too, and moving it again would refuse a row that is already where
    * the job put it.
    */
-  carried?: Set<string>;
+  carried?: ReadonlySet<string>;
   /** The credential that queued the job, as the worker resolved it for this
    *  chunk; its enforcement override is resolved against the levers as it
    *  is on the door it called. */
@@ -102,8 +104,6 @@ async function runTransitionChunk({
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const alreadyCarried = carriedByJob ?? new Set<string>();
-  // Joined to the job's set only once this chunk's transaction commits: a
-  // chunk rolled back as a whole carried nothing.
   const carriedInChunk = new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
@@ -132,8 +132,7 @@ async function runTransitionChunk({
     }
     storage.assertTransactionUsable();
   });
-  for (const id of carriedInChunk) alreadyCarried.add(id);
-  return { succeeded, errors };
+  return { succeeded, errors, carried: carriedInChunk };
 }
 
 async function runPurgeChunk({

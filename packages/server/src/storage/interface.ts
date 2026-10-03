@@ -2688,12 +2688,6 @@ export interface CreateBulkActionJobInput {
   created_at: string;
 }
 
-export interface BulkActionJobProgress {
-  processed_count: number;
-  succeeded_count: number;
-  errored_count: number;
-}
-
 export interface BulkActionJobLease {
   jobId: string;
   workerId: string;
@@ -2753,42 +2747,15 @@ export interface BulkActionJobStore {
     reason: string,
     now: string,
   ): Promise<boolean>;
-  /** Bump progress counts + heartbeat. Idempotent — over-writes
-   *  whatever was there before, doesn't sum. */
-  updateProgress(
-    id: string,
-    progress: BulkActionJobProgress,
-    heartbeatAt: string,
-  ): Promise<void>;
-  /** Terminal `completed`. Writes the result envelope, sets
-   *  `finished_at`, clears `worker_heartbeat_at`. Changes the job only while
-   *  it is `queued` or `in_progress`: a job canceled meanwhile stays
-   *  canceled. */
-  complete(
-    id: string,
-    result: string,
-    finalCounts: BulkActionJobProgress,
-    finishedAt: string,
-  ): Promise<void>;
-  /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
-   *  the job only while it is `queued` or `in_progress`, as `complete` does.
-   *  A job stopped partway passes what it had done, which is written as
-   *  `complete` writes it. */
-  fail(
-    id: string,
-    error: string,
-    finishedAt: string,
-    sofar?: { result: string; counts: BulkActionJobProgress },
-  ): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
    *  The worker observes the flag between chunks. */
   cancel(id: string, finishedAt: string): Promise<boolean>;
   /**
-   * Boot-time recovery: any `in_progress` job whose
+   * Periodic recovery: any `in_progress` job whose
    * `worker_heartbeat_at` is older than `staleBeforeIso` is reset to
-   * `queued`. Returns the number of rows reset. Called once on server
-   * boot before the worker loop starts.
+   * `queued`, invalidating its owner and preserving its checkpoint. Returns
+   * the number of rows reset.
    */
   recoverStale(staleBeforeIso: string): Promise<number>;
   /**
@@ -3228,6 +3195,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   inbound: InboundStore;
   /** Refuse further work when the current root transaction ended or became uncertain. */
   assertTransactionUsable(): void;
-  runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
+  runInTransaction<T>(
+    fn: () => T | Promise<T>,
+    options?: { retainCommitHooksOnUncertain?: boolean },
+  ): Promise<T>;
   close(): Promise<void>;
 }
