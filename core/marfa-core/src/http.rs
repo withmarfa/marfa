@@ -191,21 +191,13 @@ impl Http {
             .clone()
     }
 
-    /// `None` where nothing renews or the renewal was itself refused, so the
-    /// `401` stands as the answer: a drain parks its queue on that answer,
-    /// where an error would be counted against each write until every one
-    /// was dead.
+    /// Only an attributed credential refusal leaves the original `401` as
+    /// the answer. Local credential failures have no server verdict.
     fn renewed(&self, sent: &str) -> Result<Option<String>, CoreError> {
         match self.renewal(sent) {
             Ok(fresh) => Ok(fresh),
-            Err(
-                error @ (CoreError::Network(_)
-                | CoreError::RateLimited { .. }
-                | CoreError::Server { .. }),
-            ) => Err(CoreError::Network(format!(
-                "the credential could not be renewed: {error}"
-            ))),
-            Err(_) => Ok(None),
+            Err(CoreError::Unauthorized { .. }) => Ok(None),
+            Err(error) => Err(CoreError::RenewalFailed(Box::new(error))),
         }
     }
 
@@ -239,6 +231,8 @@ impl Http {
         let sent = self.authorization();
         let response = run(&sent)?;
         if response.status().as_u16() == 401
+            && header(&response, CONTRACT_HEADER).as_deref()
+                == Some(CONTRACT_VERSION.to_string().as_str())
             && let Some(fresh) = self.renewed(&sent)?
         {
             return run(&fresh);
@@ -600,6 +594,8 @@ impl Http {
                     .map_err(network)?;
                 if let Some(sent) = &sent
                     && response.status().as_u16() == 401
+                    && header(&response, CONTRACT_HEADER).as_deref()
+                        == Some(CONTRACT_VERSION.to_string().as_str())
                 {
                     self.renewed(sent)?;
                 }
@@ -650,7 +646,7 @@ impl Http {
             origin: self.origin(),
             served,
             expected: CONTRACT_VERSION,
-            status,
+            status: Some(status),
             write_sent,
         })
     }
@@ -826,6 +822,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_unnamed_or_other_contract_401_cannot_invoke_local_renewal() {
+        for other_contract in [false, true] {
+            let server = crate::scripted::Scripted::start();
+            let mut answer = crate::scripted::unnamed(401, "denied");
+            if other_contract && let crate::scripted::Answer::Json { headers, .. } = &mut answer {
+                headers.push((CONTRACT_HEADER.into(), (CONTRACT_VERSION + 1).to_string()));
+            }
+            for path in ["/items/x", "/events", "/blobs"] {
+                server.on(path, vec![answer.clone()]);
+            }
+            let http = Http::new(&server.url(), "k").unwrap();
+            http.renew_with(Box::new(|_| panic!("an untrusted refusal invoked renewal")));
+            let read = http.item("x").unwrap_err();
+            let stream = match http.open_events(Some("1"), Duration::from_secs(1)) {
+                Err(error) => error,
+                Ok(_) => panic!("a refused stream opened"),
+            };
+            let upload = http.call(Call {
+                method: Method::Post,
+                segments: &["blobs"],
+                params: &[],
+                headers: &[],
+                body: CallBody::Reader(Box::new(std::io::Cursor::new(b"fixture"))),
+                credential: true,
+                stream: false,
+            });
+            for error in [read, stream] {
+                assert!(if other_contract {
+                    matches!(
+                        error,
+                        CoreError::ContractMismatch {
+                            status: Some(401),
+                            ..
+                        }
+                    )
+                } else {
+                    matches!(error, CoreError::Unnamed { status: 401, .. })
+                });
+            }
+            if other_contract {
+                assert!(matches!(
+                    upload,
+                    Err(CoreError::ContractMismatch {
+                        status: Some(401),
+                        ..
+                    })
+                ));
+            } else {
+                let reply = upload.unwrap();
+                assert_eq!(reply.status, 401);
+                assert_eq!(reply.contract, None);
+            }
+        }
+    }
+
+    #[test]
+    fn renewal_preserves_local_failures_and_real_server_refusal() {
+        for error in [
+            CoreError::SignedOut {
+                origin: "https://marfa.example".into(),
+            },
+            CoreError::NoKeychain("locked".into()),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                "/items/x",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let http = Http::new(&server.url(), "k").unwrap();
+            let expected = error.clone();
+            http.renew_with(Box::new(move |_| Err(error.clone())));
+            assert_eq!(
+                http.item("x").unwrap_err(),
+                CoreError::RenewalFailed(Box::new(expected))
+            );
+        }
+    }
+
+    #[test]
     fn a_refusal_naming_no_contract_is_the_network_on_every_read() {
         let server = crate::scripted::Scripted::start();
         let http = Http::new(&server.url(), "k").unwrap();
@@ -919,7 +994,7 @@ mod tests {
             origin: "https://marfa.example".into(),
             served: Some("4".into()),
             expected: 3,
-            status: 200,
+            status: Some(200),
             write_sent: false,
         }
         .to_string();
@@ -930,7 +1005,7 @@ mod tests {
             origin: "https://marfa.example".into(),
             served: None,
             expected: 3,
-            status: 201,
+            status: Some(201),
             write_sent: true,
         }
         .to_string();

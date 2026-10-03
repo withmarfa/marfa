@@ -1,10 +1,14 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup } from "../../utils/setup.js";
+import { cleanup, trackFolder } from "../../utils/setup.js";
 import { cliContext } from "./harness.js";
 import type { CliContext } from "./harness.js";
+import { keychainEnv } from "../../utils/keychain.js";
+import { ScriptedServer } from "../../device/scripted-server.js";
+import { answers } from "../../device/marfa-answers.js";
 
 /**
  * The six exit codes `marfa --help` documents, each reached once against
@@ -27,6 +31,109 @@ afterAll(async () => {
 });
 
 describe("the exit codes", () => {
+  it("keeps real drain answers and reports a refused credential as exit five", async () => {
+    const store = join(dir, "drain");
+    const device = ["device", "--db", store];
+    await c.cli.json([
+      ...device,
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    await c.cli.json([
+      ...device,
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: "drain outcome", body: "fixture" }),
+    ]);
+    const done = await c.cli.run(["--json", ...device, "drain"]);
+    expect(done.code, done.stderr).toBe(0);
+    expect(JSON.parse(done.stdout).answered).toBe(1);
+    expect(JSON.parse(done.stdout).verdicts[0].verdict, done.stdout).toBe(
+      "accepted",
+    );
+    const pending = await c.cli.json<{ id: string }>([
+      ...device,
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: "pending outcome", body: "fixture" }),
+    ]);
+    const stopped = await c.cli
+      .as("marfa_k1_refused_fixture")
+      .run(["--json", ...device, "drain"]);
+    expect(stopped.code).toBe(5);
+    expect(stopped.stderr).toBe("");
+    const report = JSON.parse(stopped.stdout);
+    expect(report.stopped).toBeTruthy();
+    expect(report.verdicts[0].id).toBe(pending.id);
+    expect(report.verdicts[0].verdict).toBe("blocked");
+    const queue = await c.cli.json<Array<{ id: string }>>([...device, "queue"]);
+    expect(queue.some((write) => write.id === pending.id)).toBe(true);
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "keeps an ended folder renewal local while reaching a real server",
+    async () => {
+      const folder = await c.cli.json<{ item: { id: string } }>(
+        ["folders", "create", "--file", "-", "--title", "renewal fixture"],
+        { stdin: JSON.stringify({ search: { types: ["core.note"] } }) },
+      );
+      trackFolder(c.ctx, folder.item.id);
+      const directory = join(dir, "renewal-folder");
+      await c.cli.json([
+        "folders",
+        "add",
+        directory,
+        "--folder",
+        folder.item.id,
+      ]);
+      const tokenDoor = await ScriptedServer.start();
+      try {
+        tokenDoor.answer(
+          "POST",
+          "/token",
+          answers.validation("invalid_grant", "fixture sign-in ended"),
+        );
+        execFileSync("security", [
+          "add-generic-password",
+          "-A",
+          "-s",
+          "marfa",
+          "-a",
+          c.cli.url,
+          "-w",
+          JSON.stringify({
+            kind: "token",
+            access_token: "marfa_at_fixture",
+            refresh_token: "marfa_rt_fixture",
+            expires_at: null,
+            client_id: "fixture",
+            scope: "*:read",
+            token_endpoint: `${tokenDoor.url}/token`,
+            revocation_endpoint: null,
+          }),
+          keychainEnv().MARFA_KEYCHAIN!,
+        ]);
+        const result = await c.cli
+          .as(undefined)
+          .refused(["folders", "hydrate", directory]);
+        expect(result.code).toBe(5);
+        expect(result.envelope.error.code).toBe("signed_out");
+        expect(result.envelope.error.server).toBeNull();
+      } finally {
+        await tokenDoor.stop();
+      }
+    },
+  );
+
   it("leaves by 0 when done", async () => {
     const outcome = await c.cli.run(["--json", "status"]);
     expect(outcome.code, outcome.stderr).toBe(0);

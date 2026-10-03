@@ -181,7 +181,7 @@ fn refine(
 fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
     let answer = match answer {
         Ok(answer) => answer,
-        Err(CoreError::Network(_)) => return Classified::Environmental,
+        Err(error) if error.is_environmental() => return Classified::Environmental,
         // An answer on another contract never reaches here; the pass ends on
         // it first. Anything else is about the request, such as a header the
         // transport would not build, so it is counted and reaches the ceiling
@@ -698,7 +698,14 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
         let answer = match answer {
-            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            Err(error @ CoreError::RenewalFailed(_)) if error.is_environmental() => Err(error),
+            Err(
+                error @ (CoreError::ContractMismatch { .. }
+                | CoreError::RenewalFailed(_)
+                | CoreError::SignedOut { .. }
+                | CoreError::NoKeychain(_)
+                | CoreError::StorageFull(_)),
+            ) => return Err(error),
             answer => answer,
         };
         if let Ok(answer) = &answer {
@@ -708,7 +715,13 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         let class = refine(row, &payload, &answer, classify(&answer));
         let settled = match settle(core, row, &answer, class, shape) {
             Ok(settled) => settled,
-            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            Err(
+                error @ (CoreError::ContractMismatch { .. }
+                | CoreError::RenewalFailed(_)
+                | CoreError::SignedOut { .. }
+                | CoreError::NoKeychain(_)
+                | CoreError::StorageFull(_)),
+            ) => return Err(error),
             // The server answered and the copy could not take the answer: a
             // further attempt may clear it, nothing clears it on its own.
             Err(error) => {
@@ -835,6 +848,8 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
 
 fn unavailable_by(error: &CoreError) -> Option<String> {
     match error {
+        CoreError::RenewalFailed(cause) => unavailable_by(cause),
+        CoreError::Io(_) | CoreError::StorageFull(_) => Some(error.to_string()),
         CoreError::Network(reason) => Some(format!("the server could not be reached: {reason}")),
         CoreError::Unnamed { .. } => Some(error.to_string()),
         CoreError::RateLimited { .. } | CoreError::Server { .. } if error.is_environmental() => {
@@ -1336,6 +1351,11 @@ fn settle(
             }
         }
         Classified::Environmental => Ok(Settled {
+            retry_after_seconds: answer
+                .as_ref()
+                .err()
+                .and_then(CoreError::retry_after)
+                .map(|wait| wait.as_secs()),
             unavailable: unavailable(answer),
             ..Settled::plain(None, None, row.refusals)
         }),
@@ -1483,7 +1503,13 @@ fn land(
             }
             // Not read, as for any answer on another contract: the pass
             // ends, and the create goes again under its key.
-            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            Err(
+                error @ (CoreError::ContractMismatch { .. }
+                | CoreError::RenewalFailed(_)
+                | CoreError::SignedOut { .. }
+                | CoreError::NoKeychain(_)
+                | CoreError::StorageFull(_)),
+            ) => return Err(error),
             Err(CoreError::Unauthorized { .. }) => {
                 return settle(
                     core,
@@ -1551,15 +1577,19 @@ fn finish_counted(
 
 /// A read rather than a wait for catch-up: a refused write produces no
 /// event. The verdict and the copy put back are recorded already, and so is
-/// the read owed, so a read that fails is tried by the next drain; only an
-/// answer on another contract fails this, ending the pass. Answers why where
-/// the server could not be read, which ends the pass too.
+/// the read owed, so a read that fails is tried by the next drain. A contract
+/// mismatch, failed renewal or full store ends the pass with its typed error.
+/// Other unavailable reads return their reason and end the pass too.
 fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
     match read_owed(core, &owed).and_then(|read| apply_owed(core, &owed, &read)) {
-        Err(error @ CoreError::ContractMismatch { .. }) => Err(error),
+        Err(
+            error @ (CoreError::ContractMismatch { .. }
+            | CoreError::RenewalFailed(_)
+            | CoreError::StorageFull(_)),
+        ) => Err(error),
         Err(error) => {
             // A refused create's id is the server's only if a read finds it.
             if row.kind == WriteKind::CreateItem {
@@ -1590,7 +1620,13 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
         match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
-            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            Err(
+                error @ (CoreError::ContractMismatch { .. }
+                | CoreError::RenewalFailed(_)
+                | CoreError::SignedOut { .. }
+                | CoreError::NoKeychain(_)
+                | CoreError::StorageFull(_)),
+            ) => return Err(error),
             Err(error) => {
                 if let Some(unread) = unreadable(&error) {
                     return Ok(Some(unread));
@@ -2241,6 +2277,155 @@ mod tests {
                     .all(|row| row.verdict.is_none() && row.refusals == 0),
                 "a write left behind was answered or counted"
             );
+        }
+    }
+
+    #[test]
+    fn local_renewal_failure_preserves_queued_intent_without_counting() {
+        for error in [
+            CoreError::SignedOut {
+                origin: "https://marfa.example".into(),
+            },
+            CoreError::NoKeychain("locked".into()),
+            CoreError::Invalid("unsafe credential lock".into()),
+            CoreError::Decoding("malformed token".into()),
+            CoreError::Redirected {
+                origin: "https://marfa.example".into(),
+                status: 302,
+                location: Some("/elsewhere".into()),
+            },
+            CoreError::Server {
+                status: 400,
+                code: "invalid_scope".into(),
+                message: "refused scope".into(),
+            },
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &["first", "later"]);
+            server.on(
+                "/items/first",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let expected = error.clone();
+            core.renew_credential_with(Box::new(move |_| Err(error.clone())));
+            let before = core.queue().unwrap();
+            let payloads: Vec<_> = before
+                .iter()
+                .map(|row| store::payload_of(&core.conn().unwrap(), &row.id).unwrap())
+                .collect();
+            assert_eq!(
+                core.drain().unwrap_err(),
+                CoreError::RenewalFailed(Box::new(expected))
+            );
+            let after = core.queue().unwrap();
+            assert_eq!(before, after);
+            for (row, payload) in after.iter().zip(payloads) {
+                assert_eq!(
+                    store::payload_of(&core.conn().unwrap(), &row.id).unwrap(),
+                    payload
+                );
+                assert_eq!(row.refusals, 0);
+                assert_eq!(row.verdict, None);
+            }
+            assert!(server.seen("/items/later").is_empty());
+        }
+    }
+
+    #[test]
+    fn renewal_after_an_answer_preserves_progress_and_current_intent() {
+        for environmental in [false, true] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &["prior", "current", "later"]);
+            server.on(
+                "/items/prior",
+                vec![crate::scripted::json(200, r#"{"ok":true}"#)],
+            );
+            server.on(
+                "/items/current",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let error = if environmental {
+                CoreError::StorageFull("fixture disk full".into())
+            } else {
+                CoreError::SignedOut {
+                    origin: server.url(),
+                }
+            };
+            let expected = error.clone();
+            core.renew_credential_with(Box::new(move |_| Err(error.clone())));
+            let before = core.queue().unwrap();
+            let payloads: Vec<_> = before
+                .iter()
+                .map(|row| store::payload_of(&core.conn().unwrap(), &row.id).unwrap())
+                .collect();
+            if environmental {
+                let report = core.drain().unwrap();
+                assert_eq!((report.answered, report.undelivered), (1, 2));
+                assert!(report.unavailable.is_some());
+                assert!(report.stopped.is_none());
+                assert_eq!(report.verdicts[0].verdict, Some(Verdict::Accepted));
+            } else {
+                assert_eq!(
+                    core.drain().unwrap_err(),
+                    CoreError::RenewalFailed(Box::new(expected))
+                );
+            }
+            let after = core.queue().unwrap();
+            assert_eq!(after[0].verdict, Some(Verdict::Accepted));
+            assert!(after[0].answered_at.is_some());
+            assert_eq!(after[1..], before[1..]);
+            for (row, payload) in after.iter().zip(payloads).skip(1) {
+                assert_eq!(
+                    store::payload_of(&core.conn().unwrap(), &row.id).unwrap(),
+                    payload
+                );
+                assert_eq!(row.refusals, 0);
+                assert!(row.verdict.is_none());
+            }
+            assert_eq!(server.seen("/items/current").len(), 1);
+            assert!(server.seen("/items/later").is_empty());
+        }
+    }
+
+    #[test]
+    fn rate_limited_renewal_reports_its_wait_without_counting_the_write() {
+        for (requested, expected) in [
+            (Some(120), Some(120)),
+            (Some(86_400), Some(300)),
+            (None, None),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &["current", "later"]);
+            server.on(
+                "/items/current",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            core.renew_credential_with(Box::new(move |_| {
+                Err(CoreError::RateLimited {
+                    code: "rate_limited".into(),
+                    message: "wait before renewing".into(),
+                    retry_after_seconds: requested,
+                })
+            }));
+            let before = core.queue().unwrap();
+            let payload = store::payload_of(&core.conn().unwrap(), &before[0].id).unwrap();
+            let report = core.drain().unwrap();
+            assert_eq!(report.retry_after_seconds, expected);
+            assert_eq!((report.answered, report.undelivered), (0, 2));
+            assert!(report.unavailable.is_some());
+            assert!(report.stopped.is_none());
+            assert_eq!(core.queue().unwrap(), before);
+            assert_eq!(
+                store::payload_of(&core.conn().unwrap(), &before[0].id).unwrap(),
+                payload
+            );
+            assert!(
+                report
+                    .verdicts
+                    .iter()
+                    .all(|row| row.verdict.is_none() && row.refusals == 0)
+            );
+            assert!(server.seen("/items/later").is_empty());
         }
     }
 

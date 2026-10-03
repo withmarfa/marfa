@@ -13,7 +13,9 @@ use serde_json::Value;
 
 use crate::auth;
 use crate::credentials::{self, Kept};
-use crate::error::{CliError, Exit};
+use crate::error::CliError;
+#[cfg(test)]
+use crate::error::Exit;
 use request::{Body, Request};
 pub use transport::Transport;
 
@@ -105,15 +107,67 @@ fn renewal(remote: &Remote) -> Option<Renew> {
     Some(Box::new(move |refused: &str| {
         auth::refresh(&origin, Some(refused))
             .map(|kept| kept.bearer().to_string())
-            .map_err(|error| match error {
-                CliError::Core(core) => core,
-                other if other.exit() == Exit::Environment => CoreError::Network(other.to_string()),
-                other => CoreError::Unauthorized {
-                    code: other.code().to_string(),
-                    message: other.to_string(),
-                },
-            })
+            .map_err(renewal_error)
     }))
+}
+
+fn renewal_error(error: CliError) -> CoreError {
+    match error {
+        CliError::Core(core) => core,
+        CliError::SignedOut { origin } => CoreError::SignedOut { origin },
+        CliError::NoKeychain(reason) => CoreError::NoKeychain(reason),
+        CliError::Io(error) => CoreError::Io(error.to_string()),
+        CliError::Refused {
+            status: 401,
+            code,
+            message,
+            ..
+        } => CoreError::Unauthorized { code, message },
+        CliError::Refused {
+            status: 429,
+            code,
+            message,
+            retry_after_seconds,
+            ..
+        } => CoreError::RateLimited {
+            code,
+            message,
+            retry_after_seconds,
+        },
+        CliError::Refused {
+            status,
+            code,
+            message,
+            ..
+        } => CoreError::Server {
+            status,
+            code,
+            message,
+        },
+        CliError::ContractMismatch {
+            origin,
+            served,
+            expected,
+            write_sent,
+            status,
+        } => CoreError::ContractMismatch {
+            origin,
+            served,
+            expected,
+            write_sent,
+            status,
+        },
+        CliError::Redirected {
+            origin,
+            status,
+            location,
+        } => CoreError::Redirected {
+            origin,
+            status,
+            location,
+        },
+        other => CoreError::Invalid(other.to_string()),
+    }
 }
 
 impl Remote {
@@ -281,10 +335,7 @@ impl Remote {
         }
         Err(CliError::ContractMismatch {
             origin: self.origin.clone(),
-            served: match reply.contract {
-                Some(served) => format!("answers contract {served}"),
-                None => format!("answered {} naming no contract", reply.status),
-            },
+            served: reply.contract,
             expected: marfa_client::CONTRACT_VERSION,
             // The answer is what names the contract, so the server has
             // already acted on the request.
@@ -303,11 +354,10 @@ impl Remote {
         }
         Err(CliError::ContractMismatch {
             origin: self.origin.clone(),
-            served: match served {
-                Some(Value::String(served)) => format!("answers contract {served}"),
-                Some(served) => format!("answers contract {served}"),
-                None => "answers no contract at its root".into(),
-            },
+            served: served.map(|served| match served {
+                Value::String(served) => served.clone(),
+                other => other.to_string(),
+            }),
             expected: marfa_client::CONTRACT_VERSION,
             write_sent: false,
             status: None,
@@ -526,6 +576,67 @@ mod tests {
 
     fn remote_at(door: &Door, key: Option<&str>) -> Remote {
         Remote::with(Transport::new(&door.url, key).unwrap())
+    }
+
+    #[test]
+    fn renewal_adapter_preserves_refusal_and_local_provenance() {
+        for status in [None, Some(200)] {
+            let error = CliError::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("other".into()),
+                expected: 1,
+                write_sent: false,
+                status,
+            };
+            let expected = error.envelope();
+            let crossed = CliError::from(CoreError::RenewalFailed(Box::new(renewal_error(error))));
+            assert_eq!(crossed.envelope(), expected);
+        }
+        let errors = [
+            CliError::Redirected {
+                origin: "https://marfa.example".into(),
+                status: 302,
+                location: Some("/other".into()),
+            },
+            CliError::Invalid("unsafe credential lock".into()),
+            CliError::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            CliError::Core(CoreError::Decoding("malformed token".into())),
+            CliError::Refused {
+                status: 400,
+                code: "invalid_scope".into(),
+                message: "refused scope".into(),
+                retry_after_seconds: None,
+                details: None,
+            },
+        ];
+        for error in errors {
+            let expected = error.envelope();
+            let crossed = CliError::from(CoreError::RenewalFailed(Box::new(renewal_error(error))));
+            assert_eq!(crossed.envelope(), expected);
+        }
+    }
+
+    #[test]
+    fn renewal_adapter_preserves_local_credential_failures() {
+        for (error, code, exit) in [
+            (
+                CliError::SignedOut {
+                    origin: "https://marfa.example".into(),
+                },
+                "signed_out",
+                Exit::Credential,
+            ),
+            (
+                CliError::NoKeychain("locked".into()),
+                "no_keychain",
+                Exit::Local,
+            ),
+        ] {
+            let crossed = CliError::from(renewal_error(error));
+            assert_eq!(crossed.code(), code);
+            assert_eq!(crossed.exit(), exit);
+            assert!(crossed.envelope()["error"]["server"].is_null());
+        }
     }
 
     #[test]
@@ -795,7 +906,7 @@ mod tests {
         let remote = Remote::holding(&door.url, kept).unwrap();
         match remote.json(&Request::get(&["items"])) {
             Err(CliError::ContractMismatch { served, .. }) => {
-                assert_eq!(served, format!("answers contract {}", another_contract()));
+                assert_eq!(served, Some(another_contract()));
             }
             other => panic!("{other:?}"),
         }

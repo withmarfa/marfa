@@ -1584,6 +1584,38 @@ mod tests {
         core
     }
 
+    #[test]
+    fn a_full_store_refuses_a_local_edit_without_losing_the_queue() {
+        let core = held_copy();
+        let before = core.queue().unwrap();
+        {
+            let conn = core.conn().unwrap();
+            let pages: i64 = conn
+                .query_row("PRAGMA page_count", [], |row| row.get(0))
+                .unwrap();
+            conn.pragma_update(None, "max_page_count", pages).unwrap();
+        }
+        let edit = Edit {
+            base_version: Some(3),
+            properties: serde_json::json!({ "body": "x".repeat(1024 * 1024) })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..Default::default()
+        };
+        let failure = core.update_item("row", &edit);
+        assert!(
+            matches!(failure, Err(CoreError::StorageFull(_))),
+            "{failure:?}"
+        );
+        assert_eq!(core.queue().unwrap(), before);
+        core.conn()
+            .unwrap()
+            .pragma_update(None, "max_page_count", 10000)
+            .unwrap();
+        assert!(core.update_item("row", &edit).is_ok());
+    }
+
     fn refuse(core: &Core, write: &QueuedWrite) {
         let conn = core.conn().unwrap();
         store::mark_sent(&conn, &write.id).unwrap();

@@ -107,6 +107,7 @@ describe("what a change runs", () => {
         "workspace",
         "core-checks",
         "conformance",
+        "cli-scenarios",
         "openapi-freshness",
         "clients-freshness",
         "core",
@@ -115,6 +116,11 @@ describe("what a change runs", () => {
     [
       "a CLI scenario",
       ["conformance/src/suites/cli/folder.test.ts"],
+      ["ci-sqlite", "workspace", "conformance", "cli-scenarios"],
+    ],
+    [
+      "the device harness shared by CLI scenarios",
+      ["conformance/src/suites/device/harness.ts"],
       ["ci-sqlite", "workspace", "conformance", "cli-scenarios"],
     ],
     [

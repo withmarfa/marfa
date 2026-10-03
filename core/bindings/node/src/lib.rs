@@ -854,7 +854,11 @@ fn sort(sort: Option<Sort>) -> marfa_core::Sort {
 /// napi reserves for its own status.
 fn failure(error: marfa_core::CoreError) -> Error {
     use marfa_core::CoreError as E;
+    if let E::RenewalFailed(cause) = error {
+        return failure(*cause);
+    }
     let (code, detail) = match &error {
+        E::RenewalFailed(_) => unreachable!("renewal cause was unwrapped"),
         E::NotFound { .. } => ("not_found", error.to_string()),
         E::Unauthorized { .. } => ("unauthorized", error.to_string()),
         E::Forbidden { .. } => ("forbidden", error.to_string()),
@@ -862,10 +866,15 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::UnknownType { .. } => ("unknown_type", error.to_string()),
         E::RateLimited { .. } => ("rate_limited", error.to_string()),
         E::Server { .. } => ("server", error.to_string()),
+        E::Io(message) => ("io", message.clone()),
         E::Network(message) => ("network", message.clone()),
         E::Unnamed { .. } => ("unnamed_answer", error.to_string()),
         E::Decoding(message) => ("decoding", message.clone()),
         E::Store(message) => ("store", message.clone()),
+        E::Redirected { .. } => ("redirect", error.to_string()),
+        E::StorageFull(message) => ("storage_full", message.clone()),
+        E::SignedOut { .. } => ("signed_out", error.to_string()),
+        E::NoKeychain(message) => ("no_keychain", message.clone()),
         E::NoServer => ("no_server", error.to_string()),
         E::NoCursor => ("no_cursor", error.to_string()),
         E::HydrationIncomplete => ("hydration_incomplete", error.to_string()),
@@ -1723,12 +1732,42 @@ mod tests {
     }
 
     #[test]
+    fn local_failures_cross_with_their_own_codes_through_renewal() {
+        use marfa_core::CoreError as E;
+        for (cause, code) in [
+            (E::StorageFull("full".into()), "storage_full"),
+            (
+                E::SignedOut {
+                    origin: "https://marfa.example".into(),
+                },
+                "signed_out",
+            ),
+            (E::NoKeychain("locked".into()), "no_keychain"),
+            (E::Io("unavailable".into()), "io"),
+            (
+                E::Redirected {
+                    origin: "https://marfa.example".into(),
+                    status: 302,
+                    location: None,
+                },
+                "redirect",
+            ),
+        ] {
+            assert!(
+                failure(E::RenewalFailed(Box::new(cause)))
+                    .reason
+                    .starts_with(&format!("{code}: "))
+            );
+        }
+    }
+
+    #[test]
     fn a_contract_refusal_crosses_under_its_own_code() {
         let error = failure(marfa_core::CoreError::ContractMismatch {
             origin: "https://marfa.example".into(),
             served: Some("4".into()),
             expected: 3,
-            status: 200,
+            status: Some(200),
             write_sent: false,
         });
         assert!(
