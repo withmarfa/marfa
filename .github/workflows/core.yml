@@ -3,7 +3,8 @@ name: Core
 # A pull request runs it when `scripts/ci-required.ts` says the change can
 # affect it. A push to `main` also runs it for the server the live tests
 # boot, so a server pull request does not hold a macOS runner. Push paths
-# omit changes the live tests do not read.
+# omit changes the live tests do not read. A draft pull request runs none of
+# it; marking it ready for review, and every push after, does.
 on:
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - "!**/*.md"
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "47 3 * * *"
   workflow_dispatch:

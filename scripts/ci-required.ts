@@ -8,6 +8,11 @@
  * a change that could not be read, so a skip only ever comes from a diff
  * that was read and classified.
  *
+ * A draft pull request runs only the quick jobs, `DRAFT_JOBS`, and `full`
+ * says whether the rest runs: it is `false` only for a draft. Marking the
+ * pull request ready for review starts a run that does, and so does every
+ * push after.
+ *
  * A path is matched against `RULES` in order and the first match names the
  * jobs it can affect. A path no rule matches affects every job, so a new
  * folder runs everything until someone states what reads it.
@@ -231,6 +236,19 @@ function versioned(path: string): boolean {
   );
 }
 
+/**
+ * What a draft pull request runs, of what its diff names: the format check,
+ * the build, typecheck and lint, the type registry and the version check.
+ * The tests, the server and the core, the contract and the clients wait
+ * until it is ready for review.
+ */
+export const DRAFT_JOBS: readonly Job[] = [
+  "ci-sqlite",
+  "workspace",
+  "types-freshness",
+  "version-fields",
+];
+
 /** The jobs one changed path can affect. */
 export function affected(path: string): Set<Job> {
   const rule = RULES.find(([pattern]) => pattern.test(path));
@@ -253,12 +271,39 @@ export function classify(paths: readonly string[]): Record<Job, boolean> {
   >;
 }
 
-/** The pull request's changed paths, or `undefined` for any other event. */
-function changedPaths(): string[] | undefined {
+/**
+ * A draft's answer: `DRAFT_JOBS` as the diff names them, and `CI (SQLite)`
+ * whatever it names, because that required check fails for a draft. A skipped
+ * job passes its required check, so a draft that skipped every one would
+ * merge before its first full run.
+ */
+export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
+  return Object.fromEntries(
+    JOBS.map((job) => [
+      job,
+      DRAFT_JOBS.includes(job) && (job === "ci-sqlite" || answer[job]),
+    ]),
+  ) as Record<Job, boolean>;
+}
+
+interface PullRequestEvent {
+  pull_request: {
+    draft?: boolean;
+    base: { sha: string };
+    head: { sha: string };
+  };
+}
+
+/** The event of a pull request run, or `undefined` for any other event. */
+function pullRequestEvent(): PullRequestEvent | undefined {
   if (process.env.GITHUB_EVENT_NAME !== "pull_request") return undefined;
-  const event = JSON.parse(
+  return JSON.parse(
     readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"),
-  ) as { pull_request: { base: { sha: string }; head: { sha: string } } };
+  ) as PullRequestEvent;
+}
+
+/** The pull request's changed paths. */
+function changedPaths(event: PullRequestEvent): string[] {
   const base = event.pull_request.base.sha;
   const head = event.pull_request.head.sha;
   if (!/^[a-f0-9]{40}$/.test(base) || !/^[a-f0-9]{40}$/.test(head)) {
@@ -277,16 +322,22 @@ function changedPaths(): string[] | undefined {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let answer = classify([]);
+  let draft = false;
   try {
-    const paths = changedPaths();
-    if (paths !== undefined) answer = classify(paths);
+    const event = pullRequestEvent();
+    if (event !== undefined) {
+      draft = event.pull_request.draft === true;
+      answer = classify(changedPaths(event));
+    }
   } catch {
     // An unreadable diff must never turn a code change into a skipped job.
     console.log("Could not classify the change; running every job.");
   }
+  if (draft) answer = forDraft(answer);
   appendFileSync(
     process.env.GITHUB_OUTPUT ?? "",
-    JOBS.map((job) => `${job}=${String(answer[job])}\n`).join(""),
+    JOBS.map((job) => `${job}=${String(answer[job])}\n`).join("") +
+      `full=${String(!draft)}\n`,
   );
   for (const job of JOBS) {
     console.log(`${answer[job] ? "runs " : "skips"} ${job}`);

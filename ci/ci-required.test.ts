@@ -21,6 +21,8 @@ import { parse } from "yaml";
 import {
   affected,
   classify,
+  DRAFT_JOBS,
+  forDraft,
   JOBS,
   RULES,
   type Job,
@@ -364,6 +366,35 @@ function workflow(file: string): Workflow {
 const gate = (output: string) =>
   `\${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.${output} != 'false') }}`;
 
+describe("what a draft runs", () => {
+  it("runs the quick jobs the diff names, CI (SQLite) whatever it names, and nothing else", () => {
+    expect(DRAFT_JOBS).toEqual([
+      "ci-sqlite",
+      "workspace",
+      "types-freshness",
+      "version-fields",
+    ]);
+    // A change only the core's tests read names no quick job, and its draft
+    // still fails the one required check that runs, so it cannot merge.
+    expect(runs(["core/marfa-core/tests/sync.rs"])).toEqual([
+      "core-checks",
+      "core",
+    ]);
+    expect(
+      JOBS.filter(
+        (job) => forDraft(classify(["core/marfa-core/tests/sync.rs"]))[job],
+      ),
+    ).toEqual(["ci-sqlite"]);
+    const server = forDraft(classify(["packages/server/src/runtime.ts"]));
+    expect(JOBS.filter((job) => server[job])).toEqual([
+      "ci-sqlite",
+      "workspace",
+    ]);
+    const all = forDraft(classify([]));
+    expect(JOBS.filter((job) => all[job])).toEqual([...DRAFT_JOBS]);
+  });
+});
+
 describe("each job reads its own answer", () => {
   it("ci.yml runs a job only when the classifier says so, and every one when it cannot tell", () => {
     const { jobs } = workflow("ci.yml");
@@ -373,7 +404,10 @@ describe("each job reads its own answer", () => {
     );
     expect(jobs.changes?.outputs).toEqual(
       Object.fromEntries(
-        CI_YML.map((job) => [job, `\${{ steps.classify.outputs.${job} }}`]),
+        [...CI_YML, "full"].map((job) => [
+          job,
+          `\${{ steps.classify.outputs.${job} }}`,
+        ]),
       ),
     );
     for (const name of gated) {
@@ -390,7 +424,8 @@ describe("each job reads its own answer", () => {
     expect(steps[format + 1]).toEqual({
       run: "pnpm vitest run ci/ci-required.test.ts",
     });
-    const after = steps.slice(format + 2);
+    const guard = steps.at(-1);
+    const after = steps.slice(format + 2, -1);
     expect(after.map((step) => step.run ?? step.uses)).toEqual([
       "pnpm build",
       "pnpm typecheck",
@@ -398,9 +433,19 @@ describe("each job reads its own answer", () => {
       "actions/cache@v6",
       'MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts',
     ]);
-    for (const step of after) {
+    // The tests and what only they use wait until the pull request is ready.
+    for (const step of after.slice(0, 3)) {
       expect(step.if).toBe("${{ needs.changes.outputs.workspace != 'false' }}");
     }
+    for (const step of after.slice(3)) {
+      expect(step.if).toBe(
+        "${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}",
+      );
+    }
+    // A draft skips every other required job, and a skipped job passes its
+    // check, so this one fails for it until the run for ready for review.
+    expect(guard?.if).toBe("${{ github.event.pull_request.draft }}");
+    expect(guard?.run).toContain("exit 1");
     // Nothing before the gated steps needs Rust, and nothing after does now
     // that the version check, the one test that runs cargo, is left out.
     expect(steps.some((step) => step.uses?.includes("rust"))).toBe(false);
@@ -408,7 +453,10 @@ describe("each job reads its own answer", () => {
 
   it("core.yml runs its job on a pull request only when the classifier says so", () => {
     const { on, jobs } = workflow("core.yml");
-    expect(on.pull_request).toEqual({ branches: ["main"] });
+    expect(on.pull_request).toEqual({
+      branches: ["main"],
+      types: ["opened", "synchronize", "reopened", "ready_for_review"],
+    });
     expect(jobs.changes?.outputs).toEqual({
       core: "${{ steps.classify.outputs.core }}",
     });
@@ -456,12 +504,17 @@ function filterMatches(pattern: string, path: string): boolean {
 }
 
 describe("CodeQL", () => {
-  const { on } = workflow("codeql.yml") as unknown as {
+  const { on, jobs } = workflow("codeql.yml") as unknown as {
     on: {
       push?: unknown;
-      pull_request?: { branches?: string[]; "paths-ignore"?: string[] };
+      pull_request?: {
+        branches?: string[];
+        types?: string[];
+        "paths-ignore"?: string[];
+      };
       schedule?: { cron: string }[];
     };
+    jobs: Record<string, { if?: string }>;
   };
   const ignored = on.pull_request?.["paths-ignore"] ?? [];
   const skips = (path: string) =>
@@ -471,10 +524,15 @@ describe("CodeQL", () => {
     expect(on.push).toEqual({ branches: ["main"] });
     expect(on.pull_request).toEqual({
       branches: ["main"],
+      types: ["opened", "synchronize", "reopened", "ready_for_review"],
       "paths-ignore": ["**/*.md", "LICENSE", ".claude/**"],
     });
     expect(on.schedule).toHaveLength(1);
     expect(on.schedule?.[0]?.cron).toMatch(/^\d{1,2} \d{1,2} \* \* [0-6]$/);
+  });
+
+  it("analyzes a draft only once it is marked ready for review", () => {
+    expect(jobs.analyze?.if).toBe("${{ !github.event.pull_request.draft }}");
   });
 
   it("skips what the classifier also reads as documentation, and no code in a language it analyzes", () => {
@@ -651,13 +709,14 @@ describe("the classifier as CI runs it", () => {
     event: string,
     from: string,
     to: string,
+    draft?: boolean,
   ): Record<string, string> {
     const eventPath = join(directory, "event.json");
     const output = join(directory, "output");
     writeFileSync(
       eventPath,
       JSON.stringify({
-        pull_request: { base: { sha: from }, head: { sha: to } },
+        pull_request: { base: { sha: from }, head: { sha: to }, draft },
       }),
     );
     writeFileSync(output, "");
@@ -678,8 +737,10 @@ describe("the classifier as CI runs it", () => {
     );
   }
 
-  const every = (value: string) =>
-    Object.fromEntries(JOBS.map((job) => [job, value]));
+  const every = (value: string) => ({
+    ...Object.fromEntries(JOBS.map((job) => [job, value])),
+    full: "true",
+  });
 
   it("writes one answer per job for a pull request's diff", () => {
     expect(
@@ -687,6 +748,7 @@ describe("the classifier as CI runs it", () => {
     ).toEqual({
       ...every("false"),
       "ci-sqlite": "true",
+      full: "true",
     });
     const server = outputs(
       "pull_request",
@@ -694,6 +756,44 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
     );
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(SERVER);
+  });
+
+  it("runs only the quick jobs for a draft and every one once it is ready", () => {
+    const quick = (output: Record<string, string>) =>
+      JOBS.filter((job) => output[job] === "true");
+    const server = outputs(
+      "pull_request",
+      commits.docs ?? "",
+      commits.server ?? "",
+      true,
+    );
+    expect(quick(server)).toEqual(["ci-sqlite", "workspace"]);
+    expect(server.full).toBe("false");
+    // Documentation names no quick job but the format check, which CI (SQLite)
+    // runs before it fails the draft.
+    const docs = outputs(
+      "pull_request",
+      commits.base ?? "",
+      commits.docs ?? "",
+      true,
+    );
+    expect(quick(docs)).toEqual(["ci-sqlite"]);
+    expect(docs.full).toBe("false");
+    const ready = outputs(
+      "pull_request",
+      commits.docs ?? "",
+      commits.server ?? "",
+      false,
+    );
+    expect(quick(ready)).toEqual(SERVER);
+    expect(ready.full).toBe("true");
+    expect(
+      outputs("pull_request", "invalid", commits.docs ?? "", true),
+    ).toMatchObject({
+      "ci-sqlite": "true",
+      conformance: "false",
+      full: "false",
+    });
   });
 
   it("does not hide code deleted by a rename into documentation", () => {
