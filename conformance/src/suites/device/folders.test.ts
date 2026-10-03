@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import {
   answers,
   catchupTooOld,
@@ -2263,6 +2264,89 @@ describe("files and items", () => {
       fields,
       "the folder rewrote the person's frontmatter in an order nobody asked for, which is a change to their file on the first pull and one no scan can tell from a change they made",
     ).toEqual(own);
+  });
+
+  it("preserves frontmatter bytes through metadata, remote edits and presentation-only saves", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-frontmatter-preserved", {
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+      tagging: (request) => {
+        const id = request.pathname.split("/")[2]!;
+        const row = door!.rows.get(id)!;
+        const tags = [
+          ...new Set([
+            ...(row.tags ?? []),
+            ...(JSON.parse(request.body) as { tags: string[] }).tags,
+          ]),
+        ];
+        edges.events.push(
+          itemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem({ id, version: row.version, properties: row.properties }),
+            { tags },
+          ),
+        );
+        return undefined;
+      },
+    });
+    const prefix =
+      "---\r\n# café\r\nzebra: 1.10 # number\r\ninteger: 1.00\r\ntitle: 'Styled'\r\nlist: [a, 'b']\r\nnested: {keep: 'é', change: old}\r\ntags: beta, alpha\r\nstate: null\r\nblock: |\r\n  text\r\n";
+    put(harness, "styled.md", `${prefix}---\r\nBody\r\n`);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const id = idIn(harness, "styled.md");
+    expect(id).toBeTruthy();
+    const first = read(harness, "styled.md");
+    expect(first).toContain("marfa_version: 1\r\n");
+    expect(first.slice(0, prefix.length)).toBe(prefix);
+    expect(first.endsWith("---\r\nBody\r\n")).toBe(true);
+    const saves = sentUpdates(harness).length;
+    const scan = await harness.folder.scan();
+    expect(scan.ok && scan.value.updated).toBe(0);
+    expect(sentUpdates(harness)).toHaveLength(saves);
+
+    edges.logItem(
+      "item.updated",
+      door!.update(id!, {
+        properties: { nested: { keep: "é", change: "new" } },
+        version: 1,
+      }),
+    );
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok && pulled.value.rewritten).toBe(1);
+    const second = first
+      .replace("change: old", "change: new")
+      .replace("marfa_version: 1", "marfa_version: 2");
+    expect(read(harness, "styled.md")).toBe(second);
+
+    const reformatted = second
+      .replace("zebra: 1.10 # number", "zebra: 1.100 # my spelling")
+      .replace("tags: beta, alpha", "tags: ['alpha', beta]")
+      .replace("state: null", "state: active")
+      .replace("marfa_version: 2", 'marfa_version: "2"');
+    put(harness, "styled.md", reformatted);
+    const again = await harness.folder.push();
+    expect(again.ok && again.value.scan.updated).toBe(0);
+    expect(again.ok && again.value.pull?.rewritten).toBe(0);
+    expect(read(harness, "styled.md")).toBe(reformatted);
+    expect(sentUpdates(harness)).toHaveLength(saves);
+
+    edges.logItem(
+      "item.updated",
+      door!.update(id!, { properties: {}, version: 2 }),
+    );
+    const stepped = await harness.folder.push();
+    expect(stepped.ok && stepped.value.catch_up.caught_up?.applied).toBe(1);
+    expect(read(harness, "styled.md")).toBe(reformatted);
   });
 
   it("treats a fence pair holding a list or one line as a body", async () => {
@@ -6142,9 +6226,14 @@ describe("embedded files", () => {
       }),
     ]);
     expect(
-      frontOf(harness, "Note.md"),
+      (
+        parseYaml(frontOf(harness, "Note.md").slice(4, -4)) as Record<
+          string,
+          unknown
+        >
+      )["has-attachment"],
       "an attachment the body no longer shows is not listed",
-    ).toContain('has-attachment:\n  - "[[renamed.png]]"');
+    ).toEqual(["[[renamed.png]]"]);
     expect(renamed.value.pull?.unmatched).toBe(1);
 
     // The link mended, the body shows it again.
@@ -14043,6 +14132,38 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).toEqual([]);
   });
 
+  it("keeps a deleted raw-text file gone after a version step even when its body looks like YAML", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-raw-agreement", {
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    const text =
+      "---\r\ntitle: 'body text'\r\nnumber: 1.10\r\n---\r\nThe body.\r\n";
+    put(harness, "raw.txt", text);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = String(sentCreates(harness)[0]!.id);
+    expect(read(harness, "raw.txt")).toBe(text);
+    rmSync(join(harness.dir, "raw.txt"));
+    const scan = await harness.folder.scan();
+    expect(scan.ok && scan.value.missing).toBe(1);
+    edges.logItem(
+      "item.updated",
+      door!.update(id, { properties: {}, version: 1 }),
+    );
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok && pulled.value.revived).toBe(0);
+    expect(existsSync(join(harness.dir, "raw.txt"))).toBe(false);
+  });
+
   it("sends a person's delete of a file whose item moved on elsewhere in nothing the file shows", async () => {
     const item = {
       id: "01a00000-0000-7000-8000-0000000000d5",
@@ -14058,6 +14179,12 @@ describe("what a pull does with a file whose item stops matching", () => {
     });
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
+    const styled = read(harness, "stepped.md")
+      .replace("title: stepped", "# keep this comment\ntitle: 'stepped'")
+      .replaceAll("\n", "\r\n");
+    put(harness, "stepped.md", styled);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    expect(read(harness, "stepped.md")).toBe(styled);
     rmSync(join(harness.dir, "stepped.md"));
     const journaled = await harness.folder.scan();
     expect(journaled.ok && journaled.value.missing).toBe(1);
@@ -17855,6 +17982,47 @@ describe("what a folder never does to a person's text", () => {
         "a push put back a quarantine mark the person took off a file it did not change",
       ).toBe(false);
     }
+    expect(sentUpdates(harness)).toEqual([]);
+  });
+
+  it("restores a styled file's agreement after a pull crashes before landing", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-styled-crash", {
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    const prefix =
+      "---\r\n# Keep café\r\ntitle: 'Styled'\r\nnumber: 1.10\r\n---\r\n";
+    put(harness, "styled.md", `${prefix}before\r\n`);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "styled.md")!;
+    const before = read(harness, "styled.md");
+    expect(before).toContain("marfa_version: 1\r\n");
+    edges.logItem(
+      "item.updated",
+      door!.update(id, { properties: { body: "after\r\n" }, version: 1 }),
+    );
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    await expect(
+      withFault("crash-before-rename=styled.md", () => harness!.folder.pull()),
+    ).rejects.toThrow(/could not be run/);
+    expect(read(harness, "styled.md")).toBe(before);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+    expect(read(harness, "styled.md")).toBe(
+      before
+        .replace("before\r\n", "after\r\n")
+        .replace("marfa_version: 1", "marfa_version: 2"),
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
     expect(sentUpdates(harness)).toEqual([]);
   });
 

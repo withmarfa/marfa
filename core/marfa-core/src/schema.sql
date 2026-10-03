@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
   item_id TEXT NOT NULL,
   identity TEXT,
   content_hash TEXT NOT NULL,
+  presentation TEXT,
   written_hash TEXT,
   links TEXT NOT NULL,
   edge_lines TEXT NOT NULL,

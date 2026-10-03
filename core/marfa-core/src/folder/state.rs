@@ -14,6 +14,9 @@ pub struct Bound {
     /// Device, inode and birth time; `None` where the filesystem gave none.
     pub identity: Option<String>,
     pub content_hash: String,
+    /// What those bytes mean, independent of their YAML presentation. Kept on
+    /// every scan and pull agreement, including before a file is deleted.
+    pub presentation: Option<super::document::Presentation>,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
     /// where the last agreement was a scan's read. A pull removes only a file
     /// it wrote.
@@ -183,8 +186,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
-        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT (path) DO UPDATE SET
            item_id = excluded.item_id,
            identity = excluded.identity,
@@ -196,6 +199,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
            held = excluded.held,
            own = excluded.own,
            writes = excluded.writes,
+           presentation = excluded.presentation,
            seen_at = excluded.seen_at",
         params![
             bound.path,
@@ -212,6 +216,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
                 .as_ref()
                 .and_then(|own| serde_json::to_string(own).ok()),
             serde_json::to_string(&bound.writes).unwrap_or_else(|_| "{}".into()),
+            bound.presentation.as_ref().map(serde_json::to_string).transpose().map_err(|error| CoreError::Store(error.to_string()))?,
             now_iso()
         ],
     )?;
@@ -291,7 +296,7 @@ pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), C
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files WHERE path = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation FROM folder_files WHERE path = ?1",
             [path],
             read_bound,
         )
@@ -301,7 +306,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files WHERE item_id = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation FROM folder_files WHERE item_id = ?1",
             [item_id],
             read_bound,
         )
@@ -332,7 +337,7 @@ fn bound_where<P: rusqlite::Params>(
     params: P,
 ) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(&format!(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files {clause} ORDER BY path",
+        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation FROM folder_files {clause} ORDER BY path",
     ))?;
     let rows = statement.query_map(params, read_bound)?;
     let mut bound = Vec::new();
@@ -351,6 +356,9 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
         identity: row.get(2)?,
         content_hash: row.get(3)?,
         written_hash: row.get(4)?,
+        presentation: row
+            .get::<_, Option<String>>(11)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
         // Unreadable, it names no links or lines, so no edge is removed for it.
         links: serde_json::from_str(&links).unwrap_or_default(),
         lines: serde_json::from_str(&lines).unwrap_or_default(),

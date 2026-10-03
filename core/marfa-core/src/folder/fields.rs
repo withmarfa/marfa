@@ -255,6 +255,66 @@ pub fn uncarried(
     found
 }
 
+/// The presentation's meaning, independent of spellings the folder accepts.
+pub(super) fn presentation(
+    front: &Map<String, Value>,
+    edge_types: &EdgeTypes,
+) -> Map<String, Value> {
+    let mut normalized = front.clone();
+    for (name, value) in front {
+        let replacement = match name.as_str() {
+            TYPE_FIELD => value.as_str().map(|s| Value::String(s.trim().into())),
+            VERSION_FIELD => super::version_named(value).map(Value::from),
+            TAGS_FIELD => tags_of(value).ok().map(|mut tags| {
+                tags.sort();
+                Value::Array(tags.into_iter().map(Value::String).collect())
+            }),
+            STATE_FIELD if value.is_null() || value.as_str() == Some("active") => {
+                normalized.remove(name);
+                continue;
+            }
+            _ if edge_types.is_name(name) => super::edge_types::typed(value).ok().map(|targets| {
+                let mut names: Vec<_> = targets
+                    .into_iter()
+                    .map(|target| super::names::folded(&target.raw))
+                    .collect();
+                names.sort();
+                names.dedup();
+                Value::Array(names.into_iter().map(Value::String).collect())
+            }),
+            _ => None,
+        };
+        if let Some(value) = replacement {
+            if value.as_array().is_some_and(Vec::is_empty)
+                && (name == TAGS_FIELD || edge_types.is_name(name))
+            {
+                normalized.remove(name);
+            } else {
+                normalized.insert(name.clone(), value);
+            }
+        }
+    }
+    normalized
+}
+
+pub(super) fn keep_equivalent(
+    front: &mut Map<String, Value>,
+    before: &Map<String, Value>,
+    edge_types: &EdgeTypes,
+) {
+    let wanted = presentation(front, edge_types);
+    let existing = presentation(before, edge_types);
+    for (name, value) in before {
+        if match (wanted.get(name), existing.get(name)) {
+            (Some(a), Some(b)) => super::document::same_value(a, b),
+            (None, None) => true,
+            _ => false,
+        } {
+            front.insert(name.clone(), value.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -274,6 +334,34 @@ mod tests {
             unreachable!()
         };
         map
+    }
+
+    #[test]
+    fn presentation_keeps_each_equivalent_field_form() {
+        for (before, wanted) in [
+            (json!({"tags": "b, a"}), json!({"tags": ["a", "b"]})),
+            (json!({"tags": null, "state": "active"}), json!({})),
+            (json!({"tags": [], "state": null}), json!({})),
+            (
+                json!({"marfa_version": "3", "count": 1.0}),
+                json!({"marfa_version": 3, "count": 1}),
+            ),
+            (json!({"marfa_version": 3.0}), json!({"marfa_version": 3})),
+            (json!({"cites": "[[One]]"}), json!({"cites": ["[[One]]"]})),
+            (
+                json!({"cites": ["[[Two]]", "[[One]]"]}),
+                json!({"cites": ["[[One]]", "[[Two]]"]}),
+            ),
+            (
+                json!({"child-of": [["One"]]}),
+                json!({"child-of": "[[One]]"}),
+            ),
+        ] {
+            let before = front(before);
+            let mut wanted = front(wanted);
+            keep_equivalent(&mut wanted, &before, &edge_types());
+            assert_eq!(wanted, before);
+        }
     }
 
     #[test]
