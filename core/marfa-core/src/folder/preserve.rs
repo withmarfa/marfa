@@ -187,8 +187,6 @@ impl Editor<'_> {
         });
     }
 
-    /// Keep exactly one existing comma between each surviving pair of entries.
-    /// A trailing comma remains only when the original collection had one.
     fn separators(&mut self, collection: Node<'_>, surviving: &[Node<'_>]) {
         let mut cursor = collection.walk();
         let commas: Vec<_> = collection
