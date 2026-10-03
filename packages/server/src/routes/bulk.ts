@@ -68,6 +68,10 @@ import {
 } from "./_bulk-rollback.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { resolveLiveCredential } from "../auth/live-credential.js";
+import { authorizeReplay } from "../middleware/replay-authorization.js";
+import { sourceHiddenItemIds } from "../bulk-actions/source-visibility.js";
 import {
   BULK_ACTION_SHAPES,
   BulkActionFilterShape,
@@ -834,41 +838,16 @@ export function bulkRoutes(storage: Storage) {
       }
     }
 
-    const callerKey = c.get("apiKey");
+    let callerKey = c.get("apiKey");
     assertFilterEdgeTermsReadable(c, filter.filter);
 
-    // Narrowed to what the caller may *write*, which this comment claimed
-    // before the code did it. The filter compiled readable patterns, so a
-    // key holding `{"*": "read"}` arrived with nothing narrowed at all and
-    // the actions below then wrote to everything it matched — a reach
-    // `PATCH /items/{id}` refuses the same key on the same row. This door
-    // runs no per-row permission check, so the filter is the whole of it.
-    //
-    // **Purge narrows here too, rather than trusting the permission that
-    // opened the door.** A caller purges what it may write: holding
-    // `items.purge` says a credential may destroy rows irrecoverably, and
-    // its type permissions say which.
-    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+    // Purge permission does not grant write access to every type.
+    let { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
       c,
       "write",
     );
 
-    // The instance source filter, resolved the way the four list reads resolve
-    // it. This door passed nothing, so a match set included rows every read
-    // hides.
-    //
-    // That is a defect rather than a policy call, and `dry_run` is what makes
-    // it one: it answers with the matched ids, so this door is *already* a
-    // list read, and one that bypassed the lever entirely. The lever exists
-    // to stop a caller switching the control off by broadening a query, and
-    // reaching the same rows by swapping endpoint is that hole with an extra
-    // step. Once the query narrows, the actions behind it narrow with it,
-    // because it is one query.
-    //
-    // The cost is real and worth knowing: an action aimed at a source the
-    // filter excludes now matches nothing and reports `matched: 0` rather
-    // than refusing, which is the shape of a filter that found nothing.
-    // Whoever needs those rows lifts the lever, acts, and restores it.
+    // Selection discloses IDs, so it uses the source filter that read doors use.
     const instanceConfigForAction = await readInstanceConfig(storage.settings);
     const enforcementForAction = resolveEnforcement(
       instanceConfigForAction,
@@ -887,6 +866,76 @@ export function bulkRoutes(storage: Storage) {
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
+    const credentialId = callerKey?.id ?? null;
+    const authorizeSelection = async () => {
+      await authorizeReplay(
+        c,
+        storage,
+        matched.map(({ id, type }) => ({
+          kind: "item" as const,
+          id,
+          type,
+          level: "write" as const,
+          permissionOnly: false,
+        })),
+      );
+      if (enforcementForAction.source_filter) {
+        for (let offset = 0; offset < matched.length; offset += 500) {
+          const current = await storage.items.getMany(
+            matched.slice(offset, offset + 500).map(({ id }) => id),
+            { includeTrashed: true },
+          );
+          const hidden = await sourceHiddenItemIds(
+            storage,
+            current,
+            enforcementForAction.source_filter,
+          );
+          if (hidden.size > 0)
+            throw new MarfaError(
+              ErrorCode.FORBIDDEN,
+              "The selection must be repeated under the current source filter.",
+            );
+        }
+      }
+    };
+    const refreshAuthority = async () => {
+      const live = await resolveLiveCredential(storage, credentialId, {
+        tokenOutlivesExpiry: false,
+      });
+      c.set("apiKey", live?.key);
+      requireAuth(c);
+      const grant = c.get("oauthGrant");
+      if (live?.kind === "oauth" && grant)
+        c.set("oauthGrant", { ...grant, scopes: live.permissions });
+      getTypeFilter(c);
+      if (action === "purge") requirePermission(c, "items.purge");
+      assertFilterEdgeTermsReadable(c, filter.filter);
+      const currentEnforcement = resolveEnforcement(
+        await readInstanceConfig(storage.settings),
+        live?.key,
+      );
+      // Selection is private until it is returned or queued. A changed
+      // source lever requires a fresh selection, without disclosing its old
+      // count or identifiers or implementing another copy of that filter.
+      if (
+        JSON.stringify(currentEnforcement.source_filter) !==
+        JSON.stringify(enforcementForAction.source_filter)
+      )
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "The source filter changed while selecting this action. Retry the request.",
+        );
+      if (
+        JSON.stringify(callerKey?.type_permissions) !==
+        JSON.stringify(live?.key.type_permissions)
+      )
+        await authorizeSelection();
+      callerKey = live?.key;
+      ({ allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+        c,
+        "write",
+      ));
+    };
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
@@ -902,38 +951,7 @@ export function bulkRoutes(storage: Storage) {
         excluded_types: excludedTypes,
         // Per row, from the row's own type, as on every read door.
         source_filter: enforcementForAction.source_filter,
-        // The reserved namespace, and this door narrows harder than the
-        // read doors it agrees with.
-        //
-        // It passed nothing, so a filter naming no type matched
-        // platform-internal rows the sibling read hides, a dry run
-        // enumerated them, and every unbounded action acted on what it
-        // enumerated.
-        //
-        // One flag closes both ways in, because it narrows the type column
-        // rather than the state one: the structured `state` and the
-        // free-text grammar, which recognizes `state` with no value
-        // allowlist, reach the same rows whatever the state mask is.
-        //
-        // **The opt-in asks who may write the type, not merely who named
-        // it.** On a read this rule shapes an unnarrowed query and
-        // permissions decide the rest. Here they do not: this door runs no
-        // per-row `requireTypeAccess`, so whatever reaches the match query
-        // never meets the fence that guards the reserved namespace on every
-        // single-item write door. The type filter beside this is not that
-        // fence and cannot be: a credential holding `write` across the
-        // board passes it and is still not a platform one. Widening
-        // on the name alone would therefore publish a write path into that
-        // namespace which `PATCH /items/{id}` refuses to the same key.
-        //
-        // `mayWriteReserved` is that fence in predicate form rather than a
-        // second copy of it, so the one credential it admits, the operator
-        // key, still reaches reserved rows here, and its empty type map
-        // decides the rest.
-        //
-        // There is no widening token beside it for the ordinary reason: a
-        // read widened by one answers a bigger question, an action widened
-        // by one acts on more rows.
+        // Naming system types still requires the canonical reserved-namespace write gate.
         exclude_system_types: !(
           namesSystemNamespace(filter.type) &&
           callerKey !== undefined &&
@@ -941,7 +959,7 @@ export function bulkRoutes(storage: Storage) {
         ),
         occurred_after: filter.occurred_after,
         occurred_before: filter.occurred_before,
-        limit: Math.min(200, cap + 1 - matched.length),
+        limit: expected ? 200 : Math.min(200, cap + 1 - matched.length),
         cursor,
       });
       for (const item of page.data) {
@@ -954,7 +972,14 @@ export function bulkRoutes(storage: Storage) {
         matched.length <= cap && matched.length !== expected?.size
           ? (page.next_cursor ?? undefined)
           : undefined;
+      if (cursor) {
+        await yieldBulkWork();
+        await refreshAuthority();
+      }
     } while (cursor);
+
+    await refreshAuthority();
+    await authorizeSelection();
 
     if (matched.length > cap) {
       throw new MarfaError(

@@ -98,6 +98,13 @@ export const items = sqliteTable(
   ],
 );
 
+// An explicit INTEGER PRIMARY KEY survives VACUUM; an item's implicit rowid
+// does not. No foreign key: purge removes the item before its search entry.
+export const item_search_keys = sqliteTable("item_search_keys", {
+  seq: integer("seq").primaryKey(),
+  item_id: text("item_id").notNull().unique(),
+});
+
 // metadata: 1:1 sidecar for items
 export const metadata = sqliteTable("metadata", {
   item_id: text("item_id")

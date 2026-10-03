@@ -21,6 +21,7 @@ import {
   generateId,
   hasPermission,
   MarfaError,
+  resolveEnforcement,
 } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
@@ -33,6 +34,9 @@ import type {
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
+import { yieldBulkWork } from "./yield.js";
+import { sourceHiddenItemIds } from "./source-visibility.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type {
   BulkActionErrorEntry,
   BulkActionInput,
@@ -344,21 +348,28 @@ export class BulkActionWorker {
       }
 
       const slice = matchedIds.slice(i, i + this.chunkSize);
-      const { permitted, refused } = await this.splitByWriteAccess(
-        credential.key,
-        slice,
-      );
-      accErrors.push(...refused);
-      let outcome: ChunkOutcome = { succeeded: [], errors: [] };
+      let permitted = slice;
+      let refused: BulkActionErrorEntry[] = [];
+      let outcome: ChunkOutcome;
+      const carriedInChunk = new Set(carried);
       try {
-        if (permitted.length > 0)
-          outcome = await runChunk({
-            storage: this.storage,
-            input,
-            ids: permitted,
-            carried,
-            credential,
-          });
+        // Current source visibility and chunk writes share a transaction snapshot.
+        outcome = await this.storage.runInTransaction(async () => {
+          ({ permitted, refused } = await this.splitByWriteAccess(
+            credential.key,
+            slice,
+          ));
+          return permitted.length > 0
+            ? runChunk({
+                storage: this.storage,
+                input,
+                ids: permitted,
+                carried: carriedInChunk,
+                credential,
+              })
+            : { succeeded: [], errors: [] };
+        });
+        for (const id of carriedInChunk) carried.add(id);
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,
         // say. Annotate every id and continue to the next
@@ -374,6 +385,7 @@ export class BulkActionWorker {
         };
       }
 
+      accErrors.push(...refused);
       accSucceeded.push(...outcome.succeeded);
       accErrors.push(...outcome.errors);
       if (outcome.blob_hashes) {
@@ -390,6 +402,7 @@ export class BulkActionWorker {
         },
         this.nowFn().toISOString(),
       );
+      if (processed < matchedIds.length) await yieldBulkWork();
     }
 
     const { result, counts } = summarize();
@@ -431,6 +444,15 @@ export class BulkActionWorker {
     const rows = await this.storage.items.getMany(ids, {
       includeTrashed: true,
     });
+    const sourceFilter = resolveEnforcement(
+      await readInstanceConfig(this.storage.settings),
+      key,
+    ).source_filter;
+    const sourceHidden = await sourceHiddenItemIds(
+      this.storage,
+      rows,
+      sourceFilter,
+    );
     const permitted: string[] = [];
     const refused: BulkActionErrorEntry[] = [];
     for (const id of ids) {
@@ -439,7 +461,7 @@ export class BulkActionWorker {
         permitted.push(id);
         continue;
       }
-      if (!mayReadType(key, row.type)) {
+      if (!mayReadType(key, row.type) || sourceHidden.has(id)) {
         refused.push({
           id,
           code: ErrorCode.ITEM_NOT_FOUND,

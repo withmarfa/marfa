@@ -664,20 +664,14 @@ export interface ItemStore {
    * Fetch many items by id, as a map keyed by id; an id that resolves to
    * nothing is absent from the map rather than an error.
    *
-   * Trashed rows are excluded by default, because every read surface treats a
-   * soft-deleted item as gone. Three callers pass `includeTrashed`. Two are
-   * in `bulk-actions/runner.ts`: purge, whose input is the rows a job
-   * matched, trashed or not, and which needs the trashed ones to purge them
-   * and the rest to report them, and the tag chunk, which says at its own
-   * call site why it is load-bearing there rather than defensive. The third is the edge
-   * read gate in `routes/_edge-visibility.ts`, which resolves an edge's
-   * source to ask about its type: a plain read answers null for a trashed
-   * source, and a null source has no type to refuse, so trashing the source
-   * item would turn a refusal into a disclosure.
+   * Trashed rows are excluded by default. Authorization and lifecycle actions
+   * pass `includeTrashed`: hiding a trashed source would erase its type from
+   * permission checks. `source_filter` applies the listing's canonical
+   * predicate to the current row's type and source, independently of state.
    */
   getMany(
     ids: string[],
-    opts?: { includeTrashed?: boolean },
+    opts?: { includeTrashed?: boolean; source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Item>>;
   /**
    * Like `get`, but returns trashed items too. Intended for callers that

@@ -32,7 +32,6 @@ export const SCHEMA_SQL = readFileSync(
 // on every tag write.
 const CREATE_FTS = `
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-  item_id,
   title,
   body,
   description,

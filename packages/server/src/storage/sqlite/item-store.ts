@@ -43,6 +43,7 @@ import {
   resolveIncomingProperties,
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
   ItemStatsAxis,
@@ -898,20 +899,26 @@ export class SqliteItemStore implements ItemStore {
 
   async getMany(
     ids: string[],
-    opts?: { includeTrashed?: boolean },
+    opts?: { includeTrashed?: boolean; source_filter?: SourceFilterSettings },
   ): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
     const unique = Array.from(new Set(ids));
-    const where = inArray(items.id, unique);
-    const rows = await this.db
-      .select(itemColumns)
-      .from(items)
-      .where(where)
-      .all();
-    for (const row of rows) {
-      if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
-      out.set(row.id, rowToItem(row));
+    // The bulk cap exceeds SQLite's parameter limit; source terms also bind parameters.
+    for (let offset = 0; offset < unique.length; offset += 500) {
+      const where = and(
+        inArray(items.id, unique.slice(offset, offset + 500)),
+        sourceFilterToSql(opts?.source_filter, items.type, items.source),
+      );
+      const rows = await this.db
+        .select(itemColumns)
+        .from(items)
+        .where(where)
+        .all();
+      for (const row of rows) {
+        if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
+        out.set(row.id, rowToItem(row));
+      }
     }
     return out;
   }
@@ -1230,7 +1237,6 @@ export class SqliteItemStore implements ItemStore {
           digestsIn(incomingProps ?? {}),
         );
 
-        await this.searchStore.remove(id);
         await this.searchStore.index(id, merged, input.type ?? row.type);
 
         return rowToItem({
@@ -1496,7 +1502,6 @@ export class SqliteItemStore implements ItemStore {
         staleCarried,
       );
 
-      await this.searchStore.remove(id);
       await this.searchStore.index(
         id,
         resolvedProperties,

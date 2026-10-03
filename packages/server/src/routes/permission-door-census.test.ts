@@ -250,8 +250,9 @@ const PERMISSION_CALLS: Record<
       "the grant doors are plain routes that read no body, and are driven below like the standing doors",
   },
   "routes/bulk.ts": {
-    asks: { "items.purge": 1 },
-    because: "asked only of a bulk action whose action is purge",
+    asks: { "items.purge": 2 },
+    because:
+      "asked only of a purge action, initially and again after selection yields to other requests",
   },
 };
 

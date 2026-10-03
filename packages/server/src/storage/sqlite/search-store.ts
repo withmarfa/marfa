@@ -44,32 +44,47 @@ export class SqliteSearchStore implements SearchStore {
     typeId?: string,
   ): Promise<void> {
     const text = extractSearchableText(properties, typeId);
-    // The tags come off the sidecar in the same statement, so a re-index
-    // after a properties write keeps what a tag write put there.
-    await this.db.run(sql`
-      INSERT INTO items_fts(item_id, title, body, description, name, extra, tags)
-      VALUES (
-        ${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
-        COALESCE(
-          (SELECT group_concat(je.value, ' ')
-             FROM metadata m, json_each(m.tags) je
-            WHERE m.item_id = ${itemId}),
-          ''
+    // Keep the key and FTS replacement atomic even when called without an
+    // enclosing item transaction. SQL carries the key throughout because
+    // SQLite integers can exceed JavaScript's exact-number range.
+    await this.db.transaction(async (tx) => {
+      await tx.run(sql`
+        INSERT INTO item_search_keys(item_id) VALUES (${itemId})
+        ON CONFLICT(item_id) DO NOTHING
+      `);
+      await tx.run(sql`
+        INSERT OR REPLACE INTO items_fts(rowid, title, body, description, name, extra, tags)
+        VALUES (
+          (SELECT seq FROM item_search_keys WHERE item_id = ${itemId}),
+          ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
+          COALESCE(
+            (SELECT group_concat(je.value, ' ')
+               FROM metadata m, json_each(m.tags) je
+              WHERE m.item_id = ${itemId}),
+            ''
+          )
         )
-      )
-    `);
+      `);
+    });
   }
 
   async setTags(itemId: string, tags: readonly string[]): Promise<void> {
     // An update rather than a delete and re-insert: the text columns are
     // not at hand here, and an FTS5 table with its own content takes one.
     await this.db.run(sql`
-      UPDATE items_fts SET tags = ${tags.join(" ")} WHERE item_id = ${itemId}
+      UPDATE items_fts SET tags = ${tags.join(" ")}
+      WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = ${itemId})
     `);
   }
 
   async remove(itemId: string): Promise<void> {
-    await this.db.run(sql`DELETE FROM items_fts WHERE item_id = ${itemId}`);
+    await this.db.transaction(async (tx) => {
+      await tx.run(sql`
+        DELETE FROM items_fts
+        WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = ${itemId})
+      `);
+      await tx.run(sql`DELETE FROM item_search_keys WHERE item_id = ${itemId}`);
+    });
   }
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
@@ -202,8 +217,7 @@ export class SqliteSearchStore implements SearchStore {
 
     const rawSql = `
       SELECT
-        fts.item_id AS fts_item_id,
-        snippet(items_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet,
+        snippet(items_fts, 0, '<mark>', '</mark>', '...', 32) AS snippet,
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
@@ -212,7 +226,8 @@ export class SqliteSearchStore implements SearchStore {
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts
-      JOIN items i ON i.id = fts.item_id
+      JOIN item_search_keys k ON k.seq = fts.rowid
+      JOIN items i ON i.id = k.item_id
       LEFT JOIN metadata m ON m.item_id = i.id
       WHERE items_fts MATCH ?
         ${conditions.join("\n        ")}

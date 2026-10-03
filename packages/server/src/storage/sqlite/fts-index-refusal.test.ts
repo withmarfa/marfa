@@ -72,4 +72,37 @@ describe("the full-text index is refused when it predates the schema", () => {
       /is not this build's/,
     );
   });
+
+  it("refuses the searchable item-ID shape without rebuilding it", async () => {
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE VIRTUAL TABLE items_fts USING fts5(item_id, title, body, description, name, extra, tags, tokenize='porter unicode61')",
+    );
+    seed.close();
+    await expect(createConnection(path)).rejects.toThrow(
+      /items_fts table has item_id/,
+    );
+    const untouched = createClient({ url: `file:${path}` });
+    try {
+      const columns = await untouched.execute("PRAGMA table_info(items_fts)");
+      expect(columns.rows.map((row) => row.name)).toContain("item_id");
+      const map = await untouched.execute(
+        "SELECT name FROM sqlite_master WHERE name = 'item_search_keys'",
+      );
+      expect(map.rows).toEqual([]);
+    } finally {
+      untouched.close();
+    }
+  });
+
+  it("refuses a populated schema with its stable-key table missing", async () => {
+    const path = scratch();
+    const first = await createConnection(path);
+    await first.raw.execute("DROP TABLE item_search_keys");
+    await first.close();
+    await expect(createConnection(path)).rejects.toThrow(
+      /file lacks the item_search_keys table/,
+    );
+  });
 });
