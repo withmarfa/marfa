@@ -30,6 +30,8 @@ import {
   MarfaError,
   ErrorCode,
   isValidBlobHash,
+  isTier,
+  TIERS,
   resolveEnforcement,
   validateTransition,
   SYSTEM_DEFAULT_STATE,
@@ -63,6 +65,44 @@ const MAX_ARCHIVE_ITEMS = 5000;
 // Edges routinely outnumber items; a 4x multiple keeps the cap
 // proportionate without letting a hand-built archive flood the table.
 const MAX_ARCHIVE_EDGES = 20000;
+
+function archiveScalarRefusal(
+  kind: "item" | "edge",
+  row: Record<string, unknown>,
+  index: number,
+): MarfaError | null {
+  let field: "version" | "tier";
+  let expected: string;
+  if (
+    Object.hasOwn(row, "version") &&
+    !(
+      typeof row.version === "number" &&
+      Number.isSafeInteger(row.version) &&
+      row.version > 0
+    )
+  ) {
+    field = "version";
+    expected = "a positive safe integer";
+  } else if (
+    kind === "item" &&
+    Object.hasOwn(row, "tier") &&
+    !isTier(row.tier)
+  ) {
+    field = "tier";
+    expected = `one of ${TIERS.join(", ")}`;
+  } else {
+    return null;
+  }
+  return new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson parsed row ${String(index + 1)}: ${field} must be ${expected}`,
+    {
+      [kind === "item" ? "item_id" : "edge_id"]: row.id,
+      row: index + 1,
+      field,
+    },
+  );
+}
 
 /** Tags off an archived `{item, metadata}` line, defensively parsed. */
 function archiveTags(meta: unknown): string[] | undefined {
@@ -608,6 +648,17 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
         ),
       );
+    }
+
+    // Registrations publish outside the rows' transaction, so scalar
+    // refusals must precede them rather than depend on a later rollback.
+    for (const [index, { item }] of items.entries()) {
+      const error = archiveScalarRefusal("item", item, index);
+      if (error) return refuse(error);
+    }
+    for (const [index, edge] of edges.entries()) {
+      const error = archiveScalarRefusal("edge", edge, index);
+      if (error) return refuse(error);
     }
 
     // A row whose `source` claims a reserved credential shape is refused,

@@ -13,7 +13,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { PERMISSIONS } from "@withmarfa/shared";
+import { PERMISSIONS, generateId, getTypeSchema } from "@withmarfa/shared";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { purgeBlob } from "../housekeeping/blob-delete.js";
 
@@ -1394,5 +1394,223 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     expect(await ctx.storage.metadata.getExtensions(itemId)).toEqual(
       extensions,
     );
+  });
+});
+
+describe("POST /admin/restore-archive scalar preflight", () => {
+  function fixture() {
+    const firstId = generateId();
+    const lastId = generateId();
+    const edgeId = generateId();
+    const typeId = `user.archive_scalar_${Math.random().toString(36).slice(2)}`;
+    const blob = makeBlobData(typeId);
+    const rows = [firstId, lastId].map((id) => {
+      const item: Record<string, unknown> = {
+        id,
+        type: "core.note",
+        properties: { body: "Scalar preflight", blob_ref: blob.hash },
+        version: 7,
+        tier: "feed",
+      };
+      return {
+        item,
+        metadata: {
+          tags: ["scalar-preflight"],
+          extensions: { "archive.scalar": { marker: typeId } },
+        },
+        lending_blobs: [blob.hash],
+      };
+    });
+    const edge: Record<string, unknown> = {
+      id: edgeId,
+      source_id: firstId,
+      target_id: lastId,
+      edge_type: "references",
+      version: 9,
+    };
+    const archive = () =>
+      buildArchive(
+        { ...manifestFor(blob), item_count: 2, edge_count: 1, type_count: 1 },
+        rows.map((row) => JSON.stringify(row)),
+        [blob],
+        [JSON.stringify({ edge })],
+        [
+          JSON.stringify({
+            type: {
+              id: typeId,
+              label: "Archive scalar",
+              version: 1,
+              fields: {},
+            },
+          }),
+        ],
+      );
+    return { firstId, lastId, edgeId, typeId, blob, rows, edge, archive };
+  }
+
+  const invalidVersions = [
+    -1,
+    0,
+    1.5,
+    "4",
+    null,
+    true,
+    Number.MAX_SAFE_INTEGER + 1,
+  ];
+  const malformed = [
+    ...invalidVersions.map((value) => ({ field: "item.version", value })),
+    ...invalidVersions.map((value) => ({ field: "edge.version", value })),
+    ...["invalid", null, 5].map((value) => ({ field: "item.tier", value })),
+  ];
+
+  it.each(malformed)(
+    "refuses $field=$value before registrations, blobs, rows, metadata, or events",
+    async ({ field, value }) => {
+      const f = fixture();
+      if (field === "item.tier") f.rows[1]!.item.tier = value;
+      else if (field === "item.version") f.rows[1]!.item.version = value;
+      else f.edge.version = value;
+      const cursor = await logCursor();
+      const controller = new AbortController();
+      const items = collectItemEvents(controller.signal);
+      const edges = collectEdgeEvents(controller.signal);
+      let refused: Response;
+      try {
+        refused = await postArchive(await f.archive());
+        await settle();
+      } finally {
+        controller.abort();
+        await Promise.all([items.done, edges.done]);
+      }
+      expect(refused.status).toBe(400);
+      const error = (await refused.json()) as {
+        error: {
+          code: string;
+          message: string;
+          details: Record<string, unknown>;
+        };
+      };
+      const id = field.startsWith("edge") ? f.edgeId : f.lastId;
+      expect(error.error.code).toBe("validation_error");
+      expect(error.error.message).toContain(id);
+      expect(error.error.message).toContain(field.split(".")[1]);
+      expect(error.error.details).toMatchObject({
+        field: field.split(".")[1],
+        [field.startsWith("edge") ? "edge_id" : "item_id"]: id,
+      });
+      for (const rowId of [f.firstId, f.lastId]) {
+        expect(await ctx.storage.items.get(rowId)).toBeNull();
+        const rows = await (
+          ctx.storage as unknown as {
+            __sqliteAll(sql: string): Promise<unknown[]>;
+          }
+        ).__sqliteAll(
+          `SELECT item_id FROM metadata WHERE item_id = '${rowId}'`,
+        );
+        expect(rows).toEqual([]);
+      }
+      expect(await ctx.storage.edges.get(f.edgeId)).toBeNull();
+      expect(
+        (await ctx.storage.types.listRegistered()).map((t) => t.id),
+      ).not.toContain(f.typeId);
+      expect(getTypeSchema(f.typeId)).toBeUndefined();
+      expect(await ctx.storage.blobs.get(f.blob.hash)).toBeNull();
+      expect(await ctx.blobs.disk.has(f.blob.hash)).toBeNull();
+      expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
+      expect(await logSince(cursor)).toEqual([]);
+      expect(items.events).toEqual([]);
+      expect(edges.events).toEqual([]);
+
+      f.rows[1]!.item.version = 7;
+      f.rows[1]!.item.tier = "feed";
+      f.edge.version = 9;
+      const accepted = await postArchive(await f.archive());
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toMatchObject({
+        imported: 2,
+        edges_imported: 1,
+        types_registered: 1,
+        blobs_imported: 1,
+      });
+      expect((await ctx.storage.items.get(f.lastId))?.version).toBe(7);
+      expect((await ctx.storage.items.get(f.lastId))?.tier).toBe("feed");
+      expect((await ctx.storage.edges.get(f.edgeId))?.version).toBe(9);
+      expect((await ctx.storage.metadata.get(f.firstId)).tags).toEqual([
+        "scalar-preflight",
+      ]);
+      expect(getTypeSchema(f.typeId)).toBeDefined();
+      expect((await ctx.storage.metadata.get(f.firstId)).extensions).toEqual({
+        "archive.scalar": { marker: f.typeId },
+      });
+      expect(await ctx.storage.blobs.get(f.blob.hash)).not.toBeNull();
+      expect(await ctx.blobs.disk.has(f.blob.hash)).not.toBeNull();
+      expect(await logSince(cursor)).toHaveLength(3);
+    },
+  );
+
+  it.each(["item.version", "edge.version", "item.tier"])(
+    "refuses invalid %s even when the row already exists",
+    async (field) => {
+      const f = fixture();
+      expect((await postArchive(await f.archive())).status).toBe(200);
+      const cursor = await logCursor();
+      if (field === "item.tier") f.rows[1]!.item.tier = "invalid";
+      else if (field === "item.version") f.rows[1]!.item.version = 0;
+      else f.edge.version = 0;
+      const refused = await postArchive(await f.archive());
+      expect(refused.status).toBe(400);
+      expect((await errorOf(refused)).code).toBe("validation_error");
+      expect((await ctx.storage.items.get(f.lastId))?.version).toBe(7);
+      expect((await ctx.storage.items.get(f.lastId))?.tier).toBe("feed");
+      expect((await ctx.storage.edges.get(f.edgeId))?.version).toBe(9);
+      expect(await logSince(cursor)).toEqual([]);
+    },
+  );
+
+  it("refuses an invalid edge version even when its endpoint is missing", async () => {
+    const f = fixture();
+    f.edge.target_id = generateId();
+    f.edge.version = 0;
+    const refused = await postArchive(await f.archive());
+    expect(refused.status).toBe(400);
+    expect((await errorOf(refused)).code).toBe("validation_error");
+    expect(await ctx.storage.items.get(f.firstId)).toBeNull();
+    expect(getTypeSchema(f.typeId)).toBeUndefined();
+    expect(await ctx.blobs.disk.has(f.blob.hash)).toBeNull();
+    f.edge.version = 9;
+    const accepted = await postArchive(await f.archive());
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      imported: 2,
+      edges_imported: 0,
+      edges_skipped: 1,
+      edges_skipped_reasons: { endpoint_missing: 1 },
+    });
+  });
+
+  it.each([
+    { name: "omitted fields", version: undefined, tier: undefined },
+    { name: "initial versions", version: 1, tier: "library" },
+    { name: "nondefault versions and tier", version: 7, tier: "feed" },
+    {
+      name: "largest safe integer",
+      version: Number.MAX_SAFE_INTEGER,
+      tier: "library",
+    },
+  ])("restores $name", async ({ version, tier }) => {
+    const f = fixture();
+    for (const row of f.rows) {
+      row.item.version = version;
+      row.item.tier = tier;
+    }
+    f.edge.version = version;
+    const restored = await postArchive(await f.archive());
+    expect(restored.status).toBe(200);
+    for (const id of [f.firstId, f.lastId]) {
+      const item = await ctx.storage.items.get(id);
+      expect(item?.version).toBe(version ?? 1);
+      expect(item?.tier).toBe(tier ?? "library");
+    }
+    expect((await ctx.storage.edges.get(f.edgeId))?.version).toBe(version ?? 1);
   });
 });
