@@ -20,6 +20,10 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
+  "refused-database-exit.test.ts":
+    "starts the server as a child process, which needs the test's own environment to run",
+  "shutdown-stream.test.ts":
+    "starts the server as a child process, which needs the test's own environment to run",
 };
 
 /** Names in the docs that look like settings and are not the server's. */
