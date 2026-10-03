@@ -84,3 +84,19 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
     Reason: the text is the database's or the operating system's own and carries paths and driver detail.
 
     Tests: `packages/server/src/routes/health.test.ts › GET /health error text`; `packages/server/src/routes/health.app.test.ts › answers 503 with the database down, and tells only the operator key why`; `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`.
+
+## Upgrading
+
+Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
+
+15. When the server starts on a database whose schema differs from its own, or that still holds a registry or a setting this build does not read, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
+
+    Reason: an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. The message does not promise a restore the contract does not.
+
+    Tests: `packages/server/src/storage/sqlite/schema-mismatch-refusal.test.ts`; `packages/server/src/storage/sqlite/retired-registry-refusal.test.ts › names the way forward, and says the restore it names can refuse`.
+
+16. When the server refuses a database under statement 15, it SHALL exit with status 78, and SHALL exit with status 1 when it stops for any other failure to start.
+
+    Reason: what supervises the process tells a stop that starting again will not mend from one that it may.
+
+    Tests: `packages/server/src/refused-database-exit.test.ts`; `ci/entrypoint.test.ts` holds the container's entrypoint to the same number.

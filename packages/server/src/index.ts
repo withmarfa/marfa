@@ -14,6 +14,10 @@ import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { setBusyBudgetMs } from "./storage/sqlite/connection.js";
+import {
+  REFUSED_DATABASE_EXIT_CODE,
+  RefusedDatabaseError,
+} from "./storage/sqlite/refused-database.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
@@ -179,5 +183,10 @@ main().catch((err: unknown) => {
     error: formatErrorSummary(err),
     error_detail: serializeError(err),
   });
-  process.exit(1);
+  // A database another build wrote is not a crash: starting again meets the
+  // same file, so its own status lets what supervises the process stop
+  // rather than start it in a loop.
+  process.exit(
+    err instanceof RefusedDatabaseError ? REFUSED_DATABASE_EXIT_CODE : 1,
+  );
 });

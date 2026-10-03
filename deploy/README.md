@@ -52,6 +52,22 @@ The image's health check reads `GET /health`, which answers without a credential
 
 A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. The operator key gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
 
+## Upgrading
+
+Until the first public release, nothing upgrades a database in place. A build whose database schema differs from your instance's refuses to start on it, changes nothing in the file, and says so in its log. Whether a build's schema differs is not something you can read off its version, so treat each new build as one that might. The build that wrote the file can still read it, so going back to that build brings the instance back.
+
+To carry your data into a new build:
+
+1. With the running build, take an export: `GET /export?format=archive`, with the operator key.
+2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the last replica onto an empty volume, and that replica is the old build's database, which the new build refuses, so give the new instance a new bucket.
+3. Restore the archive: `POST /admin/restore-archive`, with the operator key.
+
+Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `conformance/spec/search-and-filters.md` 27 states that promise.
+
+When the container's server refuses a database, the container stays running and unhealthy with the server's message in its log, rather than stopping. A container that stopped would be started again by its restart policy and refuse again, in a loop. Stop the container to remove it, or point it at another volume. A server that stops for any other reason ends the container with the server's own exit status, and a restart policy may start it again.
+
+The release notes open with the same warning.
+
 ## Backing up the machine
 
 Litestream and the bucket are the recovery path that needs no care. If you also back up the machine the instance runs on, with Time Machine, a host's disk snapshots or a file-copying tool, back up two things:
