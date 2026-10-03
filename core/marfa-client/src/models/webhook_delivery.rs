@@ -23,6 +23,7 @@ pub struct WebhookDelivery {
     pub event_type: String,
     #[serde(rename = "status_code", deserialize_with = "Option::deserialize")]
     pub status_code: Option<f64>,
+    /// Cumulative accepted-outcome ordinal, not a census of concurrent or lost HTTP sends.
     #[serde(rename = "attempt")]
     pub attempt: f64,
     #[serde(rename = "succeeded")]

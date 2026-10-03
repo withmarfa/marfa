@@ -504,6 +504,7 @@ const invocations: Record<string, () => string[]> = {
   "webhooks update": () => ["--inactive", ID],
   "webhooks delete": () => [ID],
   "webhooks deliveries": () => [ID],
+  "webhooks redeliver": () => [ID, ID],
   audit: () => [],
   events: () => ["--for", "1"],
   "blobs stores": () => [],
@@ -705,6 +706,42 @@ describe("every command holds the server to the contract", () => {
     // Witness: it printed the table it was asked for.
     expect(JSON.parse(outcome.stdout)).not.toHaveLength(0);
     expect(server.requests).toEqual([]);
+  });
+
+  it("posts redelivery with encoded ids and no body", async () => {
+    server = await ScriptedServer.start();
+    server.answer(
+      "POST",
+      "/webhooks/webhook%20id/deliveries/delivery%2Fid/redeliver",
+      {
+        kind: "json",
+        status: 202,
+        body: { id: "delivery/id", status: "pending" },
+      },
+    );
+    const outcome = await marfa([
+      "--json",
+      "--url",
+      server.url,
+      "--key",
+      KEY,
+      "webhooks",
+      "redeliver",
+      "webhook id",
+      "delivery/id",
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(JSON.parse(outcome.stdout)).toMatchObject({
+      id: "delivery/id",
+      status: "pending",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]).toMatchObject({
+      method: "POST",
+      target: "/webhooks/webhook%20id/deliveries/delivery%2Fid/redeliver",
+      body: "",
+    });
+    expect(server.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
   });
 
   it("sends no mint to a server whose root names another contract, or none", async () => {

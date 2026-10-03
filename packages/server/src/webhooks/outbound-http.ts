@@ -21,6 +21,7 @@ import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
 import { Agent, fetch } from "undici";
+import { log } from "../middleware/logger.js";
 
 /** Why a delivery reached no receiver, as the delivery log records it. */
 export const DELIVERY_FAILURE = {
@@ -207,23 +208,36 @@ export function createWebhookHttpClient(options: {
       ) {
         return { kind: "failed", error: DELIVERY_FAILURE.notPublic };
       }
+      const abort = new AbortController();
       try {
         const response = await fetch(url, {
           method: "POST",
           headers: request.headers,
           body: request.body,
           redirect: "manual",
-          signal: AbortSignal.timeout(request.timeoutMs),
+          signal: AbortSignal.any([
+            AbortSignal.timeout(request.timeoutMs),
+            abort.signal,
+          ]),
           dispatcher,
         });
-        await response.body?.cancel();
-        if (response.status >= 300 && response.status < 400) {
-          return { kind: "redirected", status: response.status };
+        const status = response.status;
+        const retryAfter = response.headers.get("retry-after");
+        try {
+          await response.body?.cancel();
+        } catch {
+          abort.abort();
+          log("warn", "Outbound response cleanup required abort", {
+            kind: "webhook",
+          });
+        }
+        if (status >= 300 && status < 400) {
+          return { kind: "redirected", status };
         }
         return {
           kind: "answered",
-          status: response.status,
-          retryAfter: response.headers.get("retry-after"),
+          status,
+          retryAfter,
         };
       } catch (err) {
         return { kind: "failed", error: failureReason(err) };

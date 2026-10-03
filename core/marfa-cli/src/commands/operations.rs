@@ -79,6 +79,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("updateWebhook", "webhooks update"),
     reached("deleteWebhook", "webhooks delete"),
     reached("listWebhookDeliveries", "webhooks deliveries"),
+    reached("redeliverWebhookDelivery", "webhooks redeliver"),
     reached("listAuditLog", "audit"),
     reached("streamEvents", "events"),
     reached("listBlobStores", "blobs stores"),

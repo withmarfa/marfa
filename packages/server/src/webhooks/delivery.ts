@@ -53,7 +53,9 @@ export function buildSignatureHeader(
 }
 
 /** Retry delays in milliseconds. */
-const RETRY_DELAYS = [1000, 5000, 25000];
+export const RETRY_DELAYS = [
+  1000, 5000, 25000, 125000, 625000, 3125000, 15625000,
+];
 
 /** Maximum delay we'll honor from a Retry-After header. Prevents a
  *  malicious or buggy receiver from pinning a worker indefinitely. */
@@ -139,7 +141,7 @@ export const DELIVERY_CANCELED = {
  * answered with the grant's consented scopes whatever became of the token
  * that registered it.
  */
-async function ownerCredential(
+export async function ownerCredential(
   storage: Storage,
   owner: WebhookOwner,
 ): Promise<LiveCredential | null> {
@@ -235,7 +237,14 @@ export async function deliverWebhookAttempt(
   try {
     const prepared = await deliveryInReach(context.storage, delivery);
     if ("cancel" in prepared) {
-      await store.markCanceled(delivery.id, prepared.cancel);
+      if (
+        !(await store.markCanceled(
+          delivery.id,
+          delivery.claim_token,
+          prepared.cancel,
+        ))
+      )
+        return;
       log("info", "Webhook delivery canceled", {
         ...logged,
         reason: prepared.cancel,
@@ -273,13 +282,17 @@ export async function deliverWebhookAttempt(
     }
 
     if (outcome.kind === "redirected") {
-      await store.markFailed(
-        delivery.id,
-        outcome.status,
-        DELIVERY_FAILURE.redirect,
-        nextAttempt,
-        null,
-      );
+      if (
+        !(await store.markFailed(
+          delivery.id,
+          delivery.claim_token,
+          outcome.status,
+          DELIVERY_FAILURE.redirect,
+          nextAttempt,
+          null,
+        ))
+      )
+        return;
       log("error", "Webhook dead-lettered", {
         ...logged,
         status: outcome.status,
@@ -289,7 +302,15 @@ export async function deliverWebhookAttempt(
     }
 
     if (outcome.status >= 200 && outcome.status < 300) {
-      await store.markSuccess(delivery.id, outcome.status, nextAttempt);
+      if (
+        !(await store.markSuccess(
+          delivery.id,
+          delivery.claim_token,
+          outcome.status,
+          nextAttempt,
+        ))
+      )
+        return;
       log("info", "Webhook delivered", {
         ...logged,
         status: outcome.status,
@@ -303,13 +324,17 @@ export async function deliverWebhookAttempt(
       outcome.status < 500 &&
       !RETRYABLE_4XX.has(outcome.status)
     ) {
-      await store.markFailed(
-        delivery.id,
-        outcome.status,
-        `HTTP ${String(outcome.status)}`,
-        nextAttempt,
-        null,
-      );
+      if (
+        !(await store.markFailed(
+          delivery.id,
+          delivery.claim_token,
+          outcome.status,
+          `HTTP ${String(outcome.status)}`,
+          nextAttempt,
+          null,
+        ))
+      )
+        return;
       log("error", "Webhook dead-lettered", {
         ...logged,
         status: outcome.status,
@@ -345,14 +370,18 @@ async function scheduleDeliveryRetry(
   overrideDelayMs: number | undefined,
   direct: boolean,
 ): Promise<void> {
-  if (attempt >= delivery.max_attempts) {
-    await store.markFailed(
-      delivery.id,
-      statusCode,
-      error ?? "Max attempts reached",
-      attempt,
-      null,
-    );
+  if (attempt >= delivery.retry_start_attempt + 8) {
+    if (
+      !(await store.markFailed(
+        delivery.id,
+        delivery.claim_token,
+        statusCode,
+        error ?? "Max attempts reached",
+        attempt,
+        null,
+      ))
+    )
+      return;
     log("error", "Webhook max attempts reached", {
       delivery_id: delivery.id,
       webhook_id: delivery.webhook_id,
@@ -365,15 +394,23 @@ async function scheduleDeliveryRetry(
     return;
   }
 
-  const delayMs = overrideDelayMs ?? RETRY_DELAYS[attempt - 1] ?? 25000;
+  const ordinaryDelay =
+    RETRY_DELAYS[attempt - delivery.retry_start_attempt - 1];
+  if (ordinaryDelay === undefined)
+    throw new Error("Invalid webhook retry position");
+  const delayMs = Math.max(overrideDelayMs ?? 0, ordinaryDelay);
   const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
-  await store.markFailed(
-    delivery.id,
-    statusCode,
-    error ?? `HTTP ${String(statusCode)}`,
-    attempt,
-    nextAttemptAt,
-  );
+  if (
+    !(await store.markFailed(
+      delivery.id,
+      delivery.claim_token,
+      statusCode,
+      error ?? `HTTP ${String(statusCode)}`,
+      attempt,
+      nextAttemptAt,
+    ))
+  )
+    return;
   log("info", "Webhook retry scheduled", {
     delivery_id: delivery.id,
     webhook_id: delivery.webhook_id,
@@ -383,6 +420,26 @@ async function scheduleDeliveryRetry(
     next_attempt_at: nextAttemptAt,
     direct,
   });
+}
+
+export function validWebhookFrame(
+  frame: Record<string, unknown>,
+  eventType: string,
+): boolean {
+  const isEdge = eventType.startsWith("edge.");
+  const shapeValid = isEdge
+    ? !("item" in frame) &&
+      EdgeSchema.safeParse(frame.edge).success &&
+      (frame.source_type === undefined || typeof frame.source_type === "string")
+    : !("edge" in frame) &&
+      ItemSchema.safeParse(frame.item).success &&
+      ((frame.metadata === undefined && eventType !== "metadata.changed") ||
+        MetadataSchema.safeParse(frame.metadata).success);
+  return (
+    WEBHOOK_EVENTS.some((known) => known === eventType) &&
+    frame.type === eventType &&
+    shapeValid
+  );
 }
 
 export class WebhookScheduler {
@@ -465,23 +522,8 @@ export class WebhookScheduler {
         // Validate the retained frame independently of subscription matching
         // and authorization: malformed history is a failed job, not a skip.
         const isEdge = eventType.startsWith("edge.");
-        const shapeValid = isEdge
-          ? !("item" in frame) &&
-            EdgeSchema.safeParse(frame.edge).success &&
-            (frame.source_type === undefined ||
-              typeof frame.source_type === "string")
-          : !("edge" in frame) &&
-            ItemSchema.safeParse(frame.item).success &&
-            ((frame.metadata === undefined &&
-              eventType !== "metadata.changed") ||
-              MetadataSchema.safeParse(frame.metadata).success);
-        if (
-          !WEBHOOK_EVENTS.some((known) => known === eventType) ||
-          frame.type !== eventType ||
-          !shapeValid
-        ) {
+        if (!validWebhookFrame(frame, eventType))
           throw new Error("Outbound webhook event payload is inconsistent");
-        }
         let complete = !event.enable_fanout;
         if (event.enable_fanout) {
           const pageLimit = 50 - examined;

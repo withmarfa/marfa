@@ -9,6 +9,15 @@ import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { unregisterTypeSchema } from "@withmarfa/shared";
 import { WebhookScheduler, deliveryInReach } from "./delivery.js";
 let ctx: TestContext;
+async function claimToken(id: string): Promise<string> {
+  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
+    id,
+    "9999-01-01T00:00:00.000Z",
+    "9998-01-01T00:00:00.000Z",
+  );
+  return claimed?.claim_token ?? "stale-fixture-token";
+}
+
 let sent: Record<string, unknown>[];
 let scheduler: WebhookScheduler;
 beforeEach(async () => {
@@ -144,12 +153,18 @@ describe("webhook identity, outcomes and filters", () => {
     });
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       id,
+      await claimToken(id),
       503,
       "HTTP 503",
       1,
       new Date().toISOString(),
     );
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 2);
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(
+      id,
+      await claimToken(id),
+      200,
+      2,
+    );
     expect(
       (
         await ctx.storage.outboundWebhookDeliveries.list(subscription.id, {

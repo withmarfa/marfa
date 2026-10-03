@@ -118,6 +118,7 @@ const STANDING: Record<string, string> = {
   "PATCH /webhooks/:id": "webhooks.manage",
   "DELETE /webhooks/:id": "webhooks.manage",
   "GET /webhooks/:id/deliveries": "webhooks.manage",
+  "POST /webhooks/:id/deliveries/:delivery_id/redeliver": "webhooks.manage",
   "GET /config": "config.manage",
   "PUT /config": "config.manage",
   "GET /audit": "audit.read",

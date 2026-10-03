@@ -67,6 +67,118 @@ describe("outbound webhooks", () => {
     expect(mine?.secret).not.toBe(created.data.secret);
   });
 
+  it("redelivers a retained failed row to the current address with stable identity", async () => {
+    const refusal = await startReceiver({ status: 400 });
+    try {
+      const created = await client.createWebhook({
+        url: refusal.hookUrl("refused"),
+        events: ["item.created"],
+      });
+      expect(created.status).toBe(201);
+      trackWebhook(ctx, created.data.id, client);
+      const item = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { body: "redelivery witness" },
+        }),
+      );
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
+      const first = await refusal.waitFor((r) =>
+        r.body.includes(item.data.item.id),
+      );
+      expectSignedBy(first, created.data.secret);
+      let failed = (
+        await client.listWebhookDeliveries(created.data.id)
+      ).data.data.find(
+        (d) =>
+          d.id ===
+          (JSON.parse(first.body) as { delivery_id: string }).delivery_id,
+      );
+      const deadline = Date.now() + 10000;
+      while (failed?.status !== "dead_letter" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+        failed = (
+          await client.listWebhookDeliveries(created.data.id)
+        ).data.data.find(
+          (d) =>
+            d.id ===
+            (JSON.parse(first.body) as { delivery_id: string }).delivery_id,
+        );
+      }
+      expect(failed).toMatchObject({
+        status: "dead_letter",
+        status_code: 400,
+        attempt: 1,
+      });
+      const path = `/webhooks/${created.data.id}/deliveries/${failed!.id}/redeliver`;
+      const missing = await client.rawRequest(
+        `/webhooks/${created.data.id}/deliveries/missing-delivery/redeliver`,
+        { method: "POST" },
+      );
+      expect(missing.status).toBe(404);
+      expect(missing.error?.error.code).toBe("webhook_not_found");
+      expect(
+        (await client.updateWebhook(created.data.id, { active: false })).ok,
+      ).toBe(true);
+      const inactive = await client.rawRequest(path, { method: "POST" });
+      expect(inactive.status).toBe(409);
+      expect(inactive.error?.error.code).toBe("conflict");
+      const retained = await client.listWebhookDeliveries(created.data.id);
+      expect(retained.data.data.find((d) => d.id === failed!.id)).toMatchObject(
+        {
+          status: "dead_letter",
+          attempt: 1,
+          status_code: 400,
+        },
+      );
+      const updated = await client.updateWebhook(created.data.id, {
+        active: true,
+        url: receiver.hookUrl("redelivered"),
+      });
+      expect(updated.ok).toBe(true);
+      const response = await fetch(
+        `${apiUrl}/webhooks/${created.data.id}/deliveries/${failed!.id}/redeliver`,
+        { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      expect(response.status).toBe(202);
+      const queued = (await response.json()) as {
+        id: string;
+        status: string;
+        attempt: number;
+        status_code: number;
+      };
+      expect(queued).toMatchObject({
+        id: failed!.id,
+        status: "pending",
+        attempt: 1,
+        status_code: 400,
+      });
+      await expectMatchesSchema(
+        "POST",
+        "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+        202,
+        queued,
+      );
+      const received = await receiver.waitFor(
+        (r) =>
+          r.path === "/hook/redelivered" && r.body.includes(item.data.item.id),
+      );
+      expectSignedBy(received, created.data.secret);
+      const a = JSON.parse(first.body) as {
+        event_id: string;
+        delivery_id: string;
+        delivered_at: string;
+      };
+      const b = JSON.parse(received.body) as typeof a;
+      expect(b.event_id).toBe(a.event_id);
+      expect(b.delivery_id).toBe(a.delivery_id);
+      expect(b.delivered_at).not.toBe(a.delivered_at);
+    } finally {
+      await refusal.close();
+    }
+  });
+
   it("delivers a matching event to the URL with a verifiable signature", async ({
     signal,
   }) => {
@@ -187,7 +299,7 @@ describe("outbound webhooks", () => {
     }
   });
 
-  it("pages its delivery log by cursor, every attempt once", async () => {
+  it("pages its delivery log by cursor, every delivery once", async () => {
     const created = await client.createWebhook({
       url: receiver.hookUrl("paged"),
       events: ["item.created"],
@@ -537,6 +649,10 @@ describe("outbound webhooks", () => {
       await narrowed.getWebhook(mine.data.id),
       await narrowed.updateWebhook(mine.data.id, { active: false }),
       await narrowed.listWebhookDeliveries(mine.data.id),
+      await narrowed.rawRequest(
+        `/webhooks/${mine.data.id}/deliveries/missing-delivery/redeliver`,
+        { method: "POST" },
+      ),
       await narrowed.deleteWebhook(mine.data.id),
     ]) {
       expect(refused.status).toBe(403);

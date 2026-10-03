@@ -35,6 +35,13 @@ pub enum WebhooksCommand {
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// Queue a failed delivery again using the subscription's current address.
+    Redeliver {
+        /// The webhook id.
+        id: String,
+        /// The delivery id.
+        delivery_id: String,
+    },
 }
 
 #[derive(Debug, Default, Args)]
@@ -118,6 +125,10 @@ pub fn deliveries_request(id: &str, limit: Option<u32>) -> Request {
         .query_opt("limit", limit.map(|limit| limit.to_string()))
 }
 
+pub fn redeliver_request(id: &str, delivery_id: &str) -> Request {
+    Request::post(&["webhooks", id, "deliveries", delivery_id, "redeliver"])
+}
+
 pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         WebhooksCommand::Create(args) => create_request(args),
@@ -126,6 +137,7 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
         WebhooksCommand::Update(args) => update_request(args),
         WebhooksCommand::Delete { id } => delete_request(id),
         WebhooksCommand::Deliveries { id, limit } => deliveries_request(id, *limit),
+        WebhooksCommand::Redeliver { id, delivery_id } => redeliver_request(id, delivery_id),
     };
     out.value(&remote.json(&request)?)
 }

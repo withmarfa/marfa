@@ -6,6 +6,14 @@ import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 
 let ctx: TestContext;
+async function claimToken(id: string): Promise<string> {
+  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
+    id,
+    "9999-01-01T00:00:00.000Z",
+    "9998-01-01T00:00:00.000Z",
+  );
+  return claimed?.claim_token ?? "stale-fixture-token";
+}
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -67,10 +75,16 @@ describe("outbound delivery history", () => {
   it("leaves with the audit retention, and a delivery still retrying stays", async () => {
     const webhookId = "retention-subscription";
     const succeeded = await schedule(webhookId);
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(succeeded, 200, 1);
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(
+      succeeded,
+      await claimToken(succeeded),
+      200,
+      1,
+    );
     const deadLettered = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       deadLettered,
+      await claimToken(deadLettered),
       410,
       "gone",
       1,
@@ -81,7 +95,12 @@ describe("outbound delivery history", () => {
       new Date(Date.now() + DAY_MS).toISOString(),
     );
     const recent = await schedule(webhookId);
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(recent, 200, 1);
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(
+      recent,
+      await claimToken(recent),
+      200,
+      1,
+    );
     for (const id of [succeeded, deadLettered, retrying]) {
       await age(id, ctx.config.auditRetentionDays + 1);
     }
@@ -103,13 +122,19 @@ describe("outbound delivery history", () => {
     );
   });
 
-  it("keeps no payload or address once a delivery is settled, canceled included", async () => {
+  it("retains failed replay frames but clears success and canceled frames", async () => {
     const webhookId = "settled-subscription";
     const succeeded = await schedule(webhookId);
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(succeeded, 200, 1);
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(
+      succeeded,
+      await claimToken(succeeded),
+      200,
+      1,
+    );
     const failedOut = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       failedOut,
+      await claimToken(failedOut),
       500,
       "server error",
       4,
@@ -118,6 +143,7 @@ describe("outbound delivery history", () => {
     const deadLettered = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       deadLettered,
+      await claimToken(deadLettered),
       400,
       "HTTP 400",
       1,
@@ -126,6 +152,7 @@ describe("outbound delivery history", () => {
     const canceled = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markCanceled(
       canceled,
+      await claimToken(canceled),
       "removed",
     );
     const retrying = await schedule(
@@ -145,7 +172,12 @@ describe("outbound delivery history", () => {
       payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.com/hook",
     });
-    for (const id of [succeeded, failedOut, deadLettered, canceled]) {
+    for (const id of [failedOut, deadLettered])
+      expect(byId.get(id)).toMatchObject({
+        payload: '{"event_type":"item.created"}',
+        webhook_url: "https://example.com/hook",
+      });
+    for (const id of [succeeded, canceled]) {
       expect(byId.get(id)).toMatchObject({
         payload: null,
         webhook_url: null,
@@ -159,6 +191,7 @@ describe("settling an outbound delivery", () => {
     const id = await schedule("retry-subscription");
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       id,
+      await claimToken(id),
       503,
       "unavailable",
       1,
@@ -176,9 +209,15 @@ describe("settling an outbound delivery", () => {
 
   it("keeps the first outcome when an attempt whose claim lapsed reports after it", async () => {
     const id = await schedule("lapsed-subscription");
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(
+      id,
+      await claimToken(id),
+      200,
+      1,
+    );
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       id,
+      await claimToken(id),
       503,
       "unavailable",
       2,
@@ -186,6 +225,7 @@ describe("settling an outbound delivery", () => {
     );
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       id,
+      await claimToken(id),
       400,
       "HTTP 400",
       1,
@@ -212,7 +252,12 @@ describe("the retention outbound delivery history leaves with", () => {
     const older = await schedule(webhookId);
     const newer = await schedule(webhookId);
     for (const id of [older, newer]) {
-      await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(
+        id,
+        await claimToken(id),
+        200,
+        1,
+      );
     }
     await age(older, 8);
     await age(newer, 6);
