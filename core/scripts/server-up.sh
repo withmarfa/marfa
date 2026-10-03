@@ -12,6 +12,7 @@
 # secrets, data and keys; server-down.sh leaves it in place.
 # PORT: a free one by default.
 set -euo pipefail
+umask 077
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # Asked on the address the server binds (`::` dual-stack, else `0.0.0.0`),
@@ -40,6 +41,7 @@ boot="${state}/boot.env"
 kept_key=""
 kept_operator=""
 if [[ -f "${boot}" ]]; then
+  chmod 600 "${boot}"
   # shellcheck disable=SC1090
   source "${boot}"
   PORT="${BOOT_PORT}"
@@ -88,6 +90,8 @@ env_file="${MARFA_SERVER_ENV:-${state}/env}"
 
 # Written before the server is up, so a failed boot can still be stopped.
 write_env() {
+  touch "${env_file}"
+  chmod 600 "${env_file}"
   {
     echo "export MARFA_TEST_URL='${url}'"
     echo "export MARFA_TEST_KEY='${1:-}'"
