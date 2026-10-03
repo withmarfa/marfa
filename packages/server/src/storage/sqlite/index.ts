@@ -64,6 +64,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const {
     db: baseDb,
     raw,
+    inspectQueryPlan,
     close,
     captureRead,
   } = await createConnection(sqlitePath);
@@ -217,7 +218,9 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     /** Raw query escape hatch for the storage tests; nothing outside a
      *  test calls it. */
     async __sqliteAll(query: string): Promise<unknown[]> {
-      const result = await raw.execute(query);
+      const result = /^\s*EXPLAIN\b/i.test(query)
+        ? await inspectQueryPlan(query)
+        : await raw.execute(query);
       return result.rows;
     },
     /** Parameterized raw mutation escape hatch, reached by `test-utils`
