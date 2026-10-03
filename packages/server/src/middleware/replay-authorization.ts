@@ -21,15 +21,17 @@ import {
   rememberEdgeSubject,
   rememberItemSubject,
   rememberReplayRequirement,
+  rememberDisclosedSource,
   recordedEdgeSourceType,
   recordedItemType,
 } from "./replay-requirements.js";
 import type { ReplayRequirement } from "./replay-requirements.js";
 
-const itemNotFound = (id: string) =>
-  new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-const edgeNotFound = (id: string) =>
-  new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+// Internally selected subjects need authorization without introducing their identifiers in a refusal.
+const itemNotFound = () =>
+  new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+const edgeNotFound = () =>
+  new MarfaError(ErrorCode.EDGE_NOT_FOUND, "Edge not found");
 
 /** Retained envelopes can disclose snapshots and related rows beyond the write's own subject. */
 export async function rememberResponseDisclosures(
@@ -65,6 +67,8 @@ export async function rememberResponseDisclosures(
     }
     for (const [field, child] of Object.entries(row)) {
       if (field === "properties" || field === "input") continue;
+      if (field === "source" && typeof child === "string")
+        rememberDisclosedSource(child);
       if (field === "extensions") {
         if (
           child !== null &&
@@ -120,13 +124,18 @@ export async function authorizeReplay(
       itemIds.add(requirement.id);
     if (requirement.kind !== "edge") continue;
     itemIds.add(requirement.edge.source_id);
+    if (requirement.targetType !== undefined)
+      itemIds.add(requirement.edge.target_id);
     if (!currentEdges.has(requirement.edge.id))
       currentEdges.set(
         requirement.edge.id,
         await storage.edges.get(requirement.edge.id),
       );
     const current = currentEdges.get(requirement.edge.id);
-    if (current) itemIds.add(current.source_id);
+    if (current) {
+      itemIds.add(current.source_id);
+      if (requirement.targetType !== undefined) itemIds.add(current.target_id);
+    }
   }
   const currentItems = new Map<string, Item>();
   const ids = [...itemIds];
@@ -143,9 +152,7 @@ export async function authorizeReplay(
         getTypeFilter(c);
         break;
       case "item_reference": {
-        requireReadableRow(c, currentItems.get(requirement.id), () =>
-          itemNotFound(requirement.id),
-        );
+        requireReadableRow(c, currentItems.get(requirement.id), itemNotFound);
         break;
       }
       case "type":
@@ -156,10 +163,9 @@ export async function authorizeReplay(
         );
         break;
       case "item": {
-        const notFound = () => itemNotFound(requirement.id);
-        requireReadableRow(c, requirement, notFound);
+        requireReadableRow(c, requirement, itemNotFound);
         const current = currentItems.get(requirement.id);
-        if (current) requireReadableRow(c, current, notFound);
+        if (current) requireReadableRow(c, current, itemNotFound);
         if (requirement.level !== "write") break;
         const check = requirement.permissionOnly
           ? checkTypePermission
@@ -181,13 +187,23 @@ export async function authorizeReplay(
             !edgeKindReadable(key, edge as Edge) ||
             (type !== undefined && !mayReadType(key, type))
           )
-            throw edgeNotFound(requirement.edge.id);
+            throw edgeNotFound();
+          if (requirement.targetType !== undefined) {
+            const targetType =
+              currentItems.get(edge.target_id)?.type ?? requirement.targetType;
+            if (!mayReadType(key, targetType)) throw edgeNotFound();
+          }
         }
         if (
           requirement.sourceType !== undefined &&
           !mayReadType(key, requirement.sourceType)
         )
-          throw edgeNotFound(requirement.edge.id);
+          throw edgeNotFound();
+        if (
+          requirement.targetType !== undefined &&
+          !mayReadType(key, requirement.targetType)
+        )
+          throw edgeNotFound();
         if (requirement.level === "write") {
           for (const edge of facts) {
             checkEdgePermission(key, edge.edge_type, "write");
@@ -217,7 +233,20 @@ export async function authorizeReplay(
         );
         break;
       case "source":
-        itemProvenanceSource(key, requirement.source);
+        try {
+          itemProvenanceSource(key, requirement.source);
+        } catch (err) {
+          if (
+            requirement.identifierDisclosed ||
+            !(err instanceof MarfaError) ||
+            err.code !== ErrorCode.FORBIDDEN
+          )
+            throw err;
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            "This credential may not write under the required source.",
+          );
+        }
         break;
     }
   }

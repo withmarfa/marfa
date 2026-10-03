@@ -63,7 +63,10 @@ import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
 import { assertTierApplicable } from "../routes/_tier-rules.js";
 import { edgeTargetNotFound } from "./edge-constraints.js";
 import { planCascadeDelete } from "./edge-cascade.js";
-import { readableEdges, sourceTypesFor } from "../routes/_edge-visibility.js";
+import {
+  readableBlockingEdges,
+  sourceTypesFor,
+} from "../routes/_edge-visibility.js";
 import { refuseUnlessUninstalled } from "../routes/_connection-refusal.js";
 import { staleVersion } from "./conflict.js";
 import type { ConflictMode, StaleVersionResponse } from "./conflict.js";
@@ -694,7 +697,7 @@ async function changeRow(
       // it writes under, its own or one it claims, or it takes the row from
       // the key its own connector syncs it by.
       const key = credentialOf(writer);
-      if (key !== undefined) itemProvenanceSource(key, row.source);
+      if (key !== undefined) itemProvenanceSource(key, row.source, "subject");
       const holder = await storage.items.findBySourceId(
         row.source,
         change.source_id,
@@ -1146,15 +1149,7 @@ async function withoutHiddenBlockers(
     ?.blocking_edges;
   const root = (details as { root_item_id?: string } | undefined)?.root_item_id;
   if (!(err instanceof MarfaError) || !blockers || !root) return err;
-  const readable = await readableEdges(storage, writer.key, blockers);
-  const targets = await storage.items.getMany(
-    readable.map((edge) => edge.target_id),
-    { includeTrashed: true },
-  );
-  const listed = readable.filter((edge) => {
-    const target = targets.get(edge.target_id);
-    return target !== undefined && mayReadType(writer.key, target.type);
-  });
+  const listed = await readableBlockingEdges(storage, writer.key, blockers);
   return new MarfaError(
     err.code,
     listed.length === 0

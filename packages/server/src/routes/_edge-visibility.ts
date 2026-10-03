@@ -92,17 +92,48 @@ export async function readableEdges(
   key: ApiKey,
   edges: Edge[],
 ): Promise<Edge[]> {
+  return readableEdgeSet(storage, key, edges, "source");
+}
+
+/** A blocker refusal names an edge only when both of its endpoints are readable. */
+export async function readableBlockingEdges(
+  storage: Storage,
+  key: ApiKey,
+  edges: Edge[],
+): Promise<Edge[]> {
+  return readableEdgeSet(storage, key, edges, "both");
+}
+
+async function readableEdgeSet(
+  storage: Storage,
+  key: ApiKey,
+  edges: Edge[],
+  endpoints: "source" | "both",
+): Promise<Edge[]> {
   const ofReadableKind = edges.filter((edge) => edgeKindReadable(key, edge));
   if (ofReadableKind.length === 0) return [];
   const types = await sourceTypesFor(
     storage,
-    ofReadableKind.map((edge) => edge.source_id),
+    ofReadableKind.flatMap((edge) =>
+      endpoints === "both"
+        ? [edge.source_id, edge.target_id]
+        : [edge.source_id],
+    ),
   );
-  const readable = ofReadableKind.filter((edge) =>
-    sourceTypeReadable(key, types.get(edge.source_id)),
-  );
-  for (const edge of readable)
-    rememberEdgeSubject(edge, "read", types.get(edge.source_id));
+  const readable = ofReadableKind.filter((edge) => {
+    if (!sourceTypeReadable(key, types.get(edge.source_id))) return false;
+    if (endpoints === "source") return true;
+    const targetType = types.get(edge.target_id);
+    return targetType !== undefined && mayReadType(key, targetType);
+  });
+  for (const edge of readable) {
+    rememberEdgeSubject(
+      edge,
+      "read",
+      types.get(edge.source_id),
+      endpoints === "both" ? types.get(edge.target_id) : undefined,
+    );
+  }
   return readable;
 }
 

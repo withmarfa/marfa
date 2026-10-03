@@ -628,9 +628,9 @@ export function checkTypeAccess(
 
 /**
  * The credential's own type map, without the reserved-namespace fence
- * `checkTypeAccess` puts in front of it. Only the purge door wants this half
- * alone, for a reserved row already soft-deleted: no credential gets past
- * the fence and the map both, so the fence would strand the row.
+ * `checkTypeAccess` puts in front of it. The folder doors write through this
+ * map, as does purge for a reserved row already soft-deleted: no credential
+ * gets past the fence and the map both, so the fence would strand that row.
  */
 export function checkTypePermission(
   apiKey: ApiKey | undefined,
@@ -1049,14 +1049,23 @@ export function mayReadEdgeEnd(c: Context<AppEnv>): (type: string) => boolean {
 export function itemProvenanceSource(
   key: ApiKey | undefined,
   named?: string,
+  origin: "request" | "subject" = "request",
 ): string | undefined {
   if (named === undefined) return key?.source;
   if (named === key?.source) {
-    rememberReplayRequirement({ kind: "source", source: named });
+    rememberReplayRequirement({
+      kind: "source",
+      source: named,
+      identifierDisclosed: origin === "request",
+    });
     return key.source;
   }
   if (key?.sources?.includes(named) === true) {
-    rememberReplayRequirement({ kind: "source", source: named });
+    rememberReplayRequirement({
+      kind: "source",
+      source: named,
+      identifierDisclosed: origin === "request",
+    });
     return named;
   }
   throw new MarfaError(

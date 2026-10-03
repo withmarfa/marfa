@@ -21,13 +21,14 @@ export type ReplayRequirement =
       kind: "edge";
       edge: Pick<Edge, "id" | "source_id" | "target_id" | "edge_type">;
       sourceType?: string;
+      targetType?: string;
       level: "read" | "write";
     }
   | { kind: "edge_type"; edgeType: string; level: "read" | "write" }
   | { kind: "permission"; permission: Permission }
   | { kind: "extension"; namespace: string; level: "read" | "write" }
   | { kind: "metadata"; subresource: string; level: "read" | "write" }
-  | { kind: "source"; source: string };
+  | { kind: "source"; source: string; identifierDisclosed: boolean };
 
 /** Each request collects only the authorization facts its own handler used. */
 const captures = new AsyncLocalStorage<Map<string, ReplayRequirement>>();
@@ -35,7 +36,31 @@ const captures = new AsyncLocalStorage<Map<string, ReplayRequirement>>();
 export function rememberReplayRequirement(
   requirement: ReplayRequirement,
 ): void {
-  captures.getStore()?.set(JSON.stringify(requirement), requirement);
+  const capture = captures.getStore();
+  if (!capture) return;
+  if (requirement.kind === "source") {
+    const identity = JSON.stringify({
+      kind: requirement.kind,
+      source: requirement.source,
+    });
+    const existing = capture.get(identity);
+    capture.set(identity, {
+      ...requirement,
+      identifierDisclosed:
+        requirement.identifierDisclosed ||
+        (existing?.kind === "source" && existing.identifierDisclosed),
+    });
+    return;
+  }
+  capture.set(JSON.stringify(requirement), requirement);
+}
+
+/** A source selected from a row can become visible in the final response. */
+export function rememberDisclosedSource(source: string): void {
+  for (const requirement of captures.getStore()?.values() ?? []) {
+    if (requirement.kind === "source" && requirement.source === source)
+      requirement.identifierDisclosed = true;
+  }
 }
 
 export function rememberItemSubject(
@@ -56,6 +81,7 @@ export function rememberEdgeSubject(
   edge: Edge,
   level: "read" | "write",
   sourceType?: string,
+  targetType?: string,
 ): void {
   rememberReplayRequirement({
     kind: "edge",
@@ -66,6 +92,7 @@ export function rememberEdgeSubject(
       edge_type: edge.edge_type,
     },
     sourceType,
+    targetType,
     level,
   });
 }
