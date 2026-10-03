@@ -180,9 +180,18 @@ describe("canonical instants on item writes and filters", () => {
         );
         expect(refused.status).toBe(400);
       }
+      const prefix = rows[0]!.created_at.slice(0, 4);
       expect(
-        await ids(path, { ...base, filter: 'created_at starts_with "2026"' }),
-      ).toEqual(rows.map((row) => row.id).sort());
+        await ids(path, {
+          ...base,
+          filter: `created_at starts_with "${prefix}"`,
+        }),
+      ).toEqual(
+        rows
+          .filter((row) => row.created_at.startsWith(prefix))
+          .map((row) => row.id)
+          .sort(),
+      );
     }
   });
 
