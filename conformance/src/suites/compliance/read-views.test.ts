@@ -111,7 +111,7 @@ function certified(response: Response, proof: string, status = 200) {
 }
 
 async function changed(response: Response) {
-  expect(response.status).toBe(409);
+  expect(response.status, response.url).toBe(409);
   expect(await response.json()).toEqual(CHANGED);
   expect(response.headers.get("X-Error-Code")).toBe("read_view_changed");
   expect(response.headers.get("X-Marfa-Read-View")).toBeNull();
@@ -594,11 +594,30 @@ describe("conditional working-copy read views", () => {
 
   it("refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing", async () => {
     const row = await seed("retype witness");
+    const target = await seed("retype edge target");
+    const edge = await client.createEdge({
+      source_id: row.id,
+      target_id: target.id,
+      edge_type: "about",
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
     const proof = await bootstrap();
-    certified(
-      await request(`/items/${row.id}`, proof.read_view),
-      proof.read_view,
-    );
+    const paths = [
+      "/items?include=metadata",
+      `/items/${row.id}`,
+      `/items/${row.id}/edges`,
+      "/edges",
+      `/edges/${edge.data.edge.id}`,
+      "/types",
+      "/edge-types",
+      "/keys/current",
+    ];
+    for (const path of paths) {
+      const response = await request(path, proof.read_view);
+      certified(response, proof.read_view);
+      await response.json();
+    }
     const retyped = await client.updateItem(row.id, {
       version: row.version,
       type: "core.bookmark",
@@ -606,6 +625,9 @@ describe("conditional working-copy read views", () => {
       properties: { url: "https://example.com/read-view" },
     });
     expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
+    for (const path of paths) {
+      await changed(await request(path, proof.read_view));
+    }
     await changed(await request(`/items/${UNKNOWN_ID}`, proof.read_view));
     await withStream(
       server.apiUrl,
