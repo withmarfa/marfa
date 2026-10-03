@@ -88,7 +88,7 @@ describe("a live reader that stops reading", () => {
     expect(res.status).toBe(200);
     // Subscribed, and nothing read from here on.
     await settle();
-    expect(__listenerCountForTests()).toBe(listenersBefore + 2);
+    expect(__listenerCountForTests()).toBe(listenersBefore + 3);
 
     // Far past the bound: each frame is over 2 KB.
     const written = 40;

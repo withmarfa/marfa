@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DrizzleDb } from "./connection.js";
+import {
+  TransactionControl,
+  transactionControl,
+} from "./transaction-control.js";
 
 /**
  * Per-request DB substitution for SQLite transactions.
@@ -91,11 +95,48 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
           callback: (tx: SqliteTxContext) => unknown,
           ...rest: unknown[]
         ) => {
-          return bound(
-            (newTx: SqliteTxContext) =>
-              sqliteRequestContext.run({ tx: newTx }, () => callback(newTx)),
-            ...rest,
-          );
+          const root =
+            transactionControl.getStore() ?? new TransactionControl();
+          return transactionControl.run(root, async () => {
+            root.assertUsable();
+            const previousCause = root.callbackCause;
+            const callbackState: { failed: boolean; error?: unknown } = {
+              failed: false,
+            };
+            try {
+              return await bound(
+                (newTx: SqliteTxContext) =>
+                  sqliteRequestContext.run({ tx: newTx }, async () => {
+                    try {
+                      const result = await callback(newTx);
+                      root.assertUsable();
+                      return result;
+                    } catch (error) {
+                      callbackState.failed = true;
+                      callbackState.error = error;
+                      root.callbackCause = error;
+                      throw error;
+                    }
+                  }),
+                ...rest,
+              );
+            } catch (error) {
+              if (!root.begun && !ctx) throw error;
+              if (!callbackState.failed || error !== callbackState.error) {
+                if (!root.error())
+                  root.invalidate(
+                    callbackState.failed ? callbackState.error : error,
+                    "poisoned",
+                    "unknown",
+                  );
+                if (callbackState.failed) root.diagnose(error);
+              }
+              root.assertUsable();
+              throw error;
+            } finally {
+              root.callbackCause = previousCause;
+            }
+          });
         };
       }
 

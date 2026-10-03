@@ -1,3 +1,4 @@
+import { afterBulkChunkCommit } from "../bulk-actions/test-helpers.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -169,21 +170,20 @@ describe("a bulk-action job asks after its credential when it runs", () => {
 
     // The key is revoked once the first chunk has run, so only a worker
     // that asks again before the second chunk stops.
-    const jobs = ctx.storage.bulkActionJobs;
-    const updateProgress = jobs.updateProgress.bind(jobs);
-    jobs.updateProgress = async (jobId, progress, heartbeatAt) => {
-      await updateProgress(jobId, progress, heartbeatAt);
-      jobs.updateProgress = updateProgress;
+    let revokedOnce = false;
+    const restore = afterBulkChunkCommit(ctx.storage, async () => {
+      if (revokedOnce) return;
+      revokedOnce = true;
       const revoked = await request(ctx.app, "DELETE", `/keys/${id}`, {
         key: ctx.workingKey,
       });
       expect(revoked.status).toBeLessThan(300);
-    };
+    });
     let done: Awaited<ReturnType<typeof runQueued>>;
     try {
       done = await runQueued(job, 1);
     } finally {
-      jobs.updateProgress = updateProgress;
+      restore();
     }
 
     expect(done.status).toBe("failed");

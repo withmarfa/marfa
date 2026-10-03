@@ -7,8 +7,8 @@
  * its source stopped would look live to a client holding a cursor that no
  * longer moves.
  *
- * No throw path in the subscription was identified in the tree, so the
- * rejection is injected, for the reason the edge-delivery test gives.
+ * This fixture injects a generic subscription rejection. Bulk commit
+ * reconciliation fixtures also exercise a real live-delivery failure.
  */
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Hono } from "hono";
