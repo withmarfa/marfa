@@ -2,9 +2,8 @@ name: Core
 
 # A pull request runs it when `scripts/ci-required.ts` says the change can
 # affect it. A push to `main` also runs it for the server the live tests
-# boot, so a server pull request does not hold a macOS runner. The push is
-# filtered here rather than by the classifier, because a run that started
-# would cancel the one before it and then skip.
+# boot, so a server pull request does not hold a macOS runner. Push paths
+# omit changes the live tests do not read.
 on:
   push:
     branches: [main]
@@ -26,10 +25,11 @@ on:
     - cron: "47 3 * * *"
   workflow_dispatch:
 
-# The event keeps the nightly and a dispatch out of a push's group.
+# Even with cancellation disabled, a shared group replaces older pending
+# runs; non-PR runs need their own groups.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_BUILD_JOBS: 2

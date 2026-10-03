@@ -17,13 +17,12 @@ on:
         type: boolean
         default: false
 
-# A newer push to a branch, `main` included, cancels the run before it, since
-# the newer commit's run covers everything the older one would have. A
-# release tags a commit whose own run finished (`release.yml`). The event
-# keeps the nightly and a dispatch out of the push's group.
+# Release gates need a verdict for each main commit. Even with cancellation
+# disabled, a shared group replaces older pending runs; non-PR runs need
+# their own groups.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_BUILD_JOBS: 2
