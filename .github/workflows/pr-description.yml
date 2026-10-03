@@ -1,0 +1,36 @@
+name: Pull request description
+
+# GitHub cannot require the pull request template, and a body passed from the
+# command line skips it, so this check does. It is its own workflow so that
+# editing a description reruns only this and never `ci.yml`.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  description:
+    name: Pull request description
+    # A skipped job satisfies a required check, so a bot's pull request
+    # (Dependabot and the like) passes without a description.
+    if: ${{ github.event.pull_request.user.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/check-pr-description.ts
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # The body is read from the event file, never put on a command line.
+      - run: node scripts/check-pr-description.ts
