@@ -149,19 +149,41 @@ export function refusalComponentName(codes: readonly string[]): string {
   return `${[...codes].sort().map(pascal).join("Or")}Refusal`;
 }
 
+/**
+ * The refusal envelope's text, shared by the reflected schemas here and the
+ * written ones in `openapi-finalize.ts`, which a test holds equal.
+ */
+export const REFUSAL_TEXT = {
+  refusal: "An error response.",
+  error: "What went wrong.",
+  code: "A machine-readable code for the error. Use it in your logic.",
+  message:
+    "A description of the error for a person to read. It can change, so don't match on it.",
+  details:
+    "More about the error, such as the field it concerns. Each code defines its own details.",
+} as const;
+
 function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
   codes: C,
 ) {
   return z
     .object({
-      error: z.object({
-        // Sorted with the name, so the enum a door publishes is the set it
-        // answers rather than the order it happened to write.
-        code: z.enum([...codes].sort() as unknown as C),
-        message: z.string(),
-        details: z.record(z.string(), z.unknown()).optional(),
-      }),
+      error: z
+        .object({
+          // Sorted with the name, so the enum a door publishes is the set it
+          // answers rather than the order it happened to write.
+          code: z
+            .enum([...codes].sort() as unknown as C)
+            .describe(REFUSAL_TEXT.code),
+          message: z.string().describe(REFUSAL_TEXT.message),
+          details: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe(REFUSAL_TEXT.details),
+        })
+        .describe(REFUSAL_TEXT.error),
     })
+    .describe(REFUSAL_TEXT.refusal)
     .openapi(refusalComponentName(codes));
 }
 

@@ -1,7 +1,7 @@
 /*
  * Marfa API
  *
- * Typed data layer for structured personal data
+ * Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.  ## Authentication  Send a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.  ## Permissions  Your credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.  ## Pagination  A list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.  ## Query parameters  Many operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.  ## Errors  An error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.  ## Idempotency  A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.  ## Time  Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.  ## Every response  Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.
  *
  * The version of the OpenAPI document: 0
  *
@@ -28,9 +28,9 @@ pub struct SearchItemsParams {
     pub include: Option<String>,
     /// Comma-separated tags; items must match all (AND).
     pub tags: Option<String>,
-    /// Maximum results to return.
+    /// The maximum number of results to return.
     pub limit: Option<i32>,
-    /// Opaque cursor from a previous page's `next_cursor`.
+    /// The `next_cursor` from the previous page. Leave it out to get the first page.
     pub cursor: Option<String>,
     /// Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.
     pub filter: Option<String>,
