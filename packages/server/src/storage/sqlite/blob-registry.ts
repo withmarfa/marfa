@@ -36,6 +36,7 @@ import type { DrizzleDb } from "./connection.js";
 import { allowedTypesCondition } from "./item-store.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { collectBlobHashes } from "../blob-utils.js";
+import { scanPendingPropertyPatches } from "./bulk-action-job-store.js";
 
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
@@ -378,39 +379,56 @@ export class SqliteBlobRegistry implements BlobRegistry {
   }
 
   async retainOrphans(hashes: readonly string[], at: string): Promise<void> {
-    if (hashes.length === 0) {
-      await this.db.delete(blobOrphans).run();
-      return;
-    }
-    // The set can be large; the parameter limit is not. Both halves work
-    // in slices, which is safe because each is idempotent on its own rows.
-    const SLICE = 500;
-    const kept = new Set(hashes);
-    const reported = await this.db
-      .select({ hash: blobOrphans.hash })
-      .from(blobOrphans)
-      .all();
-    const stale = reported.map((r) => r.hash).filter((h) => !kept.has(h));
-    for (let i = 0; i < stale.length; i += SLICE) {
-      await this.db
-        .delete(blobOrphans)
-        .where(inArray(blobOrphans.hash, stale.slice(i, i + SLICE)))
-        .run();
-    }
-    // Only what is still registered: a purge or a refused restore may have
-    // taken a row since the walk listed it.
-    for (let i = 0; i < hashes.length; i += SLICE) {
-      await this.db
-        .insert(blobOrphans)
-        .select(
-          this.db
-            .select({ hash: blobs.hash, reported_at: sql`${at}`.as("at") })
-            .from(blobs)
-            .where(inArray(blobs.hash, hashes.slice(i, i + SLICE))),
-        )
-        .onConflictDoNothing()
-        .run();
-    }
+    await this.db.transaction(async (tx) => {
+      if (hashes.length === 0) {
+        await tx.delete(blobOrphans).run();
+        return;
+      }
+      const held = new Set<string>();
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await scanPendingPropertyPatches(tx, 200, cursor);
+        for (const patch of page.patches) collectBlobHashes(patch, held);
+        if (!page.cursor) break;
+        cursor = page.cursor;
+      }
+      // The walk can predate an enqueue. Its candidate is not an orphan while
+      // a committed job holds it, and cannot age toward purge during that job.
+      const unreferenced = hashes.filter((hash) => !held.has(hash));
+      if (unreferenced.length === 0) {
+        await tx.delete(blobOrphans).run();
+        return;
+      }
+      // The set can be large; the parameter limit is not. Both halves work
+      // in slices, which is safe because each is idempotent on its own rows.
+      const SLICE = 500;
+      const kept = new Set(unreferenced);
+      const reported = await tx
+        .select({ hash: blobOrphans.hash })
+        .from(blobOrphans)
+        .all();
+      const stale = reported.map((r) => r.hash).filter((h) => !kept.has(h));
+      for (let i = 0; i < stale.length; i += SLICE) {
+        await tx
+          .delete(blobOrphans)
+          .where(inArray(blobOrphans.hash, stale.slice(i, i + SLICE)))
+          .run();
+      }
+      // Only what is still registered: a purge or a refused restore may have
+      // taken a row since the walk listed it.
+      for (let i = 0; i < unreferenced.length; i += SLICE) {
+        await tx
+          .insert(blobOrphans)
+          .select(
+            tx
+              .select({ hash: blobs.hash, reported_at: sql`${at}`.as("at") })
+              .from(blobs)
+              .where(inArray(blobs.hash, unreferenced.slice(i, i + SLICE))),
+          )
+          .onConflictDoNothing()
+          .run();
+      }
+    });
   }
 
   async listOrphans(): Promise<BlobOrphanRow[]> {
@@ -529,7 +547,9 @@ export class SqliteBlobRegistry implements BlobRegistry {
  * Whether anything the orphan sweep counts references `hash`, asked inside
  * the transaction that would purge it. An item's properties through the
  * reference index its writes keep in step; extensions, edge properties and
- * version snapshots through their stored text, where a row holding the hex
+ * version snapshots through their stored text; and current nonterminal
+ * property-update patches through the same bounded scan the walk uses.
+ * A row holding the hex
  * at all is a candidate and the walk's own rule decides it, so a run of 65
  * hex characters is no more a reference here than there.
  */
@@ -565,6 +585,17 @@ async function referencedIn(
       collectBlobHashes(JSON.parse(row.text) as unknown, found);
       if (found.has(hash)) return true;
     }
+  }
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await scanPendingPropertyPatches(tx, 200, cursor);
+    for (const patch of page.patches) {
+      const found = new Set<string>();
+      collectBlobHashes(patch, found);
+      if (found.has(hash)) return true;
+    }
+    if (!page.cursor) break;
+    cursor = page.cursor;
   }
   return false;
 }
