@@ -1,7 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  WEBHOOK_DELIVERY_STATUSES,
+  isValidTypePattern,
+  malformedTypeIdentifier,
+} from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
@@ -11,12 +17,24 @@ import type {
   WebhookOwner,
 } from "../storage/interface.js";
 import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
-import { DELIVERY_CANCELLED } from "../webhooks/delivery.js";
+import { DELIVERY_CANCELED } from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+
+/** One stream-style item pattern; absence on PATCH preserves configuration. */
+function normalizeTypeFilter(
+  raw: string | null | undefined,
+): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw.trim() === "") return null;
+  const filter = raw.trim();
+  if (filter === "*" || !isValidTypePattern(filter))
+    throw malformedTypeIdentifier("type_filter", "Invalid type filter");
+  return filter;
+}
 
 /** Redact secret to last 4 characters for list/get responses. */
 function redactSecret(secret: string): string {
@@ -104,6 +122,7 @@ const WebhookSchema = z
 const DeliverySchema = z
   .object({
     id: z.string(),
+    status: z.enum(WEBHOOK_DELIVERY_STATUSES),
     webhook_id: z.string(),
     event_type: z.string(),
     status_code: z.number().nullable(),
@@ -140,7 +159,12 @@ const createWebhookRoute = createRoute({
             events: z
               .array(EventNameSchema)
               .min(1, "events must be a non-empty array"),
-            type_filter: z.string().nullish(),
+            type_filter: z
+              .string()
+              .nullish()
+              .describe(
+                "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.",
+              ),
             secret: z
               .string()
               .min(
@@ -303,7 +327,12 @@ const updateWebhookRoute = createRoute({
           schema: z.object({
             url: z.string().optional(),
             events: z.array(EventNameSchema).min(1).optional(),
-            type_filter: z.string().nullish(),
+            type_filter: z
+              .string()
+              .nullish()
+              .describe(
+                "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.",
+              ),
             active: z.boolean().optional(),
           }),
         },
@@ -580,7 +609,7 @@ export function webhookRoutes(
     const webhook = await storage.outboundWebhooks.create({
       url: body.url,
       events: body.events,
-      type_filter: body.type_filter ?? undefined,
+      type_filter: normalizeTypeFilter(body.type_filter) ?? undefined,
       secret: body.secret,
       owner: callerOwner(c),
     });
@@ -630,18 +659,18 @@ export function webhookRoutes(
       const next = await storage.outboundWebhooks.update(id, {
         url: body.url,
         events: body.events,
-        type_filter: body.type_filter,
+        type_filter: normalizeTypeFilter(body.type_filter),
         active: body.active,
       });
       if (next.url !== existing.url) {
         await storage.outboundWebhookDeliveries.cancelPending(
           id,
-          DELIVERY_CANCELLED.repointed,
+          DELIVERY_CANCELED.repointed,
         );
       } else if (!next.active) {
         await storage.outboundWebhookDeliveries.cancelPending(
           id,
-          DELIVERY_CANCELLED.inactive,
+          DELIVERY_CANCELED.inactive,
         );
       }
       return next;
@@ -666,7 +695,7 @@ export function webhookRoutes(
       await storage.outboundWebhooks.delete(id);
       await storage.outboundWebhookDeliveries.cancelPending(
         id,
-        DELIVERY_CANCELLED.removed,
+        DELIVERY_CANCELED.removed,
       );
     });
     void storage.audit.log({

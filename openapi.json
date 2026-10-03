@@ -5035,6 +5035,15 @@
           "id": {
             "type": "string"
           },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "success",
+              "dead_letter",
+              "canceled"
+            ]
+          },
           "webhook_id": {
             "type": "string"
           },
@@ -5065,6 +5074,7 @@
         },
         "required": [
           "id",
+          "status",
           "webhook_id",
           "event_type",
           "status_code",
@@ -30655,7 +30665,8 @@
                     "type": [
                       "string",
                       "null"
-                    ]
+                    ],
+                    "description": "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter."
                   },
                   "secret": {
                     "type": "string",
@@ -31304,7 +31315,8 @@
                     "type": [
                       "string",
                       "null"
-                    ]
+                    ],
+                    "description": "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter."
                   },
                   "active": {
                     "type": "boolean"

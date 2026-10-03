@@ -726,6 +726,7 @@ export interface Webhook {
 
 export interface WebhookDelivery {
   id: string;
+  status: "pending" | "success" | "dead_letter" | "canceled";
   webhook_id: string;
   event_type: string;
   status_code: number | null;

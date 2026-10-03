@@ -33,6 +33,7 @@ async function schedule(
   nextAttemptAt = new Date().toISOString(),
 ): Promise<string> {
   return ctx.storage.outboundWebhookDeliveries.schedule({
+    eventId: 1n,
     webhookId,
     eventType: "item.created",
     payload: '{"event_type":"item.created"}',
@@ -102,7 +103,7 @@ describe("outbound delivery history", () => {
     );
   });
 
-  it("keeps no payload or address once a delivery is settled, cancelled included", async () => {
+  it("keeps no payload or address once a delivery is settled, canceled included", async () => {
     const webhookId = "settled-subscription";
     const succeeded = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markSuccess(succeeded, 200, 1);
@@ -115,10 +116,16 @@ describe("outbound delivery history", () => {
       null,
     );
     const deadLettered = await schedule(webhookId);
-    await ctx.storage.outboundWebhookDeliveries.markDeadLetter(deadLettered);
-    const cancelled = await schedule(webhookId);
-    await ctx.storage.outboundWebhookDeliveries.markCancelled(
-      cancelled,
+    await ctx.storage.outboundWebhookDeliveries.markFailed(
+      deadLettered,
+      400,
+      "HTTP 400",
+      1,
+      null,
+    );
+    const canceled = await schedule(webhookId);
+    await ctx.storage.outboundWebhookDeliveries.markCanceled(
+      canceled,
       "removed",
     );
     const retrying = await schedule(
@@ -138,7 +145,7 @@ describe("outbound delivery history", () => {
       payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.com/hook",
     });
-    for (const id of [succeeded, failedOut, deadLettered, cancelled]) {
+    for (const id of [succeeded, failedOut, deadLettered, canceled]) {
       expect(byId.get(id)).toMatchObject({
         payload: null,
         webhook_url: null,
@@ -177,13 +184,18 @@ describe("settling an outbound delivery", () => {
       2,
       new Date(Date.now() - 1_000).toISOString(),
     );
-    await ctx.storage.outboundWebhookDeliveries.markDeadLetter(id);
+    await ctx.storage.outboundWebhookDeliveries.markFailed(
+      id,
+      400,
+      "HTTP 400",
+      1,
+      null,
+    );
     const [row] = await raw().all(
-      `SELECT status, succeeded, attempt, status_code FROM outbound_webhook_deliveries WHERE id = '${id}'`,
+      `SELECT status, attempt, status_code FROM outbound_webhook_deliveries WHERE id = '${id}'`,
     );
     expect(row).toEqual({
       status: "success",
-      succeeded: 1,
       attempt: 1,
       status_code: 200,
     });

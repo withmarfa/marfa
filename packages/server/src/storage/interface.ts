@@ -1438,6 +1438,7 @@ export interface WebhookStore {
  */
 export interface PendingWebhookDelivery {
   id: string;
+  event_id: string;
   webhook_id: string;
   event_type: string;
   payload: string;
@@ -1454,6 +1455,7 @@ export interface WebhookDeliveryStore {
   ): Promise<PaginatedResult<WebhookDelivery>>;
   schedule(entry: {
     webhookId: string;
+    eventId: bigint;
     eventType: string;
     payload: string;
     webhookUrl: string;
@@ -1480,9 +1482,8 @@ export interface WebhookDeliveryStore {
     attempt: number,
     nextAttemptAt: string | null,
   ): Promise<void>;
-  markDeadLetter(id: string): Promise<void>;
   /** Settles a pending delivery unsent, saying why. */
-  markCancelled(id: string, reason: string): Promise<void>;
+  markCanceled(id: string, reason: string): Promise<void>;
   /** Settles every pending delivery of a subscription unsent, saying why. */
   cancelPending(webhookId: string, reason: string): Promise<void>;
   /** Removes settled deliveries older than the retention; one still

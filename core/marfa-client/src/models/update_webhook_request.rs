@@ -17,6 +17,7 @@ pub struct UpdateWebhookRequest {
     pub url: Option<String>,
     #[serde(rename = "events", skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<Events>>,
+    /// One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.
     #[serde(
         rename = "type_filter",
         default,

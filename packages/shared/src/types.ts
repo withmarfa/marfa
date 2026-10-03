@@ -574,9 +574,18 @@ export interface UpdateWebhookInput {
   active?: boolean;
 }
 
-/** A single webhook delivery attempt. */
+export const WEBHOOK_DELIVERY_STATUSES = [
+  "pending",
+  "success",
+  "dead_letter",
+  "canceled",
+] as const;
+export type WebhookDeliveryStatus = (typeof WEBHOOK_DELIVERY_STATUSES)[number];
+
+/** A queued webhook delivery and its latest actual HTTP attempt. */
 export interface WebhookDelivery {
   id: string;
+  status: WebhookDeliveryStatus;
   webhook_id: string;
   event_type: string;
   status_code: number | null;
