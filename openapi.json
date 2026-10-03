@@ -4634,15 +4634,18 @@
           },
           "audit_retention_days": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 36500
           },
           "event_log_retention_hours": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 876000
           },
           "trash_retention_days": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 36500
           },
           "inbound_handled_retention_days": {
             "type": "integer",
@@ -28943,15 +28946,18 @@
                   },
                   "audit_retention_days": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 36500
                   },
                   "event_log_retention_hours": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 876000
                   },
                   "trash_retention_days": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 36500
                   },
                   "inbound_handled_retention_days": {
                     "type": "integer",

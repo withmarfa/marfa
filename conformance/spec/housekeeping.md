@@ -19,3 +19,9 @@ A housekeeping job never overlaps itself: a run started while another holds the 
 ## What is not observable over HTTP
 
 The schedule survives a restart, a run the last process never finished is cleared at the next boot with a log line, and runs are concurrent across names. None of it is observable against a server the referee booted once, so none is a statement here; the server's own suite proves each (`packages/server/src/housekeeping/scheduler.test.ts`).
+
+## Retention ranges
+
+`PUT /config` accepts integer retention overrides from 0 through 36500 days for `audit_retention_days`, `trash_retention_days`, `inbound_handled_retention_days` and `inbound_pending_retention_days`, and from 0 through 876000 hours for `event_log_retention_hours`. A larger value answers `400 validation_error` without replacing the stored configuration. Zero disables age expiry; a positive value expires eligible records older than that window. Accepted maximums can run through the registered cleanup jobs without an invalid cutoff date. The server's `routes/retention-range.test.ts` exercises these boundaries and the jobs, and witnesses retained rows at zero before ordinary positive expiry removes them.
+
+The corresponding environment defaults accept the same ranges. `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` and `MARFA_DCR_CLIENT_RETENTION_DAYS` also accept 0 through 36500 days; `MARFA_BULK_ACTION_JOB_RETENTION_MS` accepts 0 through 3153600000000 milliseconds. Outside those ranges, startup refuses the named setting. Zero disables each expiry or retirement sweep, including `MARFA_EVENT_LOG_RETENTION_HOURS`. `packages/server/src/config.test.ts` asserts the accepted boundaries, zero and the next integer's refusal.

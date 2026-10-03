@@ -499,3 +499,24 @@ it("bounds inbound date horizons and the native timer interval", () => {
     refusal({ MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483648" }),
   ).toContain("MARFA_INBOUND_CLEANUP_INTERVAL_MS");
 });
+
+it.each([
+  ["AUDIT_RETENTION_DAYS", 36500, "auditRetentionDays"],
+  ["MARFA_REVOKED_GRANT_RETENTION_DAYS", 36500, "revokedGrantRetentionDays"],
+  ["MARFA_GRANT_INACTIVITY_DAYS", 36500, "grantInactivityDays"],
+  ["MARFA_EVENT_LOG_RETENTION_HOURS", 876000, "eventLogRetentionHours"],
+  ["TRASH_RETENTION_DAYS", 36500, "trashRetentionDays"],
+  ["MARFA_DCR_CLIENT_RETENTION_DAYS", 36500, "dcrClientRetentionDays"],
+  [
+    "MARFA_BULK_ACTION_JOB_RETENTION_MS",
+    3153600000000,
+    "bulkActionJobRetentionMs",
+  ],
+])("bounds %s while preserving disabled expiry", (name, maximum, field) => {
+  expect(loadConfig({ [name]: String(maximum) })).toHaveProperty(
+    field,
+    maximum,
+  );
+  expect(refusal({ [name]: String(maximum + 1) })).toContain(name);
+  expect(loadConfig({ [name]: "0" })).toHaveProperty(field, 0);
+});
