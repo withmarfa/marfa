@@ -437,8 +437,18 @@ impl Core {
     /// blocked or dead.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        let conn = self.conn()?;
-        store::release(&conn, id)
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let released = store::release(&tx, id)?;
+        if released {
+            hydrate::lay_queue_over(
+                &tx,
+                &catalog::Catalog::load(&tx)?,
+                &store::whole_edge_types(&tx)?,
+            )?;
+        }
+        tx.commit()?;
+        Ok(released)
     }
 
     pub fn release_reason(&self, reason: BlockedReason) -> Result<usize> {
@@ -457,6 +467,13 @@ impl Core {
             if store::release(&tx, &id)? {
                 released += 1;
             }
+        }
+        if released > 0 {
+            hydrate::lay_queue_over(
+                &tx,
+                &catalog::Catalog::load(&tx)?,
+                &store::whole_edge_types(&tx)?,
+            )?;
         }
         // One transaction: a release part-way through would leave some rows
         // on a fresh key and some on a spent one.
@@ -531,6 +548,11 @@ impl Core {
         store::merge_properties(&tx, id)?;
         store::move_edit(&tx, id, held.version, None)?;
         store::release(&tx, id)?;
+        hydrate::lay_queue_over(
+            &tx,
+            &catalog::Catalog::load(&tx)?,
+            &store::whole_edge_types(&tx)?,
+        )?;
         tx.commit()?;
         Ok(true)
     }

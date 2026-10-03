@@ -200,7 +200,11 @@ pub(crate) fn hydrate(
 /// The queue survives a hydration and the copy does not, so without this a
 /// create still waiting is a row a local read no longer finds, and an edit
 /// still waiting reads as undone.
-fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog, whole: &[String]) -> Result<()> {
+pub(crate) fn lay_queue_over(
+    conn: &rusqlite::Connection,
+    catalog: &Catalog,
+    whole: &[String],
+) -> Result<()> {
     let waiting = store::waiting_writes(conn)?;
     let mut items: Vec<&str> = Vec::new();
     let mut edges: Vec<&str> = Vec::new();

@@ -12237,6 +12237,7 @@ describe("writing", () => {
     }
     // The witness: the first edit died, its line kept spent.
     expect(dead).toBe(true);
+    expect(read(harness!, "Note.md")).toContain("first");
 
     // A second edit meets a failing server, and the pull writes a change
     // another machine made over it; the server then refuses the edit.
@@ -12259,6 +12260,7 @@ describe("writing", () => {
     const buffer = read(harness!, "Note.md");
     expect(buffer).toContain("second");
     expect(lineOf(buffer)).toBe(version());
+    expect(buffer).toContain("first");
     const refused = await harness!.folder.push();
     expect(
       refused.ok && refused.value.drain.verdicts.map((entry) => entry.reason),
