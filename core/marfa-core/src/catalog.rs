@@ -244,19 +244,9 @@ fn held_types(conn: &Connection) -> Result<HashMap<String, Map<String, Value>>, 
         .collect()
 }
 
-/// Each read sees one catalog: another process may commit a new one between
-/// two statements, and an answer would then mix the two.
-fn in_one_read<T>(
-    conn: &Connection,
-    read: impl FnOnce(&Connection) -> Result<T, CoreError>,
-) -> Result<T, CoreError> {
-    let snapshot = conn.unchecked_transaction()?;
-    read(&snapshot)
-}
-
 /// By id.
 pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
-    in_one_read(conn, |conn| {
+    store::catalog_scope(conn, |conn| {
         let held = held_types(conn)?;
         let hints = Catalog::load(conn)?;
         let mut ids: Vec<&String> = held.keys().collect();
@@ -268,7 +258,7 @@ pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
 }
 
 pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
-    in_one_read(conn, |conn| {
+    store::catalog_scope(conn, |conn| {
         resolve(id, &held_types(conn)?, &Catalog::load(conn)?)
     })
 }
@@ -298,7 +288,7 @@ fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
 
 /// By id.
 pub fn edge_types(conn: &Connection) -> Result<Vec<EdgeType>, CoreError> {
-    in_one_read(conn, |conn| {
+    store::catalog_scope(conn, |conn| {
         refuse_unless_held(conn)?;
         store::edge_type_rows(conn)?
             .iter()
@@ -308,7 +298,7 @@ pub fn edge_types(conn: &Connection) -> Result<Vec<EdgeType>, CoreError> {
 }
 
 pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
-    in_one_read(conn, |conn| {
+    store::catalog_scope(conn, |conn| {
         refuse_unless_held(conn)?;
         match store::edge_type_rows(conn)?
             .into_iter()
@@ -715,25 +705,104 @@ mod tests {
     }
 
     #[test]
-    fn a_read_sees_one_catalog_though_another_is_committed_meanwhile() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        let reading = store::open(&path).unwrap();
-        let writing = store::open(&path).unwrap();
-        let catalog = |id: &str| crate::wire::WireCatalog {
-            types: serde_json::from_value(serde_json::json!([{ "id": id }])).unwrap(),
-            edge_types: Vec::new(),
+    fn public_item_type_reads_keep_fields_and_hints_in_one_snapshot() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
         };
-        store::replace_catalog(&writing, &catalog("acme.old")).unwrap();
-        let (before, during) = in_one_read(&reading, |conn| {
-            let before = store::type_rows(conn)?;
-            store::replace_catalog(&writing, &catalog("acme.new"))?;
-            Ok((before, store::type_rows(conn)?))
-        })
-        .unwrap();
-        assert_eq!(before, during, "one read saw two catalogs");
-        // The witness: the new catalog was committed, and a later read sees it.
-        assert_eq!(store::type_rows(&reading).unwrap()[0].0, "acme.new");
+        for single in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("core.sqlite");
+            let writing = store::open(&path).unwrap();
+            let catalog = |field: &str| crate::wire::WireCatalog {
+                types: serde_json::from_value(serde_json::json!([{
+                    "id": "acme.note", "fields": {field: {"type": "string"}},
+                    "display_hints": {"title_field": field}
+                }]))
+                .unwrap(),
+                edge_types: Vec::new(),
+            };
+            store::replace_catalog(&writing, &catalog("old")).unwrap();
+            let reading = crate::Core::open_reader(&path).unwrap();
+            let changed = Arc::new(AtomicBool::new(false));
+            let witnessed = changed.clone();
+            reading
+                .conn()
+                .unwrap()
+                .authorizer(Some(move |ctx: AuthContext<'_>| {
+                    // The fields have been read; hints are a separate statement.
+                    if matches!(
+                        ctx.action,
+                        AuthAction::Read {
+                            table_name: "types",
+                            column_name: "parent"
+                        }
+                    ) && !witnessed.swap(true, Ordering::SeqCst)
+                    {
+                        store::replace_catalog(&writing, &catalog("new")).unwrap();
+                    }
+                    Authorization::Allow
+                }))
+                .unwrap();
+            let old = if single {
+                reading.item_type("acme.note").unwrap()
+            } else {
+                reading.item_types().unwrap().remove(0)
+            };
+            assert!(
+                changed.load(Ordering::SeqCst),
+                "the concurrent refresh did not run"
+            );
+            assert_eq!(old.fields[0].name, "old");
+            assert_eq!(old.title_field.as_deref(), Some("old"));
+            let new = reading.item_type("acme.note").unwrap();
+            assert_eq!(new.fields[0].name, "new");
+            assert_eq!(new.title_field.as_deref(), Some("new"));
+        }
+    }
+
+    #[test]
+    fn public_catalog_reads_nest_without_finishing_the_callers_transaction() {
+        let core = crate::Core::open_in_memory(None).unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "acme.note", "fields": {} }]))
+                .unwrap(),
+            edge_types: vec![
+                serde_json::json!({ "id": "references", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": "source" }),
+            ],
+        };
+        {
+            let conn = core.conn().unwrap();
+            store::replace_catalog(&conn, &catalog).unwrap();
+            conn.execute_batch("BEGIN; INSERT INTO meta(key, value) VALUES ('caller', 'kept')")
+                .unwrap();
+        }
+        assert_eq!(core.item_types().unwrap()[0].id, "acme.note");
+        assert_eq!(core.item_type("acme.note").unwrap().id, "acme.note");
+        assert_eq!(core.edge_types().unwrap()[0].id, "references");
+        assert_eq!(core.edge_type("references").unwrap().id, "references");
+        assert!(matches!(
+            core.item_type("missing"),
+            Err(CoreError::NotFound { .. })
+        ));
+        assert!(matches!(
+            core.edge_type("missing"),
+            Err(CoreError::NotFound { .. })
+        ));
+        let conn = core.conn().unwrap();
+        assert!(
+            !conn.is_autocommit(),
+            "a nested read ended its caller's transaction"
+        );
+        assert_eq!(
+            store::meta_get(&conn, "caller").unwrap().as_deref(),
+            Some("kept")
+        );
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(store::meta_get(&conn, "caller").unwrap(), None);
+        drop(conn);
+        assert_eq!(core.item_types().unwrap()[0].id, "acme.note");
     }
 
     #[test]
@@ -749,6 +818,239 @@ mod tests {
             store::type_rows(&conn).unwrap().is_empty(),
             "the item types were written though the edge types were refused"
         );
+    }
+
+    #[test]
+    fn a_failed_catalog_rollback_reports_both_errors_without_committing_partial_writes() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+        let conn = held(
+            serde_json::json!([{ "id": "acme.old" }]),
+            serde_json::json!([]),
+        );
+        conn.execute_batch("BEGIN; INSERT INTO meta(key, value) VALUES ('caller', 'kept')")
+            .unwrap();
+        conn.authorizer(Some(|ctx: AuthContext<'_>| {
+            if matches!(
+                ctx.action,
+                AuthAction::Savepoint {
+                    operation: TransactionOperation::Rollback,
+                    ..
+                }
+            ) {
+                Authorization::Deny
+            } else {
+                Authorization::Allow
+            }
+        }))
+        .unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
+            edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
+        };
+        let error = store::replace_catalog(&conn, &catalog)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("id"),
+            "the original catalog error was lost: {error}"
+        );
+        assert!(
+            error.contains("rollback"),
+            "the rollback failure was hidden: {error}"
+        );
+        assert!(
+            !conn.is_autocommit(),
+            "cleanup committed or discarded the caller's transaction"
+        );
+        assert_eq!(
+            store::meta_get(&conn, "caller").unwrap().as_deref(),
+            Some("kept")
+        );
+        assert_eq!(
+            store::type_rows(&conn).unwrap()[0].0,
+            "acme.partial",
+            "the failing operation made no partial write to protect"
+        );
+        conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .unwrap();
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
+        assert_eq!(store::meta_get(&conn, "caller").unwrap(), None);
+        assert!(conn.is_autocommit());
+    }
+
+    #[test]
+    fn a_failed_catalog_write_rolls_back_only_its_scope() {
+        for fail_release in [false, true] {
+            use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+            let conn = held(
+                serde_json::json!([{ "id": "acme.old" }]),
+                serde_json::json!([]),
+            );
+            conn.execute_batch("BEGIN; INSERT INTO meta(key, value) VALUES ('caller', 'kept')")
+                .unwrap();
+            let opened = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let captured = opened.clone();
+            let mut denied = false;
+            conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+                if let AuthAction::Savepoint {
+                    operation: TransactionOperation::Begin,
+                    savepoint_name,
+                } = ctx.action
+                {
+                    *captured.lock().unwrap() = savepoint_name.to_string();
+                }
+                if fail_release
+                    && !denied
+                    && matches!(
+                        ctx.action,
+                        AuthAction::Savepoint {
+                            operation: TransactionOperation::Release,
+                            ..
+                        }
+                    )
+                {
+                    denied = true;
+                    Authorization::Deny
+                } else {
+                    Authorization::Allow
+                }
+            }))
+            .unwrap();
+            let catalog = crate::wire::WireCatalog {
+                types: serde_json::from_value(serde_json::json!([{ "id": "acme.new" }])).unwrap(),
+                edge_types: if fail_release {
+                    Vec::new()
+                } else {
+                    vec![serde_json::json!({ "cardinality": "many-to-many" })]
+                },
+            };
+            assert!(store::replace_catalog(&conn, &catalog).is_err());
+            assert!(!conn.is_autocommit());
+            assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
+            assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
+            assert_eq!(
+                store::meta_get(&conn, "caller").unwrap().as_deref(),
+                Some("kept")
+            );
+            assert!(
+                conn.execute_batch(&format!("RELEASE {}", opened.lock().unwrap()))
+                    .is_err(),
+                "cleanup left the catalog savepoint open"
+            );
+            conn.execute_batch("COMMIT").unwrap();
+            assert_eq!(
+                store::meta_get(&conn, "caller").unwrap().as_deref(),
+                Some("kept")
+            );
+            assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
+        }
+    }
+
+    #[test]
+    fn a_transient_catalog_rollback_error_is_reported_and_cleanup_is_retried() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+        let conn = held(
+            serde_json::json!([{ "id": "acme.old" }]),
+            serde_json::json!([]),
+        );
+        let mut denied = false;
+        conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+            if !denied
+                && matches!(
+                    ctx.action,
+                    AuthAction::Savepoint {
+                        operation: TransactionOperation::Rollback,
+                        ..
+                    }
+                )
+            {
+                denied = true;
+                Authorization::Deny
+            } else {
+                Authorization::Allow
+            }
+        }))
+        .unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
+            edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
+        };
+        let error = store::replace_catalog(&conn, &catalog)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("id") && error.contains("rollback"),
+            "{error}"
+        );
+        assert!(conn.is_autocommit(), "the retry left a savepoint open");
+        assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
+        assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn an_automatic_catalog_rollback_reports_the_original_failure() {
+        let conn = held(
+            serde_json::json!([{ "id": "acme.old" }]),
+            serde_json::json!([]),
+        );
+        conn.execute_batch("CREATE TEMP TRIGGER abort_catalog BEFORE INSERT ON edge_types BEGIN SELECT RAISE(ROLLBACK, 'catalog aborted'); END;").unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }])).unwrap(),
+            edge_types: vec![serde_json::json!({ "id": "references" })],
+        };
+        let error = store::replace_catalog(&conn, &catalog)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("catalog aborted"), "{error}");
+        assert!(!error.contains("no such savepoint"), "{error}");
+        assert!(conn.is_autocommit());
+        assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
+        assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn an_outer_catalog_scope_cleans_up_its_failed_nested_scope() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+        let conn = held(
+            serde_json::json!([{ "id": "acme.old" }]),
+            serde_json::json!([]),
+        );
+        let mut refused = 0;
+        conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+            if matches!(
+                ctx.action,
+                AuthAction::Savepoint {
+                    operation: TransactionOperation::Rollback,
+                    ..
+                }
+            ) && refused < 2
+            {
+                refused += 1;
+                Authorization::Deny
+            } else {
+                Authorization::Allow
+            }
+        }))
+        .unwrap();
+        let result = store::catalog_scope(&conn, |conn| {
+            store::meta_set(conn, "outer_scope", "uncommitted")?;
+            store::replace_catalog(
+                conn,
+                &crate::wire::WireCatalog {
+                    types: serde_json::from_value(serde_json::json!([{ "id": "acme.partial" }]))
+                        .unwrap(),
+                    edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
+                },
+            )
+        });
+        assert!(result.is_err());
+        assert!(
+            conn.is_autocommit(),
+            "cleanup released the failed inner scope instead of its own"
+        );
+        assert_eq!(store::meta_get(&conn, "outer_scope").unwrap(), None);
+        assert_eq!(store::type_rows(&conn).unwrap()[0].0, "acme.old");
     }
 
     #[test]

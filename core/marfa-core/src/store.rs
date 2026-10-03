@@ -1209,8 +1209,7 @@ fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
 /// nothing. A savepoint rather than a transaction, so it holds alone and
 /// inside a hydration's. Answers whether the version moved.
 pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool, CoreError> {
-    conn.execute_batch("SAVEPOINT replace_catalog")?;
-    let written = (|| {
+    catalog_scope(conn, |conn| {
         let types = replace_types(conn, &catalog.types)?;
         let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
         let held = catalog_version(conn)?;
@@ -1220,18 +1219,73 @@ pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool,
         let next = held.map_or(1, |version| version + 1);
         meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
         Ok(true)
-    })();
-    match written {
-        Ok(moved) => {
-            conn.execute_batch("RELEASE replace_catalog")?;
-            Ok(moved)
+    })
+}
+
+/// Both reads and replacements nest inside a caller's transaction. The
+/// connection is shared immutably, so rusqlite's mutable savepoint guard
+/// cannot represent this scope.
+pub(crate) fn catalog_scope<T>(
+    conn: &Connection,
+    operation: impl FnOnce(&Connection) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    // Distinct names let an outer scope unwind past an inner scope whose
+    // rollback failed, without accidentally releasing the inner one only.
+    let name = format!("marfa_catalog_{}", Uuid::now_v7().simple());
+    conn.execute_batch(&format!("SAVEPOINT {name}"))?;
+    let mut scope = CatalogScope {
+        conn,
+        name,
+        finished: false,
+    };
+    let error = match operation(conn) {
+        Ok(value) => match scope.release() {
+            Ok(()) => return Ok(value),
+            Err(error) => CoreError::from(error),
+        },
+        Err(error) => error,
+    };
+    match scope.rollback() {
+        Ok(()) => Err(error),
+        Err(cleanup) => Err(CoreError::Store(format!(
+            "{error}; catalog rollback failed: {cleanup}; cleanup could not be confirmed"
+        ))),
+    }
+}
+
+struct CatalogScope<'a> {
+    conn: &'a Connection,
+    name: String,
+    finished: bool,
+}
+
+impl CatalogScope<'_> {
+    fn release(&mut self) -> rusqlite::Result<()> {
+        self.conn.execute_batch(&format!("RELEASE {}", self.name))?;
+        self.finished = true;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> rusqlite::Result<()> {
+        // SQLite can abort the entire transaction on an I/O failure or
+        // RAISE(ROLLBACK); in that case there is no scope left to close.
+        if self.conn.is_autocommit() {
+            self.finished = true;
+            return Ok(());
         }
-        Err(error) => {
-            // SQLite may have rolled the whole transaction back already (a
-            // full disk, an I/O error), and then there is no savepoint to
-            // roll back to: the error that caused it is the one to report.
-            let _ = conn.execute_batch("ROLLBACK TO replace_catalog; RELEASE replace_catalog");
-            Err(error)
+        self.conn
+            .execute_batch(&format!("ROLLBACK TO {}", self.name))?;
+        // Releasing after a failed rollback could commit partial writes.
+        self.release()
+    }
+}
+
+impl Drop for CatalogScope<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            // Also protects unwinding and retries a transient cleanup error.
+            // An ordinary return reports any failure before this fallback.
+            let _ = self.rollback();
         }
     }
 }

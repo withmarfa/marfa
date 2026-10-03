@@ -79,7 +79,9 @@ impl Folder {
         let settings = self.settings()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
-            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
+            crate::store::catalog_scope(&conn, |conn| {
+                Ok((Catalog::load(conn)?, EdgeTypes::load(conn)?))
+            })?
         };
         let lists = settings.lists()?;
         let walked = self.walked(&lists);
@@ -350,5 +352,109 @@ fn display_dir(path: &str) -> String {
         "the folder".into()
     } else {
         path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Core, catalog::Indexing, store, wire::WireCatalog};
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[test]
+    fn status_keeps_the_edge_catalog_from_its_item_catalog_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join(super::super::STATE_DIR);
+        std::fs::create_dir(&state_dir).unwrap();
+        let path = state_dir.join("core.sqlite");
+        let writing = store::open(&path).unwrap();
+        let catalog = |written_at: &str| WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "core.note", "fields": {} }]))
+                .unwrap(),
+            edge_types: vec![
+                serde_json::json!({ "id": "references", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": written_at }),
+            ],
+        };
+        store::replace_catalog(&writing, &catalog("source")).unwrap();
+        for (key, value) in [
+            (store::META_SLICE_TYPES, "[\"core.note\"]"),
+            (store::META_SLICE_TIER, "library"),
+            (store::META_EVENT_CURSOR, "1"),
+        ] {
+            store::meta_set(&writing, key, value).unwrap();
+        }
+        store::upsert_item(
+            &writing,
+            &store::testing::wire_item(
+                "folder",
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "search": {"types": ["core.note"]} }),
+            ),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Note.md"), "new note\n").unwrap();
+        let core = Core::open_reader(&path).unwrap();
+        let changed = Arc::new(AtomicBool::new(false));
+        let witnessed = changed.clone();
+        let mut type_reads = 0;
+        core.conn()
+            .unwrap()
+            .authorizer(Some(move |ctx: AuthContext<'_>| {
+                if matches!(
+                    ctx.action,
+                    AuthAction::Read {
+                        table_name: "types",
+                        column_name: "parent"
+                    }
+                ) {
+                    type_reads += 1;
+                }
+                if type_reads >= 2
+                    && matches!(
+                        ctx.action,
+                        AuthAction::Read {
+                            table_name: "meta",
+                            column_name: "value"
+                        }
+                    )
+                    && !witnessed.swap(true, Ordering::SeqCst)
+                {
+                    // The next catalog is unreadable. This status began with the
+                    // previous one and must not combine the two revisions.
+                    store::replace_catalog(&writing, &catalog("unreadable")).unwrap();
+                }
+                Authorization::Allow
+            }))
+            .unwrap();
+        let folder = Folder {
+            root: dir.path().to_path_buf(),
+            folder: "folder".into(),
+            core,
+            key: std::sync::Mutex::new(None),
+            permissions: std::sync::OnceLock::new(),
+            store_mark: None,
+        };
+        let status = folder.status().unwrap();
+        assert!(
+            changed.load(Ordering::SeqCst),
+            "the concurrent refresh did not run"
+        );
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(
+            (status.files[0].path.as_str(), status.files[0].status),
+            ("Note.md", "waiting")
+        );
+        assert!(
+            folder.status().is_err(),
+            "a later status did not see the unreadable replacement"
+        );
     }
 }
