@@ -1,15 +1,11 @@
 /**
  * Every item write goes through `writeItem`.
  *
- * The rules an item write must pass were once called door by door, outside
- * the transaction that wrote, and each door fixed on its own. A module that
- * reaches the store's write primitives directly reads as covered from every
- * angle a test of one door can see. So `Storage.items` carries only the
- * store's reads, and the compiler refuses a write through it or through any
- * handle typed from it; the writes are reached through `itemWrites` and the
- * `ItemStore` type, and this fails on a module that imports either without a
- * reason named here, and on a module that writes the `items` table with a
- * statement of its own.
+ * `Storage.items` carries only the store's reads, so the compiler refuses a
+ * write through it or through any handle typed from it. Writes are reached
+ * through `itemWrites` and the `ItemStore` type; this census fails on a
+ * module that imports either without a reason named here, or writes the
+ * `items` table with a statement of its own.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";

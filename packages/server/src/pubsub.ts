@@ -63,12 +63,11 @@ export interface EdgeEvent extends FanoutControl {
    * by a subscriber, because a purge announces the edges it took after the
    * source row has gone, and a subscriber cannot look up a type nobody holds.
    *
-   * Every door that publishes names it (`edge-events-every-door.test.ts`
-   * holds them to it). Optional because a door announcing after its commit
-   * can find the source already purged by a concurrent request: the event
-   * is still logged and delivered to webhooks, and the stream withholds it
-   * from every subscriber, since a source it cannot classify is not one it
-   * may read.
+   * Every door that publishes looks it up (`edge-events-every-door.test.ts`
+   * holds them to it). Optional because the source row may be absent from
+   * that lookup. The event is still logged and delivered to webhooks, while
+   * the stream withholds it from every subscriber: a source it cannot
+   * classify is not one it may read.
    */
   sourceType?: string;
   /** On `edge_deleted` alone: the item whose purge took the edge. */

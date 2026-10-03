@@ -9,8 +9,7 @@ import type { Edge } from "@withmarfa/shared";
 import { publishEdge } from "../pubsub.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
 
-/** What one `applyInlineEdges` call changed, for the caller to announce
- *  once its transaction has committed. */
+/** What one `applyInlineEdges` call changed. */
 export interface InlineEdgeChanges {
   created: Edge[];
   deleted: Edge[];
@@ -38,13 +37,9 @@ export interface InlineEdgeChanges {
  * but before any create, so a rejected set never lands a write; the
  * transaction unwinds the deletes.
  *
- * **Returns what it changed and announces nothing.** This runs inside the
- * caller's transaction, so a publish from here describes a graph that may
- * still be rolled back — an atomic bulk batch whose later item fails would
- * leave subscribers an `edge.created` with no row behind it. The caller
- * owns the announcement because only the caller knows when its transaction
- * committed; `announceInlineEdges` below is the one place that knows the
- * shape.
+ * **Returns what it changed and announces nothing.** `writeItem` records
+ * item and edge events inside the write's transaction, after the outcome is
+ * known. A failed atomic bulk batch then leaves neither rows nor events.
  *
  * `assertEdgeWritable` is the caller's edge-type permission gate, run once
  * per listed edge type. It lives here rather than at each call site because
@@ -131,15 +126,9 @@ export async function applyInlineEdges(
  * Announce a completed inline-edge change.
  *
  * Deletions before creations, so a subscriber replaying a replacement in
- * order never briefly holds both the old edge and the new one. Call this
- * **after** the transaction commits, and after the item event, so an edge
- * always arrives behind the item it belongs to — the ordering
- * `POST /items` already states.
- *
- * One function rather than a publish per call site: three doors reach
- * `applyInlineEdges` — `POST /items`, `PATCH /items/{id}` and
- * `POST /items/bulk` — and a rule spread across three of them is a rule
- * one of them will be missing.
+ * order never briefly holds both the old edge and the new one. `writeItem`
+ * calls this inside its transaction, after the item event, so the events
+ * commit together and the edge arrives behind the item it belongs to.
  */
 export async function announceInlineEdges(
   storage: Storage,
