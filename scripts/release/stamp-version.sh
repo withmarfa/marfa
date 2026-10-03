@@ -10,7 +10,7 @@
 #
 # Every manifest is stamped, not only the published ones, so one build
 # reports one number everywhere it can be asked: `marfa --version`, the
-# packed tarballs, the crate, the workspace's private packages. The
+# packed tarballs and the workspace's private packages. The
 # manifests are the tracked ones, listed the way the check lists them, so
 # the two cannot disagree about which files are manifests. Every manifest is
 # checked before any is written, so a version or a manifest this script

@@ -3,8 +3,8 @@ name: Release
 # A release is a tag, and tags are the maintainer's. Each is the one before
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
 # from that commit, uploads them to the run, and publishes them: the npm
-# packages `@withmarfa/core` and `@withmarfa/client`, the `marfa-client`
-# crate, and a GitHub release carrying every artifact.
+# packages `@withmarfa/core` and `@withmarfa/client`, and a GitHub release
+# carrying those tarballs and the binary archive.
 #
 # A dispatch with a `version` is a dry run: it runs the same build a tag
 # would, and skips only the publish job. It is how the workflow is exercised
@@ -15,24 +15,20 @@ name: Release
 # writes it into every manifest in this checkout, which is why no manifest in
 # the repository holds one (`ci/version-fields.test.ts`).
 #
-# The registries are published to by trusted publishing, with no stored
-# token: npm and crates.io each trust this workflow's OIDC identity, and the
-# GitHub release is made with the job's own token. Trusted publishing is
-# configured per package, at npmjs.com for `@withmarfa/core` and
-# `@withmarfa/client` and at crates.io for `marfa-client`, and only on a
-# package that already exists. So each package's first version is published
-# by hand from a run's artifacts, its trusted publisher configured, and only
-# then does this workflow publish it. A tag before that stops at the publish
-# job's preflight, which names the package it cannot publish, with nothing
-# sent.
+# npm publishes by trusting this workflow's OIDC identity, with no stored
+# token; the GitHub release uses the job's own token. Trusted publishing is
+# configured per package at npmjs.com for `@withmarfa/core` and
+# `@withmarfa/client`, and only on a package that already exists. Each
+# package's first version is published by hand from a run's artifacts, its
+# trusted publisher configured, and only then does this workflow publish
+# it. A tag before that stops at the publish job's preflight, which names
+# the package it cannot publish, with nothing sent.
 #
 # Each trusted publisher names the owner `withmarfa`, the repository
-# `marfa`, the workflow `release.yml` and no environment; npm's must allow
-# `npm publish`. crates.io records the repository's owner by id, so a
-# transferred repository needs its publisher made again. Neither registry
-# checks the ref, so what keeps a publish to a tag is this file's own
-# condition on the publish job: a branch that edits it can publish, which is
-# why only the maintainer's tags reach it and why it is reviewed like code.
+# `marfa`, the workflow `release.yml` and no environment, and must allow
+# `npm publish`. The registry does not check the ref: this file's condition
+# on the publish job keeps publication to tags. A branch that edits it can
+# publish, so only the maintainer's tags reach it and it is reviewed like code.
 
 on:
   push:
@@ -72,11 +68,8 @@ jobs:
       # never reaches `main`, so the run asked for is a push to `main`, not
       # any green run on the SHA. Verifying that run is stronger than
       # recomputing it here: the steps below would pass against the tag's
-      # own tree either way. `ci.yml` cancels a superseded run on `main`, so
-      # the commit tagged is one whose own run finished, normally the newest.
-      # A commit whose run was cancelled is validated by dispatching `ci.yml`
-      # on its tag, and that run counts too: like a push to `main`, it ran
-      # the tree as it is, which a pull request's head did not.
+      # own tree either way. A dispatch on the tag also counts: like a push to
+      # `main`, it runs the tree as it is, which a pull request's head did not.
       #
       # A dry run publishes nothing, so it asks only that `ci.yml` passed at
       # the commit by any event, which lets a branch that changes this
@@ -269,31 +262,20 @@ jobs:
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # `--allow-dirty` because the stamp just wrote the version into the
-      # manifests of this checkout, which is the only place it lives.
-      - name: Package the marfa-client crate
-        working-directory: core
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          cargo package -p marfa-client --allow-dirty
-          cp "target/package/marfa-client-$VERSION.crate" "$RUNNER_TEMP/artifacts/"
-
-      # Exactly the four the publish job reads, by name: an upload that only
+      # Exactly the three the publish job reads, by name: an upload that only
       # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the four a release carries
+      - name: Hold the artifacts to the three a release carries
         working-directory: ${{ runner.temp }}/artifacts
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           expected=$(printf '%s\n' \
             "marfa-$VERSION-darwin-arm64.tar.gz" \
-            "marfa-client-$VERSION.crate" \
             "withmarfa-client-$VERSION.tgz" \
             "withmarfa-core-$VERSION.tgz" | LC_ALL=C sort)
           found=$(for file in *; do printf '%s\n' "$file"; done | LC_ALL=C sort)
           if [ "$found" != "$expected" ]; then
-            echo "::error::The artifacts are not the four a release carries."
+            echo "::error::The artifacts are not the three a release carries."
             diff <(echo "$expected") <(echo "$found") || true
             exit 1
           fi
@@ -364,7 +346,6 @@ jobs:
           present=()
           missing=()
           npm_packages=()
-          crate=false
           # `npm view` answers a version it has, nothing for a version it has
           # not of a package it has, and E404 for a package it has not. Each
           # answer is assigned before it is read, so a lookup that errs fails
@@ -394,41 +375,19 @@ jobs:
               missing+=("$name, which npm has never published")
             fi
           done
-          # crates.io answers 200 for a crate or version it has and 404 for
-          # one it has not.
-          crate_state() {
-            local status
-            status=$(curl -s -o /dev/null -w '%{http_code}' -A "withmarfa-release" "https://crates.io/api/v1/crates/$1")
-            case "$status" in
-              200) echo present ;;
-              404) echo absent ;;
-              *) echo "::error::crates.io answered $status for $1." >&2; return 1 ;;
-            esac
-          }
-          version_state=$(crate_state "marfa-client/$VERSION")
-          package_state=$(crate_state marfa-client)
-          if [ "$version_state" = present ]; then
-            present+=("marfa-client $VERSION on crates.io")
-          elif [ "$package_state" = present ]; then
-            publish+=("marfa-client $VERSION to crates.io")
-            crate=true
-          else
-            missing+=("marfa-client, which crates.io has never published")
-          fi
           for line in "${publish[@]}"; do echo "will publish $line"; done
           for line in "${present[@]}"; do echo "already there: $line"; done
           if [ "${#missing[@]}" -gt 0 ]; then
             for line in "${missing[@]}"; do
-              echo "::error::Nothing was published: $line. Publish its first version by hand from this run's artifacts (a .crate is unpacked and published from its directory), configure trusted publishing for it, then re-run this job."
+              echo "::error::Nothing was published: $line. Publish its first version by hand from this run's artifacts, configure trusted publishing for it, then re-run this job."
             done
             exit 1
           fi
           echo "npm=${npm_packages[*]}" >> "$GITHUB_OUTPUT"
-          echo "crate=$crate" >> "$GITHUB_OUTPUT"
 
       # npm checks a trusted publisher only when a publish asks for one, so a
       # package whose publisher is missing or misspelled would otherwise be
-      # found only after the crate had gone out. This asks npm for the same
+      # found only after another package had gone out. This asks npm for the same
       # exchange `npm publish` makes, for each package about to be
       # published, and publishes nothing: the token it answers with expires
       # unused.
@@ -464,16 +423,6 @@ jobs:
                 ;;
             esac
           done
-
-      # A token crates.io mints for this run from the job's OIDC identity,
-      # scoped to the crates that trust this workflow, and revoked when the
-      # job ends; it would expire thirty minutes after minting in any case,
-      # which is the job's own limit. Before anything is made, so a crate
-      # that does not trust this workflow stops the job with nothing sent.
-      - name: Authenticate to crates.io
-        id: crates-io
-        if: steps.plan.outputs.crate == 'true'
-        uses: rust-lang/crates-io-auth-action@v1
 
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -514,40 +463,6 @@ jobs:
             cat "$RUNNER_TEMP/release-view.err"
             exit 1
           fi
-
-      # `CARGO_REGISTRY_TOKEN` is the variable cargo reads, holding the
-      # token the step above minted for this run, never a stored one.
-      - name: Publish marfa-client to crates.io
-        if: steps.plan.outputs.crate == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
-        run: |
-          status=$(curl -s -o /dev/null -w '%{http_code}' -A "withmarfa-release" \
-            "https://crates.io/api/v1/crates/marfa-client/$VERSION")
-          case "$status" in
-            200)
-              echo "marfa-client $VERSION is already on crates.io"
-              exit 0
-              ;;
-            404) ;;
-            *)
-              echo "::error::crates.io answered $status for marfa-client $VERSION."
-              exit 1
-              ;;
-          esac
-          mkdir -p "$RUNNER_TEMP/crate"
-          tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
-          # Published from the build job's archive, unpacked, rather than from
-          # the checkout, which would need the version stamped again. Its
-          # manifest is the normalized one cargo wrote; the original beside it
-          # is a name cargo reserves for itself and refuses to package. cargo
-          # packs these sources again to send them, outside git, so the
-          # archive crates.io holds has the same manifest and sources as the
-          # one the release carries but not its VCS record or the generator's
-          # dotfiles, and its checksum differs. `--no-verify` because
-          # `cargo package` in the build job already built these sources.
-          rm "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml.orig"
-          cargo publish --no-verify --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
       # By trusted publishing: npm exchanges the job's OIDC identity itself,
       # so no token is set anywhere.
