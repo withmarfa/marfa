@@ -68,15 +68,15 @@ describe("jobs use standard GitHub-hosted runners", () => {
   });
 
   it.each(["ci.yml", "core.yml", "codeql.yml"])(
-    "%s cancels a superseded run on every branch, main included, per event",
+    "%s cancels only superseded pull requests and preserves every other run",
     (file) => {
       const { concurrency } = parse(
         readFileSync(join(WORKFLOWS, file), "utf8"),
       ) as { concurrency?: unknown };
       expect(concurrency).toEqual({
         group:
-          "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
-        "cancel-in-progress": true,
+          "${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
       });
     },
   );
