@@ -111,7 +111,29 @@ describe("outbound webhooks", () => {
         status_code: 400,
         attempt: 1,
       });
+      const path = `/webhooks/${created.data.id}/deliveries/${failed!.id}/redeliver`;
+      const missing = await client.rawRequest(
+        `/webhooks/${created.data.id}/deliveries/missing-delivery/redeliver`,
+        { method: "POST" },
+      );
+      expect(missing.status).toBe(404);
+      expect(missing.error?.error.code).toBe("webhook_not_found");
+      expect(
+        (await client.updateWebhook(created.data.id, { active: false })).ok,
+      ).toBe(true);
+      const inactive = await client.rawRequest(path, { method: "POST" });
+      expect(inactive.status).toBe(409);
+      expect(inactive.error?.error.code).toBe("conflict");
+      const retained = await client.listWebhookDeliveries(created.data.id);
+      expect(retained.data.data.find((d) => d.id === failed!.id)).toMatchObject(
+        {
+          status: "dead_letter",
+          attempt: 1,
+          status_code: 400,
+        },
+      );
       const updated = await client.updateWebhook(created.data.id, {
+        active: true,
         url: receiver.hookUrl("redelivered"),
       });
       expect(updated.ok).toBe(true);
@@ -627,6 +649,10 @@ describe("outbound webhooks", () => {
       await narrowed.getWebhook(mine.data.id),
       await narrowed.updateWebhook(mine.data.id, { active: false }),
       await narrowed.listWebhookDeliveries(mine.data.id),
+      await narrowed.rawRequest(
+        `/webhooks/${mine.data.id}/deliveries/missing-delivery/redeliver`,
+        { method: "POST" },
+      ),
       await narrowed.deleteWebhook(mine.data.id),
     ]) {
       expect(refused.status).toBe(403);
