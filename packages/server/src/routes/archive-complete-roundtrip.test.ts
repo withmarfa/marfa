@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Item, Version } from "@withmarfa/shared";
 import { itemWrites } from "../storage/item-writes.js";
 import {
@@ -615,5 +615,79 @@ describe("complete archive round trips", () => {
       existingHistory,
     );
     expect(await target.storage.eventLog.getAfter(0n, 100)).toHaveLength(0);
+  });
+
+  it("fences exported history below the selected row's version during a concurrent patch", async () => {
+    const source = await context();
+    const target = await context();
+    const item = await note(source, "earliest content");
+    const selectedResponse = await request(
+      source.app,
+      "PATCH",
+      `/items/${item.id}`,
+      {
+        key: source.workingKey,
+        body: {
+          version: item.version,
+          properties: { body: "selected content" },
+        },
+      },
+    );
+    expect(selectedResponse.status).toBe(200);
+    const selected = (await source.storage.items.get(item.id))!;
+    const earlier = await source.storage.versions.all(item.id);
+    expect(selected.version).toBe(2);
+    expect(earlier.map((snapshot) => snapshot.version)).toEqual([1]);
+
+    const list = source.storage.items.list.bind(source.storage.items);
+    const intercepted = vi
+      .spyOn(source.storage.items, "list")
+      .mockImplementationOnce(async (filter) => {
+        const page = await list(filter);
+        expect(page.data.find((row) => row.id === item.id)).toEqual(selected);
+        const response = await request(
+          source.app,
+          "PATCH",
+          `/items/${item.id}`,
+          {
+            key: source.workingKey,
+            body: {
+              version: selected.version,
+              properties: { body: "concurrent content" },
+            },
+          },
+        );
+        expect(response.status, await response.clone().text()).toBe(200);
+        return page;
+      });
+    let archive: Buffer;
+    try {
+      archive = await exported(source);
+      expect(intercepted).toHaveBeenCalledOnce();
+    } finally {
+      intercepted.mockRestore();
+    }
+
+    expect((await source.storage.items.get(item.id))!.version).toBe(
+      selected.version + 1,
+    );
+    const liveHistory = await source.storage.versions.all(item.id);
+    expect(liveHistory.map((snapshot) => snapshot.version)).toEqual([1, 2]);
+    expect(liveHistory[1]!.properties).toEqual(selected.properties);
+    const entries = await unpack(archive);
+    const row = JSON.parse(entries.get("items.ndjson")!.toString()) as {
+      item: Item;
+      versions: Version[];
+    };
+    expect(row.item).toEqual(selected);
+    expect(row.versions).toEqual(earlier);
+    expect(
+      row.versions.some((snapshot) => snapshot.version === selected.version),
+    ).toBe(false);
+
+    const response = await restore(target, archive);
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await target.storage.items.get(item.id)).toEqual(selected);
+    expect(await target.storage.versions.all(item.id)).toEqual(earlier);
   });
 });
