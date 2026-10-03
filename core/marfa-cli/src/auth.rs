@@ -1,12 +1,15 @@
-use std::collections::hash_map::DefaultHasher;
+use std::fs::File;
+#[cfg(unix)]
 use std::fs::OpenOptions;
-use std::hash::{Hash, Hasher};
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(unix)]
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::credentials::{self, Kept};
@@ -285,15 +288,10 @@ pub fn is_stale(kept: &Kept) -> bool {
 /// `refused` is the bearer a call was just answered `401` with: the refresh
 /// happens only while it is still the kept one.
 pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path(origin)?)?;
-    let mut lock = fd_lock::RwLock::new(file);
-    let _held = lock.write()?;
+    with_credential_lock(origin, || refresh_locked(origin, refused))
+}
 
+fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     let current = credentials::read(origin)?.ok_or_else(|| signed_out(origin))?;
     let (refresh_token, client_id, token_endpoint) = match &current {
         Kept::Token {
@@ -371,59 +369,139 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     Ok(next)
 }
 
-/// The directory is checked to be this user's alone: on a shared `/tmp`
-/// another user could plant the file first and hold the lock against every
-/// refresh.
-fn lock_path(origin: &str) -> Result<PathBuf, CliError> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let dir = base.join(format!("marfa-{}", user_id()));
-    own_directory(&dir)?;
-    Ok(dir.join(format!("refresh-{}.lock", fingerprint(origin))))
+/// The operation must not acquire this lock again, including by resolving a
+/// credential that might need a refresh.
+pub fn with_credential_lock<T>(
+    origin: &str,
+    operation: impl FnOnce() -> Result<T, CliError>,
+) -> Result<T, CliError> {
+    let mut lock = fd_lock::RwLock::new(credential_lock_file(origin)?);
+    let _held = lock.write()?;
+    operation()
 }
 
 #[cfg(unix)]
-fn user_id() -> u32 {
-    // Safe: getuid takes nothing and cannot fail.
-    unsafe { libc::getuid() }
+fn credential_lock_file(origin: &str) -> Result<File, CliError> {
+    lock_file_in(&user_home()?.join(".marfa-credential-locks"), origin)
 }
 
 #[cfg(unix)]
-fn own_directory(dir: &std::path::Path) -> Result<(), CliError> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+fn user_home() -> Result<PathBuf, CliError> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+    let mut size = 1024;
+    loop {
+        let mut buffer = vec![0u8; size];
+        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        // The entry and buffer remain live until pw_dir has been copied.
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                entry.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE {
+            size = size.checked_mul(2).ok_or_else(|| {
+                CliError::Invalid("the operating-system user record is too large".into())
+            })?;
+            continue;
+        }
+        if status != 0 {
+            return Err(std::io::Error::from_raw_os_error(status).into());
+        }
+        if result.is_null() {
+            return Err(CliError::Invalid(
+                "the operating-system user has no home directory".into(),
+            ));
+        }
+        // A successful lookup populated the entry; pw_dir lives in buffer.
+        let entry = unsafe { entry.assume_init() };
+        if entry.pw_dir.is_null() {
+            return Err(CliError::Invalid(
+                "the operating-system user has no home directory".into(),
+            ));
+        }
+        let home = PathBuf::from(std::ffi::OsStr::from_bytes(unsafe {
+            CStr::from_ptr(entry.pw_dir).to_bytes()
+        }));
+        if !home.is_absolute() {
+            return Err(CliError::Invalid(
+                "the operating-system user's home directory is not absolute".into(),
+            ));
+        }
+        return Ok(home);
+    }
+}
+
+#[cfg(unix)]
+fn lock_file_in(dir: &std::path::Path, origin: &str) -> Result<File, CliError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
     match std::fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
-    let metadata = std::fs::metadata(dir)?;
-    if !metadata.is_dir()
-        || metadata.uid() != user_id()
-        || metadata.permissions().mode() & 0o077 != 0
-    {
-        return Err(CliError::Invalid(format!(
-            "{} is not a directory of this user's alone; refusing to take the refresh lock there",
-            dir.display()
-        )));
+    // Keep the checked directory open so a pathname replacement cannot
+    // redirect the subsequent lock-file open.
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(dir)?;
+    let metadata = directory.metadata()?;
+    // Safe: geteuid takes no arguments and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    if metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+        return Err(CliError::Invalid(
+            "the credential lock directory is not private to this user".into(),
+        ));
     }
-    Ok(())
+    let name = CString::new(format!("{}.lock", fingerprint(origin))).expect("hex name has no NUL");
+    // openat pins the parent to the checked descriptor. NONBLOCK lets us
+    // reject a planted FIFO instead of waiting on it before validation.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            0o600 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // The successful openat returned a new, owned descriptor.
+    let file = unsafe { File::from_raw_fd(fd) };
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.uid() != uid
+        || metadata.mode() & 0o077 != 0
+        || metadata.nlink() != 1
+    {
+        return Err(CliError::Invalid(
+            "the credential lock is not a private regular file of this user".into(),
+        ));
+    }
+    // Never unlink a lock file: a waiter can still hold its inode after
+    // another process opens a replacement and takes a different lock.
+    Ok(file)
 }
 
 #[cfg(not(unix))]
-fn user_id() -> u32 {
-    0
-}
-
-#[cfg(not(unix))]
-fn own_directory(dir: &std::path::Path) -> Result<(), CliError> {
-    std::fs::create_dir_all(dir)?;
-    Ok(())
+fn credential_lock_file(_: &str) -> Result<File, CliError> {
+    Err(CliError::Invalid(
+        "credential locking is not supported on this operating system".into(),
+    ))
 }
 
 /// Revokes the refresh token where there is one, since that ends the whole
 /// chain.
-pub fn revoke(kept: &Kept) -> Result<(), CliError> {
+pub fn revoke(kept: &Kept) -> Result<bool, CliError> {
     if let Kept::Token {
         refresh_token,
         access_token,
@@ -442,8 +520,9 @@ pub fn revoke(kept: &Kept) -> Result<(), CliError> {
             ("token_type_hint", hint),
             ("client_id", client_id),
         ]))?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 pub fn signed_out(origin: &str) -> CliError {
@@ -452,10 +531,9 @@ pub fn signed_out(origin: &str) -> CliError {
     }
 }
 
+#[cfg(unix)]
 fn fingerprint(origin: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    origin.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    format!("{:x}", Sha256::digest(origin.as_bytes()))
 }
 
 #[cfg(test)]
@@ -779,3 +857,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod process_tests;

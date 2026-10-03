@@ -240,6 +240,12 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Metadata { command } => metadata::run(command, &remote()?, &out),
         Command::Extensions { command } => extensions::run(command, &remote()?, &out),
         Command::Blobs { command } => blobs::run(command, &remote()?, &out),
+        Command::Keys {
+            command: keys::KeysCommand::Forget,
+        } => {
+            let url = Remote::url_named(&named)?;
+            keys::run(keys::KeysCommand::Forget, &Remote::public_at(&url)?, &out)
+        }
         Command::Keys { command } => keys::run(command, &remote()?, &out),
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),

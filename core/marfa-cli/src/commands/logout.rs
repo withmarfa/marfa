@@ -9,14 +9,19 @@ use crate::remote::{Named, Remote};
 pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
     let url = Remote::url_named(named)?;
     let origin = Remote::public_at(&url)?.origin().to_string();
-    match credentials::read(&origin)? {
+    auth::with_credential_lock(&origin, || sign_out(&origin, out))
+}
+
+fn sign_out(origin: &str, out: &Printer) -> Result<(), CliError> {
+    match credentials::read(origin)? {
         Some(kept @ Kept::Token { .. }) => {
             // The token is forgotten whether or not the server took the
             // revocation. The flag says whether it is known not to have: a
             // revocation answered on another contract was sent, so it may
             // have taken effect.
             let not_revoked: Option<(&str, bool)> = match auth::revoke(&kept) {
-                Ok(()) => None,
+                Ok(true) => None,
+                Ok(false) => Some(("no revocation endpoint was kept for this sign-in", true)),
                 Err(CliError::Refused { .. }) => {
                     Some(("the server did not accept the revocation", true))
                 }
@@ -26,7 +31,7 @@ pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
                 )),
                 Err(_) => Some(("the server could not be reached to revoke it", true)),
             };
-            credentials::forget(&origin)?;
+            credentials::forget(origin)?;
             let revoked = match not_revoked {
                 None => json!(true),
                 Some((_, true)) => json!(false),
