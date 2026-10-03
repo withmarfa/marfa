@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # A draft runs only the quick jobs; marking it ready for review runs the
+  # rest, and so does every push after that.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   # Conformance and CLI scenarios run on Ubuntu, and on macOS every night and
   # when `macos` is set, so that what only macOS has stays tested: file
   # watching, name case, Finder packages and a real keychain.
@@ -35,7 +38,8 @@ permissions:
 jobs:
   # Every job below runs only when `scripts/ci-required.ts` says the pull
   # request can affect it. A skipped job satisfies its required check, where
-  # a `paths` filter on the workflow would leave the check pending.
+  # a `paths` filter on the workflow would leave the check pending. A draft
+  # runs only the jobs `DRAFT_JOBS` names there, and `full` is `false` for it.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
@@ -53,6 +57,7 @@ jobs:
       openapi-freshness: ${{ steps.classify.outputs.openapi-freshness }}
       version-fields: ${{ steps.classify.outputs.version-fields }}
       clients-freshness: ${{ steps.classify.outputs.clients-freshness }}
+      full: ${{ steps.classify.outputs.full }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,7 +85,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Prettier reads Markdown as well as code, and the classifier's test
-      # reads the whole tree, so a documentation change stops after these.
+      # reads the whole tree, so a documentation change stops after these. A
+      # draft stops before the tests.
       - run: pnpm format:check
       - run: pnpm vitest run ci/ci-required.test.ts
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
@@ -90,15 +96,24 @@ jobs:
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
         run: pnpm lint
       # Cache the language model fetched by the real OCR test.
-      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+      - if: ${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}
         uses: actions/cache@v6
         with:
           path: ~/.cache/marfa-tessdata
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       # The version check asks cargo how it reads the manifests, so it runs
       # in its own job and this one needs no Rust.
-      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+      - if: ${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}
         run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
+      # A skipped job passes its required check, and a draft skips every
+      # other required job, so a draft's results would let a pull request
+      # merge in the moment between marking it ready and the first run that
+      # runs them. This check fails for a draft, whatever the diff, until
+      # that run replaces it.
+      - if: ${{ github.event.pull_request.draft }}
+        run: |
+          echo "::error::A draft runs only the quick checks. Mark the pull request ready for review to run the tests, the contract, the core and the rest."
+          exit 1
 
   # `marfa-client` is held to its generator, not these: `--no-deps` keeps
   # clippy off it where a crate depends on it. Formatting still takes it,

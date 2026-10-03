@@ -8,8 +8,9 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 - One clone per machine. Parallel work happens in worktrees inside it, made with `git worktree add .claude/worktrees/<name> -b <branch> origin/main`; never a second clone or a sibling folder. Once a branch is merged, `git worktree remove` its worktree and run `git worktree prune`; if git refuses, report it rather than forcing it.
 - Feature branches and pull requests; never push `main`. A session merges its own pull request once every required check is green and the review its risk calls for is done, with that depth stated on the pull request: squash, branch deleted, in stack order. Cancel superseded runs; never hold back a push or a check to ration runners.
 - All CI runs on standard GitHub-hosted runners, never personal or paid third-party ones (`ci/workflow-runner.test.ts` enforces it).
+- A draft pull request runs only the quick jobs (named in `scripts/ci-required.ts`: the format check, build, typecheck and lint, the type registry and the version check), and `CI (SQLite)` then fails, so that the skipped rest cannot let the pull request merge in the moment between marking it ready and the first full run. Marking it ready for review, and every push after, runs everything.
 - `scripts/ci-required.ts` decides what a pull request runs: each changed path names the jobs that read it, and an unnamed path runs everything. Markdown reaches only the format check, except `conformance/spec/`, package READMEs, fixtures and generated trees, and `core.yml`'s macOS job leaves a server-only change to the push to `main`. A push to `main`, the nightly and a dispatch run all of `ci.yml`, and a skipped job passes its required check. When a job starts reading a file, change its rule there; `ci/ci-required.test.ts` pins the rules.
-- `codeql.yml` analyzes every push to `main`, once a week, and a pull request unless it changes only Markdown, the license or `.claude/`. It is not a required check, so a `paths-ignore` filter starts no run at all for documentation; `ci/ci-required.test.ts` pins it.
+- `codeql.yml` analyzes every push to `main`, once a week, and a pull request that is not a draft unless it changes only Markdown, the license or `.claude/`. It is not a required check, so a `paths-ignore` filter starts no run at all for documentation; `ci/ci-required.test.ts` pins it.
 - SQLite is the only database. Removed means gone: no shims, aliases, migration paths or compatibility flags.
 - No personal details of any machine or person: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value. No time estimates.
 - No test touches the login keychain or raises a dialog.
@@ -19,7 +20,12 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 - The server's behavior is the specification, written down and held in `conformance/`. The docs site is not a source of truth.
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced.
 - A count, a list or a claim that nothing calls something is checked by running the query, never by trusting a comment.
-- A comment stays only if it says what the code cannot: a constraint from outside, a non-obvious reason, a trap. Never what the code does, history, removed code, a ticket or a person. When in doubt, it goes.
+
+## Writing
+
+- Public prose (README, docs, issues, pull requests) follows the Google developer documentation style guide, in American English, with docs organized by Diátaxis: tutorials, how-to guides, reference and explanation kept apart.
+- Code comments follow the language's own conventions. A comment stays only if it says what the code cannot: a constraint from outside, a non-obvious reason, a trap. Never what the code does, history, removed code, a ticket or a person. When in doubt, it goes.
+- The contract in `conformance/spec/` uses RFC 2119 keywords and the EARS requirement pattern, one requirement per statement, with its reason and its test references set apart from the rule.
 
 ## Versions
 

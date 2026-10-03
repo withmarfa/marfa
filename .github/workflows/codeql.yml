@@ -2,12 +2,15 @@ name: CodeQL
 
 # A pull request that changes only documentation or agent settings starts no
 # run. CodeQL is not a required check, so a run that never starts leaves no
-# check pending. Every push to `main` and a weekly run analyze the whole tree.
+# check pending. A draft pull request is analyzed once it is marked ready for
+# review, and on every push after that. Every push to `main` and a weekly run
+# analyze the whole tree.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - "**/*.md"
       - LICENSE
@@ -27,6 +30,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
