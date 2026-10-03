@@ -21,6 +21,22 @@ pub(crate) fn hydrate(
     edge_types: &[String],
     every_type: bool,
 ) -> Result<HydrateReport> {
+    let previous = crate::read_view::Context::capture_build(&*core.conn()?).ok();
+    let result = hydrate_inner(core, http, types, tier, edge_types, every_type);
+    result.map_err(|error| match previous {
+        Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
+        None => error,
+    })
+}
+
+fn hydrate_inner(
+    core: &Core,
+    http: &Http,
+    types: &[String],
+    tier: Tier,
+    edge_types: &[String],
+    every_type: bool,
+) -> Result<HydrateReport> {
     let types = if every_type && types.is_empty() {
         vec![store::EVERY_TYPE.to_string()]
     } else {
@@ -39,135 +55,31 @@ pub(crate) fn hydrate(
         }
     }
 
-    // Before the head, so an instance swapped between the two leaves the
-    // copy bound to the old instance, which its next catch-up expires,
-    // rather than to the new one with the old instance's cursor.
-    let instance = http.instance_id()?;
-    let cursor = read_head(http)?;
+    let (instance, cursor, fence) = read_head(http)?;
+    let http = &http.for_view(&fence);
+    {
+        let mut conn = core.conn()?;
+        if store::hydrated(&conn)?
+            && (store::meta_get(&conn, crate::read_view::FENCE)?.as_deref() != Some(&fence)
+                || store::meta_get(&conn, store::META_INSTANCE_ID)?.as_deref() != Some(&instance))
+        {
+            let tx = conn.transaction()?;
+            crate::read_view::expire(&tx)?;
+            tx.commit()?;
+        }
+    }
     let catalog_rows = http.catalog()?;
     refuse_unreadable(http, &types)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
-
     {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
+        crate::read_view::advance_generation(&tx)?;
         store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
-        store::meta_delete(&tx, store::META_EVENT_CURSOR)?;
-        store::clear_slice(&tx)?;
-        store::replace_catalog(&tx, &catalog_rows)?;
-        tx.commit()?;
-    }
-    let catalog = {
-        let conn = core.conn()?;
-        Catalog::load(&conn)?
-    };
-
-    let mut pages = 0u64;
-    let listings: Vec<Option<&str>> = types
-        .iter()
-        .map(|declared| (declared != store::EVERY_TYPE).then_some(declared.as_str()))
-        .collect();
-    for declared in listings {
-        let mut page_cursor: Option<String> = None;
-        loop {
-            let page = http.items_page(&ItemsQuery {
-                r#type: declared,
-                tier,
-                cursor: page_cursor.as_deref(),
-            })?;
-            pages += 1;
-            let mut overflow: Vec<WireEdge> = Vec::new();
-            for row in &page.data {
-                if let Some(blocks) = &row.item.edges {
-                    for (edge_type, block) in blocks {
-                        overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
-                    }
-                }
-            }
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            for row in &page.data {
-                let indexing = catalog.indexing(&row.item.r#type);
-                store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
-                for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
-                    for edge in &block.data {
-                        store::put_server_edge(&tx, edge)?;
-                    }
-                }
-            }
-            for edge in &overflow {
-                store::put_server_edge(&tx, edge)?;
-            }
-            tx.commit()?;
-            let Some(next) = page.next_cursor.clone() else {
-                break;
-            };
-            // A server can report more while handing back the same cursor;
-            // without this check a hydration spins forever.
-            let next = Some(next);
-            if next == page_cursor {
-                return Err(CoreError::Decoding(
-                    "the server kept answering with the same cursor while reporting more items"
-                        .into(),
-                ));
-            }
-            page_cursor = next;
-        }
-    }
-
-    for edge_type in &edge_types {
-        let mut page_cursor: Option<String> = None;
-        loop {
-            let page = http.edges_page(edge_type, page_cursor.as_deref())?;
-            pages += 1;
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            for edge in &page.data {
-                store::put_server_edge(&tx, edge)?;
-            }
-            tx.commit()?;
-            // Rows the key cannot read leave a page short or empty, not last.
-            let Some(next) = page.next_cursor else {
-                break;
-            };
-            if page_cursor.as_deref() == Some(next.as_str()) {
-                return Err(CoreError::Decoding(
-                    "the server kept answering with the same cursor while reporting more edges"
-                        .into(),
-                ));
-            }
-            page_cursor = Some(next);
-        }
-    }
-
-    let pinned = store::pins(&*core.conn()?)?;
-    for id in pinned {
-        if store::item_held(&*core.conn()?, &id)? {
-            continue;
-        }
-        let Some((row, edges)) = read_with_edges(http, &id)? else {
-            continue;
-        };
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        store::put_server_item(
-            &tx,
-            &row.item,
-            Some(&row.metadata.tags),
-            &catalog.indexing(&row.item.r#type),
-        )?;
-        for edge in &edges {
-            store::put_server_edge(&tx, edge)?;
-        }
-        tx.commit()?;
-    }
-
-    let (items, edges) = {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        lay_queue_over(&tx, &catalog, &edge_types)?;
-        store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
+        store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
+        store::meta_set(&tx, crate::read_view::FENCE, &fence)?;
         store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
+        store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
         store::meta_set(
             &tx,
             store::META_SLICE_TYPES,
@@ -179,22 +91,150 @@ pub(crate) fn hydrate(
             store::META_SLICE_EDGE_TYPES,
             &serde_json::to_string(&edge_types)?,
         )?;
-        store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
-        store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
-        let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
+        store::clear_slice(&tx)?;
+        store::replace_catalog(&tx, &catalog_rows)?;
         tx.commit()?;
-        counts
-    };
+    }
+    let context = crate::read_view::Context::capture_build(&*core.conn()?)?;
+    let result = (|| {
+        let catalog = {
+            let conn = core.conn()?;
+            Catalog::load(&conn)?
+        };
 
-    Ok(HydrateReport {
-        types,
-        tier,
-        edge_types,
-        items,
-        edges,
-        pages,
-        cursor,
-    })
+        let mut pages = 0u64;
+        let listings: Vec<Option<&str>> = types
+            .iter()
+            .map(|declared| (declared != store::EVERY_TYPE).then_some(declared.as_str()))
+            .collect();
+        for declared in listings {
+            let mut page_cursor: Option<String> = None;
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let page = http.items_page(&ItemsQuery {
+                    r#type: declared,
+                    tier,
+                    cursor: page_cursor.as_deref(),
+                })?;
+                pages += 1;
+                let mut overflow: Vec<WireEdge> = Vec::new();
+                for row in &page.data {
+                    if let Some(blocks) = &row.item.edges {
+                        for (edge_type, block) in blocks {
+                            overflow.extend(fetch_overflow(http, &row.item.id, edge_type, block)?);
+                        }
+                    }
+                }
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                context.check(&tx)?;
+                for row in &page.data {
+                    crate::read_view::set_listed(
+                        &tx,
+                        &row.item.id,
+                        row.listed.ok_or_else(crate::read_view::invalid)?,
+                    )?;
+                    let indexing = catalog.indexing(&row.item.r#type);
+                    store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
+                    for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
+                        for edge in &block.data {
+                            store::put_server_edge(&tx, edge)?;
+                        }
+                    }
+                }
+                for edge in &overflow {
+                    store::put_server_edge(&tx, edge)?;
+                }
+                tx.commit()?;
+                let Some(next) = page.next_cursor.clone() else {
+                    break;
+                };
+                // A server can report more while handing back the same cursor;
+                // without this check a hydration spins forever.
+                let next = Some(next);
+                if !seen.insert(next.clone()) {
+                    return Err(crate::read_view::invalid());
+                }
+                page_cursor = next;
+            }
+        }
+
+        for edge_type in &edge_types {
+            let mut page_cursor: Option<String> = None;
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let page = http.edges_page(edge_type, page_cursor.as_deref())?;
+                pages += 1;
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                context.check(&tx)?;
+                for edge in &page.data {
+                    store::put_server_edge(&tx, edge)?;
+                }
+                tx.commit()?;
+                // Rows the key cannot read leave a page short or empty, not last.
+                let Some(next) = page.next_cursor else {
+                    break;
+                };
+                if !seen.insert(next.clone()) {
+                    return Err(crate::read_view::invalid());
+                }
+                page_cursor = Some(next);
+            }
+        }
+
+        let pinned = store::pins(&*core.conn()?)?;
+        for id in pinned {
+            if store::item_held(&*core.conn()?, &id)? {
+                continue;
+            }
+            let Some((row, edges)) = read_with_edges(http, &id)? else {
+                continue;
+            };
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            context.check(&tx)?;
+            crate::read_view::set_listed(
+                &tx,
+                &row.item.id,
+                row.listed.ok_or_else(crate::read_view::invalid)?,
+            )?;
+            store::put_server_item(
+                &tx,
+                &row.item,
+                Some(&row.metadata.tags),
+                &catalog.indexing(&row.item.r#type),
+            )?;
+            for edge in &edges {
+                store::put_server_edge(&tx, edge)?;
+            }
+            tx.commit()?;
+        }
+
+        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle)?;
+        let cursor = replay.cursor;
+        let (items, edges) = {
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            context.check(&tx)?;
+            lay_queue_over(&tx, &catalog, &edge_types)?;
+            store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
+            let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
+            tx.commit()?;
+            counts
+        };
+
+        Ok(HydrateReport {
+            types: types.clone(),
+            tier,
+            edge_types: edge_types.clone(),
+            items,
+            edges,
+            pages,
+            cursor,
+        })
+    })();
+    result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
 
 /// The queue survives a hydration and the copy does not, so without this a
@@ -406,6 +446,11 @@ pub(crate) fn hold_row(
     row: &WireItemWithMetadata,
     edges: &[WireEdge],
 ) -> Result<()> {
+    crate::read_view::set_listed(
+        conn,
+        &row.item.id,
+        row.listed.ok_or_else(crate::read_view::invalid)?,
+    )?;
     let indexing = catalog.indexing(&row.item.r#type);
     if store::put_server_item(conn, &row.item, Some(&row.metadata.tags), &indexing)? {
         store::lay_waiting_writes_over(conn, &row.item.id, &|laid| catalog.indexing(laid))?;
@@ -427,14 +472,16 @@ pub(crate) fn fetch_overflow(
 ) -> Result<Vec<WireEdge>> {
     let mut edges = Vec::new();
     let mut cursor = block.next_cursor.clone();
+    let mut seen = std::collections::HashSet::new();
     while let Some(asked_for) = cursor {
+        if !seen.insert(asked_for.clone()) {
+            return Err(crate::read_view::invalid());
+        }
         let page = http.item_edges_page(item_id, edge_type, Some(&asked_for))?;
         edges.extend(page.data);
         // A repeated cursor would loop forever.
         if page.next_cursor.as_deref() == Some(asked_for.as_str()) {
-            return Err(CoreError::Decoding(
-                "the server kept answering with the same cursor while reporting more edges".into(),
-            ));
+            return Err(crate::read_view::invalid());
         }
         cursor = page.next_cursor;
     }
@@ -443,25 +490,49 @@ pub(crate) fn fetch_overflow(
 
 /// Read before the first page so the snapshot has a resume point from before
 /// it.
-fn read_head(http: &Http) -> Result<String> {
+fn read_head(http: &Http) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
         let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
             match frames.next_frame() {
                 Ok(Some(Frame::Comment(_))) => continue,
-                Ok(Some(Frame::Event { name, data, .. })) => {
-                    if name.as_deref() == Some("stream_cursor")
-                        && let Ok(payload) = serde_json::from_str::<EventPayload>(&data)
-                        && let Some(cursor) = payload.cursor
-                    {
-                        return Ok(cursor);
+                Ok(Some(Frame::Event { id, name, data })) => {
+                    let payload: EventPayload =
+                        serde_json::from_str(&data).map_err(|_| crate::read_view::invalid())?;
+                    if id.is_some() || name.as_deref() != Some(payload.r#type.as_str()) {
+                        return Err(crate::read_view::invalid());
                     }
-                    break;
+                    if payload.r#type == "stream_incomplete" {
+                        return Err(CoreError::StreamIncomplete {
+                            reason: payload.reason.unwrap_or_default(),
+                        });
+                    }
+                    if payload.r#type == "read_view_changed" {
+                        return Err(CoreError::CopyExpired {
+                            reason: "read_view_changed".into(),
+                        });
+                    }
+                    if payload.r#type != "stream_cursor" {
+                        return Err(crate::read_view::invalid());
+                    }
+                    let cursor = payload.cursor.ok_or_else(crate::read_view::invalid)?;
+                    let instance = payload
+                        .instance_id
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(crate::read_view::invalid)?;
+                    let fence = payload
+                        .read_view
+                        .filter(|s| crate::read_view::valid_fence(s))
+                        .ok_or_else(crate::read_view::invalid)?;
+                    crate::read_view::cursor(&cursor).ok_or_else(crate::read_view::invalid)?;
+                    return Ok((instance, cursor, fence));
                 }
                 Ok(None) | Err(_) => break,
             }
         }
     }
-    Err(CoreError::NoCursor)
+    Err(CoreError::StreamIncomplete {
+        reason: "replay_failed".into(),
+    })
 }

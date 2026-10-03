@@ -65,6 +65,8 @@ pub struct WireMetadata {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireItemWithMetadata {
+    #[serde(default)]
+    pub listed: Option<bool>,
     pub item: WireItem,
     pub metadata: WireMetadata,
 }
@@ -142,6 +144,12 @@ pub struct WireErrorEnvelope {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventPayload {
+    #[serde(default)]
+    pub listed: Option<bool>,
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default)]
+    pub read_view: Option<String>,
     pub r#type: String,
     #[serde(default)]
     pub item: Option<WireItem>,
@@ -149,7 +157,7 @@ pub struct EventPayload {
     pub metadata: Option<WireMetadata>,
     #[serde(default)]
     pub edge: Option<WireEdge>,
-    #[serde(default, deserialize_with = "lenient_string")]
+    #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub min_retained_id: Option<String>,
@@ -171,8 +179,6 @@ pub struct WireConflictResolution {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireWriteAnswer {
     pub item: WireItem,
-    #[serde(default)]
-    pub metadata: Option<WireMetadata>,
     #[serde(default)]
     pub conflict_resolution: Option<WireConflictResolution>,
     #[serde(default)]

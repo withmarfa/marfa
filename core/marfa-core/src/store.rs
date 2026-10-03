@@ -270,7 +270,14 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
         return Ok(false);
     }
-    if meta_get(conn, META_EVENT_CURSOR)?.is_none() {
+    if meta_get(conn, META_EVENT_CURSOR)?
+        .as_deref()
+        .and_then(crate::read_view::cursor)
+        .is_none()
+        || !meta_get(conn, crate::read_view::FENCE)?
+            .is_some_and(|f| crate::read_view::valid_fence(&f))
+        || !meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty())
+    {
         return Ok(false);
     }
     holds_slice(conn)
@@ -292,13 +299,14 @@ pub fn slice_holds(
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };
-    Ok(slice_takes(
-        catalog,
-        &types,
-        tier,
-        &item.r#type,
-        Tier::parse_wire(item.tier.as_deref())?,
-    ))
+    Ok(crate::read_view::listed(conn, &item.id)?
+        && slice_takes(
+            catalog,
+            &types,
+            tier,
+            &item.r#type,
+            Tier::parse_wire(item.tier.as_deref())?,
+        ))
 }
 
 pub const EVERY_TYPE: &str = "*";
@@ -1470,7 +1478,7 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items;
          DELETE FROM items_fts;
          DELETE FROM beneath;
-         DELETE FROM read_backs;",
+         DELETE FROM meta WHERE key LIKE 'item_listed/%';",
     )?;
     Ok(())
 }
@@ -1537,8 +1545,9 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     for statement in [
         "UPDATE edges SET source_id = ?2 WHERE source_id = ?1",
         "UPDATE edges SET target_id = ?2 WHERE target_id = ?1",
-        "UPDATE queue SET item_id = ?2 WHERE item_id = ?1",
-        "UPDATE queue SET target_id = ?2 WHERE target_id = ?1",
+        "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
+         (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted')))",
+        "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
         "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
@@ -1552,9 +1561,13 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     if beneath_row(conn, Subject::Item, answered)?.is_none() {
         keep_beneath_item(conn, answered, None)?;
     }
-    // An edge create carries its endpoints in its payload too.
-    let mut edges = conn
-        .prepare("SELECT id, payload FROM queue WHERE kind = 'create_edge' AND verdict IS NULL")?;
+    // Unsent blocked/dead work needs the same identity as its columns.
+    // Once sent, both the request body and its addressed row keep their
+    // original meaning under the original idempotency key.
+    let mut edges = conn.prepare(
+        "SELECT id, payload FROM queue WHERE kind = 'create_edge' AND sent = 0
+         AND (verdict IS NULL OR verdict IN ('blocked', 'dead', 'refused'))",
+    )?;
     let waiting: Vec<(String, String)> = edges
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?;
@@ -1722,8 +1735,8 @@ pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool,
 
 /// The one way a row leaves the copy, with the edges `edges` names (a
 /// condition on `edges`, `?1` the row's id, then `kept`): what is kept
-/// beneath them and any read-back owed for them go too, so a refusal cannot
-/// put back what the copy let go of. Whether the copy changed: a purge of an
+/// beneath them goes too. Read-back debt requires independent certified
+/// settlement. Whether the copy changed: a purge of an
 /// item already evicted still takes the edges held items drew to it.
 fn remove_item(
     conn: &Connection,
@@ -1731,8 +1744,8 @@ fn remove_item(
     edges: &str,
     kept: &[String],
 ) -> Result<bool, CoreError> {
+    crate::read_view::forget_listed(conn, id)?;
     drop_beneath(conn, Subject::Item, id)?;
-    settle_read_back(conn, Subject::Item, id)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
@@ -1801,12 +1814,20 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
 
 /// Whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    Ok(conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0)
+    let changed = conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
+    if changed {
+        crate::read_view::pins_changed(conn)?;
+    }
+    Ok(changed)
 }
 
 /// Whether it was pinned.
 pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    Ok(conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0)
+    let changed = conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0;
+    if changed {
+        crate::read_view::pins_changed(conn)?;
+    }
+    Ok(changed)
 }
 
 pub fn pinned(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -1859,11 +1880,10 @@ pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
 }
 
-/// The one way an edge leaves the copy, with what is kept beneath it and any
-/// read-back owed for it.
+/// The edge and its baseline leave together. Read-back debt requires its own
+/// certified settlement, including when local unpinning removes this edge.
 pub fn forget_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     drop_beneath(conn, Subject::Edge, id)?;
-    settle_read_back(conn, Subject::Edge, id)?;
     delete_edge(conn, id)
 }
 
@@ -2320,7 +2340,8 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
     let unreleasable = conn.execute(
         &format!(
             "DELETE FROM queue
-          WHERE verdict = ?1 AND sent = 0 AND kind NOT IN ({kept})
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
+            AND verdict = ?1 AND sent = 0 AND kind NOT IN ({kept})
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
                WHERE named.value NOT IN (SELECT id FROM queue)
@@ -2341,7 +2362,8 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
         + conn.execute(
             &format!(
                 "DELETE FROM queue
-          WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
+          WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
+            AND verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
             AND NOT (verdict = :refused AND kind IN ({kept}))
             AND NOT EXISTS (
@@ -2383,6 +2405,9 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             message: format!("{id} is not a write this queue holds"),
         });
     };
+    if meta_get(conn, &format!("receipt_pending/{id}"))?.is_some() {
+        return Ok(false);
+    }
     if row.verdict != Some(Verdict::Refused) || !held_for(conn, id)?.is_empty() {
         return Ok(false);
     }
@@ -2621,38 +2646,6 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             // Where the server moved it to a source the copy does not hold
             // while the refused write waited.
             let_go_of_untaken_edge(conn, id)?;
-        }
-        None => {}
-    }
-    Ok(())
-}
-
-/// An answer that carries no row says the server took `row` as sent, so the
-/// row beneath the writes still waiting now holds it too: put back over a
-/// later refusal, it would otherwise undo a write the server took.
-pub fn fold_into_beneath(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
-    match row.kind.subject() {
-        Some(Subject::Item) => {
-            let Some(id) = row.item_id.as_deref() else {
-                return Ok(());
-            };
-            if !row_writes_wait(conn, id)? {
-                return drop_beneath(conn, Subject::Item, id);
-            }
-            if let Some(mut held) = beneath_item(conn, id)? {
-                let mut tags = held.tags.clone();
-                lay_write(conn, &mut held, &mut tags, row)?;
-                tags.sort();
-                held.tags = tags;
-                set_beneath(conn, Subject::Item, id, &serde_json::to_string(&held)?)?;
-            }
-        }
-        Some(Subject::Edge) => {
-            if let Some(id) = row.edge_id.as_deref()
-                && (row.kind == WriteKind::DeleteEdge || !edge_write_waits(conn, id)?)
-            {
-                drop_beneath(conn, Subject::Edge, id)?;
-            }
         }
         None => {}
     }
@@ -3010,6 +3003,19 @@ mod tests {
 
     /// The hash names this schema's statements as they are.
     #[test]
+    fn a_copy_without_read_view_proof_is_unreadable() {
+        let conn = testing::conn();
+        meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+        meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+        meta_set(&conn, META_SLICE_TIER, "library").unwrap();
+        assert!(!hydrated(&conn).unwrap());
+        assert!(matches!(
+            refuse_unless_hydrated(&conn),
+            Err(CoreError::HydrationIncomplete)
+        ));
+    }
+
+    #[test]
     fn a_changed_catalog_indexes_every_held_row_again() {
         let conn = conn();
         let photo = |thumbnail: bool| {
@@ -3318,6 +3324,8 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+        meta_set(&conn, META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
         meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
         meta_set(&conn, META_SLICE_TIER, "library").unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
@@ -3340,6 +3348,7 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
         assert!(refuse_unless_hydrated(&conn).is_ok());
 
         meta_set(&conn, META_HYDRATE_STATE, HYDRATE_IN_PROGRESS).unwrap();

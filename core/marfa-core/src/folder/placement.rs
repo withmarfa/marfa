@@ -272,8 +272,7 @@ impl Folder {
                     kept.push(verdict);
                     continue;
                 };
-                self.take_servers_placement(source)?;
-                store::withdraw_edge_writes(&*self.core.conn()?, edge_id)?;
+                self.take_servers_placement(source, edge_id)?;
                 gave_way += 1;
                 continue;
             }
@@ -337,35 +336,57 @@ impl Folder {
 
     /// Puts the placement the server holds for `source` into the copy, in
     /// place of any this machine holds.
-    fn take_servers_placement(&self, source: &str) -> Result<()> {
-        let http = self.core.http()?;
-        let mut held = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let page = http.item_edges_page(source, PLACEMENT_EDGE, cursor.as_deref())?;
-            held.extend(
-                page.data
-                    .into_iter()
-                    .filter(|edge| edge.target_id == self.folder),
-            );
-            match page.next_cursor {
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => break,
+    fn take_servers_placement(&self, source: &str, edge_id: &str) -> Result<()> {
+        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let http = context.http(self.core.http()?);
+        let result = (|| {
+            let mut held = Vec::new();
+            let mut cursor: Option<String> = None;
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let page = http.item_edges_page(source, PLACEMENT_EDGE, cursor.as_deref())?;
+                held.extend(
+                    page.data
+                        .into_iter()
+                        .filter(|edge| edge.target_id == self.folder),
+                );
+                match page.next_cursor {
+                    Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+                    Some(_) => return Err(crate::read_view::invalid()),
+                    None => break,
+                }
             }
-        }
-        let conn = self.core.conn()?;
-        for edge in store::edges_from(&conn, source)? {
-            if edge.edge_type == PLACEMENT_EDGE
-                && edge.target_id == self.folder
-                && !held.iter().any(|found| found.id == edge.id)
-            {
-                store::forget_edge(&conn, &edge.id)?;
+            let known = store::edges_from(&*self.core.conn()?, source)?;
+            let mut absent = Vec::new();
+            for edge in known {
+                if edge.edge_type == PLACEMENT_EDGE
+                    && edge.target_id == self.folder
+                    && !held.iter().any(|found| found.id == edge.id)
+                {
+                    match http.edge(&edge.id)? {
+                        Some(current) => held.push(current),
+                        None => absent.push(edge.id),
+                    }
+                }
             }
-        }
-        for edge in &held {
-            store::put_server_edge(&conn, edge)?;
-        }
-        Ok(())
+            let mut conn = self.core.conn()?;
+            let tx = conn.transaction()?;
+            context.check(&tx)?;
+            for id in absent {
+                store::forget_edge(&tx, &id)?;
+            }
+            for edge in &held {
+                store::put_server_edge(&tx, edge)?;
+            }
+            store::withdraw_edge_writes(&tx, edge_id)?;
+            tx.commit()?;
+            Ok(())
+        })();
+        result.map_err(|error| {
+            context
+                .failed(&self.core, error)
+                .unwrap_or_else(|error| error)
+        })
     }
 
     fn remember_refused(&self, placements: Vec<(String, Held)>) -> Result<()> {

@@ -55,6 +55,8 @@ pub enum Then {
 #[derive(Debug, Clone)]
 pub struct Seen {
     pub path: String,
+    pub query: String,
+    pub read_view: Option<String>,
     pub last_event_id: Option<String>,
     pub authorization: Option<String>,
     pub body: Vec<u8>,
@@ -175,6 +177,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let path = target.split('?').next().unwrap_or("/").to_string();
     let mut last_event_id = None;
+    let mut read_view = None;
     let mut authorization = None;
     let mut length = None;
     let mut chunked = false;
@@ -188,7 +191,9 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             break;
         }
         if let Some((name, value)) = line.split_once(':') {
-            if name.eq_ignore_ascii_case("last-event-id") {
+            if name.eq_ignore_ascii_case("x-marfa-read-view") {
+                read_view = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("last-event-id") {
                 last_event_id = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("authorization") {
                 authorization = Some(value.trim().to_string());
@@ -210,6 +215,8 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         let mut script = script.lock().unwrap();
         script.seen.push(Seen {
             path: path.clone(),
+            query: target.split_once('?').map_or("", |(_, query)| query).into(),
+            read_view,
             last_event_id,
             authorization,
             body,
@@ -361,12 +368,6 @@ pub fn event(id: &str, name: &str, payload: &str) -> String {
     format!("id: {id}\nevent: {name}\ndata: {payload}\n\n")
 }
 
-pub fn stream_cursor(cursor: &str) -> String {
-    format!(
-        "event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"{cursor}\"}}\n\n"
-    )
-}
-
 pub fn stream_live(cursor: Option<&str>) -> String {
     let cursor = cursor.map_or("null".to_string(), |cursor| format!("\"{cursor}\""));
     format!("event: stream_live\ndata: {{\"type\":\"stream_live\",\"cursor\":{cursor}}}\n\n")
@@ -427,6 +428,25 @@ pub fn root(instance: &str) -> Answer {
         &format!(
             r#"{{"name":"marfa","version":"dev","instance_id":"{instance}","contract":{CONTRACT_VERSION},"features":[]}}"#
         ),
+    )
+}
+
+pub const FENCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+pub fn certified(mut answer: Answer) -> Answer {
+    match &mut answer {
+        Answer::Json { headers, .. } => {
+            headers.push(("X-Marfa-Read-View".into(), FENCE.into()));
+            headers.push(("Cache-Control".into(), "no-store".into()));
+        }
+        _ => panic!("only a JSON read can carry an HTTP proof"),
+    }
+    answer
+}
+
+pub fn copy_marker(kind: &str, cursor: &str) -> String {
+    format!(
+        "event: {kind}\ndata: {{\"type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"read_view\":\"{FENCE}\"}}\n\n"
     )
 }
 

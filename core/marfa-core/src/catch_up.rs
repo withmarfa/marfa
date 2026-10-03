@@ -12,6 +12,7 @@ use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{CatchUpReport, Subject, Tier};
+use crate::read_view::{self, Context};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{EventPayload, WireCatalog, WireEdge, WireItem};
@@ -137,18 +138,27 @@ pub struct FollowReport {
 }
 
 fn start(core: &Core) -> Result<(Slice, String)> {
-    let conn = core.conn()?;
+    let mut conn = core.conn()?;
     if !store::hydration_complete(&conn)? {
         return Err(CoreError::HydrationIncomplete);
     }
-    let cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or(CoreError::NoCursor)?;
-    if cursor.is_empty() || !cursor.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(CoreError::Invalid(format!(
-            "the stored event cursor {cursor:?} is not an event id"
-        )));
+    if !store::hydrated(&conn)? {
+        if store::holds_slice(&conn)? {
+            let tx = conn.transaction()?;
+            read_view::expire(&tx)?;
+            tx.commit()?;
+            return Err(read_view::invalid());
+        }
+        return Err(CoreError::NoCursor);
     }
-    let (types, tier) = store::slice(&conn)?.ok_or(CoreError::NoCursor)?;
-    let whole = store::whole_edge_types(&conn)?;
+    start_build(&conn)
+}
+
+fn start_build(conn: &rusqlite::Connection) -> Result<(Slice, String)> {
+    let cursor = store::meta_get(conn, store::META_EVENT_CURSOR)?.ok_or_else(read_view::invalid)?;
+    read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
+    let (types, tier) = store::slice(conn)?.ok_or_else(read_view::invalid)?;
+    let whole = store::whole_edge_types(conn)?;
     Ok((Slice { types, tier, whole }, cursor))
 }
 
@@ -161,8 +171,9 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 
 /// Written only where it differs from the one held, so a reader told of every
 /// save is not told of this. Says whether the catalog version moved.
-fn adopt(core: &Core, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
+fn adopt(core: &Core, context: &Context, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
     let conn = core.conn()?;
+    context.check(&conn)?;
     let moved = store::replace_catalog(&conn, catalog)?;
     Ok((Catalog::load(&conn)?, moved))
 }
@@ -205,15 +216,23 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
 /// change can read the row it names.
 fn take(
     core: &Core,
+    context: &Context,
     catalog: &Catalog,
     slice: &Slice,
     id: &str,
     kind: &str,
     payload: &EventPayload,
 ) -> Result<Option<Change>> {
-    let brought = edges_of_entering_row(core, catalog, slice, kind, payload)?;
+    let brought = edges_of_entering_row(core, context, catalog, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
+    context.check(&tx)?;
+    read_view::cursor(id).ok_or_else(read_view::invalid)?;
+    if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
+        let listed = payload.listed.ok_or_else(read_view::invalid)?;
+        let item = payload.item.as_ref().ok_or_else(read_view::invalid)?;
+        read_view::set_listed(&tx, &item.id, listed)?;
+    }
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     if applied {
         for edge in &brought {
@@ -236,7 +255,12 @@ fn take(
 /// Frames the filter or the credential withheld are never sent, so the
 /// replay's marker is the only word this reader has that it is past them.
 /// Never moves the cursor back.
-fn pass_withheld(core: &Core, held: &str, live: Option<&str>) -> Result<Option<String>> {
+fn pass_withheld(
+    core: &Core,
+    context: &Context,
+    held: &str,
+    live: Option<&str>,
+) -> Result<Option<String>> {
     let Some(live) = live else { return Ok(None) };
     let (Ok(reached), Ok(have)) = (live.parse::<u64>(), held.parse::<u64>()) else {
         return Ok(None);
@@ -245,6 +269,7 @@ fn pass_withheld(core: &Core, held: &str, live: Option<&str>) -> Result<Option<S
         return Ok(None);
     }
     let conn = core.conn()?;
+    context.check(&conn)?;
     store::meta_set(&conn, store::META_EVENT_CURSOR, live)?;
     Ok(Some(live.to_string()))
 }
@@ -255,9 +280,21 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 }
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
-    let (slice, cursor) = start(core)?;
-    same_instance(core, &http.instance_id()?)?;
-    let (mut catalog, _) = adopt(core, &http.catalog()?)?;
+    start(core)?;
+    let context = Context::capture(&*core.conn()?)?;
+    let scoped = context.http(http);
+    replay_build(core, &scoped, &context, idle)
+        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+pub(crate) fn replay_build(
+    core: &Core,
+    http: &Http,
+    context: &Context,
+    idle: Duration,
+) -> Result<CatchUpReport> {
+    let (slice, cursor) = start_build(&*core.conn()?)?;
+    let (mut catalog, _) = adopt(core, context, &http.catalog()?)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     // So a type the server will not describe costs one read of the catalog
     // rather than one for every event naming it.
@@ -299,24 +336,37 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
             Frame::Event { id, name, data } => {
                 connected = true;
                 prologue_seen = true;
-                let payload = payload_of(&data)?;
+                let payload = payload_of(&data).map_err(|_| read_view::invalid())?;
                 let kind = name.as_deref().unwrap_or(&payload.r#type);
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
-                    return Err(expire(core, reason)?);
+                    return Err(CoreError::CopyExpired { reason });
                 }
                 match kind {
+                    "read_view_changed" => {
+                        return Err(CoreError::CopyExpired {
+                            reason: "read_view_changed".into(),
+                        });
+                    }
                     "stream_cursor" => {
-                        head = payload.cursor.as_deref().and_then(|text| text.parse().ok());
-                        if let (Some(head), Ok(have)) = (head, report.cursor.parse::<u64>())
-                            && head <= have
-                        {
-                            report.reached_head = true;
-                            break;
+                        if id.is_some() || head.is_some() {
+                            return Err(read_view::invalid());
                         }
+                        head = Some(context.marker(&payload, kind)?);
                     }
                     "stream_live" => {
+                        if id.is_some() {
+                            return Err(read_view::invalid());
+                        }
+                        let live = context.marker(&payload, kind)?;
+                        if head.is_none_or(|head| live < head)
+                            || live
+                                < read_view::cursor(&report.cursor)
+                                    .ok_or_else(read_view::invalid)?
+                        {
+                            return Err(read_view::invalid());
+                        }
                         if let Some(cursor) =
-                            pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
+                            pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                         {
                             report.cursor = cursor;
                         }
@@ -329,30 +379,34 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                         });
                     }
                     kind => {
-                        let Some(id) = id else { continue };
+                        let Some(id) = id else {
+                            return Err(read_view::invalid());
+                        };
+                        if head.is_none() || read_view::cursor(&id).is_none() {
+                            return Err(read_view::invalid());
+                        }
                         let pinned = pinned_row(core, &payload)?;
                         while let Some(named) =
                             unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
                         {
                             refreshed.insert(named);
-                            catalog = adopt(core, &http.catalog()?)?.0;
+                            catalog = adopt(core, context, &http.catalog()?)?.0;
                         }
-                        if take(core, &catalog, &slice, &id, kind, &payload)?.is_some() {
+                        if take(core, context, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
                         } else {
                             report.skipped += 1;
                         }
                         report.cursor = id.clone();
-                        if let (Some(head), Ok(reached)) = (head, id.parse::<u64>())
-                            && reached >= head
-                        {
-                            report.reached_head = true;
-                            break;
-                        }
                     }
                 }
             }
         }
+    }
+    if !report.reached_head {
+        return Err(CoreError::StreamIncomplete {
+            reason: "replay_failed".into(),
+        });
     }
     Ok(report)
 }
@@ -360,8 +414,10 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
 /// Forgetting the cursor is what sends the next caller to hydrate, and the
 /// queue is no part of what it forgets.
 fn expire(core: &Core, reason: String) -> Result<CoreError> {
-    let conn = core.conn()?;
-    store::meta_delete(&conn, store::META_EVENT_CURSOR)?;
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    read_view::expire(&tx)?;
+    tx.commit()?;
     Ok(CoreError::CopyExpired { reason })
 }
 
@@ -449,99 +505,106 @@ fn follow_paced(
     pace: &Pace,
     pause: &mut dyn FnMut(Duration),
 ) -> Result<FollowReport> {
-    let mut report = FollowReport::default();
-    let mut backoff = pace.reconnect_first;
-    let mut asked = false;
-    // So a type the server will not describe costs one reopen rather than one
-    // per event. Kept across a reopen for one of these, and forgotten on any
-    // other end, so the next stream reads again for a property its type has
-    // since made its thumbnail.
-    let mut refreshed = HashSet::new();
-    // Unknown until the first stream is asked for, so a follow that never
-    // reaches the server says so, and one that does says nothing.
-    let mut reachable: Option<bool> = None;
-    while !stop.load(Ordering::Relaxed) {
-        let (slice, cursor) = start(core)?;
-        report.cursor = cursor.clone();
-        if asked {
-            report.reconnects += 1;
-        }
-        asked = true;
-        let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
-            break;
-        };
-        let (instance, fetched, frames) = match reached {
-            Ok(reached) => reached,
-            Err(error) if error.is_environmental() => {
-                report.failed_opens += 1;
-                let wait = error
-                    .retry_after()
-                    .map_or(backoff, |named| backoff.max(named));
-                report.last_failure = Some(error.to_string());
-                if reachable != Some(false) {
-                    reachable = Some(false);
-                    on_change(&Change {
-                        event: SERVER_UNREACHABLE.into(),
-                        item_id: None,
-                        edge_id: None,
-                        cursor: report.cursor.clone(),
-                        reason: Some(error.to_string()),
-                    });
-                }
-                pause(wait);
-                backoff = (backoff * 2).min(pace.reconnect_most);
-                continue;
+    start(core)?;
+    let context = Context::capture(&*core.conn()?)?;
+    let http = Arc::new(context.http(&http));
+    let result = (|| {
+        let mut report = FollowReport::default();
+        let mut backoff = pace.reconnect_first;
+        let mut asked = false;
+        // So a type the server will not describe costs one reopen rather than one
+        // per event. Kept across a reopen for one of these, and forgotten on any
+        // other end, so the next stream reads again for a property its type has
+        // since made its thumbnail.
+        let mut refreshed = HashSet::new();
+        // Unknown until the first stream is asked for, so a follow that never
+        // reaches the server says so, and one that does says nothing.
+        let mut reachable: Option<bool> = None;
+        while !stop.load(Ordering::Relaxed) {
+            let (slice, cursor) = start(core)?;
+            report.cursor = cursor.clone();
+            if asked {
+                report.reconnects += 1;
             }
-            Err(error) => return Err(error),
-        };
-        same_instance(core, &instance)?;
-        if reachable == Some(false) {
-            on_change(&Change {
-                event: SERVER_REACHABLE.into(),
-                item_id: None,
-                edge_id: None,
-                cursor: report.cursor.clone(),
-                reason: None,
-            });
+            asked = true;
+            let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
+                break;
+            };
+            let (instance, fetched, frames) = match reached {
+                Ok(reached) => reached,
+                Err(error) if error.is_environmental() => {
+                    report.failed_opens += 1;
+                    let wait = error
+                        .retry_after()
+                        .map_or(backoff, |named| backoff.max(named));
+                    report.last_failure = Some(error.to_string());
+                    if reachable != Some(false) {
+                        reachable = Some(false);
+                        on_change(&Change {
+                            event: SERVER_UNREACHABLE.into(),
+                            item_id: None,
+                            edge_id: None,
+                            cursor: report.cursor.clone(),
+                            reason: Some(error.to_string()),
+                        });
+                    }
+                    pause(wait);
+                    backoff = (backoff * 2).min(pace.reconnect_most);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            same_instance(core, &instance)?;
+            if reachable == Some(false) {
+                on_change(&Change {
+                    event: SERVER_REACHABLE.into(),
+                    item_id: None,
+                    edge_id: None,
+                    cursor: report.cursor.clone(),
+                    reason: None,
+                });
+            }
+            reachable = Some(true);
+            let (catalog, moved) = adopt(core, &context, &fetched)?;
+            if moved {
+                on_change(&Change {
+                    event: CATALOG_CHANGED.into(),
+                    item_id: None,
+                    edge_id: None,
+                    cursor: report.cursor.clone(),
+                    reason: None,
+                });
+            }
+            let opened = Instant::now();
+            let ended = read_stream(
+                core,
+                &context,
+                &catalog,
+                &slice,
+                &frames,
+                stop,
+                pace,
+                &Instant::now,
+                &mut report,
+                &mut refreshed,
+                on_change,
+            )?;
+            match ended {
+                Ended::Stopped => return Ok(report),
+                Ended::Behind => continue,
+                Ended::Over => {}
+            }
+            refreshed.clear();
+            if opened.elapsed() >= pace.reconnect_most {
+                backoff = pace.reconnect_first;
+            } else {
+                pause(backoff);
+                backoff = (backoff * 2).min(pace.reconnect_most);
+            }
         }
-        reachable = Some(true);
-        let (catalog, moved) = adopt(core, &fetched)?;
-        if moved {
-            on_change(&Change {
-                event: CATALOG_CHANGED.into(),
-                item_id: None,
-                edge_id: None,
-                cursor: report.cursor.clone(),
-                reason: None,
-            });
-        }
-        let opened = Instant::now();
-        let ended = read_stream(
-            core,
-            &catalog,
-            &slice,
-            &frames,
-            stop,
-            pace,
-            &Instant::now,
-            &mut report,
-            &mut refreshed,
-            on_change,
-        )?;
-        match ended {
-            Ended::Stopped => return Ok(report),
-            Ended::Behind => continue,
-            Ended::Over => {}
-        }
-        refreshed.clear();
-        if opened.elapsed() >= pace.reconnect_most {
-            backoff = pace.reconnect_first;
-        } else {
-            pause(backoff);
-            backoff = (backoff * 2).min(pace.reconnect_most);
-        }
-    }
-    Ok(report)
+        Ok(report)
+    })();
+    result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
 
 #[derive(Debug, PartialEq)]
@@ -556,6 +619,7 @@ enum Ended {
 #[allow(clippy::too_many_arguments)]
 fn read_stream(
     core: &Core,
+    context: &Context,
     catalog: &Catalog,
     slice: &Slice,
     frames: &Receiver<io::Result<Frame>>,
@@ -567,6 +631,7 @@ fn read_stream(
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<Ended> {
     let mut heard = now();
+    let mut head = None;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -588,23 +653,45 @@ fn read_stream(
         let Frame::Event { id, name, data } = frame else {
             continue;
         };
-        let payload = payload_of(&data)?;
+        let payload = payload_of(&data).map_err(|_| read_view::invalid())?;
         let kind = name.as_deref().unwrap_or(&payload.r#type);
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
-            return Err(expire(core, reason)?);
+            return Err(CoreError::CopyExpired { reason });
         }
         match kind {
-            "stream_cursor" => {}
+            "read_view_changed" => {
+                return Err(CoreError::CopyExpired {
+                    reason: "read_view_changed".into(),
+                });
+            }
+            "stream_cursor" => {
+                if id.is_some() || head.is_some() {
+                    return Err(read_view::invalid());
+                }
+                head = Some(context.marker(&payload, kind)?);
+            }
             "stream_live" => {
+                let live = context.marker(&payload, kind)?;
+                if id.is_some()
+                    || head.is_none_or(|head| live < head)
+                    || live < read_view::cursor(&report.cursor).ok_or_else(read_view::invalid)?
+                {
+                    return Err(read_view::invalid());
+                }
                 if let Some(cursor) =
-                    pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
+                    pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                 {
                     report.cursor = cursor;
                 }
             }
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
-                let Some(id) = id else { continue };
+                let Some(id) = id else {
+                    return Err(read_view::invalid());
+                };
+                if head.is_none() || read_view::cursor(&id).is_none() {
+                    return Err(read_view::invalid());
+                }
                 // Left untaken with the cursor before it, so the reopened
                 // stream replays it after reading the catalog.
                 let pinned = pinned_row(core, &payload)?;
@@ -615,7 +702,7 @@ fn read_stream(
                 }
                 // A failed read of a row entering the slice reopens the
                 // stream from before this event rather than ending.
-                let taken = match take(core, catalog, slice, &id, kind, &payload) {
+                let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
                         report.last_failure = Some(error.to_string());
@@ -697,6 +784,7 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
 /// follow as frames.
 fn edges_of_entering_row(
     core: &Core,
+    context: &Context,
     catalog: &Catalog,
     slice: &Slice,
     kind: &str,
@@ -716,9 +804,11 @@ fn edges_of_entering_row(
             return Ok(Vec::new());
         }
     }
-    Ok(crate::hydrate::read_with_edges(core.http()?, &item.id)?
-        .map(|(_, edges)| edges)
-        .unwrap_or_default())
+    Ok(
+        crate::hydrate::read_with_edges(&context.http(core.http()?), &item.id)?
+            .map(|(_, edges)| edges)
+            .unwrap_or_default(),
+    )
 }
 
 fn apply(
@@ -744,7 +834,9 @@ fn apply(
             if store::holds_later(tx, Subject::Item, &item.id, item.version, &item.updated_at)? {
                 return Ok(false);
             }
-            if in_slice(catalog, slice, item)? || store::pinned(tx, &item.id)? {
+            if (payload.listed == Some(true) && in_slice(catalog, slice, item)?)
+                || store::pinned(tx, &item.id)?
+            {
                 let tags = payload
                     .metadata
                     .as_ref()
@@ -795,10 +887,44 @@ mod tests {
 
     use super::*;
     use crate::Server;
-    use crate::scripted::{
-        Answer, Scripted, Then, connected, event, item_payload, refusal, stream, stream_cursor,
-        stream_live, types,
-    };
+    use crate::scripted::{Answer, Scripted, Then, connected, event, refusal};
+
+    fn types(entries: &[(&str, Option<&str>)]) -> Answer {
+        crate::scripted::certified(crate::scripted::types(entries))
+    }
+
+    fn item_payload(event: &str, id: &str, ty: &str, version: i64) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&crate::scripted::item_payload(event, id, ty, version)).unwrap();
+        value["listed"] = true.into();
+        value.to_string()
+    }
+
+    fn stream_cursor(cursor: &str) -> String {
+        crate::scripted::copy_marker("stream_cursor", cursor)
+    }
+    fn stream_live(cursor: Option<&str>) -> String {
+        cursor.map_or_else(
+            || crate::scripted::stream_live(None),
+            |cursor| crate::scripted::copy_marker("stream_live", cursor),
+        )
+    }
+
+    fn stream(mut frames: Vec<String>, then: Then) -> Answer {
+        if !frames
+            .iter()
+            .any(|frame| frame.contains("event: stream_cursor"))
+        {
+            let first = frames
+                .iter()
+                .find_map(|frame| frame.lines().find_map(|line| line.strip_prefix("id: ")))
+                .map(str::to_string);
+            if let Some(first) = first {
+                frames.insert(0, stream_cursor(&first));
+            }
+        }
+        crate::scripted::stream(frames, then)
+    }
 
     const NOTE: &str = "core.note";
     const MS: fn(u64) -> Duration = Duration::from_millis;
@@ -822,7 +948,12 @@ mod tests {
         .unwrap();
         {
             let conn = core.conn().unwrap();
+            server.on(
+                "/edge-types",
+                vec![crate::scripted::certified(crate::scripted::edge_types(&[]))],
+            );
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
@@ -1246,6 +1377,7 @@ mod tests {
             let catalog = Catalog::load(&core.conn().unwrap()).unwrap();
             let read = read_stream(
                 &core,
+                &Context::capture(&core.conn().unwrap()).unwrap(),
                 &catalog,
                 &slice,
                 &frames,
@@ -1540,11 +1672,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![
-                    connected(),
-                    "event: stream_cursor\ndata: {\"type\":\"stream_cursor\",\"cursor\":\"10\"}\n\n"
-                        .into(),
-                ],
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
                 Then::End,
             )],
         );
@@ -1651,14 +1779,19 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         assert!(matches!(
             core.catch_up(),
-            Err(CoreError::Unauthorized { .. })
+            Err(CoreError::CopyExpired { .. })
         ));
         assert_eq!(carried(&server, "/types"), ["Bearer k"]);
 
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+        }
         let asked = renewing(&core);
         assert!(matches!(
             core.catch_up(),
-            Err(CoreError::Unauthorized { .. })
+            Err(CoreError::CopyExpired { .. })
         ));
         assert_eq!(*asked.lock().unwrap(), ["k"]);
         assert_eq!(
@@ -1674,9 +1807,10 @@ mod tests {
         server.on("/events", vec![withheld_head(None)]);
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(200)).unwrap();
-        assert!(!report.reached_head);
-        assert_eq!(report.cursor, "11");
+        assert!(matches!(
+            catch_up(&core, &http, MS(200)),
+            Err(CoreError::StreamIncomplete { .. })
+        ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
     }
 
@@ -1736,9 +1870,11 @@ mod tests {
         );
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(1000)).unwrap();
-        assert!(!report.reached_head);
-        assert_eq!(report.cursor, "11");
+        assert!(matches!(
+            catch_up(&core, &http, MS(1000)),
+            Err(CoreError::StreamIncomplete { .. })
+        ));
+        assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
     }
 
     fn expired(ended: Result<impl std::fmt::Debug>, core: &Core, named: &str) {
@@ -1776,7 +1912,10 @@ mod tests {
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
             "/events",
-            vec![stream(vec![connected(), stream_cursor("10")], Then::End)],
+            vec![stream(
+                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                Then::End,
+            )],
         );
         let (_dir, core) = hydrated(&server);
         assert!(core.catch_up().unwrap().reached_head);
@@ -1815,19 +1954,20 @@ mod tests {
         assert!(core.catch_up().unwrap().reached_head);
 
         let other = "00000000-0000-7000-8000-0000000000ff";
-        server.on("/", vec![crate::scripted::root(other)]);
-        let streams = server.seen("/events").len();
-        expired(core.catch_up(), &core, other);
-        assert_eq!(server.seen("/events").len(), streams);
-
-        store::meta_set(&core.conn().unwrap(), store::META_EVENT_CURSOR, "40").unwrap();
+        server.on(
+            "/events",
+            vec![stream(
+                vec![stream_cursor("40").replace(crate::scripted::INSTANCE, other)],
+                Then::End,
+            )],
+        );
+        expired(core.catch_up(), &core, "read_view_invalid");
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "40").unwrap();
+        }
         let run = follow_on(&core, QUICK, None);
-        expired(run.ended(), &core, other);
-
-        // A copy naming no instance cannot say this server is its own.
-        store::meta_set(&core.conn().unwrap(), store::META_EVENT_CURSOR, "40").unwrap();
-        store::meta_delete(&core.conn().unwrap(), store::META_INSTANCE_ID).unwrap();
-        server.on("/", vec![crate::scripted::root(crate::scripted::INSTANCE)]);
-        expired(core.catch_up(), &core, "does not name the instance");
+        expired(run.ended(), &core, "read_view_invalid");
     }
 }

@@ -1710,8 +1710,6 @@ pub(crate) enum ReadBack {
         context: read_view::Context,
         id: String,
         held: Option<Box<crate::wire::WireItemWithMetadata>>,
-        /// Read before anything changes the queue.
-        moved: bool,
         /// The copy's stamp before the read, so a row the read did not find
         /// is forgotten only where nothing has written it since.
         before: Option<store::Stamp>,
@@ -1764,7 +1762,6 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
         context,
         id: owed.id.clone(),
         held: held.map(Box::new),
-        moved: owed.moved,
         before,
     })
 }
@@ -1822,9 +1819,7 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
             }
         }
         ReadBack::Item {
-            held: Some(held),
-            moved,
-            ..
+            held: Some(held), ..
         } => {
             let item = &held.item;
             let listed = held.listed.ok_or_else(read_view::invalid)?;
@@ -1841,12 +1836,8 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
             }
             let catalog = Catalog::load(conn)?;
             let indexing = catalog.indexing(&item.r#type);
-            // Outside the slice: not put back where a move ahead let it go,
-            // and let go where this refused write was itself a move. A row
-            // held outside the slice for another reason, an attachment,
-            // stays.
-            let let_go = !store::slice_holds(conn, &catalog, item)?
-                && (!store::item_held(conn, &item.id)? || *moved);
+            let let_go =
+                !store::slice_holds(conn, &catalog, item)? && !store::item_waits(conn, &item.id)?;
             if let_go {
                 store::evict_item(conn, &item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());

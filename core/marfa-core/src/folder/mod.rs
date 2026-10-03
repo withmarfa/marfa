@@ -431,10 +431,11 @@ impl Folder {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
         let fetched = self.core.http()?.catalog()?;
-        crate::store::replace_catalog(&*self.core.conn()?, &fetched)?;
-        let edge_types = EdgeTypes::load(&*self.core.conn()?)?;
+        let planning = crate::store::open_in_memory()?;
+        crate::store::replace_catalog(&planning, &fetched)?;
+        let edge_types = EdgeTypes::load(&planning)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
-        let catalog = Catalog::load(&*self.core.conn()?)?;
+        let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
         self.core
             .hydrate_every_type_or(settings.types(), settings.tier(), &whole)
@@ -2705,6 +2706,7 @@ impl Folder {
                 ..PullReport::default()
             });
         }
+        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
         state::settle_landings(&*self.core.conn()?, &self.root)?;
         let mut report = PullReport::default();
         let settings = self.settings()?;
@@ -2751,6 +2753,7 @@ impl Folder {
             if !settings.holds_state(item.state) {
                 continue;
             }
+            context.same_copy(&*self.core.conn()?)?;
             if !self.let_go(&item.id, &peers, &mut report)? {
                 work.push((item, true));
             }
@@ -2937,13 +2940,17 @@ impl Folder {
             .map(|bound| names::folded(&bound.path))
             .collect();
         let mut waiting = Vec::new();
+        context.same_copy(&*self.core.conn()?)?;
+        let filesystem = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let rendering = Rendering {
+            context: &filesystem,
             catalog: &catalog,
             edge_types: &edge_types,
             names: &names,
         };
         let mut refused = HashSet::new();
         for entry in placing {
+            context.same_copy(&*self.core.conn()?)?;
             match self.write_placed(&entry, &rendering, &withheld, Some(&leaving), &mut report)? {
                 PlacementWrite::Waiting => waiting.push(entry),
                 PlacementWrite::Refused => {
@@ -2953,6 +2960,7 @@ impl Folder {
             }
         }
         for entry in waiting {
+            context.same_copy(&*self.core.conn()?)?;
             if matches!(
                 self.write_placed(&entry, &rendering, &withheld, None, &mut report)?,
                 PlacementWrite::Refused
@@ -2960,6 +2968,7 @@ impl Folder {
                 refused.insert(names::folded(&entry.want));
             }
         }
+        context.same_copy(&*self.core.conn()?)?;
         self.remove_departed(&members, &settings, &lists, &refused, &mut report)?;
         report.flagged = {
             let conn = self.core.conn()?;
@@ -2983,6 +2992,7 @@ impl Folder {
         report.uncarried = fields::uncarried(&catalog, &edge_types, |r#type| {
             settings.holds_type(&catalog, r#type)
         });
+        context.same_copy(&*self.core.conn()?)?;
         report.settings = self.write_settings_if_moved()?;
         Ok(report)
     }
@@ -3026,6 +3036,7 @@ impl Folder {
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
     ) -> Result<PlacementWrite> {
+        rendering.context.check(&*self.core.conn()?)?;
         let Placing {
             item,
             bound,
@@ -3100,6 +3111,7 @@ impl Folder {
                 (rendered.text.into_bytes(), rendered.links, rendered.lines)
             }
         };
+        rendering.context.check(&*self.core.conn()?)?;
         let hash = state::hash(&bytes);
         let presentation = if bytes_of(item, catalog).is_none() {
             std::str::from_utf8(&bytes).ok().map(|text| {
@@ -3273,6 +3285,7 @@ impl Folder {
                 )),
             );
         }
+        rendering.context.check(&*self.core.conn()?)?;
         let written = self.land(
             &path,
             |file, beside| {
@@ -3318,6 +3331,7 @@ impl Folder {
             // Unbound even where not removed: a bound path the walk cannot
             // reach is journaled and deleted. One changed since the scan read
             // it holds the person's edit, and stays for the next scan.
+            rendering.context.check(&*self.core.conn()?)?;
             if plainly_inside(&self.root, &bound.path) {
                 let _ = landing::remove(&self.root.join(&bound.path), |found| {
                     state::hash(found) == bound.content_hash
@@ -3508,6 +3522,7 @@ impl Folder {
         refused: &HashSet<String>,
         report: &mut PullReport,
     ) -> Result<()> {
+        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let (bound, of) = {
             let conn = self.core.conn()?;
             (state::every_bound(&conn)?, state::bound_count(&conn)?)
@@ -3534,6 +3549,7 @@ impl Folder {
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Pull, &[])?;
         for row in going {
+            context.check(&*self.core.conn()?)?;
             if self.take_away(&row)? {
                 report.removed += 1;
             } else {
@@ -3852,6 +3868,7 @@ impl Folder {
 type LinesBy<'a> = (&'a Names, Option<&'a document::Document>, &'a [state::Line]);
 
 struct Rendering<'a> {
+    context: &'a crate::read_view::Context,
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     names: &'a Names,
@@ -4280,6 +4297,8 @@ mod tests {
             {
                 let conn = core.conn().unwrap();
                 store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+                store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+                store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
                 store::meta_set(
                     &conn,
                     store::META_SLICE_TYPES,
@@ -4352,7 +4371,9 @@ mod tests {
             let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
             let names = Names::load(&folder, &catalog).unwrap();
             let edge_types = EdgeTypes::default();
+            let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {
+                context: &context,
                 catalog: &catalog,
                 names: &names,
                 edge_types: &edge_types,

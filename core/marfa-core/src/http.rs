@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -16,13 +16,15 @@ use crate::wire::{
 
 pub const PAGE_LIMIT: u32 = 200;
 
+#[derive(Clone)]
 pub struct Http {
     agent: Agent,
     base: Url,
-    authorization: RwLock<String>,
-    renew: OnceLock<Renew>,
+    authorization: Arc<RwLock<String>>,
+    renew: Arc<OnceLock<Renew>>,
     /// Held while a renewal runs, so two calls refused at once renew once.
-    renewing: Mutex<()>,
+    renewing: Arc<Mutex<()>>,
+    view: Option<String>,
 }
 
 /// Handed the refused bearer, so a caller that keeps the credential elsewhere
@@ -174,10 +176,26 @@ impl Http {
         Ok(Http {
             agent,
             base,
-            authorization: RwLock::new(format!("Bearer {key}")),
-            renew: OnceLock::new(),
-            renewing: Mutex::new(()),
+            authorization: Arc::new(RwLock::new(format!("Bearer {key}"))),
+            renew: Arc::new(OnceLock::new()),
+            renewing: Arc::new(Mutex::new(())),
+            view: None,
         })
+    }
+
+    pub(crate) fn for_view(&self, fence: &str) -> Self {
+        Self {
+            view: Some(fence.into()),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn edge(&self, id: &str) -> Result<Option<WireEdge>, CoreError> {
+        match self.get_json::<crate::wire::WireEdgeAnswer>(&["edges", id], &[]) {
+            Ok(answer) => Ok(Some(answer.edge)),
+            Err(CoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Set once; a second is ignored.
@@ -252,7 +270,13 @@ impl Http {
         retry_after_seconds: Option<u64>,
     ) -> CoreError {
         if named {
-            refusal(status, text, retry_after_seconds)
+            let refused = refusal(status, text, retry_after_seconds);
+            if self.view.is_some() && status == 401 {
+                return CoreError::CopyExpired {
+                    reason: "credential_ended".into(),
+                };
+            }
+            refused
         } else {
             CoreError::Unnamed {
                 origin: self.origin(),
@@ -274,6 +298,7 @@ impl Http {
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
         let mut types = Vec::new();
         let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
         loop {
             let params: Vec<(&str, &str)> = cursor
                 .as_deref()
@@ -283,11 +308,12 @@ impl Http {
             types.extend(page.data);
             match page.next_cursor {
                 None => return Ok(types),
-                Some(next) if Some(&next) == cursor.as_ref() => {
-                    return Err(CoreError::Decoding(
-                        "the server kept answering with the same cursor while reporting more types"
-                            .into(),
-                    ));
+                Some(next) if !seen.insert(next.clone()) => {
+                    return Err(if self.view.is_some() {
+                        crate::read_view::invalid()
+                    } else {
+                        CoreError::Decoding("the server repeated a type page cursor".into())
+                    });
                 }
                 Some(next) => cursor = Some(next),
             }
@@ -346,6 +372,7 @@ impl Http {
     pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
         let mut rows = Vec::new();
         let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
         loop {
             let params: Vec<(&str, &str)> = cursor
                 .as_deref()
@@ -360,11 +387,12 @@ impl Http {
             }
             match page.next_cursor {
                 None => return Ok(rows),
-                Some(next) if Some(&next) == cursor.as_ref() => {
-                    return Err(CoreError::Decoding(
-                        "the server kept answering with the same cursor while reporting more edge types"
-                            .into(),
-                    ));
+                Some(next) if !seen.insert(next.clone()) => {
+                    return Err(if self.view.is_some() {
+                        crate::read_view::invalid()
+                    } else {
+                        CoreError::Decoding("the server repeated an edge type page cursor".into())
+                    });
                 }
                 Some(next) => cursor = Some(next),
             }
@@ -513,7 +541,7 @@ impl Http {
         last_event_id: Option<&str>,
         body_timeout: Duration,
     ) -> Result<Box<dyn Read + Send>, CoreError> {
-        let url = self.url(&["events"], &[("edges", "all")]);
+        let url = self.url(&["events"], &[("edges", "all"), ("copy", "1")]);
         let response = self.authorized(|authorization| {
             let mut request = self
                 .agent
@@ -525,6 +553,9 @@ impl Http {
                 .header("Authorization", authorization);
             if let Some(cursor) = last_event_id {
                 request = request.header("Last-Event-ID", cursor);
+                if let Some(view) = &self.view {
+                    request = request.header("X-Marfa-Read-View", view);
+                }
             }
             request
                 .call()
@@ -536,6 +567,11 @@ impl Http {
             let named = header(&response, CONTRACT_HEADER).is_some();
             let retry_after = retry_after(&response);
             let text = response.into_body().read_to_string().unwrap_or_default();
+            if status == 401 && named {
+                return Err(CoreError::CopyExpired {
+                    reason: "credential_ended".into(),
+                });
+            }
             return Err(self.refused(status, named, &text, retry_after));
         }
         Ok(Box::new(response.into_body().into_reader()))
@@ -679,27 +715,78 @@ impl Http {
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
+        let conditional = self.view.as_deref().filter(|_| !segments.is_empty());
         let response = self.authorized(|authorization| {
-            self.agent
+            let mut request = self
+                .agent
                 .get(url.as_str())
                 .header("Accept", "application/json")
-                .header("Authorization", authorization)
+                .header("Authorization", authorization);
+            if let Some(view) = conditional {
+                request = request.header("X-Marfa-Read-View", view);
+            }
+            request
                 .call()
                 .map_err(|error| CoreError::Network(error.to_string()))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
-        let served = header(&response, CONTRACT_HEADER);
+        let named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after = retry_after(&response);
+        let proof = response
+            .headers()
+            .get_all("X-Marfa-Read-View")
+            .iter()
+            .collect::<Vec<_>>();
+        let certified = conditional
+            .is_none_or(|expected| proof.len() == 1 && proof[0].to_str().ok() == Some(expected));
         let text = response
             .into_body()
             .read_to_string()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         if !(200..300).contains(&status) {
-            return Err(self.refused(status, served.is_some(), &text, retry_after));
+            let error = self.refused(status, named, &text, retry_after);
+            if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
+                return Err(crate::read_view::invalid());
+            }
+            return Err(error);
         }
-        serde_json::from_str(&text)
-            .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))
+        if !certified {
+            return Err(crate::read_view::invalid());
+        }
+        let decode = || -> Result<T, CoreError> {
+            let value: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))?;
+            if conditional.is_some()
+                && segments.first() == Some(&"items")
+                && (segments.len() == 1 || segments.len() == 2)
+            {
+                let valid =
+                    |row: &serde_json::Value| row.get("listed").and_then(|v| v.as_bool()).is_some();
+                if segments.len() == 1 {
+                    if !value
+                        .get("data")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|rows| {
+                            rows.iter().all(|row| valid(row) && row["listed"] == true)
+                        })
+                    {
+                        return Err(crate::read_view::invalid());
+                    }
+                } else if !valid(&value) {
+                    return Err(crate::read_view::invalid());
+                }
+            }
+            serde_json::from_value(value)
+                .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))
+        };
+        decode().map_err(|error| {
+            if conditional.is_some() {
+                crate::read_view::invalid()
+            } else {
+                error
+            }
+        })
     }
 }
 
@@ -805,6 +892,9 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
         Err(_) => ("unknown".to_string(), text.chars().take(200).collect()),
     };
     match status {
+        409 if code == "read_view_changed" => CoreError::CopyExpired {
+            reason: "read_view_changed".into(),
+        },
         400 if code == "unknown_type" => CoreError::UnknownType { message },
         400 | 422 => CoreError::Validation { code, message },
         401 => CoreError::Unauthorized { code, message },
