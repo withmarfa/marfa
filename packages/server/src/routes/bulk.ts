@@ -68,6 +68,9 @@ import {
 } from "./_bulk-rollback.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { resolveLiveCredential } from "../auth/live-credential.js";
+import { authorizeReplay } from "../middleware/replay-authorization.js";
 import {
   BULK_ACTION_SHAPES,
   BulkActionFilterShape,
@@ -834,7 +837,7 @@ export function bulkRoutes(storage: Storage) {
       }
     }
 
-    const callerKey = c.get("apiKey");
+    let callerKey = c.get("apiKey");
     assertFilterEdgeTermsReadable(c, filter.filter);
 
     // Narrowed to what the caller may *write*, which this comment claimed
@@ -848,7 +851,7 @@ export function bulkRoutes(storage: Storage) {
     // opened the door.** A caller purges what it may write: holding
     // `items.purge` says a credential may destroy rows irrecoverably, and
     // its type permissions say which.
-    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+    let { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
       c,
       "write",
     );
@@ -887,6 +890,57 @@ export function bulkRoutes(storage: Storage) {
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
+    const credentialId = callerKey?.id ?? null;
+    const authorizeSelection = () =>
+      authorizeReplay(
+        c,
+        storage,
+        matched.map(({ id, type }) => ({
+          kind: "item" as const,
+          id,
+          type,
+          level: "write" as const,
+          permissionOnly: false,
+        })),
+      );
+    const refreshAuthority = async () => {
+      const live = await resolveLiveCredential(storage, credentialId, {
+        tokenOutlivesExpiry: false,
+      });
+      c.set("apiKey", live?.key);
+      requireAuth(c);
+      const grant = c.get("oauthGrant");
+      if (live?.kind === "oauth" && grant)
+        c.set("oauthGrant", { ...grant, scopes: live.permissions });
+      getTypeFilter(c);
+      if (action === "purge") requirePermission(c, "items.purge");
+      assertFilterEdgeTermsReadable(c, filter.filter);
+      const currentEnforcement = resolveEnforcement(
+        await readInstanceConfig(storage.settings),
+        live?.key,
+      );
+      // Selection is private until it is returned or queued. A changed
+      // source lever requires a fresh selection, without disclosing its old
+      // count or identifiers or implementing another copy of that filter.
+      if (
+        JSON.stringify(currentEnforcement.source_filter) !==
+        JSON.stringify(enforcementForAction.source_filter)
+      )
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "The source filter changed while selecting this action. Retry the request.",
+        );
+      if (
+        JSON.stringify(callerKey?.type_permissions) !==
+        JSON.stringify(live?.key.type_permissions)
+      )
+        await authorizeSelection();
+      callerKey = live?.key;
+      ({ allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+        c,
+        "write",
+      ));
+    };
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
@@ -941,7 +995,7 @@ export function bulkRoutes(storage: Storage) {
         ),
         occurred_after: filter.occurred_after,
         occurred_before: filter.occurred_before,
-        limit: Math.min(200, cap + 1 - matched.length),
+        limit: expected ? 200 : Math.min(200, cap + 1 - matched.length),
         cursor,
       });
       for (const item of page.data) {
@@ -954,7 +1008,14 @@ export function bulkRoutes(storage: Storage) {
         matched.length <= cap && matched.length !== expected?.size
           ? (page.next_cursor ?? undefined)
           : undefined;
+      if (cursor) {
+        await yieldBulkWork();
+        await refreshAuthority();
+      }
     } while (cursor);
+
+    await refreshAuthority();
+    await authorizeSelection();
 
     if (matched.length > cap) {
       throw new MarfaError(

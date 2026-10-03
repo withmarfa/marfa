@@ -33,6 +33,7 @@ import type {
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
+import { yieldBulkWork } from "./yield.js";
 import type {
   BulkActionErrorEntry,
   BulkActionInput,
@@ -390,6 +391,7 @@ export class BulkActionWorker {
         },
         this.nowFn().toISOString(),
       );
+      if (processed < matchedIds.length) await yieldBulkWork();
     }
 
     const { result, counts } = summarize();

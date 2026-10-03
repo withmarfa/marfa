@@ -26,6 +26,49 @@ afterAll(async () => {
 });
 
 describe("FTS — searchable:false honoring", () => {
+  it("matches searchable content and tags without matching an item identifier alone", async () => {
+    const body = `searchbody${ctx.runId}`;
+    const tag = `searchtag${ctx.runId}`;
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body },
+      tags: [tag],
+    });
+    expect(created.ok).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    for (const query of [body, tag]) {
+      const result = await client.search(query, { limit: 50 });
+      expect(result.ok).toBe(true);
+      expect(result.data.data.map((hit) => hit.item.id)).toContain(id);
+    }
+    const contentWitness = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: id },
+    });
+    const tagWitness = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `tagwitness${ctx.runId}` },
+      tags: [id],
+    });
+    expect(contentWitness.ok).toBe(true);
+    expect(tagWitness.ok).toBe(true);
+    trackItem(ctx, contentWitness.data.item.id);
+    trackItem(ctx, tagWitness.data.item.id);
+    const result = await client.search(`"${id}"`, { limit: 50 });
+    expect(result.ok).toBe(true);
+    expect(result.data.data.map((hit) => hit.item.id)).toEqual(
+      expect.arrayContaining([
+        contentWitness.data.item.id,
+        tagWitness.data.item.id,
+      ]),
+    );
+    expect(result.data.data.map((hit) => hit.item.id)).not.toContain(id);
+  });
+
   it("field with searchable:false is excluded from full-text matches", async () => {
     const typeId = `user.searchable-test-${ctx.runId}`;
     const reg = await client.registerType({

@@ -1230,7 +1230,6 @@ export class SqliteItemStore implements ItemStore {
           digestsIn(incomingProps ?? {}),
         );
 
-        await this.searchStore.remove(id);
         await this.searchStore.index(id, merged, input.type ?? row.type);
 
         return rowToItem({
@@ -1496,7 +1495,6 @@ export class SqliteItemStore implements ItemStore {
         staleCarried,
       );
 
-      await this.searchStore.remove(id);
       await this.searchStore.index(
         id,
         resolvedProperties,

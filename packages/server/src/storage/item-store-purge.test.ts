@@ -32,7 +32,7 @@ async function ftsRowCount(itemId: string): Promise<number> {
   // ids are well-formed UUIDv7 hex+hyphens; safe to interpolate in this
   // test-only context (the escape hatch doesn't bind params).
   const rows = await s.__sqliteAll(
-    `SELECT 1 FROM items_fts WHERE item_id = '${itemId.replace(/'/g, "''")}'`,
+    `SELECT 1 FROM items_fts WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = '${itemId.replace(/'/g, "''")}')`,
   );
   return rows.length;
 }

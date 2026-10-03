@@ -525,6 +525,12 @@ CREATE TABLE IF NOT EXISTS `item_links` (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_item_links_item` ON `item_links` (`item_id`);
+CREATE TABLE IF NOT EXISTS `item_search_keys` (
+	`seq` integer PRIMARY KEY NOT NULL,
+	`item_id` text NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `item_search_keys_item_id_unique` ON `item_search_keys` (`item_id`);
 CREATE TABLE IF NOT EXISTS `items` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,
