@@ -10,7 +10,7 @@ import type { EdgeStore, ItemReader } from "./interface.js";
 
 /**
  * Edge types that can reach around and close a cycle over more than one
- * edge — hierarchy for `parent-of`, version chain for `supersedes`. Reachability
+ * edge: hierarchy for `parent-of`, version chain for `supersedes`. Reachability
  * is skipped for every other edge type, where the graph is DAG-by-construction
  * or unordered. A self-loop is the exception and is refused on all of them,
  * because one edge closing on itself needs no walk to find.
@@ -28,7 +28,7 @@ const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
  * literal: a copy drifted once when the membership edge gained two container
  * types the copy did not, and two series could then hold each other. That
  * derivation is what makes this survive the target constraint becoming a role
- * rather than a list — a type declaring `container` is refused as a source the
+ * rather than a list: a type declaring `container` is refused as a source the
  * day it declares it, with nothing here to update. It is also what makes a
  * membership cycle impossible without a reachability query: every cycle needs a container
  * standing as a source somewhere, and no such edge can exist. Hierarchy is

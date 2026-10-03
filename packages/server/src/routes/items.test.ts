@@ -465,9 +465,8 @@ describe("natural-key upsert: inline edges are validated", () => {
 
 describe("inline edges: a self-loop is refused edge_cycle on every door", () => {
   // Driven on `about`, which is many-to-many and has no reachability check.
-  // On `parent-of` every one of these would pass the cycle check alone,
-  // which reaches A→A before any self-loop rule does — so the type is what
-  // makes these assertions witness the rule rather than the walk.
+  // On `parent-of`, reachability alone would also refuse A→A, so these
+  // assertions would not prove that the shared self-loop rule ran.
   //
   // Per door rather than once. The refusal is one shared check, but what a
   // caller reads is the door's envelope, and a door that wraps or reorders
