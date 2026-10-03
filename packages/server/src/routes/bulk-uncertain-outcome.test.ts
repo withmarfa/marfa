@@ -102,9 +102,9 @@ for (const family of ["items", "edges"] as const) {
       `${family} entry ${String(index)} keeps a lost COMMIT with %s witness truthful and continues`,
       async (witness) => {
         const rows = await inputs(family);
-        const insert = ctx.storage.audit.logOrThrow.bind(ctx.storage.audit);
+        const insert = ctx.storage.audit.log.bind(ctx.storage.audit);
         const attempts: number[] = [];
-        vi.spyOn(ctx.storage.audit, "logOrThrow").mockImplementation(
+        vi.spyOn(ctx.storage.audit, "log").mockImplementation(
           async (entry, id) => {
             await insert(entry, id);
             if (entry.action === `${family}.bulk`) {
@@ -185,8 +185,8 @@ for (const family of ["items", "edges"] as const) {
           );
         } else {
           fault.mode = "before";
-          const insert = ctx.storage.audit.logOrThrow.bind(ctx.storage.audit);
-          vi.spyOn(ctx.storage.audit, "logOrThrow").mockImplementation(
+          const insert = ctx.storage.audit.log.bind(ctx.storage.audit);
+          vi.spyOn(ctx.storage.audit, "log").mockImplementation(
             async (entry, id) => {
               await insert(entry, id);
               if (
@@ -245,14 +245,12 @@ it.each(["items", "edges"] as const)(
       `CREATE TRIGGER refuse_second_audit BEFORE INSERT ON audit_log WHEN NEW.action = '${family}.bulk' AND json_extract(NEW.details, '$.index') = 1 BEGIN SELECT RAISE(ABORT, 'audit refused'); END`,
       [],
     );
-    const insert = ctx.storage.audit.logOrThrow.bind(ctx.storage.audit);
-    vi.spyOn(ctx.storage.audit, "logOrThrow").mockImplementation(
-      async (entry, id) => {
-        await insert(entry, id);
-        if (entry.action === `${family}.bulk` && entry.details?.index === 0)
-          fault.armed = true;
-      },
-    );
+    const insert = ctx.storage.audit.log.bind(ctx.storage.audit);
+    vi.spyOn(ctx.storage.audit, "log").mockImplementation(async (entry, id) => {
+      await insert(entry, id);
+      if (entry.action === `${family}.bulk` && entry.details?.index === 0)
+        fault.armed = true;
+    });
     fault.mode = "after";
     vi.spyOn(ctx.storage.audit, "has").mockRejectedValue(
       new Error("witness unavailable"),

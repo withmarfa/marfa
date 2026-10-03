@@ -97,3 +97,35 @@
     Reason: a success response must not claim that a session has ended when the database operation failed to establish that outcome.
 
     Tests: `packages/server/src/auth/sign-out-failure.test.ts › refuses sign-out without clearing cookies when native session deletion fails, then retries successfully`, `› refuses sign-out when native lookup cannot determine whether to delete the session, then retries successfully`.
+
+## Credential audit units
+
+47. WHEN an owner account, key, bootstrap credential, OAuth registration, grant, consent, token, code, session, password, or profile mutation commits, the server MUST commit its audit record in the same database unit.
+
+    Reason: a missing audit must not leave undisclosed authority or a projection that disagrees with provider state. Browser consent, device approval, grant withdrawal, retirement, and session termination include their related provider rows and local projections in that unit.
+
+    Tests: `packages/server/src/auth/credential-audit.test.ts`, `packages/server/src/auth/oauth-client-revoke.test.ts`, `packages/server/src/routes/device-consent-row.test.ts`, `packages/server/src/routes/key-audit-atomicity.test.ts`, `packages/server/src/routes/bootstrap-audit-outcome.test.ts`, `packages/server/src/storage/credential-retention-audit.test.ts`.
+
+48. IF a credential unit rolls back, the server MUST preserve its prior database authority and publish no event for that unit.
+
+    Reason: a refused consent or withdrawal must not leave only part of its provider and projected state changed. Concurrent consent and revocation use the same pair lock before the database writer.
+
+    Tests: `packages/server/src/auth/oauth-client-revoke.test.ts`, `packages/server/src/routes/auth-grant-revoke.test.ts`, `packages/server/src/routes/consent-announcement-failure.test.ts`, `packages/server/src/routes/auth-consent-skip.test.ts`.
+
+49. WHILE a credential commit outcome is unknown, the server MUST withhold its success response, raw credential, authorization-code redirect, and cookie changes.
+
+    Reason: an unavailable commit acknowledgement is not proof of rollback. A retained audit can establish a committed result without replaying the mutation; an unavailable witness leaves the result unknown.
+
+    Tests: `packages/server/src/auth/credential-outcome.test.ts`, `packages/server/src/auth/oauth-client-revoke.test.ts`, `packages/server/src/routes/bootstrap-audit-outcome.test.ts`.
+
+50. WHEN a session ends, the server MUST commit its local session and session-bound token revocations before sending a remote logout notification.
+
+    Reason: an audit refusal or unknown commit must not announce a logout that the server has not established. Offline refresh tokens retain their existing lifetime. Remote delivery runs outside the database writer and cannot undo a committed logout.
+
+    Tests: `packages/server/src/auth/oauth-client-revoke.test.ts › rolls session logout and linked token revocation back before any remote notification`, `› publishes session logout only after a confirmed %s commit`, `› releases the writer while a committed logout notification waits for its receiver`.
+
+51. WHEN the server records a failed sign-in, reused grant, narrowed scope request, or refresh replay, it MUST make that observation durable before returning the corresponding protocol outcome.
+
+    Reason: a protocol refusal can be the intended result of a successfully recorded security observation. It does not imply rollback of that observation or an intentional replay withdrawal.
+
+    Tests: `packages/server/src/auth/credential-audit.test.ts`, `packages/server/src/auth/oauth-authorize-observability.test.ts`, `packages/server/src/auth/oauth-authorize-scope-narrowing.test.ts`, `packages/server/src/auth/oauth-client-revoke.test.ts`.
