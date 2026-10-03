@@ -11,9 +11,9 @@ use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
-use crate::store;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
+use crate::{read_view, store};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainReport {
@@ -610,8 +610,20 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 {
                     let mut conn = core.conn()?;
                     let tx = conn.transaction()?;
-                    store::record_refusal(&tx, row, &reason, None, true)?;
-                    move_edits_back(&tx, row)?;
+                    store::record_verdict(
+                        &tx,
+                        &row.id,
+                        &store::Answered {
+                            verdict: Verdict::Refused,
+                            reason: Some(&reason),
+                            answer: None,
+                            conflicted_copy_id: None,
+                        },
+                    )?;
+                    if let Some(owed) = store::owed_of(&tx, row)? {
+                        store::owe_read_back(&tx, &owed)?;
+                        store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
+                    }
                     tx.commit()?;
                 }
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
@@ -704,7 +716,9 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)),
+                | CoreError::StorageFull(_)
+                | CoreError::CopyExpired { .. }
+                | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),
             answer => answer,
         };
@@ -721,11 +735,18 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)),
+                | CoreError::StorageFull(_)
+                | CoreError::CopyExpired { .. }
+                | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),
             // The server answered and the copy could not take the answer: a
             // further attempt may clear it, nothing clears it on its own.
             Err(error) => {
+                if store::queued_write(&*core.conn()?, &row.id)?
+                    .is_some_and(|current| current.verdict.is_some())
+                {
+                    return Err(error);
+                }
                 let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
                 let mut settled = finish_counted(
                     core,
@@ -750,15 +771,6 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
             && settled.reason.as_deref() == Some(BlockedReason::CredentialRefused.as_str());
         if settled.verdict.is_none() || credential_block {
             waiting.insert(row.id.clone());
-        }
-        // A refused credential is not about the edit.
-        if matches!(
-            settled.verdict,
-            Some(Verdict::Refused | Verdict::Blocked | Verdict::Dead)
-        ) && !credential_block
-        {
-            let conn = core.conn()?;
-            move_edits_back(&conn, row)?;
         }
         for (other, verdict, reason) in &settled.also {
             answers.insert(other.id.clone(), Some(*verdict));
@@ -1142,6 +1154,190 @@ impl Settled {
     }
 }
 
+fn receipt_key(id: &str) -> String {
+    format!("receipt_pending/{id}")
+}
+
+fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
+    let current = store::queued_write(conn, &row.id)?;
+    if current.as_ref().is_none_or(|current| {
+        current.idempotency_key != row.idempotency_key
+            || current.body != row.body
+            || current.kind != row.kind
+            || current.base_version != row.base_version
+            || current.item_id != row.item_id
+            || current.edge_id != row.edge_id
+    }) {
+        return Err(CoreError::StreamIncomplete {
+            reason: "local_queue_changed".into(),
+        });
+    }
+    Ok(())
+}
+
+fn settle_success(
+    core: &Core,
+    row: &QueuedWrite,
+    answer: &Answer,
+    shape: Shape,
+) -> Result<Settled> {
+    let item = if shape == Shape::Item {
+        serde_json::from_str::<WireWriteAnswer>(&answer.body).ok()
+    } else {
+        None
+    };
+    let edge = if shape == Shape::Edge {
+        serde_json::from_str::<WireEdgeAnswer>(&answer.body).ok()
+    } else {
+        None
+    };
+    let blob_matches = shape != Shape::Blob
+        || serde_json::from_str::<serde_json::Value>(&answer.body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("hash")
+                    .and_then(|hash| hash.as_str())
+                    .map(str::to_owned)
+            })
+            .as_deref()
+            == row.blob.as_deref();
+    if shape == Shape::Item && item.is_none()
+        || shape == Shape::Edge && edge.is_none()
+        || !blob_matches
+    {
+        let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
+        return finish_counted(core, row, refusals, Some(answer.body.clone()));
+    }
+    let (verdict, conflicted_copy_id, merged_fields) = match item
+        .as_ref()
+        .and_then(|item| item.conflict_resolution.as_ref())
+    {
+        None => (Verdict::Accepted, None, Vec::new()),
+        Some(resolution) => (
+            if resolution.conflicted_copy_id.is_some() {
+                Verdict::Conflicted
+            } else {
+                Verdict::Merged
+            },
+            resolution.conflicted_copy_id.clone(),
+            resolution.fields.clone(),
+        ),
+    };
+    let mut settled = Settled {
+        verdict: Some(verdict),
+        conflicted_copy_id: conflicted_copy_id.clone(),
+        merged_fields,
+        replayed: answer.replayed
+            || item.as_ref().is_some_and(|item| item.acknowledged)
+            || edge.as_ref().is_some_and(|edge| edge.acknowledged),
+        ..Settled::plain(None, None, row.refusals)
+    };
+    let owed = {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        same_attempt(&tx, row)?;
+        let mut owed = store::owed_of(&tx, row)?;
+        if let (Some(owed), Some(item)) = (&mut owed, &item) {
+            owed.id = item.item.id.clone();
+        }
+        if let (Some(owed), Some(edge)) = (&mut owed, &edge) {
+            owed.id = edge.edge.id.clone();
+        }
+        if store::meta_get(&tx, &receipt_key(&row.id))?.is_none() {
+            store::record_verdict(
+                &tx,
+                &row.id,
+                &store::Answered {
+                    verdict,
+                    reason: None,
+                    answer: Some(&answer.body),
+                    conflicted_copy_id: conflicted_copy_id.as_deref(),
+                },
+            )?;
+        }
+        if let Some(owed) = &owed {
+            store::owe_read_back(&tx, owed)?;
+            store::meta_set(
+                &tx,
+                &receipt_key(&row.id),
+                match shape {
+                    Shape::Item => "item",
+                    Shape::Edge => "edge",
+                    _ => "plain",
+                },
+            )?;
+        }
+        tx.commit()?;
+        owed
+    };
+    let Some(owed) = owed else {
+        return Ok(settled);
+    };
+    let read = match read_owed(core, &owed) {
+        Ok(read) => read,
+        Err(error) if error.is_environmental() => {
+            settled.unavailable = Some(error.to_string());
+            settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
+            return Ok(settled);
+        }
+        Err(error) => return Err(error),
+    };
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    same_attempt(&tx, row)?;
+    check_read_back(&tx, &read)?;
+    restore_settled_overlay(&tx, row, &read)?;
+    if let Some(parsed) = &item {
+        if row.kind == WriteKind::CreateItem
+            && let Some(local) = row.item_id.as_deref()
+        {
+            store::adopt_answered_id(&tx, local, &parsed.item.id)?;
+            store::refollow(&tx, &parsed.item.id, &row.id)?;
+        }
+        move_edits_behind(
+            &tx,
+            row,
+            verdict,
+            parsed.acknowledged,
+            &parsed.item.id,
+            &AnsweredAt {
+                version: parsed.item.version,
+                item: Some(&parsed.item),
+            },
+        )?;
+        if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
+            move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
+        }
+        if verdict == Verdict::Conflicted
+            && row.kind == WriteKind::UpdateItem
+            && against_its_own(&tx, row, parsed)?
+        {
+            store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
+        }
+    }
+    if let Some(parsed) = &edge {
+        move_edits_behind(
+            &tx,
+            row,
+            verdict,
+            parsed.acknowledged,
+            &parsed.edge.id,
+            &AnsweredAt {
+                version: parsed.edge.version,
+                item: None,
+            },
+        )?;
+    }
+    // The receipt can rename a pin, but the fresh response was checked against
+    // the exact pre-adoption pin set while this transaction held the writer.
+    apply_read_back_unchecked(&tx, &read)?;
+    store::settle_read_back(&tx, owed.subject, &owed.id)?;
+    store::meta_delete(&tx, &receipt_key(&row.id))?;
+    tx.commit()?;
+    Ok(settled)
+}
+
 fn settle(
     core: &Core,
     row: &QueuedWrite,
@@ -1151,206 +1347,12 @@ fn settle(
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     match class {
-        Classified::Success => {
-            let body = envelope.clone().unwrap_or_default();
-            // Either says replayed: the header comes from the replay cache,
-            // `acknowledged` from the route.
-            let replayed_header = answer
-                .as_ref()
-                .map(|answer| answer.replayed)
-                .unwrap_or(false);
-            match shape {
-                Shape::Item => {
-                    let Ok(parsed) = serde_json::from_str::<WireWriteAnswer>(&body) else {
-                        // Counted, not accepted: the device cannot say what
-                        // the server took.
-                        let conn = core.conn()?;
-                        let refusals = store::count_refusal(&conn, &row.id)?;
-                        drop(conn);
-                        return finish_counted(core, row, refusals, envelope);
-                    };
-                    let (verdict, conflicted_copy_id, merged_fields) =
-                        match &parsed.conflict_resolution {
-                            None => (Verdict::Accepted, None, Vec::new()),
-                            Some(resolution) => match &resolution.conflicted_copy_id {
-                                None => (Verdict::Merged, None, resolution.fields.clone()),
-                                Some(sibling) => (
-                                    Verdict::Conflicted,
-                                    Some(sibling.clone()),
-                                    resolution.fields.clone(),
-                                ),
-                            },
-                        };
-                    let mut conn = core.conn()?;
-                    let catalog = Catalog::load(&conn)?;
-                    let indexing = catalog.indexing(&parsed.item.r#type);
-                    let tags = parsed
-                        .metadata
-                        .as_ref()
-                        .map(|metadata| metadata.tags.clone());
-                    let tx = conn.transaction()?;
-                    // Not over a newer row: a replayed answer can arrive
-                    // after a catch-up brought a later version. Only a move
-                    // out of the slice lets the row go; an edit to a row held
-                    // outside it, such as an attachment, keeps it, and an
-                    // answer behind a move does not put back what the move
-                    // let go.
-                    let newer = store::holds_later(
-                        &tx,
-                        Subject::Item,
-                        &parsed.item.id,
-                        parsed.item.version,
-                        &parsed.item.updated_at,
-                    )?;
-                    let moved_out = !newer
-                        && row.kind != WriteKind::CreateItem
-                        && !store::slice_holds(&tx, &catalog, &parsed.item)?
-                        && (!store::item_held(&tx, &parsed.item.id)?
-                            || row.kind == WriteKind::UpdateItem && store::moves(&row.body));
-                    if moved_out {
-                        store::evict_item(&tx, &parsed.item.id, &store::whole_edge_types(&tx)?)?;
-                    } else {
-                        store::put_server_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
-                    }
-                    // A keyed create went without the minted id, so its
-                    // answer names the server's row.
-                    if row.kind == WriteKind::CreateItem
-                        && let Some(local) = row.item_id.as_deref()
-                    {
-                        store::adopt_answered_id(&tx, local, &parsed.item.id)?;
-                        store::refollow(&tx, &parsed.item.id, &row.id)?;
-                    }
-                    store::record_verdict(
-                        &tx,
-                        &row.id,
-                        &store::Answered {
-                            verdict,
-                            reason: None,
-                            answer: envelope.as_deref(),
-                            conflicted_copy_id: conflicted_copy_id.as_deref(),
-                        },
-                    )?;
-                    move_edits_behind(
-                        &tx,
-                        row,
-                        verdict,
-                        parsed.acknowledged,
-                        &parsed.item.id,
-                        &AnsweredAt {
-                            version: parsed.item.version,
-                            item: Some(&parsed.item),
-                        },
-                    )?;
-                    if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
-                        move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
-                    }
-                    // Set aside against this device's own earlier save: the
-                    // file holds the newest, so the pull leaves it and the
-                    // next scan sends it as an edit.
-                    if verdict == Verdict::Conflicted
-                        && row.kind == WriteKind::UpdateItem
-                        && against_its_own(&tx, row, &parsed)?
-                    {
-                        store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
-                    }
-                    store::lay_waiting_writes_over(&tx, &parsed.item.id, &|laid| {
-                        catalog.indexing(laid)
-                    })?;
-                    tx.commit()?;
-                    Ok(Settled {
-                        verdict: Some(verdict),
-                        conflicted_copy_id,
-                        replayed: parsed.acknowledged || replayed_header,
-                        merged_fields,
-                        ..Settled::plain(None, None, row.refusals)
-                    })
-                }
-                Shape::Edge => {
-                    let Ok(parsed) = serde_json::from_str::<WireEdgeAnswer>(&body) else {
-                        let conn = core.conn()?;
-                        let refusals = store::count_refusal(&conn, &row.id)?;
-                        drop(conn);
-                        return finish_counted(core, row, refusals, envelope);
-                    };
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    store::put_server_edge(&tx, &parsed.edge)?;
-                    store::record_verdict(
-                        &tx,
-                        &row.id,
-                        &store::Answered {
-                            verdict: Verdict::Accepted,
-                            reason: None,
-                            answer: envelope.as_deref(),
-                            conflicted_copy_id: None,
-                        },
-                    )?;
-                    move_edits_behind(
-                        &tx,
-                        row,
-                        Verdict::Accepted,
-                        parsed.acknowledged,
-                        &parsed.edge.id,
-                        &AnsweredAt {
-                            version: parsed.edge.version,
-                            item: None,
-                        },
-                    )?;
-                    store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
-                    store::let_go_of_untaken_edge(&tx, &parsed.edge.id)?;
-                    tx.commit()?;
-                    Ok(Settled {
-                        replayed: parsed.acknowledged || replayed_header,
-                        ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
-                    })
-                }
-                Shape::Blob => {
-                    // Another hash is unreadable: a file item naming the
-                    // queued hash would name nothing.
-                    let named = serde_json::from_str::<serde_json::Value>(&body)
-                        .ok()
-                        .and_then(|answer| Some(answer.get("hash")?.as_str()?.to_string()));
-                    if named.as_deref() != row.blob.as_deref() {
-                        let conn = core.conn()?;
-                        let refusals = store::count_refusal(&conn, &row.id)?;
-                        drop(conn);
-                        return finish_counted(core, row, refusals, envelope);
-                    }
-                    let conn = core.conn()?;
-                    store::record_verdict(
-                        &conn,
-                        &row.id,
-                        &store::Answered {
-                            verdict: Verdict::Accepted,
-                            reason: None,
-                            answer: envelope.as_deref(),
-                            conflicted_copy_id: None,
-                        },
-                    )?;
-                    Ok(Settled::plain(Some(Verdict::Accepted), None, row.refusals))
-                }
-                Shape::Plain => {
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    store::record_verdict(
-                        &tx,
-                        &row.id,
-                        &store::Answered {
-                            verdict: Verdict::Accepted,
-                            reason: None,
-                            answer: envelope.as_deref(),
-                            conflicted_copy_id: None,
-                        },
-                    )?;
-                    store::fold_into_beneath(&tx, row)?;
-                    tx.commit()?;
-                    Ok(Settled {
-                        replayed: replayed_header,
-                        ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
-                    })
-                }
-            }
-        }
+        Classified::Success => settle_success(
+            core,
+            row,
+            answer.as_ref().expect("a success has a response"),
+            shape,
+        ),
         Classified::Environmental => Ok(Settled {
             retry_after_seconds: answer
                 .as_ref()
@@ -1372,7 +1374,21 @@ fn settle(
             {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                store::record_refusal(&tx, row, &code, envelope.as_deref(), true)?;
+                same_attempt(&tx, row)?;
+                store::record_verdict(
+                    &tx,
+                    &row.id,
+                    &store::Answered {
+                        verdict: Verdict::Refused,
+                        reason: Some(&code),
+                        answer: envelope.as_deref(),
+                        conflicted_copy_id: None,
+                    },
+                )?;
+                if let Some(owed) = store::owed_of(&tx, row)? {
+                    store::owe_read_back(&tx, &owed)?;
+                    store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
+                }
                 tx.commit()?;
             }
             let unread = reconcile(core, row)?;
@@ -1392,21 +1408,11 @@ fn settle(
         }
         Classified::Landed { id, code } => land(core, row, answer, shape, &id, code),
         Classified::Trashed => {
-            {
-                let mut conn = core.conn()?;
-                let tx = conn.transaction()?;
-                // Its row was only ever this device's, so nothing is owed.
-                store::record_refusal(&tx, row, "trashed", envelope.as_deref(), false)?;
-                if let Some(local) = row.item_id.as_deref() {
-                    store::unpin(&tx, local)?;
-                }
-                tx.commit()?;
+            let mut response = answer.clone();
+            if let Ok(answer) = &mut response {
+                answer.code = "trashed".into();
             }
-            Ok(Settled::plain(
-                Some(Verdict::Refused),
-                Some("trashed".into()),
-                row.refusals,
-            ))
+            settle(core, row, &response, Classified::Contract, shape)
         }
         Classified::Unclaimed { source } => {
             let mut conn = core.conn()?;
@@ -1444,9 +1450,11 @@ fn settle(
             })
         }
         Classified::Block(reason) | Classified::BlockQueue(reason) => {
-            let conn = core.conn()?;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            same_attempt(&tx, row)?;
             store::record_verdict(
-                &conn,
+                &tx,
                 &row.id,
                 &store::Answered {
                     verdict: Verdict::Blocked,
@@ -1455,6 +1463,12 @@ fn settle(
                     conflicted_copy_id: None,
                 },
             )?;
+            if reason != BlockedReason::CredentialRefused {
+                // The later edit read this failed edit's optimistic fields.
+                // Correct its unsent base, without adopting any server data.
+                move_edits_back(&tx, row)?;
+            }
+            tx.commit()?;
             Ok(Settled {
                 stops_the_drain: matches!(class, Classified::BlockQueue(_)),
                 ..Settled::plain(
@@ -1467,91 +1481,77 @@ fn settle(
     }
 }
 
-/// The row is read first unless the copy holds it at a version the server
-/// still holds. Then the copy keeps it as read, so the next edit is based on
-/// that version and the server merges it rather than taking it as newer.
+/// A natural-key receipt settles independently of the current read authority.
+/// Its identity reconciliation waits until a fresh conditional read can land.
 fn land(
     core: &Core,
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
-    shape: Shape,
+    _shape: Shape,
     id: &str,
     code: String,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
-    // A `version_conflict` says the server still holds the version the
-    // create read; an `ancestor_unavailable` says it does not.
-    let read_at = row
-        .base_version
-        .filter(|version| code == "version_conflict" && *version > 0);
-    let held = {
-        let conn = core.conn()?;
-        store::item_held(&conn, id)?
+    let owed = store::Owed {
+        subject: Subject::Item,
+        id: id.into(),
+        source_id: None,
+        edge_type: None,
+        moved: false,
     };
-    let read = if held && read_at.is_some() {
-        None
-    } else {
-        match core.http()?.item(id) {
-            Ok(Some(found)) => Some(found),
-            // The server keeps its answer under the create's key, so the next
-            // drain is answered the same way and reads again.
-            Err(error) if error.is_environmental() => {
-                return Ok(Settled {
-                    retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
-                    unavailable: unavailable_by(&error),
-                    ..Settled::plain(None, None, row.refusals)
-                });
-            }
-            // Not read, as for any answer on another contract: the pass
-            // ends, and the create goes again under its key.
-            Err(
-                error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
-                | CoreError::RenewalFailed(_)
-                | CoreError::SignedOut { .. }
-                | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)),
-            ) => return Err(error),
-            Err(CoreError::Unauthorized { .. }) => {
-                return settle(
-                    core,
-                    row,
-                    answer,
-                    Classified::BlockQueue(BlockedReason::CredentialRefused),
-                    shape,
-                );
-            }
-            // Gone or out of reach since the refusal: nothing to move onto.
-            Ok(None) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => {
-                let reason = if code == "version_conflict" {
-                    BlockedReason::ConflictUnresolved
-                } else {
-                    BlockedReason::AncestorUnavailable
-                };
-                return settle(core, row, answer, Classified::Block(reason), shape);
-            }
-            Err(_) => return settle(core, row, answer, Classified::Counted, shape),
+    {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        same_attempt(&tx, row)?;
+        if store::meta_get(&tx, &receipt_key(&row.id))?.is_none() {
+            store::record_verdict(
+                &tx,
+                &row.id,
+                &store::Answered {
+                    verdict: Verdict::Refused,
+                    reason: Some(&code),
+                    answer: envelope.as_deref(),
+                    conflicted_copy_id: None,
+                },
+            )?;
         }
+        store::owe_read_back(&tx, &owed)?;
+        store::meta_set(&tx, &receipt_key(&row.id), &format!("land:{id}"))?;
+        tx.commit()?;
+    }
+    let mut settled = Settled::plain(Some(Verdict::Refused), Some(code), row.refusals);
+    let read = match read_owed(core, &owed) {
+        Ok(read @ ReadBack::Item { held: Some(_), .. }) => read,
+        Ok(_) => {
+            settled.unavailable =
+                Some("the row named by the receipt is not returned to this read view".into());
+            return Ok(settled);
+        }
+        Err(error) if error.is_environmental() => {
+            settled.unavailable = Some(error.to_string());
+            settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
+            return Ok(settled);
+        }
+        Err(error) => return Err(error),
     };
     let mut conn = core.conn()?;
-    let catalog = Catalog::load(&conn)?;
     let tx = conn.transaction()?;
-    if let Some(found) = &read {
-        let indexing = catalog.indexing(&found.item.r#type);
-        store::put_server_item(&tx, &found.item, Some(&found.metadata.tags), &indexing)?;
-    }
+    same_attempt(&tx, row)?;
+    check_read_back(&tx, &read)?;
+    // The checked response must be admitted under the pin and waiting work
+    // that move from the local identity in this same transaction.
     let refused = store::land_on_held_row(&tx, row, id)?;
-    // The copy is on the server's row now; the minted one is gone.
-    store::record_refusal(&tx, row, &code, envelope.as_deref(), false)?;
+    apply_read_back_unchecked(&tx, &read)?;
+    let catalog = Catalog::load(&tx)?;
     store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
+    store::settle_read_back(&tx, Subject::Item, id)?;
+    store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
-    Ok(Settled {
-        also: refused
-            .into_iter()
-            .map(|(other, reason)| (other, Verdict::Refused, reason))
-            .collect(),
-        ..Settled::plain(Some(Verdict::Refused), Some(code), row.refusals)
-    })
+    settled.also = refused
+        .into_iter()
+        .map(|(other, reason)| (other, Verdict::Refused, reason))
+        .collect();
+    Ok(settled)
 }
 
 fn finish_counted(
@@ -1563,9 +1563,11 @@ fn finish_counted(
     if refusals < store::CEILING {
         return Ok(Settled::plain(None, None, refusals));
     }
-    let conn = core.conn()?;
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    same_attempt(&tx, row)?;
     store::record_verdict(
-        &conn,
+        &tx,
         &row.id,
         &store::Answered {
             verdict: Verdict::Dead,
@@ -1574,32 +1576,44 @@ fn finish_counted(
             conflicted_copy_id: None,
         },
     )?;
+    // Dead does not establish that this edit landed. Followers cannot treat
+    // its optimistic value as content read from their newer server version.
+    move_edits_back(&tx, row)?;
+    tx.commit()?;
     Ok(Settled::plain(Some(Verdict::Dead), None, refusals))
 }
 
 /// A read rather than a wait for catch-up: a refused write produces no
-/// event. The verdict and the copy put back are recorded already, and so is
-/// the read owed, so a read that fails is tried by the next drain. A contract
-/// mismatch, redirect, failed renewal or full store ends the pass with its typed error.
+/// event. The verdict and debt survive a failed read; the refused overlay
+/// is removed only after a fresh response passes the local context guard.
+/// A contract mismatch, redirect, failed renewal or full store ends the pass.
 /// Other unavailable reads return their reason and end the pass too.
 fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
-    match read_owed(core, &owed).and_then(|read| apply_owed(core, &owed, &read)) {
+    match read_owed(core, &owed).and_then(|read| {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        check_read_back(&tx, &read)?;
+        same_attempt(&tx, row)?;
+        restore_settled_overlay(&tx, row, &read)?;
+        move_edits_back(&tx, row)?;
+        apply_read_back_unchecked(&tx, &read)?;
+        store::settle_read_back(&tx, owed.subject, &owed.id)?;
+        store::meta_delete(&tx, &receipt_key(&row.id))?;
+        tx.commit()?;
+        Ok(())
+    }) {
         Err(
             error @ (CoreError::Redirected { .. }
             | CoreError::ContractMismatch { .. }
             | CoreError::RenewalFailed(_)
-            | CoreError::StorageFull(_)),
+            | CoreError::StorageFull(_)
+            | CoreError::CopyExpired { .. }
+            | CoreError::StreamIncomplete { .. }),
         ) => Err(error),
-        Err(error) => {
-            // A refused create's id is the server's only if a read finds it.
-            if row.kind == WriteKind::CreateItem {
-                store::unpin(&*core.conn()?, &owed.id)?;
-            }
-            Ok(unreadable(&error))
-        }
+        Err(error) => Ok(unreadable(&error)),
         Ok(()) => Ok(None),
     }
 }
@@ -1620,6 +1634,56 @@ fn unreadable(error: &CoreError) -> Option<Unreadable> {
 /// that fails again stays owed, and one that cannot get through ends the
 /// pass before anything is sent.
 fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
+    let pending = {
+        let conn = core.conn()?;
+        store::queued_writes(&conn)?
+            .into_iter()
+            .filter_map(|row| match store::meta_get(&conn, &receipt_key(&row.id)) {
+                Ok(Some(shape)) => Some(Ok((row, shape))),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    for (row, shape) in pending {
+        if shape == "refused" {
+            if let Some(unread) = reconcile(core, &row)? {
+                return Ok(Some(unread));
+            }
+            continue;
+        }
+        let answer = Answer {
+            status: 200,
+            code: String::new(),
+            body: row.answer.clone().unwrap_or_default(),
+            retry_after_seconds: None,
+            replayed: true,
+            contract_named: true,
+        };
+        let settled = if let Some(id) = shape.strip_prefix("land:") {
+            land(
+                core,
+                &row,
+                &Ok(answer),
+                Shape::Plain,
+                id,
+                row.reason.clone().unwrap_or_default(),
+            )?
+        } else {
+            let shape = match shape.as_str() {
+                "item" => Shape::Item,
+                "edge" => Shape::Edge,
+                _ => Shape::Plain,
+            };
+            settle_success(core, &row, &answer, shape)?
+        };
+        if let Some(reason) = settled.unavailable {
+            return Ok(Some(Unreadable {
+                reason,
+                retry_after_seconds: settled.retry_after_seconds,
+            }));
+        }
+    }
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
         match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
@@ -1629,7 +1693,9 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)),
+                | CoreError::StorageFull(_)
+                | CoreError::CopyExpired { .. }
+                | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),
             Err(error) => {
                 if let Some(unread) = unreadable(&error) {
@@ -1654,15 +1720,15 @@ fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
 pub(crate) enum ReadBack {
     Nothing,
     Item {
+        context: read_view::Context,
         id: String,
         held: Option<Box<crate::wire::WireItemWithMetadata>>,
-        /// Read before anything changes the queue.
-        moved: bool,
         /// The copy's stamp before the read, so a row the read did not find
         /// is forgotten only where nothing has written it since.
         before: Option<store::Stamp>,
     },
     Edge {
+        context: read_view::Context,
         id: String,
         held: Option<Box<WireEdge>>,
         before: Option<store::Stamp>,
@@ -1679,56 +1745,85 @@ pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
 }
 
 fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
-    let http = core.http()?;
-    let before = store::stamp(&*core.conn()?, owed.subject, &owed.id)?;
+    let (context, before) = {
+        let conn = core.conn()?;
+        (
+            read_view::Context::capture(&conn)?,
+            store::stamp(&conn, owed.subject, &owed.id)?,
+        )
+    };
+    let http = context.http(core.http()?);
     if owed.subject == Subject::Edge {
-        let Some(source) = owed.source_id.as_deref() else {
-            return Ok(ReadBack::Nothing);
+        let held = match http.edge(&owed.id) {
+            Ok(found) => found,
+            Err(CoreError::Forbidden { .. }) => None,
+            Err(error) => return Err(context.failed(core, error)?),
         };
-        // Every page: an edge missing from the first may be on a later one,
-        // and the copy would delete it with no event to put it back.
-        let mut found = None;
-        if let Some(edge_type) = &owed.edge_type {
-            let mut cursor: Option<String> = None;
-            loop {
-                // A source whose create never landed holds no edges.
-                let page = match http.item_edges_page(source, edge_type, cursor.as_deref()) {
-                    Err(CoreError::NotFound { .. }) => break,
-                    page => page?,
-                };
-                found = page.data.into_iter().find(|edge| edge.id == owed.id);
-                if found.is_some() {
-                    break;
-                }
-                match page.next_cursor {
-                    None => break,
-                    // A cursor that does not move would spin forever.
-                    Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                    Some(_) => {
-                        return Err(CoreError::Invalid(format!(
-                            "the server kept answering with the same cursor while reporting more \
-                             edges for {source}, so whether it still holds {} cannot be answered",
-                            owed.id
-                        )));
-                    }
-                }
-            }
-        }
         return Ok(ReadBack::Edge {
+            context,
             id: owed.id.clone(),
-            held: found.map(Box::new),
+            held: held.map(Box::new),
             before,
         });
     }
+    let held = match http.item(&owed.id) {
+        Ok(found) => found,
+        Err(CoreError::Forbidden { .. }) => None,
+        Err(error) => return Err(context.failed(core, error)?),
+    };
     Ok(ReadBack::Item {
+        context,
         id: owed.id.clone(),
-        held: http.item(&owed.id)?.map(Box::new),
-        moved: owed.moved,
+        held: held.map(Box::new),
         before,
     })
 }
 
+pub(crate) fn check_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
+    match read {
+        ReadBack::Nothing => Ok(()),
+        ReadBack::Item { context, .. } | ReadBack::Edge { context, .. } => context.check(conn),
+    }
+}
+
+pub(crate) fn withdraw_read_backs(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    held: &[QueuedWrite],
+    reads: &[ReadBack],
+) -> Result<()> {
+    for read in reads {
+        check_read_back(conn, read)?;
+    }
+    store::withdraw(conn, row, held)?;
+    for read in reads {
+        apply_read_back_unchecked(conn, read)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
+    check_read_back(conn, read)?;
+    apply_read_back_unchecked(conn, read)
+}
+
+fn restore_settled_overlay(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    read: &ReadBack,
+) -> Result<()> {
+    if !matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge)
+        && matches!(
+            read,
+            ReadBack::Item { held: Some(_), .. } | ReadBack::Edge { held: Some(_), .. }
+        )
+    {
+        store::put_back(conn, row)?;
+    }
+    Ok(())
+}
+
+fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
     match read {
         ReadBack::Nothing => {}
         ReadBack::Edge {
@@ -1745,6 +1840,7 @@ pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> R
             id,
             held: None,
             before,
+            ..
         } => {
             let now = store::stamp(conn, Subject::Edge, id)?;
             if now.is_none() || now == *before {
@@ -1752,11 +1848,11 @@ pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> R
             }
         }
         ReadBack::Item {
-            held: Some(held),
-            moved,
-            ..
+            held: Some(held), ..
         } => {
             let item = &held.item;
+            let listed = held.listed.ok_or_else(read_view::invalid)?;
+            read_view::set_listed(conn, &item.id, listed)?;
             if store::holds_later(
                 conn,
                 Subject::Item,
@@ -1769,12 +1865,8 @@ pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> R
             }
             let catalog = Catalog::load(conn)?;
             let indexing = catalog.indexing(&item.r#type);
-            // Outside the slice: not put back where a move ahead let it go,
-            // and let go where this refused write was itself a move. A row
-            // held outside the slice for another reason, an attachment,
-            // stays.
-            let let_go = !store::slice_holds(conn, &catalog, item)?
-                && (!store::item_held(conn, &item.id)? || *moved);
+            let let_go =
+                !store::slice_holds(conn, &catalog, item)? && !store::item_waits(conn, &item.id)?;
             if let_go {
                 store::evict_item(conn, &item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
@@ -1972,6 +2064,106 @@ mod tests {
     }
 
     #[test]
+    fn failed_verdicts_restore_unsent_followers_base_without_reading_or_rewriting_sent_work() {
+        for kind in [WriteKind::UpdateItem, WriteKind::UpdateEdge] {
+            for code in [
+                "ancestor_unavailable",
+                "version_conflict",
+                "idempotency_key_reused",
+                "unauthorized",
+                "dead",
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                // No server and no read view: this is a correction of what a
+                // queued edit read, not adoption of a server baseline.
+                let core = Core::open(dir.path().join("copy.sqlite"), None).unwrap();
+                let (ahead, follows, apart, sent, sent_before, key) = {
+                    let conn = core.conn().unwrap();
+                    let queue = |base, properties: serde_json::Value| {
+                        let body = json!({"version": base, "properties": properties}).to_string();
+                        store::enqueue(
+                            &conn,
+                            &store::NewWrite {
+                                payload: &body,
+                                ..write(
+                                    kind,
+                                    "mine",
+                                    (kind == WriteKind::UpdateEdge).then_some("edge"),
+                                    Some(base),
+                                    &[],
+                                )
+                            },
+                        )
+                        .unwrap()
+                    };
+                    let ahead = queue(1, json!({"body": "first"}));
+                    let follows = queue(2, json!({"body": "second", "title": "held"}));
+                    let apart = queue(2, json!({"title": "other"}));
+                    let sent = queue(2, json!({"body": "already sent"}));
+                    store::record_read(
+                        &conn,
+                        &follows.id,
+                        &json!({"properties": {"body": "first", "title": "held"}}),
+                    )
+                    .unwrap();
+                    store::mark_sent(&conn, &ahead.id).unwrap();
+                    store::mark_sent(&conn, &sent.id).unwrap();
+                    if code == "dead" {
+                        for _ in 1..store::CEILING {
+                            store::count_refusal(&conn, &ahead.id).unwrap();
+                        }
+                    }
+                    let sent_before = store::queued_write(&conn, &sent.id).unwrap().unwrap();
+                    let key = follows.idempotency_key.clone();
+                    (ahead, follows, apart, sent, sent_before, key)
+                };
+                let answer = if code == "dead" {
+                    Err(CoreError::Decoding("unreadable receipt".into()))
+                } else {
+                    Ok(Answer {
+                        status: match code {
+                            "unauthorized" => 401,
+                            "idempotency_key_reused" => 422,
+                            _ => 409,
+                        },
+                        code: code.into(),
+                        body: "{}".into(),
+                        retry_after_seconds: None,
+                        replayed: false,
+                        contract_named: true,
+                    })
+                };
+                settle(&core, &ahead, &answer, classify(&answer), Shape::Item).unwrap();
+                let conn = core.conn().unwrap();
+                let expected = if code == "unauthorized" { 2 } else { 1 };
+                assert_eq!(
+                    based_on(&conn, &follows.id),
+                    (Some(expected), Some(expected)),
+                    "{kind:?} {code}"
+                );
+                assert_eq!(based_on(&conn, &apart.id), (Some(2), Some(2)));
+                assert_eq!(
+                    store::queued_write(&conn, &sent.id).unwrap().unwrap(),
+                    sent_before
+                );
+                let current = store::queued_write(&conn, &follows.id).unwrap().unwrap();
+                assert_eq!(current.idempotency_key, key);
+                let properties = if code == "unauthorized" {
+                    json!({"body": "second", "title": "held"})
+                } else {
+                    json!({"body": "second"})
+                };
+                assert_eq!(current.body["properties"], properties);
+                assert_eq!(
+                    store::payload_of(&conn, &ahead.id).unwrap(),
+                    ahead.body.to_string()
+                );
+                assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn an_edit_made_against_one_that_did_not_land_goes_back_onto_its_base() {
         let conn = store::open_in_memory().unwrap();
         let queue = |base: i64, properties: serde_json::Value| {
@@ -2142,6 +2334,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             for id in rows {
@@ -2196,6 +2390,375 @@ mod tests {
     }
 
     #[test]
+    fn accepted_receipt_owes_a_fresh_read_even_without_a_generation_change() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::refusal(503, "unavailable"),
+            ],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let original = core.queue().unwrap().remove(0);
+        let report = core.drain().unwrap();
+        assert_eq!(
+            server.seen("/items/a").len(),
+            2,
+            "a receipt cannot certify the baseline"
+        );
+        assert!(report.unavailable.is_some());
+        let requests = server.seen("/items/a");
+        assert!(
+            requests[0].read_view.is_none(),
+            "writes do not carry read preconditions"
+        );
+        assert_eq!(
+            requests[1].read_view.as_deref(),
+            Some(crate::scripted::FENCE)
+        );
+        let settled = store::queued_write(&core.conn().unwrap(), &original.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Accepted));
+        assert_eq!(settled.refusals, 0);
+        assert_eq!(settled.idempotency_key, original.idempotency_key);
+        assert_eq!(settled.body, original.body);
+        assert_eq!(
+            store::owed_read_backs(&core.conn().unwrap()).unwrap().len(),
+            1
+        );
+        assert_eq!(store::forget_answered(&core.conn().unwrap()).unwrap(), 0);
+        server.on(
+            "/items/a",
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        core.drain().unwrap();
+        assert_eq!(
+            server.seen("/items/a").len(),
+            3,
+            "retry reads without resending the settled write"
+        );
+        assert!(
+            store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(store::forget_answered(&core.conn().unwrap()).unwrap(), 1);
+    }
+
+    #[test]
+    fn uncertified_read_after_success_keeps_original_receipt_and_expires() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::refusal(404, "item_not_found"),
+            ],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let original = core.queue().unwrap().remove(0);
+        assert_eq!(core.drain().unwrap_err(), read_view::invalid());
+        let conn = core.conn().unwrap();
+        let settled = store::queued_write(&conn, &original.id).unwrap().unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Accepted));
+        assert_eq!(settled.refusals, 0);
+        assert_eq!(settled.idempotency_key, original.idempotency_key);
+        assert_eq!(settled.body, original.body);
+        assert!(
+            store::meta_get(&conn, store::META_EVENT_CURSOR)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store::owed_read_backs(&conn).unwrap().len(), 1);
+        assert!(
+            store::meta_get(&conn, &receipt_key(&original.id))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn late_read_back_cannot_install_or_delete_or_settle_new_copy_debt() {
+        for present in [false, true] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &["a"]);
+            let row = core.queue().unwrap().remove(0);
+            let answer = if present {
+                let mut body: serde_json::Value = serde_json::from_str(
+                    &crate::scripted::item_payload("item.updated", "a", "core.note", 1),
+                )
+                .unwrap();
+                body["listed"] = serde_json::Value::Bool(true);
+                crate::scripted::json(200, &body.to_string())
+            } else {
+                crate::scripted::refusal(404, "item_not_found")
+            };
+            server.on("/items/a", vec![crate::scripted::certified(answer)]);
+            let owed = store::owed_of(&core.conn().unwrap(), &row)
+                .unwrap()
+                .unwrap();
+            let read = read_owed(&core, &owed).unwrap();
+            {
+                let conn = core.conn().unwrap();
+                read_view::advance_generation(&conn).unwrap();
+                let newer = store::testing::note("a", "rebuilt", "", "2026-02-01T00:00:00Z");
+                store::upsert_item(&conn, &newer, None, &Default::default()).unwrap();
+                store::owe_read_back(&conn, &owed).unwrap();
+            }
+            assert!(matches!(
+                apply_owed(&core, &owed, &read),
+                Err(CoreError::StreamIncomplete { .. })
+            ));
+            let conn = core.conn().unwrap();
+            assert_eq!(
+                store::item_by_id(&conn, "a").unwrap().unwrap().properties["title"],
+                "rebuilt"
+            );
+            assert_eq!(store::owed_read_backs(&conn).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn adoption_remaps_unsent_held_edges_without_rewriting_sent_attempts() {
+        let conn = store::testing::conn();
+        for verdict in [None, Some(Verdict::Blocked), Some(Verdict::Dead)] {
+            for sent in [false, true] {
+                let id = format!("edge-{:?}-{sent}", verdict);
+                let mut queued = write(WriteKind::CreateEdge, "local", Some(&id), Some(3), &[]);
+                queued.target_id = Some("local");
+                queued.payload = r#"{"source_id":"local","target_id":"local","edge_type":"references","properties":{"note":"unsent content"}}"#;
+                let row = store::enqueue(&conn, &queued).unwrap();
+                if let Some(verdict) = verdict {
+                    store::record_verdict(
+                        &conn,
+                        &row.id,
+                        &store::Answered {
+                            verdict,
+                            reason: (verdict == Verdict::Blocked).then_some("awaiting_dependency"),
+                            answer: None,
+                            conflicted_copy_id: None,
+                        },
+                    )
+                    .unwrap();
+                }
+                if sent {
+                    store::mark_sent(&conn, &row.id).unwrap();
+                }
+            }
+        }
+        let before = store::queued_writes(&conn).unwrap();
+        store::adopt_answered_id(&conn, "local", "server").unwrap();
+        for original in before {
+            let row = store::queued_write(&conn, &original.id).unwrap().unwrap();
+            let sent = original.edge_id.as_ref().unwrap().ends_with("true");
+            let expected = if sent { "local" } else { "server" };
+            assert_eq!(row.item_id.as_deref(), Some(expected));
+            assert_eq!(row.target_id.as_deref(), Some(expected));
+            assert_eq!(row.body["source_id"], expected);
+            assert_eq!(row.body["target_id"], expected);
+            assert_eq!(row.body["properties"], original.body["properties"]);
+            assert_eq!(row.idempotency_key, original.idempotency_key);
+            assert_eq!(row.base_version, original.base_version);
+            assert_eq!(row.verdict, original.verdict);
+            if sent {
+                assert_eq!(row, original);
+            }
+        }
+    }
+
+    #[test]
+    fn an_edge_read_back_uses_direct_certified_absence() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let owed = store::Owed {
+            subject: Subject::Edge,
+            id: "edge".into(),
+            source_id: Some("source".into()),
+            edge_type: Some("references".into()),
+            moved: false,
+        };
+        store::owe_read_back(&core.conn().unwrap(), &owed).unwrap();
+        server.on(
+            "/edges/edge",
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "edge_not_found",
+            ))],
+        );
+        let read = read_owed(&core, &owed).unwrap();
+        apply_owed(&core, &owed, &read).unwrap();
+        assert_eq!(server.seen("/edges/edge").len(), 1);
+        assert!(server.seen("/items/source/edges").is_empty());
+        assert!(
+            store::owed_read_backs(&core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn natural_key_landing_admits_source_excluded_row_under_its_moved_pin() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let create = {
+            let conn = core.conn().unwrap();
+            store::upsert_item(
+                &conn,
+                &store::testing::note("local", "mine", "", "2026-01-01T00:00:00Z"),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            store::pin(&conn, "local").unwrap();
+            store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap()
+        };
+        let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "server",
+            "core.note",
+            1,
+        ))
+        .unwrap();
+        body["listed"] = false.into();
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &body.to_string(),
+            ))],
+        );
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        let settled = land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+        )
+        .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Refused));
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &create.id)
+                .unwrap()
+                .unwrap()
+                .item_id
+                .as_deref(),
+            Some("server")
+        );
+        assert!(store::pinned(&conn, "server").unwrap());
+        assert!(store::item_held(&conn, "server").unwrap());
+        assert!(!store::item_held(&conn, "local").unwrap());
+    }
+
+    #[test]
+    fn natural_key_receipt_keeps_dependent_work_until_certified_landing() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (create, dependant) = {
+            let conn = core.conn().unwrap();
+            let local = store::testing::note("local", "draft", "", "2026-01-01T00:00:00Z");
+            store::upsert_item(&conn, &local, None, &Default::default()).unwrap();
+            store::pin(&conn, "local").unwrap();
+            let create = store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap();
+            let mut tag = write(
+                WriteKind::AddTag,
+                "local",
+                None,
+                None,
+                std::slice::from_ref(&create.id),
+            );
+            tag.tag = Some("kept");
+            let dependant = store::enqueue(&conn, &tag).unwrap();
+            (create, dependant)
+        };
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::refusal(
+                404,
+                "item_not_found",
+            ))],
+        );
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        let settled = land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+        )
+        .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Refused));
+        assert!(settled.unavailable.is_some());
+        {
+            let conn = core.conn().unwrap();
+            assert_eq!(
+                store::queued_write(&conn, &dependant.id).unwrap().unwrap(),
+                dependant
+            );
+            assert!(store::item_held(&conn, "local").unwrap());
+            assert!(!store::discard(&conn, &create.id).unwrap());
+            read_view::advance_generation(&conn).unwrap();
+        }
+        let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "server",
+            "core.note",
+            1,
+        ))
+        .unwrap();
+        body["listed"] = serde_json::Value::Bool(true);
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &body.to_string(),
+            ))],
+        );
+        assert!(read_owed_backs(&core).unwrap().is_none());
+        let conn = core.conn().unwrap();
+        let moved = store::queued_write(&conn, &dependant.id).unwrap().unwrap();
+        assert_eq!(moved.item_id.as_deref(), Some("server"));
+        assert_eq!(moved.body, dependant.body);
+        assert_eq!(moved.idempotency_key, dependant.idempotency_key);
+        assert!(moved.depends_on.is_empty());
+        assert!(
+            store::meta_get(&conn, &receipt_key(&create.id))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_read_reconciling_a_refusal_refused_naming_no_contract_ends_the_pass() {
         let server = crate::scripted::Scripted::start();
         let rows = ["a", "b"];
@@ -2235,10 +2798,13 @@ mod tests {
         for id in rows {
             server.on(
                 &format!("/items/{id}"),
-                vec![crate::scripted::Answer::Slow {
-                    after: std::time::Duration::from_millis(150),
-                    answer: Box::new(crate::scripted::json(200, r#"{"ok":true}"#)),
-                }],
+                vec![
+                    crate::scripted::Answer::Slow {
+                        after: std::time::Duration::from_millis(150),
+                        answer: Box::new(crate::scripted::json(200, r#"{"ok":true}"#)),
+                    },
+                    crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+                ],
             );
         }
         let (_dir, core) = deleting(&server, &rows);
@@ -2259,8 +2825,8 @@ mod tests {
             .collect();
         assert_eq!(
             sent,
-            [1, 1, 1],
-            "drains at once sent a write more than once"
+            [2, 2, 2],
+            "each write needs one original receipt and one fresh read"
         );
         assert_eq!(
             answered.iter().sum::<usize>(),
@@ -2274,7 +2840,7 @@ mod tests {
         for (cannot, says) in [
             (crate::scripted::refusal(503, "unavailable"), "503"),
             (crate::scripted::refusal(429, "rate_limited"), "429"),
-            (crate::scripted::Answer::Stall, "reached"),
+            (crate::scripted::Answer::Stall, "network"),
         ] {
             let server = crate::scripted::Scripted::start();
             let rows = ["a", "b", "c"];
@@ -2286,7 +2852,7 @@ mod tests {
                 );
             }
             let (_dir, core) = deleting(&server, &rows);
-            if says == "reached" {
+            if says == "network" {
                 // Gone rather than waited out: a refused connection.
                 drop(server);
                 let report = core.drain().unwrap();
@@ -2382,7 +2948,10 @@ mod tests {
             let (_dir, core) = deleting(&server, &["prior", "current", "later"]);
             server.on(
                 "/items/prior",
-                vec![crate::scripted::json(200, r#"{"ok":true}"#)],
+                vec![
+                    crate::scripted::json(200, r#"{"ok":true}"#),
+                    crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+                ],
             );
             server.on(
                 "/items/current",

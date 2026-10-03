@@ -13,6 +13,7 @@ mod js;
 mod lock;
 mod model;
 mod query;
+mod read_view;
 #[cfg(test)]
 mod scripted;
 mod search;
@@ -236,31 +237,45 @@ impl Core {
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
-        catch_up::refuse_another_instance(self, http)?;
-        // Pinned before the read, so an event a follow applies meanwhile is kept.
-        let added = {
+        let (added, context) = {
             let conn = self.conn()?;
             store::refuse_unless_hydrated(&conn)?;
-            store::pin(&conn, id)?
+            let added = store::pin(&conn, id)?;
+            (added, read_view::Context::capture(&conn)?)
         };
-        let held = hydrate::read_with_edges(http, id).and_then(|read| {
+        let held = hydrate::read_with_edges(&context.http(http), id).and_then(|read| {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
+            context.check(&tx)?;
             let held = match &read {
                 Some((row, edges)) => {
                     let catalog = catalog::Catalog::load(&tx)?;
                     hydrate::hold_row(&tx, &catalog, row, edges)?;
                     true
                 }
-                None => store::item_held(&tx, id)?,
+                None => {
+                    if store::waiting_writes_for_item(&tx, id)?
+                        .iter()
+                        .any(|row| row.kind == WriteKind::CreateItem)
+                        && store::item_held(&tx, id)?
+                    {
+                        true
+                    } else {
+                        store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
+                        false
+                    }
+                }
             };
             tx.commit()?;
             Ok(held)
         });
         if !matches!(held, Ok(true)) && added {
-            store::unpin(&*self.conn()?, id)?;
+            let conn = self.conn()?;
+            if context.check(&conn).is_ok() {
+                store::unpin(&conn, id)?;
+            }
         }
-        match held? {
+        match held.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))? {
             true => Ok(!added),
             false => Err(CoreError::NotFound {
                 code: "not_found".into(),
@@ -282,7 +297,9 @@ impl Core {
             && let Some(held) = store::items_by_ids(&tx, &[id.to_string()])?.pop()
         {
             let catalog = catalog::Catalog::load(&tx)?;
-            if !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier) {
+            if !read_view::listed(&tx, id)?
+                || !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier)
+            {
                 store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
             }
         }
@@ -510,12 +527,7 @@ impl Core {
         {
             return Ok(false);
         }
-        store::withdraw(&tx, &row, &held)?;
-        // A row a follow brought while the reads were out is later than what
-        // they read, and is kept.
-        for read in &reads {
-            drain::apply_read_back(&tx, read)?;
-        }
+        drain::withdraw_read_backs(&tx, &row, &held, &reads)?;
         tx.commit()?;
         Ok(true)
     }
@@ -1186,9 +1198,20 @@ impl Core {
     }
 
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
-        self.conn
-            .lock()
-            .map_err(|_| CoreError::Store("the connection was poisoned by an earlier panic".into()))
+        let mut conn = self.conn.lock().map_err(|_| {
+            CoreError::Store("the connection was poisoned by an earlier panic".into())
+        })?;
+        if self.handle() == Handle::Writer
+            && store::hydration_complete(&conn)?
+            && store::holds_slice(&conn)?
+            && store::meta_get(&conn, store::META_EVENT_CURSOR)?.is_some()
+            && !store::hydrated(&conn)?
+        {
+            let tx = conn.transaction()?;
+            read_view::expire(&tx)?;
+            tx.commit()?;
+        }
+        Ok(conn)
     }
 }
 
@@ -1229,7 +1252,10 @@ fn queue_create(
     )?;
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
-    if !store::slice_holds(tx, catalog, &row)? {
+    let declared = store::slice(tx)?.is_some_and(|(types, tier)| {
+        store::slice_takes(catalog, &types, tier, &row.r#type, draft.tier)
+    });
+    if !declared {
         store::pin(tx, &id)?;
     }
     let queued = store::enqueue(
@@ -1564,6 +1590,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             let mut row = store::testing::note("row", "server", "body", "2026-01-01T00:00:00Z");
@@ -1660,7 +1688,18 @@ mod tests {
                 },
             )
             .unwrap();
-            store::fold_into_beneath(&conn, &tagged).unwrap();
+            let mut baseline =
+                store::testing::note("row", "server", "body", "2026-01-01T00:00:00Z");
+            baseline.version = 3;
+            store::put_server_item(
+                &conn,
+                &baseline,
+                Some(&["a".into(), "b".into()]),
+                &catalog::Indexing::default(),
+            )
+            .unwrap();
+            store::lay_waiting_writes_over(&conn, "row", &|_| catalog::Indexing::default())
+                .unwrap();
         }
         refuse(&core, &edited);
         assert_eq!(
@@ -1894,6 +1933,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             for id in ["root", "first", "second"] {
@@ -1976,6 +2017,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(
                 &conn,
                 store::META_SLICE_TYPES,
@@ -2105,6 +2148,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_types(&conn, &[photo(false, "title")]).unwrap();
@@ -2163,6 +2208,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_types(&conn, &[photo]).unwrap();
@@ -2197,6 +2244,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_types(&conn, &[photo]).unwrap();
@@ -2242,6 +2291,8 @@ mod tests {
             // and a case that leaned on that would pass with no lock at all.
             let conn = writer.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_types(
@@ -2704,6 +2755,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
         }
@@ -2745,6 +2798,8 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
         }

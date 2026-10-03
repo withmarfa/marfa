@@ -23,7 +23,9 @@ import {
   edgeTypeCatalog,
   refusal,
   edgesPage,
-  headRead,
+  copyHeadRead,
+  copyReplay,
+  SCRIPTED_READ_VIEW,
   itemsPage,
   typeCatalog,
   wireEdge,
@@ -165,6 +167,7 @@ export function scriptHydration(
   server: ScriptedServer,
   options: {
     head: string;
+    instance?: () => string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /edges` lists, by edge type; scripted only where named. */
     edges?: Record<string, WireEdgeOptions[]>;
@@ -179,10 +182,27 @@ export function scriptHydration(
     key?: Responder[];
   },
 ): void {
+  const copyInstance = (answer: Answer): Answer => {
+    if (options.instance === undefined || answer.kind !== "sse") return answer;
+    return {
+      ...answer,
+      frames: answer.frames.map((frame) =>
+        frame.event === "stream_cursor" || frame.event === "stream_live"
+          ? {
+              ...frame,
+              data: {
+                ...(frame.data as Record<string, unknown>),
+                instance_id: options.instance!(),
+              },
+            }
+          : frame,
+      ),
+    };
+  };
   const rows = options.rows ?? {};
   const edges = options.edges;
   if (edges !== undefined) {
-    server.answer("GET", "/edges", (request) => {
+    server.copyAnswer("GET", "/edges", (request) => {
       const type = request.query.get("edge_type") ?? "";
       return edgesPage(
         (edges[type] ?? []).map((edge) =>
@@ -191,11 +211,47 @@ export function scriptHydration(
       );
     });
   }
-  server.answer("GET", "/edge-types", options.edgeTypes ?? edgeTypeCatalog());
+  server.copyAnswer(
+    "GET",
+    "/edge-types",
+    options.edgeTypes ?? edgeTypeCatalog(),
+  );
   scriptKey(server, ...(options.key ?? []));
-  server.answer("GET", "/events", headRead(options.head));
-  server.answer("GET", "/types", options.catalog ?? typeCatalog());
-  server.answer("GET", "/items", (request) => {
+  server.copyAnswer(
+    "GET",
+    "/events",
+    (request) => {
+      if (
+        request.query.toString() !== "edges=all&copy=1" ||
+        request.headers["last-event-id"] !== undefined ||
+        request.headers["x-marfa-read-view"] !== undefined
+      )
+        return refusal(
+          400,
+          "validation_error",
+          "invalid copy bootstrap request",
+        );
+      return copyInstance(copyHeadRead(options.head));
+    },
+    (request) => {
+      const cursor = request.headers["last-event-id"];
+      const fence = request.headers["x-marfa-read-view"];
+      if (request.query.toString() !== "edges=all&copy=1")
+        return refusal(400, "validation_error", "invalid copy stream query");
+      if (cursor === undefined && fence === undefined)
+        return copyInstance(copyHeadRead(options.head));
+      if (
+        cursor === undefined ||
+        !/^(0|[1-9][0-9]*)$/.test(cursor) ||
+        BigInt(cursor) > 9223372036854775807n ||
+        fence !== SCRIPTED_READ_VIEW
+      )
+        return refusal(400, "validation_error", "invalid copy replay request");
+      return copyInstance(copyReplay(options.head, []));
+    },
+  );
+  server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
+  server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
     // No type is every type the key reads, which leaves `system.*` out.
     const forType =
@@ -246,7 +302,7 @@ export function scriptHydration(
  * itself.
  */
 export function scriptKey(server: ScriptedServer, ...key: Responder[]): void {
-  server.answer(
+  server.copyAnswer(
     "GET",
     "/keys/current",
     ...(key.length > 0
@@ -356,7 +412,7 @@ export function scriptWrites(
   // scripts the read too or the device meets an unscripted door on its way
   // to reconciling.
   if (options.read !== undefined)
-    server.answer("GET", /^\/items\/[^/]+$/, ...options.read);
+    server.copyAnswer("GET", /^\/items\/[^/]+$/, ...options.read);
   if (options.tags !== undefined) {
     server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
     server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
@@ -426,7 +482,7 @@ export function scriptFolderRow(
   settings: FolderSettings,
 ): FolderRow {
   const row: FolderRow = { id: uuidv7(), version: 1, settings };
-  server.answer("GET", `/items/${row.id}`, () =>
+  server.copyAnswer("GET", `/items/${row.id}`, () =>
     answers.updated(folderItem(row)),
   );
   return row;
@@ -534,7 +590,7 @@ export async function folderHarness(
     );
   }
   if (options.events !== undefined) {
-    server.answer("GET", "/events", ...options.events);
+    server.copyAnswer("GET", "/events", ...options.events);
   }
   if (options.hydrate !== false) {
     const hydrated = await folder.hydrate();
@@ -573,12 +629,12 @@ export function scriptBlob(
 ): string {
   const hash = hashOf(bytes);
   const hex = hash.slice("sha256:".length);
-  server.answer(
+  server.copyAnswer(
     "GET",
     `/blobs/${hash}/url`,
     writeAnswers.link(`${server.url}/links/${hex}`),
   );
-  server.answer("GET", `/links/${hex}`, {
+  server.copyAnswer("GET", `/links/${hex}`, {
     kind: "bytes",
     status: 200,
     body: served,

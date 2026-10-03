@@ -2064,6 +2064,7 @@ mod tests {
     struct Quiet {
         url: String,
         streams: Arc<std::sync::atomic::AtomicUsize>,
+        expire: Arc<AtomicBool>,
     }
 
     fn quiet() -> Quiet {
@@ -2072,9 +2073,14 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&streams);
+        let expire = Arc::new(AtomicBool::new(false));
+        let changed = Arc::clone(&expire);
+        let replayed = Arc::new(AtomicBool::new(false));
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let counted = Arc::clone(&counted);
+                let changed = Arc::clone(&changed);
+                let replayed = Arc::clone(&replayed);
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let (mut head, mut line) = (String::new(), String::new());
@@ -2087,9 +2093,21 @@ mod tests {
                     let resumed = head.to_ascii_lowercase().contains("last-event-id");
                     let mut stream = stream;
                     let contract = marfa_core::contract::CONTRACT_VERSION;
+                    let fence = "a".repeat(64);
+                    let instance = "00000000-0000-7000-8000-000000000000";
+                    let proof = if head.to_ascii_lowercase().contains("x-marfa-read-view:") {
+                        format!("X-Marfa-Read-View: {fence}\r\nCache-Control: no-store\r\n")
+                    } else {
+                        String::new()
+                    };
+                    let marker = |kind: &str| {
+                        format!(
+                            "event: {kind}\ndata: {{\"type\":\"{kind}\",\"cursor\":\"10\",\"instance_id\":\"{instance}\",\"read_view\":\"{fence}\"}}\n\n"
+                        )
+                    };
                     let json = |body: &str| {
                         format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {contract}\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {contract}\r\n{proof}Connection: close\r\n\r\n{body}",
                             body.len()
                         )
                     };
@@ -2102,12 +2120,19 @@ mod tests {
                         ("/edge-types", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
                         ("/items", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
-                        ("/events", false) => stream.write_all(format!("{events}event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"10\"}}\n\n").as_bytes()),
+                        ("/events", false) => stream.write_all(format!("{events}{}", marker("stream_cursor")).as_bytes()),
                         ("/events", true) => {
-                            counted.fetch_add(1, Ordering::SeqCst);
-                            let _ = stream.write_all(events.as_bytes());
-                            while stream.write_all(b": keepalive\n\n").is_ok() {
-                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            let live = format!("{events}{}{}", marker("stream_cursor"), marker("stream_live"));
+                            let _ = stream.write_all(live.as_bytes());
+                            if replayed.swap(true, Ordering::SeqCst) {
+                                counted.fetch_add(1, Ordering::SeqCst);
+                                while stream.write_all(b": keepalive\n\n").is_ok() {
+                                    if changed.load(Ordering::SeqCst) {
+                                        let _ = stream.write_all(b"event: read_view_changed\ndata: {\"type\":\"read_view_changed\"}\n\n");
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                }
                             }
                             Ok(())
                         }
@@ -2116,7 +2141,11 @@ mod tests {
                 });
             }
         });
-        Quiet { url, streams }
+        Quiet {
+            url,
+            streams,
+            expire,
+        }
     }
 
     /// The scenario is the contract's (`queue-and-verdicts.md` 40) and the
@@ -2193,6 +2222,41 @@ mod tests {
             ended.recv_timeout(std::time::Duration::from_secs(2)),
             Ok(None),
             "a subscription let go left its follow holding the store"
+        );
+    }
+
+    #[test]
+    fn read_view_expiry_ends_subscription_once_with_typed_error() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core =
+            MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        core.hydrate(vec!["core.note".into()], Tier::Library)
+            .unwrap();
+        let reader = MarfaCore::open_reader(path).unwrap();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
+        server.expire.store(true, Ordering::SeqCst);
+        let error = ended
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            matches!(error, Some(MarfaError::CopyExpired { reason, .. }) if reason == "read_view_changed")
+        );
+        assert!(matches!(
+            reader.status().unwrap().hydration,
+            Hydration::Expired
+        ));
+        assert!(matches!(
+            reader.get("absent".into()),
+            Err(MarfaError::HydrationIncomplete { .. })
+        ));
+        drop(subscription);
+        assert!(
+            ended
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err()
         );
     }
 

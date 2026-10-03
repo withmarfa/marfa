@@ -4,11 +4,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   answers,
-  headRead,
-  itemEvent,
+  certifiedRead,
+  copyHeadRead,
+  copyItemEvent,
   itemsPage,
   refusal as refused,
-  replay,
+  copyReplay,
   edgeTypeCatalog,
   typeCatalog,
   wireItem,
@@ -99,7 +100,7 @@ async function scriptItems(
 ): Promise<ScriptedServer> {
   const started = await ScriptedServer.start();
   if (contract !== undefined) started.contract = contract;
-  started.answer("GET", "/items", {
+  started.copyAnswer("GET", "/items", {
     kind: "json",
     status,
     body:
@@ -165,7 +166,7 @@ describe("the contract the binary was built for", () => {
   it("refuses an answer that names its contract twice, differently", async () => {
     const twice = async (contract: string[]) => {
       const started = await ScriptedServer.start();
-      started.answer(
+      started.copyAnswer(
         "GET",
         "/items",
         naming(
@@ -212,7 +213,7 @@ describe("the contract the binary was built for", () => {
     server = await ScriptedServer.start();
     const served = builtFor + 1;
     server.contract = String(served);
-    server.answer("GET", "/health", {
+    server.copyAnswer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
@@ -254,13 +255,13 @@ describe("the contract the binary was built for", () => {
     ] as const) {
       server = await ScriptedServer.start();
       server.contract = String(header);
-      server.answer("GET", "/", answers.root(body));
-      server.answer("GET", "/health", {
+      server.copyAnswer("GET", "/", answers.root(body));
+      server.copyAnswer("GET", "/health", {
         kind: "json",
         status: 200,
         body: { status: "ok" },
       });
-      server.answer("GET", "/items/stats", {
+      server.copyAnswer("GET", "/items/stats", {
         kind: "json",
         status: 200,
         body: {},
@@ -291,7 +292,7 @@ describe("the contract the binary was built for", () => {
     const events = async (contract?: string) => {
       const started = await ScriptedServer.start();
       if (contract !== undefined) started.contract = contract;
-      started.answer("GET", "/events", {
+      started.copyAnswer("GET", "/events", {
         kind: "sse",
         frames: [{ id: "1", event: "item.created", data: { id: "i" } }],
       });
@@ -321,7 +322,7 @@ describe("the contract the binary was built for", () => {
   it("says in words that the server speaks another contract", async () => {
     server = await ScriptedServer.start();
     server.contract = String(builtFor + 1);
-    server.answer("GET", "/health", {
+    server.copyAnswer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
@@ -336,12 +337,12 @@ describe("the contract the binary was built for", () => {
   const statusWithCounts = async (stats: Answer) => {
     const started = await ScriptedServer.start();
     server = started;
-    started.answer("GET", "/health", {
+    started.copyAnswer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
     });
-    started.answer("GET", "/items/stats", stats);
+    started.copyAnswer("GET", "/items/stats", stats);
     const outcome = await marfa([
       "--json",
       "--url",
@@ -679,7 +680,7 @@ describe("every command holds the server to the contract", () => {
     // body, unless a case says otherwise, so a write that reads the root
     // before it mints is sent, and it is the mint's own answer that has to
     // be refused.
-    started.answer(
+    started.copyAnswer(
       "GET",
       "/",
       Object.assign(answers.root(builtFor), { contract: root }),
@@ -922,7 +923,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted),
       "the device asked for more after an answer that named another contract",
-    ).toEqual(["GET /"]);
+    ).toEqual(["GET /events"]);
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("never");
 
@@ -937,10 +938,12 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-catch-up");
     const { server: scripted, device } = harness;
     scriptHydration(scripted, { head: "10" });
-    scripted.answer(
+    scripted.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.created", wireItem({ id: "n2" }))]),
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "n2" })),
+      ]),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
@@ -965,10 +968,12 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-follow");
     const { server: scripted, device } = harness;
     scriptHydration(scripted, { head: "10" });
-    scripted.answer(
+    scripted.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.created", wireItem({ id: "n2" }))]),
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "n2" })),
+      ]),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
@@ -1007,12 +1012,15 @@ describe("the contract the working copy was built for", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     const id = queued.value.item_id ?? "";
-    scriptWrites(scripted, { create: [answers.created(wireItem({ id }))] });
+    scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id }))],
+      create: [answers.created(wireItem({ id }))],
+    });
 
     scripted.contract = other;
     // The root on the core's own contract, so the instance is read and the
     // answer refused is the one this case is about.
-    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
+    scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     const refused = await device.drain();
     expect(
       refused.ok,
@@ -1067,13 +1075,14 @@ describe("the contract the working copy was built for", () => {
     if (!put.ok || !queued.ok) return;
     acceptUploads(scripted);
     scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id: queued.value.item_id ?? "" }))],
       create: [answers.created(wireItem({ id: queued.value.item_id ?? "" }))],
     });
 
     scripted.contract = other;
     // The root on the core's own contract, so the instance is read and the
     // answer refused is the one this case is about.
-    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
+    scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     const ended = await device.drain();
     expect(ended.ok).toBe(false);
     if (!ended.ok) {
@@ -1287,7 +1296,7 @@ describe("the contract the working copy was built for", () => {
 
     // The stream a catch-up reads. The hydration's head read answers once
     // more first.
-    scripted.answer("GET", "/events", unnamed(401, "access_denied"));
+    scripted.copyAnswer("GET", "/events", unnamed(401, "access_denied"));
     expect((await device.catchUp()).ok).toBe(true);
     const stream = await device.catchUp();
     expect(stream.ok).toBe(false);
@@ -1302,7 +1311,7 @@ describe("the contract the working copy was built for", () => {
     }
     // The catalog it reads before the stream: the scripted catalog answers
     // once more, then the proxy does.
-    scripted.answer("GET", "/types", unnamed(404, "not_found"));
+    scripted.copyAnswer("GET", "/types", unnamed(404, "not_found"));
     expect((await device.catchUp()).ok).toBe(false);
     const streamsBefore = scripted.requests.filter(
       (request) => request.pathname === "/events",
@@ -1318,7 +1327,11 @@ describe("the contract the working copy was built for", () => {
 
     // A blob's link.
     const hash = hashOf(Buffer.from("bytes behind a gateway\n"));
-    scripted.answer("GET", `/blobs/${hash}/url`, unnamed(401, "access_denied"));
+    scripted.copyAnswer(
+      "GET",
+      `/blobs/${hash}/url`,
+      unnamed(401, "access_denied"),
+    );
     const blob = await device.blob(hash);
     expect(blob.ok).toBe(false);
     if (!blob.ok) {
@@ -1363,8 +1376,12 @@ describe("the contract the working copy was built for", () => {
         verdict.verdict,
         verdict.refusals,
       ]),
-      "a proxy's 403 on the landed row was taken as the server's, and the create stopped for good",
-    ).toEqual([[null, 0]]);
+      "a proxy's read refusal changed the original settled create verdict or counted a failure",
+    ).toEqual([["refused", 0]]);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      scripted.requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(1);
   });
 
   it("ends the pass when the read of the row a create landed on answers on another contract", async () => {
@@ -1420,11 +1437,16 @@ describe("the contract the working copy was built for", () => {
     const queue = await device.queue();
     expect(
       queue.ok && queue.value.map((row) => [row.verdict, row.refusals]),
-      "the landed create was counted against an answer the core could not read",
+      "a failed read changed the original refusal or answered the unrelated create",
     ).toEqual([
-      [null, 0],
+      ["refused", 0],
       [null, 0],
     ]);
+    const retry = await device.drain();
+    expect(retry.ok ? null : retry.refusal.code).toBe("contract_mismatch");
+    expect(
+      scripted.requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(1);
   });
 
   it("hands the working copy a refusal that names no contract, as a proxy's would", async () => {
@@ -1433,8 +1455,8 @@ describe("the contract the working copy was built for", () => {
     scripted.contract = null;
     // The root on the core's own contract, so the refusal handed on is the
     // head read's.
-    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
-    scripted.answer("GET", "/events", {
+    scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
+    scripted.copyAnswer("GET", "/events", {
       kind: "json",
       status: 502,
       body: { error: { code: "bad_gateway", message: "upstream" } },
@@ -1454,11 +1476,15 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-page");
     const { server: scripted, device } = harness;
     let pageOn = other;
-    scripted.answer("GET", "/events", headRead("10"));
-    scripted.answer("GET", "/types", typeCatalog());
-    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
+    scripted.copyAnswer("GET", "/events", (request) =>
+      request.headers["last-event-id"]
+        ? copyReplay("10", [])
+        : copyHeadRead("10"),
+    );
+    scripted.copyAnswer("GET", "/types", typeCatalog());
+    scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
-    scripted.answer("GET", "/items", () =>
+    scripted.copyAnswer("GET", "/items", () =>
       naming(itemsPage([{ item: wireItem({ id: "n1" }) }]), pageOn),
     );
     const refused = await device.hydrate(["core.note"], "library");
@@ -1467,7 +1493,6 @@ describe("the contract the working copy was built for", () => {
     );
     if (!refused.ok) expect(refused.refusal.code).toBe("contract_mismatch");
     expect(sent(scripted)).toEqual([
-      "GET /",
       "GET /events",
       "GET /types",
       "GET /edge-types",
@@ -1490,16 +1515,21 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-catch-up-catalog");
     const { server: scripted, device } = harness;
     let catalogOn = String(builtFor);
-    scripted.answer(
+    scripted.copyAnswer(
       "GET",
       "/events",
-      headRead("10"),
-      replay("11", [itemEvent("11", "item.created", wireItem({ id: "n2" }))]),
+      copyHeadRead("10"),
+      copyReplay("10", []),
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "n2" })),
+      ]),
     );
-    scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
-    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
+    scripted.copyAnswer("GET", "/types", () =>
+      naming(typeCatalog(), catalogOn),
+    );
+    scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
-    scripted.answer("GET", "/items", itemsPage([]));
+    scripted.copyAnswer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     catalogOn = other;
@@ -1510,7 +1540,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted).slice(before),
       "the device opened the stream after a catalog on another contract",
-    ).toEqual(["GET /", "GET /types"]);
+    ).toEqual(["GET /types"]);
 
     // The witness: with the catalog on the core's own contract, the stream
     // is opened and its event applied.
@@ -1548,11 +1578,15 @@ describe("the contract the working copy was built for", () => {
   it("refuses a catalog on another contract on its headers, without waiting on its body", async () => {
     harness = await startHarness("contract-catalog-endless");
     const { server: scripted, device } = harness;
-    scripted.answer("GET", "/events", headRead("10"));
-    scripted.answer("GET", "/types", typeCatalog(), endless);
-    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
+    scripted.copyAnswer("GET", "/events", (request) =>
+      request.headers["last-event-id"]
+        ? copyReplay("10", [])
+        : copyHeadRead("10"),
+    );
+    scripted.copyAnswer("GET", "/types", typeCatalog(), typeCatalog(), endless);
+    scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
-    scripted.answer("GET", "/items", itemsPage([]));
+    scripted.copyAnswer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     await waitsOnTheBody(device.hold(["catch-up"]));
 
@@ -1589,7 +1623,7 @@ describe("the contract the working copy was built for", () => {
     harness = await hydratedHarness("contract-link-endless");
     const { server: scripted, device } = harness;
     const hash = `sha256:${"c".repeat(64)}`;
-    scripted.answer("GET", `/blobs/${hash}/url`, endless);
+    scripted.copyAnswer("GET", `/blobs/${hash}/url`, endless);
     await waitsOnTheBody(device.hold(["blobs", "get", hash]));
 
     scripted.contract = other;
@@ -1605,7 +1639,7 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-stream-refused");
     const { server: scripted, device } = harness;
     let refusalOn = other;
-    scripted.answer("GET", "/events", () =>
+    scripted.copyAnswer("GET", "/events", () =>
       naming(
         refused(401, "unauthorized", "Invalid or missing credential"),
         refusalOn,
@@ -1622,7 +1656,10 @@ describe("the contract the working copy was built for", () => {
     refusalOn = String(builtFor);
     const onItsOwn = await device.hydrate(["core.note"], "library");
     expect(onItsOwn.ok).toBe(false);
-    if (!onItsOwn.ok) expect(onItsOwn.refusal.code).toBe("unauthorized");
+    if (!onItsOwn.ok) {
+      expect(onItsOwn.refusal.code).toBe("copy_expired");
+      expect(onItsOwn.refusal.raw).toContain("credential_ended");
+    }
   });
 
   it("says a read refused on another contract sent no write, naming the server and the status, with exit 1", async () => {
@@ -1635,7 +1672,7 @@ describe("the contract the working copy was built for", () => {
     scripted.contract = other;
     // The root on the core's own contract, so the instance is read and the
     // answer refused is the one this case is about.
-    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
+    scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     // The stream's head read, the catalog and the link door: one of each of
     // the core's ways of reading an answer.
     const reads = {
@@ -1672,6 +1709,7 @@ describe("the contract the working copy was built for", () => {
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     if (!queued.ok) return;
     scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id: queued.value.item_id ?? "" }))],
       create: [answers.created(wireItem({ id: queued.value.item_id ?? "" }))],
     });
     const drained = await device.drain();
@@ -1711,11 +1749,17 @@ describe("the contract the working copy was built for", () => {
       [BUILT_FOR, BUILT_FOR],
     ];
     let catalogOn = orders[0] ?? [];
-    scripted.answer("GET", "/events", headRead("10"));
-    scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
-    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
+    scripted.copyAnswer("GET", "/events", (request) =>
+      request.headers["last-event-id"]
+        ? copyReplay("10", [])
+        : copyHeadRead("10"),
+    );
+    scripted.copyAnswer("GET", "/types", () =>
+      naming(certifiedRead(typeCatalog(), BUILT_FOR), catalogOn),
+    );
+    scripted.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
-    scripted.answer("GET", "/items", itemsPage([]));
+    scripted.copyAnswer("GET", "/items", itemsPage([]));
     for (const order of orders.slice(0, 2)) {
       catalogOn = order;
       const refused = await device.hydrate(["core.note"], "library");
@@ -1736,7 +1780,7 @@ describe("the contract the working copy was built for", () => {
     const { server: scripted, device } = harness;
     const hash = `sha256:${"a".repeat(64)}`;
     let notFoundOn: string | null = null;
-    scripted.answer("GET", `/blobs/${hash}/url`, () =>
+    scripted.copyAnswer("GET", `/blobs/${hash}/url`, () =>
       naming(refused(404, "blob_not_found", "no such blob"), notFoundOn),
     );
     const proxy = await device.blob(hash);

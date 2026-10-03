@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use super::settings::{FOLDER_TYPE, Settings};
 use super::{Folder, SETTINGS_FILE, STATE_DIR, document, landing, state};
 use crate::http::{Method, Outgoing};
-use crate::{Core, Result, store};
+use crate::{Core, CoreError, Result, store};
 
 const META_FOLDER: &str = "folder_id";
 const META_WRITTEN: &str = "folder_file";
@@ -355,6 +355,7 @@ impl Folder {
             }
             Err(error) => return Err(error),
         }
+        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let answer = self.core.http()?.send(&Outgoing {
             method: Method::Patch,
             segments: vec!["folders".into(), self.folder.clone()],
@@ -399,14 +400,27 @@ impl Folder {
                 format!("the folder door refused it: {refused}{back}"),
             );
         }
-        let row: crate::wire::WireItemWithMetadata = serde_json::from_str(&answer.body)?;
+        let row = context
+            .http(self.core.http()?)
+            .item(&self.folder)
+            .map_err(|error| {
+                context
+                    .failed(&self.core, error)
+                    .unwrap_or_else(|error| error)
+            })?
+            .ok_or_else(|| CoreError::NotFound {
+                code: "item_not_found".into(),
+                message: "The accepted folder settings are not returned to this read view.".into(),
+            })?;
         {
             let mut conn = self.core.conn()?;
             let tx = conn.transaction()?;
+            context.check(&tx)?;
             let catalog = crate::catalog::Catalog::load(&tx)?;
             crate::hydrate::hold_row(&tx, &catalog, &row, &[])?;
             tx.commit()?;
         }
+        context.check(&*self.core.conn()?)?;
         Ok(self
             .write_settings_file(&row.item.properties, row.item.version, Some(&text))?
             .report(true))

@@ -384,6 +384,8 @@ mod tests {
             (store::META_SLICE_TYPES, "[\"core.note\"]"),
             (store::META_SLICE_TIER, "library"),
             (store::META_EVENT_CURSOR, "1"),
+            (crate::read_view::FENCE, crate::scripted::FENCE),
+            (store::META_INSTANCE_ID, crate::scripted::INSTANCE),
         ] {
             store::meta_set(&writing, key, value).unwrap();
         }

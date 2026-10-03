@@ -12,15 +12,16 @@ import {
   connected,
   cursorAhead,
   edgeEvent,
-  headRead,
-  heldLog,
-  itemEvent,
+  copyHeadRead,
+  copyHeldLog,
+  copyItemEvent,
   itemsPage,
-  liveReplay,
+  copyLiveReplay,
   refusal,
-  replay,
-  streamCursor,
-  streamLive,
+  copyReplay,
+  copyIncompleteReplay,
+  copyStreamCursor,
+  copyStreamLive,
   SCRIPTED_INSTANCE,
   edgeTypeCatalog,
   typeCatalog,
@@ -63,12 +64,12 @@ describe("catch-up replays from the cursor", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "n1" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent("11", "item.created", wireItem({ id: "n2" })),
-        itemEvent("12", "item.created", wireItem({ id: "n3" })),
+      copyReplay("12", [
+        copyItemEvent("11", "item.created", wireItem({ id: "n2" })),
+        copyItemEvent("12", "item.created", wireItem({ id: "n3" })),
       ]),
     );
 
@@ -82,7 +83,7 @@ describe("catch-up replays from the cursor", () => {
     expect(
       lastEventIds(harness),
       "the replay did not resume from the cursor the store held, so it either re-read what the snapshot already had or skipped what it did not",
-    ).toEqual(["(none)", "10"]);
+    ).toEqual(["(none)", "10", "10"]);
     expect(
       caught.ok ? caught.value.applied : undefined,
       "the device counted fewer events than the stream carried, so something arrived and was not applied without being reported as skipped",
@@ -104,24 +105,35 @@ describe("catch-up replays from the cursor", () => {
     // a lower id after a higher one, which a cursor kept as a high-water
     // mark would step over for good. The rule is that the cursor is what
     // was applied, whatever arrived.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("20", [
-        itemEvent("12", "item.created", wireItem({ id: "committed-second" })),
-        itemEvent("11", "item.created", wireItem({ id: "committed-first" })),
+      copyIncompleteReplay("20", [
+        copyItemEvent(
+          "12",
+          "item.created",
+          wireItem({ id: "committed-second" }),
+        ),
+        copyItemEvent(
+          "11",
+          "item.created",
+          wireItem({ id: "committed-first" }),
+        ),
       ]),
-      replay("20", []),
+      copyIncompleteReplay("20", []),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-    expect((await device.catchUp()).ok).toBe(true);
+    const incomplete = await device.catchUp();
+    expect(incomplete.ok ? null : incomplete.refusal.code).toBe(
+      "stream_incomplete",
+    );
     await device.catchUp();
 
     expect(
       lastEventIds(harness),
       "the second replay resumed from the highest id seen rather than the last one applied, so every event between the two is skipped with nothing left to fetch it",
-    ).toEqual(["(none)", "10", "11"]);
+    ).toEqual(["(none)", "10", "10", "11"]);
   });
 
   it("resumes from zero after hydrating an empty instance, and applies the first event", async () => {
@@ -130,11 +142,11 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("catch-up-from-zero");
     const { server, device } = harness;
     scriptHydration(server, { head: "0" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("1", [
-        itemEvent(
+      copyReplay("1", [
+        copyItemEvent(
           "1",
           "item.created",
           wireItem({ id: "first", properties: { title: "first", body: "" } }),
@@ -154,7 +166,7 @@ describe("catch-up replays from the cursor", () => {
     if (!caught.ok) return;
     expect(caught.value.applied).toBe(1);
     expect(caught.value.cursor).toBe("1");
-    expect(lastEventIds(harness)).toEqual(["(none)", "0"]);
+    expect(lastEventIds(harness)).toEqual(["(none)", "0", "0"]);
     const status = await device.status();
     expect(status.ok ? status.value.hydration : null).toBe("complete");
     const held = await device.get("first");
@@ -167,16 +179,16 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("stale-stamp");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
+      copyReplay("12", [
         // Archived at version 3, then an event from before the transition
         // arrives behind it: the version cannot tell them apart, since a
         // transition leaves it where it was, and the time each was written
         // can. A follow and a drain on one core meet this shape when the
         // drain writes a row it read ahead of the stream.
-        itemEvent(
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({
@@ -186,7 +198,7 @@ describe("catch-up replays from the cursor", () => {
             updated_at: "2026-03-02T00:00:00.000Z",
           }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.updated",
           wireItem({
@@ -217,14 +229,14 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("stale-event");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("13", [
+      copyReplay("13", [
         // Version 3 lands, then version 2 arrives behind it: a shape the
         // real server does not produce, since it delivers ids in order,
         // and one the device still takes by the version, not by arrival.
-        itemEvent(
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({
@@ -233,7 +245,7 @@ describe("catch-up replays from the cursor", () => {
             properties: { title: "row", body: "the newer body" },
           }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.updated",
           wireItem({
@@ -244,7 +256,11 @@ describe("catch-up replays from the cursor", () => {
         ),
         // A third row, so the count assertions below are about the skip
         // rather than about a stream that carried one event.
-        itemEvent("13", "item.created", wireItem({ id: "other", version: 1 })),
+        copyItemEvent(
+          "13",
+          "item.created",
+          wireItem({ id: "other", version: 1 }),
+        ),
       ]),
     );
 
@@ -294,26 +310,30 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("lifecycle-events");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       // Every one of these carries version 1, because the server moves the
       // modification time on a lifecycle write and leaves the version
       // alone. A rule that skipped a version "no newer than" the one held
       // would drop all three and report the catch-up as clean.
-      replay("14", [
-        itemEvent("11", "item.created", wireItem({ id: "row", version: 1 })),
-        itemEvent(
+      copyReplay("14", [
+        copyItemEvent(
+          "11",
+          "item.created",
+          wireItem({ id: "row", version: 1 }),
+        ),
+        copyItemEvent(
           "12",
           "item.state_changed",
           wireItem({ id: "row", version: 1, state: "archived" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "13",
           "item.deleted",
           wireItem({ id: "row", version: 1, state: "trashed" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "14",
           "item.restored",
           wireItem({ id: "row", version: 1, state: "active" }),
@@ -358,14 +378,18 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("metadata-event");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent("11", "item.created", wireItem({ id: "row", version: 1 })),
+      copyReplay("12", [
+        copyItemEvent(
+          "11",
+          "item.created",
+          wireItem({ id: "row", version: 1 }),
+        ),
         // A tag write moves `updated_at` and not the version, so this frame
         // carries the version the device already holds.
-        itemEvent(
+        copyItemEvent(
           "12",
           "metadata.changed",
           wireItem({ id: "row", version: 1 }),
@@ -410,13 +434,13 @@ describe("catch-up replays from the cursor", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
+      copyReplay("11", [
         // Another device changed the body. This one has a title edit queued
         // and unanswered.
-        itemEvent(
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({
@@ -485,10 +509,10 @@ describe("catch-up replays from the cursor", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
+      copyReplay("11", [
         edgeEvent("11", "edge.updated", {
           ...edge,
           version: 2,
@@ -558,11 +582,11 @@ describe("catch-up replays from the cursor", () => {
         ),
       ],
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({
@@ -623,7 +647,7 @@ describe("catch-up replays from the cursor", () => {
       },
     });
     const resumedFrom: Array<string | undefined> = [];
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       // Two events and then the stream ends: the connection a laptop loses
@@ -635,7 +659,8 @@ describe("catch-up replays from the cursor", () => {
           kind: "sse",
           frames: [
             connected,
-            itemEvent(
+            copyStreamCursor("12"),
+            copyItemEvent(
               "11",
               "item.updated",
               wireItem({
@@ -644,7 +669,7 @@ describe("catch-up replays from the cursor", () => {
                 properties: { title: "changed while held", body: "the body" },
               }),
             ),
-            itemEvent(
+            copyItemEvent(
               "12",
               "item.updated",
               wireItem({
@@ -668,7 +693,8 @@ describe("catch-up replays from the cursor", () => {
           hold: true,
           frames: [
             connected,
-            itemEvent(
+            copyStreamCursor("13"),
+            copyItemEvent(
               "13",
               "item.created",
               wireItem({
@@ -749,11 +775,11 @@ describe("catch-up replays from the cursor", () => {
     });
     // The same event the catch-up fixture applies beneath a waiting write,
     // here on the path a held stream takes.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
-        itemEvent(
+      copyHeldLog([
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({
@@ -825,10 +851,10 @@ describe("catch-up replays from the cursor", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
+      copyHeldLog([
         edgeEvent("11", "edge.updated", {
           ...edge,
           version: 2,
@@ -869,23 +895,23 @@ describe("catch-up replays from the cursor", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "leaving", version: 1 } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
-        itemEvent("11", "item.created", wireItem({ id: "declared" })),
-        itemEvent(
+      copyHeldLog([
+        copyItemEvent("11", "item.created", wireItem({ id: "declared" })),
+        copyItemEvent(
           "12",
           "item.created",
           wireItem({ id: "undeclared", type: "core.bookmark" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "13",
           "item.created",
           wireItem({ id: "other-tier", tier: "feed" }),
         ),
         // A row the copy holds, moved out of the slice's tier.
-        itemEvent(
+        copyItemEvent(
           "14",
           "item.updated",
           wireItem({ id: "leaving", version: 2, tier: "feed" }),
@@ -931,7 +957,7 @@ describe("catch-up replays from the cursor", () => {
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     // Had at once, then a failing server and a dropped connection, then a
     // stream held open.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       refusal(503, "unavailable", "busy"),
@@ -964,11 +990,11 @@ describe("catch-up replays from the cursor", () => {
     scriptHydration(server, { head: "10" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const { edges: _edges, ...row } = wireItem({ id: "n11" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("eleven", "item.created", row)]),
-      replay("11", [itemEvent("11", "item.created", row)]),
+      copyReplay("11", [copyItemEvent("eleven", "item.created", row)]),
+      copyReplay("11", [copyItemEvent("11", "item.created", row)]),
     );
     // The hydration's own head read answers once more first.
     expect((await device.catchUp()).ok).toBe(true);
@@ -996,7 +1022,7 @@ describe("catch-up replays from the cursor", () => {
     // A server that ends every stream the moment it opens, and later one
     // that fails and then refuses.
     let next: Answer[] = [];
-    server.answer("GET", "/events", () =>
+    server.copyAnswer("GET", "/events", () =>
       next.length > 1
         ? next.shift()!
         : (next[0] ?? { kind: "sse", frames: [connected] }),
@@ -1070,7 +1096,7 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-unprinted");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       // The first stream ends at once, so the change arrives on the next,
@@ -1081,7 +1107,8 @@ describe("catch-up replays from the cursor", () => {
         hold: true,
         frames: [
           connected,
-          itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+          copyStreamCursor("11"),
+          copyItemEvent("11", "item.created", wireItem({ id: "arrived" })),
         ],
       },
     );
@@ -1114,12 +1141,13 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-interrupted");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
       hold: true,
       frames: [
         connected,
-        itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+        copyStreamCursor("11"),
+        copyItemEvent("11", "item.created", wireItem({ id: "arrived" })),
       ],
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -1165,7 +1193,7 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-stall");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", { kind: "stall" });
+    server.copyAnswer("GET", "/events", { kind: "stall" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     const started = Date.now();
@@ -1175,7 +1203,7 @@ describe("catch-up replays from the cursor", () => {
     expect(
       server.requests.filter((request) => request.pathname === "/events")
         .length,
-    ).toBe(2);
+    ).toBe(3);
     expect(
       Date.now() - started,
       "the follow waited out a request nobody answered after it was told to stop, holding the store the whole time",
@@ -1190,18 +1218,18 @@ describe("catch-up replays from the cursor", () => {
     // Registered after the device read the catalog: the hydration and the
     // first stream read it without the type, every read after with it.
     let reads = 0;
-    server.answer("GET", "/types", () => {
+    server.copyAnswer("GET", "/types", () => {
       reads += 1;
       return typeCatalog(
-        reads > 1 ? [wireType("acme.late-note", { parent: "core.note" })] : [],
+        reads > 2 ? [wireType("acme.late-note", { parent: "core.note" })] : [],
       );
     });
     scriptKey(server);
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog([
-        itemEvent(
+      copyHeldLog([
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "late", type: "acme.late-note" }),
@@ -1239,12 +1267,12 @@ describe("catch-up replays from the cursor", () => {
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
     const ids = Array.from({ length: 20 }, (_, n) => String(11 + n));
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog(
+      copyHeldLog(
         ids.map((id) =>
-          itemEvent(
+          copyItemEvent(
             id,
             "item.created",
             wireItem({ id: `gone-${id}`, type: "acme.gone" }),
@@ -1299,12 +1327,12 @@ describe("catch-up replays from the cursor", () => {
       },
     });
     const ids = ["11", "12", "13", "14", "15"];
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      heldLog(
+      copyHeldLog(
         ids.map((id) =>
-          itemEvent(
+          copyItemEvent(
             id,
             "item.created",
             wireItem({
@@ -1346,9 +1374,9 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("follow-aged-out");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     // The witness: the hydration left a cursor for the follow to lose.
@@ -1391,62 +1419,52 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("short-stream");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       // The head is 20 and the stream carries two events and then ends, which
       // is what a dropped connection looks like from the reading end.
-      replay("20", [
-        itemEvent("11", "item.created", wireItem({ id: "a" })),
-        itemEvent("12", "item.created", wireItem({ id: "b" })),
+      copyIncompleteReplay("20", [
+        copyItemEvent("11", "item.created", wireItem({ id: "a" })),
+        copyItemEvent("12", "item.created", wireItem({ id: "b" })),
       ]),
-      replay("20", []),
+      copyIncompleteReplay("20", []),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const caught = await device.catchUp();
-    expect(caught.ok).toBe(true);
-    expect(
-      caught.ok ? caught.value.cursor : undefined,
-      "the cursor moved past the events the device actually applied, so everything between is skipped with nothing left to fetch it",
-    ).toBe("12");
+    expect(caught.ok ? null : caught.refusal.code).toBe("stream_incomplete");
+    const status = await device.status();
+    expect(status.ok ? status.value.event_cursor : null).toBe("12");
 
     await device.catchUp();
     expect(
       lastEventIds(harness),
       "the next catch-up resumed from somewhere other than the last event applied, so a stream that ends early loses everything between",
-    ).toEqual(["(none)", "10", "12"]);
+    ).toEqual(["(none)", "10", "10", "12"]);
   });
 
   it("reports reaching the head, and reports stopping short of it", async () => {
     harness = await startHarness("head-report");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("20", [
-        itemEvent("11", "item.created", wireItem({ id: "short" })),
+      copyIncompleteReplay("20", [
+        copyItemEvent("11", "item.created", wireItem({ id: "short" })),
       ]),
-      replay("12", [
-        itemEvent("12", "item.created", wireItem({ id: "complete" })),
+      copyReplay("12", [
+        copyItemEvent("12", "item.created", wireItem({ id: "complete" })),
       ]),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     const short = await device.catchUp();
-    expect(short.ok).toBe(true);
-    expect(
-      short.ok ? short.value.reached_head : undefined,
-      "a catch-up that stopped eight events short of the head reported a clean pass, so a caller believes the copy is current when it is not",
-    ).toBe(false);
-    expect(
-      short.ok
-        ? [short.value.applied, short.value.skipped, short.value.cursor]
-        : undefined,
-      "the report did not count what it applied and skipped or name where it reached, so nothing can tell a catch-up that did work from one that did none",
-    ).toEqual([1, 0, "11"]);
+    expect(short.ok ? null : short.refusal.code).toBe("stream_incomplete");
+    const partial = await device.status();
+    expect(partial.ok ? partial.value.event_cursor : null).toBe("11");
 
     const complete = await device.catchUp();
     expect(complete.ok).toBe(true);
@@ -1462,15 +1480,15 @@ describe("catch-up ends on the replay's marker", () => {
     harness = await startHarness("replay-marker");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
       // The head is 14 and the device is sent only 11: 12 to 14 are rows its
       // credential may not read, so no frame it is sent reaches the head.
-      liveReplay("14", [
-        itemEvent("11", "item.created", wireItem({ id: "seen" })),
+      copyLiveReplay("14", [
+        copyItemEvent("11", "item.created", wireItem({ id: "seen" })),
       ]),
-      liveReplay("14", []),
+      copyLiveReplay("14", []),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -1487,18 +1505,18 @@ describe("catch-up ends on the replay's marker", () => {
     expect(
       lastEventIds(harness),
       "the next catch-up did not resume from the marker's cursor",
-    ).toEqual(["(none)", "10", "14"]);
+    ).toEqual(["(none)", "10", "10", "14"]);
   });
 
   it("moves a held stream's cursor past the rows it withheld", async () => {
     harness = await startHarness("follow-marker");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      liveReplay("14", [
-        itemEvent("11", "item.created", wireItem({ id: "seen" })),
+      copyLiveReplay("14", [
+        copyItemEvent("11", "item.created", wireItem({ id: "seen" })),
       ]),
     );
 
@@ -1518,28 +1536,22 @@ describe("catch-up ends on the replay's marker", () => {
     expect(status.ok && status.value.event_cursor).toBe("14");
   });
 
-  it("keeps the cursor it holds when the marker names no position", async () => {
+  it("expires the copy when a live marker names no position", async () => {
     harness = await startHarness("replay-marker-null");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", {
-      // What a real server sends when its read of the head outran its
-      // budget and the replay found nothing: no head, and a marker that
-      // knows no position.
+    server.copyAnswer("GET", "/events", {
+      // A malformed marker cannot certify completion or keep a readable copy.
       kind: "sse",
       hold: true,
-      frames: [connected, streamLive(null)],
+      frames: [connected, copyStreamLive(null)],
     });
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const caught = await device.catchUp();
-    expect(caught.ok).toBe(true);
-    expect(
-      caught.ok
-        ? [caught.value.applied, caught.value.cursor, caught.value.reached_head]
-        : undefined,
-      "a marker naming no position moved the cursor or did not end the catch-up",
-    ).toEqual([0, "10", true]);
+    expect(caught.ok ? null : caught.refusal.code).toBe("copy_expired");
+    const status = await device.status();
+    expect(status.ok ? status.value.hydration : null).toBe("expired");
   });
 });
 
@@ -1553,11 +1565,11 @@ describe("catch-up keeps the copy to its slice", () => {
         "core.note": [{ item: { id: "stays" } }, { item: { id: "leaves" } }],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({ id: "leaves", tier: "feed", version: 2 }),
@@ -1591,14 +1603,14 @@ describe("catch-up keeps the copy to its slice", () => {
     // into the slice. Its frame carries its tags; its edges are its own and
     // no frame carries them.
     const entered = wireItem({ id: "entered", version: 3 });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent("11", "item.updated", entered, { tags: ["kept"] }),
+      copyReplay("11", [
+        copyItemEvent("11", "item.updated", entered, { tags: ["kept"] }),
       ]),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/entered",
       answers.updated({
@@ -1638,12 +1650,12 @@ describe("catch-up keeps the copy to its slice", () => {
     // A note the copy never held because it was in the feed, now moved to
     // the library the slice holds.
     const moved = wireItem({ id: "moved", tier: "library", version: 2 });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", moved)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", moved)]),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/moved",
       answers.updated({
@@ -1679,14 +1691,14 @@ describe("catch-up keeps the copy to its slice", () => {
     const { server, device } = harness;
     scriptHydration(server, { head: "10", rows: { "core.note": [] } });
     const entered = wireItem({ id: "entered", version: 3 });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", entered)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", entered)]),
     );
     const edge = (id: string): Record<string, unknown> =>
       wireEdge({ id, source_id: "entered", target_id: "elsewhere" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/entered",
       answers.updated({
@@ -1696,7 +1708,7 @@ describe("catch-up keeps the copy to its slice", () => {
         },
       }),
     );
-    server.answer("GET", "/items/entered/edges", {
+    server.copyAnswer("GET", "/items/entered/edges", {
       kind: "json",
       status: 200,
       body: { data: [edge("second-page")], next_cursor: null },
@@ -1722,12 +1734,12 @@ describe("catch-up keeps the copy to its slice", () => {
     const { server, device } = harness;
     scriptHydration(server, { head: "10", rows: { "core.note": [] } });
     const entered = wireItem({ id: "entered", version: 3 });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", entered)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", entered)]),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/entered",
       refusal(503, "service_unavailable", "busy"),
@@ -1770,12 +1782,16 @@ describe("catch-up keeps the copy to its slice", () => {
     const { server, device } = harness;
     scriptHydration(server, { head: "10", rows: { "core.note": [] } });
     const entered = wireItem({ id: "entered", version: 3 });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
       hold: true,
-      frames: [connected, itemEvent("11", "item.updated", entered)],
+      frames: [
+        connected,
+        copyStreamCursor("11"),
+        copyItemEvent("11", "item.updated", entered),
+      ],
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/entered",
       refusal(503, "service_unavailable", "busy"),
@@ -1812,11 +1828,11 @@ describe("catch-up keeps the copy to its slice", () => {
         "core.note": [{ item: { id: "stays" } }, { item: { id: "moves" } }],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({ id: "moves", type: "core.bookmark", version: 2 }),
@@ -1883,11 +1899,11 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({ id: "leaves", tier: "feed", version: 2 }),
@@ -1947,10 +1963,10 @@ describe("catch-up keeps the copy to its slice", () => {
       },
       edges: { "parent-of": [beneath] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("13", [
+      copyReplay("13", [
         edgeEvent(
           "11",
           "edge.created",
@@ -1966,7 +1982,7 @@ describe("catch-up keeps the copy to its slice", () => {
           "edge.created",
           wireEdge({ id: "not-whole", source_id: "outer", target_id: "inner" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "13",
           "item.updated",
           wireItem({ id: "leaves", tier: "feed", version: 2 }),
@@ -2039,10 +2055,10 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
+      copyReplay("12", [
         edgeEvent(
           "11",
           "edge.updated",
@@ -2105,10 +2121,10 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
+      copyReplay("11", [
         edgeEvent(
           "11",
           "edge.updated",
@@ -2167,10 +2183,10 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
+      copyReplay("11", [
         edgeEvent(
           "11",
           "edge.updated",
@@ -2226,24 +2242,24 @@ describe("catch-up keeps the copy to its slice", () => {
         version,
         properties: { title },
       });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/settings",
       answers.updated(settings(1, "pinned")),
       answers.updated(settings(3, "read again")),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent("11", "item.updated", settings(2, "changed")),
-        itemEvent(
+      copyReplay("12", [
+        copyItemEvent("11", "item.updated", settings(2, "changed")),
+        copyItemEvent(
           "12",
           "item.updated",
           wireItem({ id: "stranger", type: "core.bookmark", version: 2 }),
         ),
       ]),
-      headRead("12"),
+      copyHeadRead("12"),
     );
     const title = async (): Promise<unknown> => {
       const held = await device.get("settings");
@@ -2288,21 +2304,21 @@ describe("catch-up keeps the copy to its slice", () => {
         "core.note": [{ item: { id: "bound" } }, { item: { id: "free" } }],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/bound",
       answers.updated(wireItem({ id: "bound" })),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent(
+      copyReplay("12", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({ id: "bound", tier: "feed", version: 2 }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.updated",
           wireItem({ id: "free", tier: "feed", version: 2 }),
@@ -2334,16 +2350,16 @@ describe("catch-up keeps the copy to its slice", () => {
     });
     const settings = (version: number) =>
       wireItem({ id: "settings", type: "core.bookmark", version });
-    server.answer("GET", "/items/settings", answers.updated(settings(1)));
-    server.answer(
+    server.copyAnswer("GET", "/items/settings", answers.updated(settings(1)));
+    server.copyAnswer(
       "GET",
       "/items/stays",
       answers.updated(wireItem({ id: "stays" })),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", settings(2))]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", settings(2))]),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -2380,11 +2396,11 @@ describe("catch-up keeps the copy to its slice", () => {
       rows: { "core.note": [{ item: { id: "note" } }] },
     });
     const settings = wireItem({ id: "settings", type: "core.bookmark" });
-    server.answer("GET", "/items/settings", answers.updated(settings));
-    server.answer(
+    server.copyAnswer("GET", "/items/settings", answers.updated(settings));
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.purged", settings)]),
+      copyReplay("11", [copyItemEvent("11", "item.purged", settings)]),
     );
     const pinned = async () => {
       const status = await device.status();
@@ -2423,12 +2439,12 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "note" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/held",
       answers.updated(wireItem({ id: "held", type: "core.bookmark" })),
     );
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/absent",
       refusal(404, "not_found", "no item absent"),
@@ -2466,7 +2482,7 @@ describe("catch-up keeps the copy to its slice", () => {
         version,
         properties: { title },
       });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/settings",
       answers.updated(settings(1, "first")),
@@ -2512,15 +2528,15 @@ describe("catch-up keeps the copy to its slice", () => {
         version,
         properties: { title },
       });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/settings",
       answers.updated(settings(1, "pinned")),
       answers.updated(settings(2, "read again")),
     );
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
     });
     const title = async (): Promise<unknown> => {
       const held = await device.get("settings");
@@ -2536,7 +2552,7 @@ describe("catch-up keeps the copy to its slice", () => {
       expired.ok && [expired.value.hydration, expired.value.pinned],
     ).toEqual(["expired", ["settings"]]);
 
-    server.answer("GET", "/events", headRead("900"));
+    server.copyAnswer("GET", "/events", copyHeadRead("900"));
     const again = await device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
     const status = await device.status();
@@ -2557,7 +2573,7 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "note" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/settings",
       answers.updated(wireItem({ id: "settings", type: "core.bookmark" })),
@@ -2603,7 +2619,7 @@ describe("catch-up keeps the copy to its slice", () => {
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
     const local = created.value.item_id ?? "";
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/items/${local}`,
       refusal(404, "not_found", "no such item"),
@@ -2619,6 +2635,16 @@ describe("catch-up keeps the copy to its slice", () => {
 
     const answered = "01a00000-0000-7000-8000-0000000000e1";
     scriptWrites(server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: answered,
+            properties: { title: "mine", body: "mine" },
+            source: "notes",
+            source_id: "mine.md",
+          }),
+        ),
+      ],
       create: [
         answers.created(
           wireItem({
@@ -2655,7 +2681,7 @@ describe("catch-up keeps the copy to its slice", () => {
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
     const local = created.value.item_id ?? "";
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/items/${local}`,
       refusal(404, "not_found", "no such item"),
@@ -2678,7 +2704,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
-  it("takes the pin off a row whose create was refused, even where reading it back fails", async () => {
+  it("keeps the pin until a fresh read confirms absence after a create refusal", async () => {
     harness = await startHarness("pinned-create-refused-unread");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -2694,11 +2720,12 @@ describe("catch-up keeps the copy to its slice", () => {
     if (!created.ok) return;
     const local = created.value.item_id ?? "";
     // The pin's read, then the read back after the refusal.
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/items/${local}`,
       refusal(404, "not_found", "no such item"),
       refusal(503, "service_unavailable", "later"),
+      refusal(404, "not_found", "no such item"),
     );
     expect((await device.pin(local)).ok).toBe(true);
     const before = await device.status();
@@ -2719,8 +2746,16 @@ describe("catch-up keeps the copy to its slice", () => {
     const after = await device.status();
     expect(
       after.ok && after.value.pinned,
-      "a refused create whose read back failed kept its pin for good, since the server never holds that id",
-    ).toEqual([]);
+      "a failed read cannot certify absence or remove a pin",
+    ).toEqual([local]);
+    expect((await device.drain()).ok).toBe(true);
+    const reconciled = await device.status();
+    expect(reconciled.ok && reconciled.value.pinned).toEqual([]);
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+    ).toHaveLength(1);
   });
 
   it("lays a waiting write over a row it pins", async () => {
@@ -2734,7 +2769,7 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/n1",
       answers.updated(
@@ -2764,7 +2799,7 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "note" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/note",
       answers.updated(wireItem({ id: "note" })),
@@ -2802,7 +2837,7 @@ describe("catch-up keeps the copy to its slice", () => {
       rows: { "core.note": [{ item: { id: "note" } }] },
       edges: { "parent-of": [beneath] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/settings",
       answers.updated(
@@ -2845,10 +2880,13 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "bound", version: 1 } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items/bound",
       answers.updated(wireItem({ id: "bound", version: 1 })),
+      answers.updated(
+        wireItem({ id: "bound", version: 2, type: "core.bookmark" }),
+      ),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.pin("bound")).ok).toBe(true);
@@ -2895,11 +2933,12 @@ describe("catch-up keeps the copy to its slice", () => {
         supersedes: [],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      headRead("10"),
-      replay("12", [
+      copyHeadRead("10"),
+      copyReplay("10", []),
+      copyReplay("12", [
         edgeEvent(
           "11",
           "edge.created",
@@ -3000,11 +3039,11 @@ describe("catch-up keeps the copy to its slice", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent("11", "item.purged", wireItem({ id: "purged" })),
+      copyReplay("11", [
+        copyItemEvent("11", "item.purged", wireItem({ id: "purged" })),
       ]),
     );
 
@@ -3039,12 +3078,12 @@ describe("catch-up keeps the copy to its slice", () => {
     harness = await startHarness("no-add");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent("11", "item.created", wireItem({ id: "declared" })),
-        itemEvent(
+      copyReplay("12", [
+        copyItemEvent("11", "item.created", wireItem({ id: "declared" })),
+        copyItemEvent(
           "12",
           "item.created",
           wireItem({ id: "undeclared", type: "core.bookmark" }),
@@ -3070,9 +3109,14 @@ describe("catch-up keeps the copy to its slice", () => {
   it("refreshes the type catalog before applying", async () => {
     harness = await startHarness("catalog");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("10"));
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
-    server.answer(
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeadRead("10"),
+      copyReplay("10", []),
+    );
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer(
       "GET",
       "/types",
       typeCatalog(),
@@ -3093,12 +3137,12 @@ describe("catch-up keeps the copy to its slice", () => {
       },
     );
     scriptKey(server);
-    server.answer("GET", "/items", itemsPage([]));
-    server.answer(
+    server.copyAnswer("GET", "/items", itemsPage([]));
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "registered-while-away", type: "acme.field-note" }),
@@ -3123,36 +3167,48 @@ describe("catch-up keeps the copy to its slice", () => {
   it("reads the catalog again, once for each, for a type an event names that it does not hold", async () => {
     harness = await startHarness("catalog-behind");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("10"));
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
-    // The hydration and the catch-up's first read know neither type; the
-    // one registered after the catch-up began is there from the next read,
-    // and the other is never described.
-    server.answer("GET", "/types", typeCatalog(), typeCatalog(), {
-      kind: "json",
-      status: 200,
-      body: {
-        data: [
-          wireType("core.note"),
-          wireType("core.file"),
-          wireType("acme.late-note", { parent: "core.note" }),
-        ],
-        next_cursor: null,
-      },
-    });
-    scriptKey(server);
-    server.answer("GET", "/items", itemsPage([]));
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("14", [
-        itemEvent(
+      copyHeadRead("10"),
+      copyReplay("10", []),
+    );
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    // The hydration, internal replay and catch-up's first read know neither type; the
+    // one registered after the catch-up began is there from the next read,
+    // and the other is never described.
+    server.copyAnswer(
+      "GET",
+      "/types",
+      typeCatalog(),
+      typeCatalog(),
+      typeCatalog(),
+      {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [
+            wireType("core.note"),
+            wireType("core.file"),
+            wireType("acme.late-note", { parent: "core.note" }),
+          ],
+          next_cursor: null,
+        },
+      },
+    );
+    scriptKey(server);
+    server.copyAnswer("GET", "/items", itemsPage([]));
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("14", [
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "late", type: "acme.late-note" }),
         ),
         ...["12", "13", "14"].map((id) =>
-          itemEvent(
+          copyItemEvent(
             id,
             "item.created",
             wireItem({ id: `gone-${id}`, type: "acme.gone" }),
@@ -3185,13 +3241,13 @@ describe("catch-up keeps the copy to its slice", () => {
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
     const ids = ["11", "12", "13"];
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay(
+      copyReplay(
         "13",
         ids.map((id) =>
-          itemEvent(
+          copyItemEvent(
             id,
             "item.created",
             wireItem({
@@ -3235,9 +3291,9 @@ describe("a cursor the log no longer holds", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "first" } }] },
     });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
     });
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -3267,7 +3323,7 @@ describe("a cursor the log no longer holds", () => {
     ).toBe(1);
 
     // And the remedy is a hydration, which the device can still perform.
-    server.answer("GET", "/events", headRead("900"));
+    server.copyAnswer("GET", "/events", copyHeadRead("900"));
     const again = await device.hydrate(["core.note"], "library");
     expect(
       again.ok,
@@ -3285,9 +3341,9 @@ describe("a cursor the log no longer holds", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "first" } }] },
     });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
     });
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -3361,7 +3417,7 @@ describe("a cursor the log no longer holds", () => {
 
     // And a hydration clears it, which is what makes the refusal a state to
     // leave rather than a store to discard.
-    server.answer("GET", "/events", headRead("900"));
+    server.copyAnswer("GET", "/events", copyHeadRead("900"));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const recovered = await device.list();
     expect(
@@ -3388,6 +3444,11 @@ describe("a server that is not the one the copy followed", () => {
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) throw new Error("unreachable: the assertion above threw");
+    h.server.copyAnswer(
+      "GET",
+      `/items/${created.value.item_id}`,
+      refusal(404, "item_not_found", "The queued create has not been sent."),
+    );
     return created.value.id;
   }
 
@@ -3432,16 +3493,16 @@ describe("a server that is not the one the copy followed", () => {
     });
     // What the real server answers a cursor past its head: the head it
     // holds, then the terminal frame.
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("7"), cursorAhead("10", "7")],
+      frames: [connected, copyStreamCursor("7"), cursorAhead("10", "7")],
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const waiting = await queued(harness);
 
     await expectExpired(harness, await device.catchUp(), ["7", "10"], waiting);
 
-    server.answer("GET", "/events", headRead("7"));
+    server.copyAnswer("GET", "/events", copyHeadRead("7"));
     const again = await device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect(again.ok ? again.value.cursor : undefined).toBe("7");
@@ -3460,7 +3521,7 @@ describe("a server that is not the one the copy followed", () => {
     });
     // A head read that outran its budget names no position, so the
     // terminal frame is the only word the copy has.
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
       frames: [connected, cursorAhead("10", "7")],
     });
@@ -3473,9 +3534,9 @@ describe("a server that is not the one the copy followed", () => {
     harness = await startHarness("follow-restored");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("7"), cursorAhead("10", "7")],
+      frames: [connected, copyStreamCursor("7"), cursorAhead("10", "7")],
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const waiting = await queued(harness);
@@ -3500,31 +3561,49 @@ describe("a server that is not the one the copy followed", () => {
     harness = await startHarness("other-instance");
     const { server, device } = harness;
     let instance = SCRIPTED_INSTANCE;
-    server.answer("GET", "/", () => answers.root(Number(BUILT_FOR), instance));
+    const replayFromInstance = (head: string): Answer => {
+      const answer = copyReplay(head, []);
+      if (answer.kind !== "sse") throw new Error("a replay must be a stream");
+      return {
+        ...answer,
+        frames: answer.frames.map((frame) => ({
+          ...frame,
+          data:
+            typeof frame.data === "object" &&
+            frame.data !== null &&
+            "instance_id" in frame.data
+              ? { ...frame.data, instance_id: instance }
+              : frame.data,
+        })),
+      };
+    };
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
     scriptHydration(server, {
       head: "10",
       rows: { "core.note": [{ item: { id: "first" } }] },
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     // The witness: the instance the copy hydrated from catches up.
-    server.answer("GET", "/events", liveReplay("10", []));
+    server.copyAnswer("GET", "/events", () => replayFromInstance("10"));
     const caught = await device.catchUp();
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
 
     // A fresh instance at the same address, whose log has run past the
-    // copy's cursor, so nothing in the stream says it is another.
+    // copy's cursor; the copy marker identifies the new instance.
     instance = OTHER_INSTANCE;
-    server.answer("GET", "/events", liveReplay("40", []));
+    server.copyAnswer("GET", "/events", () => replayFromInstance("40"));
     const waiting = await queued(harness);
     await expectExpired(
       harness,
       await device.catchUp(),
-      [OTHER_INSTANCE, SCRIPTED_INSTANCE],
+      ["read_view_invalid"],
       waiting,
     );
 
     // A follow meets another instance and ends as the catch-up did.
-    server.answer("GET", "/events", headRead("40"));
+    server.copyAnswer("GET", "/events", () => replayFromInstance("40"));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     instance = SCRIPTED_INSTANCE;
     const followed = await device.follow(30);

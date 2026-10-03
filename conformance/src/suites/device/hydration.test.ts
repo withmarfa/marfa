@@ -8,11 +8,11 @@ import {
 import {
   answers,
   edgesPage,
-  headRead,
-  itemEvent,
+  copyHeadRead,
+  copyItemEvent,
   itemsPage,
   refusal,
-  replay,
+  copyReplay,
   edgeTypeCatalog,
   typeCatalog,
   wireEdge,
@@ -147,7 +147,7 @@ describe("what a hydration declares", () => {
       head: "10",
       rows: { "core.note": [{ item: { id: "n1" } }] },
     });
-    server.answer("GET", "/items", (request) => {
+    server.copyAnswer("GET", "/items", (request) => {
       const type = request.query.get("type");
       if (type === "bookmark") {
         return refusal(
@@ -245,11 +245,11 @@ describe("the order a hydration reads in", () => {
     // door are consumed in order, so a second subscription is the replay the
     // catch-up below makes, carrying a write that landed at id 11 while the
     // snapshot at cursor 10 was being read.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.created",
           wireItem({ id: "written-during-the-snapshot" }),
@@ -288,11 +288,11 @@ describe("what a hydration leaves behind", () => {
   it("replaces what the store held", async () => {
     harness = await startHarness("replace");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("10"));
-    server.answer("GET", "/types", typeCatalog());
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer("GET", "/events", copyHeadRead("10"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
-    server.answer("GET", "/items", (request) =>
+    server.copyAnswer("GET", "/items", (request) =>
       request.query.get("type") === "core.note"
         ? itemsPage([{ item: wireItem({ id: "from-the-first-slice" }) }])
         : itemsPage([
@@ -331,9 +331,9 @@ describe("what a hydration leaves behind", () => {
   it("leaves an interrupted hydration to be run again, never resumed", async () => {
     harness = await startHarness("interrupted-hydration");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("10"));
-    server.answer("GET", "/types", typeCatalog());
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer("GET", "/events", copyHeadRead("10"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     // The first attempt lands a page and then dies partway through the walk,
     // so there is something a resuming device could resume from. With nothing
@@ -342,7 +342,7 @@ describe("what a hydration leaves behind", () => {
     const firstPage = itemsPage([{ item: wireItem({ id: "a" }) }], {
       nextCursor: "p2",
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items",
       firstPage,
@@ -375,11 +375,11 @@ describe("what a hydration leaves behind", () => {
     // copy short and call it complete.
     harness = await startHarness("empty-page");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("7"));
-    server.answer("GET", "/types", typeCatalog());
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer("GET", "/events", copyHeadRead("7"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items",
       itemsPage([{ item: wireItem({ id: "before" }) }], { nextCursor: "p2" }),
@@ -401,7 +401,7 @@ describe("what a hydration leaves behind", () => {
       head: "7",
       rows: { "core.note": [{ item: { id: "ticket" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/edges",
       edgesPage(
@@ -452,7 +452,7 @@ describe("what a hydration leaves behind", () => {
       head: "7",
       rows: { "core.note": [{ item: { id: "ticket" } }] },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/edges",
       edgesPage(
@@ -492,11 +492,11 @@ describe("what a hydration leaves behind", () => {
   it("reports the counts, the pages and the cursor it stored", async () => {
     harness = await startHarness("report");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("42"));
-    server.answer("GET", "/types", typeCatalog());
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
+    server.copyAnswer("GET", "/events", copyHeadRead("42"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/items",
       itemsPage([{ item: wireItem({ id: "page-one" }) }], {

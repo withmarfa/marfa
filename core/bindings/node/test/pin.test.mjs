@@ -1,15 +1,12 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { MarfaCore, Tier } from "../index.js";
-
-const CONTRACT = /** @type {{ info: { version: string } }} */ (
-  JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
-).info.version;
+import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
 
@@ -51,11 +48,12 @@ async function scripted() {
       res.writeHead(status, {
         "content-type": "application/json",
         "x-marfa-contract": CONTRACT,
+        ...readProof(req),
       });
       res.end(JSON.stringify(body));
     };
     if (path === "/") {
-      json({ instance_id: "00000000-0000-7000-8000-000000000000" });
+      json({ instance_id: INSTANCE });
     } else if (path === "/types") {
       json({
         data: [
@@ -84,21 +82,17 @@ async function scripted() {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {
       json({
-        data: [{ item: item("note", "core.note"), metadata: { tags: [] } }],
+        data: [{ listed: true, item: item("note", "core.note"), metadata: { tags: [] } }],
         next_cursor: null,
       });
     } else if (path === "/items/settings") {
-      json({ item: item("settings", "core.bookmark"), metadata: { tags: [] } });
+      json({ listed: true, item: item("settings", "core.bookmark"), metadata: { tags: [] } });
     } else if (path === "/edges") {
       json({ data: [parentOf("beneath", "outer", "inner")], next_cursor: null });
     } else if (path === "/events") {
-      res.writeHead(200, {
-        "content-type": "text/event-stream",
-        "x-marfa-contract": CONTRACT,
-      });
-      res.end(
-        ': connected\n\nevent: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n',
-      );
+      const cursor = streamHead(req, res);
+      if (cursor !== null) res.write(marker("stream_live", cursor));
+      res.end();
     } else {
       json({ error: { code: "not_found", message: "no such item" } }, 404);
     }

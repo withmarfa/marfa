@@ -11,6 +11,7 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
+  copyLiveReplay,
   cursorAhead,
   edgesPage,
   itemEvent,
@@ -3008,4 +3009,92 @@ describe("a local read answers the listing grammar as the server does", () => {
     expect(to.data.data.map((item) => item.id)).toEqual([pointer]);
     expect(bystander).not.toBe(pointer);
   });
+});
+
+it("matches copy marker tuples and conditional listing proofs", async (context) => {
+  const seeded = await note({
+    title: "certified page",
+    body: "certified page",
+  });
+  const frames = await withStream(
+    apiUrl,
+    apiKey,
+    {
+      query: [
+        ["edges", "all"],
+        ["copy", "1"],
+      ],
+    },
+    async (stream) =>
+      (
+        await collectUntil(
+          stream,
+          (events) => events.some((event) => event.event === "stream_live"),
+          "certified bootstrap live marker",
+          context.signal,
+        )
+      ).events,
+  );
+  const scripted = copyLiveReplay("1", []);
+  if (scripted.kind !== "sse") throw new Error("expected copy stream");
+  let fence = "";
+  for (const type of ["stream_cursor", "stream_live"]) {
+    const observed = frames.find((frame) => frame.event === type)!;
+    const expected = scripted.frames.find((frame) => frame.event === type)!;
+    expect(observed).toBeDefined();
+    expect(observed.id).toBeUndefined();
+    expectFidelity(
+      type,
+      { status: 200, body: observed.data },
+      { kind: "json", status: 200, body: expected.data },
+      { same: ["type"], shape: ["cursor", "instance_id", "read_view"] },
+    );
+    const tuple = observed.data as {
+      cursor: string;
+      instance_id: string;
+      read_view: string;
+    };
+    expect(tuple.cursor).toMatch(/^(0|[1-9][0-9]*)$/);
+    expect(tuple.instance_id.length).toBeGreaterThan(0);
+    expect(tuple.read_view).toMatch(/^[0-9a-f]{64}$/);
+    if (fence) expect(tuple.read_view).toBe(fence);
+    fence = tuple.read_view;
+  }
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "X-Marfa-Read-View": fence,
+  };
+  const response = await fetch(
+    `${apiUrl}/items/${seeded.id}?include=metadata`,
+    { headers },
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("X-Marfa-Read-View")).toBe(fence);
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  const row = (await response.json()) as {
+    listed: boolean;
+    item: { id: string };
+  };
+  expect(row.listed).toBe(true);
+  expect(row.item.id).toBe(seeded.id);
+  const ordinary = await fetch(
+    `${apiUrl}/items/${seeded.id}?include=metadata`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  expect(ordinary.status).toBe(200);
+  expect(ordinary.headers.get("X-Marfa-Read-View")).toBeNull();
+  expect(await ordinary.json()).not.toHaveProperty("listed");
+  const page = await fetch(
+    `${apiUrl}/items?type=core.note&include=metadata&source=${encodeURIComponent(ctx.source)}`,
+    { headers },
+  );
+  expect(page.status).toBe(200);
+  expect(page.headers.get("X-Marfa-Read-View")).toBe(fence);
+  const listed = (await page.json()) as {
+    data: { listed: boolean; item: { id: string } }[];
+    next_cursor: string | null;
+  };
+  expect(listed.data.some((entry) => entry.item.id === seeded.id)).toBe(true);
+  expect(listed.data.every((entry) => entry.listed === true)).toBe(true);
+  expect(listed).toHaveProperty("next_cursor");
 });

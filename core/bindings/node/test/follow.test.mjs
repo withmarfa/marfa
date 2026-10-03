@@ -1,7 +1,7 @@
 // @ts-check
 // Run with `--expose-gc`: one case lets a subscription be collected.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { Handle, MarfaCore, Tier } from "../index.js";
-
-const CONTRACT = /** @type {{ info: { version: string } }} */ (
-  JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
-).info.version;
+import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
 
@@ -37,6 +34,7 @@ function created(id, cursor) {
   };
   const data = JSON.stringify({
     type: "item.created",
+    listed: true,
     item,
     metadata: { tags: [] },
   });
@@ -59,17 +57,19 @@ async function scripted(streams) {
   /** @type {Set<Response>} */
   const open = new Set();
   let followed = 0;
+  let building = false;
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
     const json = (/** @type {unknown} */ body) => {
       res.writeHead(200, {
         "content-type": "application/json",
         "x-marfa-contract": CONTRACT,
+        ...readProof(req),
       });
       res.end(JSON.stringify(body));
     };
     if (path === "/") {
-      json({ instance_id: "00000000-0000-7000-8000-000000000000" });
+      json({ instance_id: INSTANCE });
     } else if (path === "/types") {
       json({
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
@@ -82,15 +82,18 @@ async function scripted(streams) {
     } else if (path === "/items") {
       json({ data: [], next_cursor: null });
     } else if (path === "/events") {
-      res.writeHead(200, {
-        "content-type": "text/event-stream",
-        "x-marfa-contract": CONTRACT,
-      });
-      res.write(": connected\n\n");
-      if (req.headers["last-event-id"] === undefined) {
-        res.end(
-          'event: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n',
-        );
+      const cursor = streamHead(req, res);
+      if (cursor === null) {
+        building = true;
+        res.end();
+        return;
+      }
+      res.write(marker("stream_live", cursor));
+      // Hydration's replay establishes completeness before a separately
+      // held follow exercises callback ordering and cancellation.
+      if (building) {
+        building = false;
+        res.end();
         return;
       }
       followed += 1;

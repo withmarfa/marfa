@@ -4,12 +4,13 @@ import {
   SERVED_SOURCE,
   answers,
   edgeEvent,
-  headRead,
+  copyHeadRead,
   SCRIPTED_INSTANCE,
-  itemEvent,
+  copyItemEvent,
   refusal,
-  replay,
+  copyReplay,
   wireEdge,
+  type WireEdgeOptions,
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
@@ -22,6 +23,7 @@ import {
   BUILT_FOR,
   type Answer,
   type Responder,
+  type ScriptedServer,
 } from "../../device/scripted-server.js";
 import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -156,6 +158,10 @@ describe("the queue keeps its order", () => {
     if (!first.ok || !second.ok) return;
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: first.value.item_id ?? "a" })),
+        answers.updated(wireItem({ id: second.value.item_id ?? "b" })),
+      ],
       create: [
         answers.created(wireItem({ id: first.value.item_id ?? "a" })),
         answers.created(wireItem({ id: second.value.item_id ?? "b" })),
@@ -240,6 +246,7 @@ describe("every write names the version it read", () => {
     expect((await queueOf(harness.device)).length).toBe(1);
 
     scriptWrites(harness.server, {
+      read: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
       update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
     });
     expect((await harness.device.drain()).ok).toBe(true);
@@ -271,6 +278,10 @@ describe("every write names the version it read", () => {
     ).toBe(7);
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: withVersion.value.item_id ?? "a" })),
+        answers.updated(wireItem({ id: without.value.item_id ?? "b" })),
+      ],
       create: [
         answers.created(wireItem({ id: withVersion.value.item_id ?? "a" })),
         answers.created(wireItem({ id: without.value.item_id ?? "b" })),
@@ -309,6 +320,7 @@ describe("a write is answered once", () => {
     // The first attempt meets a 5xx, which retries and is not counted; the
     // second is answered from the server's record.
     scriptWrites(harness.server, {
+      read: [answers.updated(wireItem({ id }))],
       create: [
         { kind: "json", status: 503, body: { error: { code: "unavailable" } } },
         {
@@ -398,6 +410,9 @@ describe("what a drain sends and reports", () => {
     expect(edit.ok).toBe(true);
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       update: [
         answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
       ],
@@ -434,6 +449,16 @@ describe("what a drain sends and reports", () => {
     expect(local.ok && local.value.type).toBe("core.bookmark");
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+            tier: "feed",
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -485,6 +510,15 @@ describe("what a drain sends and reports", () => {
     ).toEqual({ title: "held", body: "rewritten" });
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "held", body: "rewritten" },
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -526,11 +560,11 @@ describe("what a drain sends and reports", () => {
         ],
       },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           row(HELD.version + 1, {
@@ -591,6 +625,11 @@ describe("what a drain sends and reports", () => {
     const answer = (version: number, properties: Record<string, unknown>) =>
       answers.updated(wireItem({ id: HELD.id, version, properties }));
     scriptWrites(harness.server, {
+      read: [
+        answer(HELD.version + 1, { title: "t", body: "held" }),
+        answer(HELD.version + 2, { title: "t", body: "b2" }),
+        answer(HELD.version + 3, { title: "t", body: "b2", notes: "n" }),
+      ],
       update: [
         answer(HELD.version + 1, { title: "t", body: "held" }),
         answer(HELD.version + 2, { title: "t", body: "b2" }),
@@ -624,6 +663,15 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -657,6 +705,16 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+            properties: { title: "as the server holds it", body: "held" },
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -715,10 +773,10 @@ describe("what a drain sends and reports", () => {
       version: HELD.version + 1,
       properties: { title: "held", body: "theirs" },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", theirs)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", theirs)]),
     );
     expect(
       (await device.hydrate(["core.note", "core.bookmark"], "library")).ok,
@@ -765,6 +823,15 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "held", body: "first" },
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -801,7 +868,12 @@ describe("what a drain sends and reports", () => {
       type: "",
       properties: {},
     };
+    let currentVersion = 1;
     scriptWrites(server, {
+      read: [
+        () =>
+          answers.updated(wireItem({ ...fileRow, version: currentVersion })),
+      ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as typeof fileRow;
@@ -813,18 +885,18 @@ describe("what a drain sends and reports", () => {
           return answers.created(wireItem({ ...fileRow, version: 1 }));
         },
       ],
-      edges: [
-        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
-      ],
+      edges: [edgeCreateDoor(server)],
       update: [
-        () =>
-          answers.updated(
-            wireItem({
-              ...fileRow,
-              version: 2,
-              properties: { ...fileRow.properties, title: "renamed" },
-            }),
-          ),
+        () => {
+          currentVersion = 2;
+          fileRow = {
+            ...fileRow,
+            properties: { ...fileRow.properties, title: "renamed" },
+          };
+          return answers.updated(
+            wireItem({ ...fileRow, version: currentVersion }),
+          );
+        },
       ],
     });
     expect((await device.drain()).ok).toBe(true);
@@ -856,10 +928,10 @@ describe("what a drain sends and reports", () => {
       version: HELD.version + 1,
       properties: { title: "held", body: "theirs" },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", theirs)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", theirs)]),
     );
     const hydrated = await device.hydrate(
       ["core.note", "core.bookmark"],
@@ -960,6 +1032,23 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 2,
+            type: "core.bookmark",
+            properties: { title: "after", body: "held" },
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -1008,7 +1097,12 @@ describe("what a drain sends and reports", () => {
       type: string;
       properties: Record<string, unknown>;
     } = { id: "", type: "", properties: {} };
+    let currentVersion = 1;
     scriptWrites(server, {
+      read: [
+        () =>
+          answers.updated(wireItem({ ...fileRow, version: currentVersion })),
+      ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as typeof fileRow;
@@ -1020,18 +1114,18 @@ describe("what a drain sends and reports", () => {
           return answers.created(wireItem({ ...fileRow, version: 1 }));
         },
       ],
-      edges: [
-        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
-      ],
+      edges: [edgeCreateDoor(server)],
       update: [
-        () =>
-          answers.updated(
-            wireItem({
-              ...fileRow,
-              version: 2,
-              properties: { ...fileRow.properties, title: "renamed" },
-            }),
-          ),
+        () => {
+          currentVersion = 2;
+          fileRow = {
+            ...fileRow,
+            properties: { ...fileRow.properties, title: "renamed" },
+          };
+          return answers.updated(
+            wireItem({ ...fileRow, version: currentVersion }),
+          );
+        },
       ],
     });
     expect((await device.drain()).ok).toBe(true);
@@ -1054,7 +1148,7 @@ describe("what a drain sends and reports", () => {
   it("keeps a pinned row its own answered move takes out of the slice", async () => {
     harness = await hydratedHarness("queue-retype-pinned", { rows: held() });
     const { device, server } = harness;
-    server.answer(
+    server.copyAnswer(
       "GET",
       `/items/${HELD.id}`,
       answers.updated(
@@ -1062,6 +1156,13 @@ describe("what a drain sends and reports", () => {
           id: HELD.id,
           version: HELD.version,
           properties: { title: "held", body: "held" },
+        }),
+      ),
+      answers.updated(
+        wireItem({
+          id: HELD.id,
+          version: HELD.version + 1,
+          type: "core.bookmark",
         }),
       ),
     );
@@ -1076,6 +1177,15 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -1106,7 +1216,7 @@ describe("what a drain sends and reports", () => {
       type: "core.bookmark",
       version: 1,
     });
-    server.answer("GET", "/items/settings", answers.updated(settings));
+    server.copyAnswer("GET", "/items/settings", answers.updated(settings));
     expect((await device.pin("settings")).ok).toBe(true);
     expect(
       (
@@ -1186,6 +1296,15 @@ describe("what a drain sends and reports", () => {
   it("keeps the edges of a type held whole on a row its answered move lets go", async () => {
     harness = await moving("queue-move-answered-whole");
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -1235,6 +1354,9 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       update: [
         answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
       ],
@@ -1260,6 +1382,9 @@ describe("what a drain sends and reports", () => {
       ).ok,
     ).toBe(true);
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       update: [
         answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
       ],
@@ -1302,6 +1427,10 @@ describe("what a drain sends and reports", () => {
     if (!created.ok || !edited.ok) return;
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: created.value.item_id ?? "a" })),
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       create: [answers.created(wireItem({ id: created.value.item_id ?? "a" }))],
       update: [
         answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
@@ -1569,7 +1698,20 @@ describe("what a queue holds", () => {
 
     // Nothing was dropped and nothing rode inline: the create's body carries
     // no tags, and the copy holds them.
+    harness.server.copyAnswer(
+      "GET",
+      /^\/edges\/[^/]+$/,
+      writeAnswers.edge(
+        {
+          id: "01a00000-0000-7000-8000-0000000000ee",
+          source_id: HELD.id,
+          target_id: id,
+        },
+        200,
+      ),
+    );
     scriptWrites(harness.server, {
+      read: [answers.updated(wireItem({ id }), ["alpha", "beta"])],
       create: [answers.created(wireItem({ id }), ["alpha", "beta"])],
       tags: [writeAnswers.metadata(id, ["alpha", "beta"])],
       extensions: [writeAnswers.extensions({ "app.notes": { pinned: true } })],
@@ -1668,7 +1810,23 @@ describe("a write that is not about an item's fields", () => {
     }
 
     // Each door answering exactly what it answers.
+    harness.server.copyAnswer(
+      "GET",
+      /^\/edges\/[^/]+$/,
+      writeAnswers.edge(
+        {
+          id: edgeId,
+          source_id: HELD.id,
+          target_id: otherId,
+        },
+        200,
+      ),
+    );
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: otherId })),
+        answers.updated(wireItem({ id: HELD.id, version: 4 })),
+      ],
       create: [answers.created(wireItem({ id: otherId }))],
       update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
       tags: [writeAnswers.metadata(HELD.id, ["alpha"])],
@@ -1791,10 +1949,10 @@ describe("offline, reconnect and re-hydration", () => {
     // were made. The root still answers, so the drain can confirm the
     // instance and send.
     let outage = true;
+    const accepting = createDoor(harness.server);
     harness.server.answer("POST", "/items", (request) => {
       if (outage) return { kind: "drop" };
-      const { id } = JSON.parse(request.body) as { id: string };
-      return answers.created(wireItem({ id }));
+      return accepting(request);
     });
     expect((await harness.device.drain()).ok).toBe(true);
     const attempted = creates(harness).length;
@@ -1819,8 +1977,14 @@ describe("offline, reconnect and re-hydration", () => {
     const { server, device } = harness;
     const replaced = "00000000-0000-7000-8000-0000000000ff";
     let instance = SCRIPTED_INSTANCE;
-    server.answer("GET", "/", () => answers.root(Number(BUILT_FOR), instance));
-    scriptHydration(server, { head: "10", rows: held() });
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(server, {
+      head: "10",
+      rows: held(),
+      instance: () => instance,
+    });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const queued = await device.create({
       type: "core.note",
@@ -1829,6 +1993,7 @@ describe("offline, reconnect and re-hydration", () => {
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     if (!queued.ok) return;
     scriptWrites(server, {
+      read: [answers.updated(wireItem({ id: queued.value.item_id ?? "a" }))],
       create: [answers.created(wireItem({ id: queued.value.item_id ?? "a" }))],
     });
 
@@ -1862,7 +2027,7 @@ describe("offline, reconnect and re-hydration", () => {
     harness = await startHarness("queue-instance-unknown");
     const { server, device } = harness;
     let restarting = false;
-    server.answer("GET", "/", () =>
+    server.copyAnswer("GET", "/", () =>
       restarting
         ? refusal(503, "unavailable", "restarting")
         : answers.root(Number(BUILT_FOR)),
@@ -1876,6 +2041,7 @@ describe("offline, reconnect and re-hydration", () => {
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     if (!queued.ok) return;
     scriptWrites(server, {
+      read: [answers.updated(wireItem({ id: queued.value.item_id ?? "a" }))],
       create: [answers.created(wireItem({ id: queued.value.item_id ?? "a" }))],
     });
 
@@ -2001,6 +2167,28 @@ describe("offline, reconnect and re-hydration", () => {
     // Both doors: the edit above is queued too, so a drain sends a create
     // and then the update that depends on it.
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id,
+            version: 1,
+            properties: {
+              title: "reworded",
+              body: "a body that does not change",
+            },
+          }),
+        ),
+        answers.updated(
+          wireItem({
+            id,
+            version: 2,
+            properties: {
+              title: "as the server took it",
+              body: "a body that does not change",
+            },
+          }),
+        ),
+      ],
       create: [
         answers.created(
           wireItem({
@@ -2042,17 +2230,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
   /** A create door that takes whatever it is sent, at version 1. */
   function acceptCreates(harnessUnderTest: Harness): void {
     scriptWrites(harnessUnderTest.server, {
-      create: [
-        (request) => {
-          const sent = JSON.parse(request.body) as {
-            id: string;
-            properties: Record<string, unknown>;
-          };
-          return answers.created(
-            wireItem({ id: sent.id, version: 1, properties: sent.properties }),
-          );
-        },
-      ],
+      create: [createDoor(harnessUnderTest.server)],
     });
   }
 
@@ -2180,22 +2358,31 @@ describe("an answer the device applies keeps what it has not had answered", () =
       (await queueOf(device)).filter((row) => row.item_id === local),
     ).toHaveLength(4);
 
+    const currentRows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
+      read: [
+        (request) => {
+          const row = currentRows.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(row);
+        },
+      ],
       // The server resolves the pair onto the row it holds.
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as {
             properties: Record<string, unknown>;
           };
-          return answers.created(
-            wireItem({
-              id: HELD.id,
-              version: HELD.version + 1,
-              properties: sent.properties,
-              source: "notes",
-              source_id: "shared.md",
-            }),
-          );
+          const currentRow = wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: sent.properties,
+            source: "notes",
+            source_id: "shared.md",
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.created(currentRow);
         },
       ],
       update: [
@@ -2204,13 +2391,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
             version: number;
             properties: Record<string, unknown>;
           };
-          return answers.updated(
-            wireItem({
-              id: request.pathname.split("/").at(-1) ?? "",
-              version: sent.version + 1,
-              properties: sent.properties,
-            }),
-          );
+          const currentRow = wireItem({
+            id: request.pathname.split("/").at(-1) ?? "",
+            version: sent.version + 1,
+            properties: sent.properties,
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.updated(currentRow);
         },
       ],
       tags: [{ kind: "json", status: 200, body: {} }],
@@ -2331,16 +2518,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
           ),
       ],
       tags: [{ kind: "json", status: 200, body: {} }],
-      edges: [
-        (request) => {
-          const sent = JSON.parse(request.body) as {
-            id: string;
-            source_id: string;
-            target_id: string;
-          };
-          return writeAnswers.edge(sent);
-        },
-      ],
+      edges: [edgeCreateDoor(server)],
     });
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
@@ -2429,9 +2607,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(THEIRS.version);
   });
 
-  it("blocks a create whose natural key names a row it cannot read", async () => {
-    // The named row then reads as gone, deleted or unreadable alike, so the
-    // create stops on either refusal (`queue-and-verdicts.md` 22, 23).
+  it("preserves a refused create while its natural-key target cannot be read", async () => {
+    // The original receipt settles while identity adoption awaits a current readable target.
     const GONE = "01a00000-0000-7000-8000-0000000000c9";
     const current = {
       id: GONE,
@@ -2457,7 +2634,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
           ["title"],
           { fields: {}, default: "last_writer_wins" },
         ),
-        "conflict_unresolved",
+        "version_conflict",
         refusal(404, "item_not_found", "Item not found"),
       ],
     ] as const) {
@@ -2497,7 +2674,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         expect(
           [verdict?.verdict, verdict?.reason],
           "a create was refused onto a row the device could not hold, leaving its copy holding nothing under the key",
-        ).toEqual(["blocked", reason]);
+        ).toEqual(["refused", reason]);
         expect((await own.device.get(local)).ok).toBe(true);
       } finally {
         await own.stop();
@@ -2506,10 +2683,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
   });
 
   it("reads the row a create landed on again after a failure that clears on its own", async () => {
-    // The read that holds the landed row fails for a reason no write caused:
-    // the create is left unanswered and uncounted, and the next drain, which
-    // the server answers the same way, reads again. A refused credential is
-    // the exception that stops everything, as it does anywhere.
+    // Failed reads retry without resending or changing the settled refusal.
     const THEIRS = "01a00000-0000-7000-8000-0000000000c8";
     const current = {
       id: THEIRS,
@@ -2577,26 +2751,25 @@ describe("an answer the device applies keeps what it has not had answered", () =
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
       if (!drained.ok) return;
       expect(
-        [
-          drained.value.verdicts[0]?.verdict,
-          drained.value.verdicts[0]?.refusals,
-        ],
-        `the create was settled or counted on ${attempt} while reading the row it landed on, although that clears on its own`,
-      ).toEqual([null, 1]);
+        (await queueOf(device)).map((row) => [row.verdict, row.refusals]),
+        `the original receipt changed on ${attempt} while its fresh read was retried`,
+      ).toEqual([["refused", 1]]);
       expect(drained.value.retry_after_seconds).toBe(waited);
     }
     expect(reads()).toBe(3);
     const landed = await device.drain();
     expect(landed.ok, JSON.stringify(landed)).toBe(true);
     if (!landed.ok) return;
-    expect([
-      landed.value.verdicts[0]?.verdict,
-      landed.value.verdicts[0]?.item_id,
-    ]).toEqual(["refused", THEIRS]);
+    expect((await queueOf(device))[0]?.verdict).toBe("refused");
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+    ).toHaveLength(2);
     expect((await device.get(THEIRS)).ok).toBe(true);
   });
 
-  it("blocks the whole queue when the read of a landed row meets a refused credential", async () => {
+  it("expires the copy without changing a settled receipt when the landed read loses its credential", async () => {
     const THEIRS = "01a00000-0000-7000-8000-0000000000c8";
     const current = {
       id: THEIRS,
@@ -2628,12 +2801,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
         read: [answers.unauthorized()],
       });
       const stopped = await refusedKey.device.drain();
-      expect(stopped.ok, JSON.stringify(stopped)).toBe(true);
-      if (!stopped.ok) return;
-      expect(
-        stopped.value.stopped,
-        "the drain went on past a refused credential",
-      ).not.toBeNull();
+      expect(stopped.ok).toBe(false);
+      if (!stopped.ok) expect(stopped.refusal.code).toBe("copy_expired");
       expect(
         refusedKey.server.requests.filter(
           (request) => request.method === "PATCH",
@@ -2642,8 +2811,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ).toEqual([]);
       const queued = await queueOf(refusedKey.device);
       expect(queued.map((row) => [row.kind, row.verdict, row.reason])).toEqual([
-        ["create_item", "blocked", "credential_refused"],
-        ["update_item", "blocked", "credential_refused"],
+        ["create_item", "refused", "ancestor_unavailable"],
+        ["update_item", null, null],
       ]);
     } finally {
       await refusedKey.stop();
@@ -2673,6 +2842,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       create: [
         (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
       ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
     // The witness: a create under a key that names nothing lands, so the
     // refusal below is the bin's and not the door's.
@@ -2787,16 +2957,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         ),
       ],
       tags: [{ kind: "json", status: 200, body: {} }],
-      edges: [
-        (request) => {
-          const sent = JSON.parse(request.body) as {
-            id: string;
-            source_id: string;
-            target_id: string;
-          };
-          return writeAnswers.edge(sent);
-        },
-      ],
+      edges: [edgeCreateDoor(server)],
     });
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
@@ -2930,7 +3091,16 @@ describe("an answer the device applies keeps what it has not had answered", () =
     // The server's rules: a create naming an id is written under it, and one
     // naming none is given an id the server mints.
     const minted = "01a00000-0000-7000-8000-0000000000f1";
+    const currentRows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
+      read: [
+        (request) => {
+          const row = currentRows.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(row);
+        },
+      ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as {
@@ -2939,14 +3109,14 @@ describe("an answer the device applies keeps what it has not had answered", () =
             source?: string;
             source_id?: string;
           };
-          return answers.created(
-            wireItem({
-              id: sent.id ?? minted,
-              properties: sent.properties,
-              ...(sent.source === undefined ? {} : { source: sent.source }),
-              source_id: sent.source_id ?? null,
-            }),
-          );
+          const currentRow = wireItem({
+            id: sent.id ?? minted,
+            properties: sent.properties,
+            ...(sent.source === undefined ? {} : { source: sent.source }),
+            source_id: sent.source_id ?? null,
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.created(currentRow);
         },
       ],
       update: [
@@ -2955,15 +3125,15 @@ describe("an answer the device applies keeps what it has not had answered", () =
             version: number;
             properties: Record<string, unknown>;
           };
-          return answers.updated(
-            wireItem({
-              id: request.pathname.split("/").at(-1) ?? "",
-              version: sent.version + 1,
-              properties: sent.properties,
-              source: "notes",
-              source_id: "fresh.md",
-            }),
-          );
+          const currentRow = wireItem({
+            id: request.pathname.split("/").at(-1) ?? "",
+            version: sent.version + 1,
+            properties: sent.properties,
+            source: "notes",
+            source_id: "fresh.md",
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.updated(currentRow);
         },
       ],
     });
@@ -3044,7 +3214,16 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(true);
 
     acceptCreates(harness);
+    const currentRows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
+      read: [
+        (request) => {
+          const row = currentRows.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(row);
+        },
+      ],
       update: [
         (request) => {
           const sent = JSON.parse(request.body) as {
@@ -3052,13 +3231,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
             properties: Record<string, unknown>;
           };
           const target = request.pathname.split("/").at(-1) ?? "";
-          return answers.updated(
-            wireItem({
-              id: target,
-              version: sent.version + 1,
-              properties: sent.properties,
-            }),
-          );
+          const currentRow = wireItem({
+            id: target,
+            version: sent.version + 1,
+            properties: sent.properties,
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.updated(currentRow);
         },
       ],
     });
@@ -3112,6 +3291,24 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ).ok,
     ).toBe(true);
 
+    server.copyAnswer(
+      "GET",
+      `/edges/${edgeId}`,
+      writeAnswers.edge(
+        { id: edgeId, source_id: HELD.id, target_id: target, version: 1 },
+        200,
+      ),
+      writeAnswers.edge(
+        {
+          id: edgeId,
+          source_id: HELD.id,
+          target_id: target,
+          version: 2,
+          properties: { weight: 2 },
+        },
+        200,
+      ),
+    );
     acceptCreates(harness);
     server.answer(
       "POST",
@@ -3241,6 +3438,14 @@ describe("an answer the device applies keeps what it has not had answered", () =
       ).ok,
     ).toBe(true);
 
+    server.copyAnswer(
+      "GET",
+      `/edges/${edgeId}`,
+      writeAnswers.edge(
+        { id: edgeId, source_id: HELD.id, target_id: target, version: 1 },
+        200,
+      ),
+    );
     acceptCreates(harness);
     server.answer("POST", "/edges", {
       kind: "json",
@@ -3472,9 +3677,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     scriptWrites(server, {
-      edges: [
-        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
-      ],
+      edges: [edgeCreateDoor(server)],
     });
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
@@ -3496,12 +3699,17 @@ describe("an answer the device applies keeps what it has not had answered", () =
  * item the device made and never sent, and no edge from it.
  */
 function holdsNoneOfIt(harnessUnderTest: Harness): void {
-  harnessUnderTest.server.answer(
+  harnessUnderTest.server.copyAnswer(
+    "GET",
+    /^\/edges\/[^/]+$/,
+    refusal(404, "edge_not_found", "No such edge"),
+  );
+  harnessUnderTest.server.copyAnswer(
     "GET",
     /^\/items\/[^/]+$/,
     refusal(404, "item_not_found", "no such item"),
   );
-  harnessUnderTest.server.answer("GET", /^\/items\/[^/]+\/edges$/, {
+  harnessUnderTest.server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, {
     kind: "json",
     status: 200,
     body: { data: [], next_cursor: null },
@@ -3694,7 +3902,16 @@ describe("an upload is a queued write", () => {
     });
 
     acceptUploads(harness.server);
+    const currentRows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
+      read: [
+        (request) => {
+          const row = currentRows.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(row);
+        },
+      ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as {
@@ -3702,27 +3919,17 @@ describe("an upload is a queued write", () => {
             type: string;
             properties: Record<string, unknown>;
           };
-          return answers.created(
-            wireItem({
-              id: sent.id,
-              type: sent.type,
-              version: 1,
-              properties: sent.properties,
-            }),
-          );
+          const currentRow = wireItem({
+            id: sent.id,
+            type: sent.type,
+            version: 1,
+            properties: sent.properties,
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.created(currentRow);
         },
       ],
-      edges: [
-        (request) => {
-          const sent = JSON.parse(request.body) as {
-            id: string;
-            source_id: string;
-            target_id: string;
-            edge_type: string;
-          };
-          return writeAnswers.edge(sent);
-        },
-      ],
+      edges: [edgeCreateDoor(server)],
     });
     const drained = await device.drain();
     expect(drained.ok).toBe(true);
@@ -3783,7 +3990,16 @@ describe("an upload is a queued write", () => {
     });
 
     acceptUploads(harness.server);
+    const currentRows = new Map<string, ReturnType<typeof wireItem>>();
     scriptWrites(server, {
+      read: [
+        (request) => {
+          const row = currentRows.get(request.pathname.split("/").at(-1) ?? "");
+          return row === undefined
+            ? refusal(404, "item_not_found", "No such item")
+            : answers.updated(row);
+        },
+      ],
       create: [
         (request) => {
           const sent = JSON.parse(request.body) as {
@@ -3791,14 +4007,14 @@ describe("an upload is a queued write", () => {
             type: string;
             properties: Record<string, unknown>;
           };
-          return answers.created(
-            wireItem({
-              id: sent.id,
-              type: sent.type,
-              version: 1,
-              properties: sent.properties,
-            }),
-          );
+          const currentRow = wireItem({
+            id: sent.id,
+            type: sent.type,
+            version: 1,
+            properties: sent.properties,
+          });
+          currentRows.set(String(currentRow.id), currentRow);
+          return answers.created(currentRow);
         },
       ],
     });
@@ -4206,7 +4422,7 @@ describe("an edit behind an edit of the same row", () => {
           return answer;
         },
       ],
-      // A refused write is read back to reconcile the copy.
+      // Each settled write is reconciled against a fresh current row.
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
     return door;
@@ -4248,6 +4464,18 @@ describe("an edit behind an edit of the same row", () => {
         200,
       );
     });
+    harnessUnderTest.server.copyAnswer("GET", `/edges/${EDGE}`, () =>
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version: edge.version,
+          properties: edge.properties,
+        },
+        200,
+      ),
+    );
     return edge;
   }
 
@@ -4512,10 +4740,23 @@ describe("an edit behind an edit of the same row", () => {
         );
       },
     );
+    server.copyAnswer("GET", `/items/${HELD.id}`, () => door.read(HELD.id));
     const edge = {
       version: 1,
       properties: { weight: 1 } as Record<string, unknown>,
     };
+    server.copyAnswer("GET", `/edges/${EDGE}`, () =>
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version: edge.version,
+          properties: edge.properties,
+        },
+        200,
+      ),
+    );
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
       const sent = JSON.parse(request.body) as {
         properties: Record<string, unknown>;
@@ -4616,6 +4857,11 @@ describe("an edit behind an edit of the same row", () => {
     // as stale and blocked. The first edit of the other is refused outright,
     // and the second meets a busy server. A refusal is reconciled against
     // the edges the server holds.
+    server.copyAnswer("GET", `/edges/${other}`, {
+      kind: "json",
+      status: 200,
+      body: { edge: served.find((row) => row.id === other) },
+    });
     let otherEdits = 0;
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
       if (request.pathname === `/edges/${EDGE}`) {
@@ -4628,7 +4874,7 @@ describe("an edit behind an edit of the same row", () => {
         ? refusal(400, "validation_error", "not an edit this takes")
         : answers.serverFault();
     });
-    server.answer("GET", `/items/${HELD.id}/edges`, {
+    server.copyAnswer("GET", `/items/${HELD.id}/edges`, {
       kind: "json",
       status: 200,
       body: { data: served, next_cursor: null },
@@ -4696,14 +4942,26 @@ describe("an edit behind an edit of the same row", () => {
     // Another device's edit of the edge, which the copy takes in once its
     // own two edits are blocked.
     const moved = { ...edge, version: 2, properties: { weight: 5 } };
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [edgeEvent("11", "edge.updated", moved)]),
+      copyReplay("11", [edgeEvent("11", "edge.updated", moved)]),
     );
     // The edge door as the server keeps it: an edit on the version the edge
     // is at is taken, and one on any other is refused naming the edge.
     const held = { version: 2, properties: { weight: 5 } };
+    server.copyAnswer("GET", `/edges/${EDGE}`, () =>
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version: held.version,
+          properties: held.properties,
+        },
+        200,
+      ),
+    );
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
       const sent = JSON.parse(request.body) as {
         properties: Record<string, unknown>;
@@ -4796,7 +5054,11 @@ describe("an edit behind an edit of the same row", () => {
     expect(verdictsOf(report, "delete_item", HELD.id)).toEqual(["accepted"]);
     expect(
       server.requests
-        .filter((request) => request.pathname === `/items/${HELD.id}`)
+        .filter(
+          (request) =>
+            request.pathname === `/items/${HELD.id}` &&
+            request.method !== "GET",
+        )
         .map((request) => request.method),
     ).toEqual(["PATCH", "PATCH", "PATCH", "DELETE"]);
     expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
@@ -4824,7 +5086,7 @@ describe("an edit behind an edit of the same row", () => {
         id === HELD.id && nth <= 5 ? unreadable : undefined,
     });
     server.answer("PATCH", /^\/edges\/[^/]+$/, unreadable);
-    server.answer("GET", `/items/${HELD.id}/edges`, {
+    server.copyAnswer("GET", `/items/${HELD.id}/edges`, {
       kind: "json",
       status: 200,
       body: {
@@ -5107,17 +5369,18 @@ describe("an edit behind an edit of the same row", () => {
       properties: { title: "held", body: "first" },
     });
     const { edges: _five, ...five } = door.wire(HELD.id);
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent("11", "item.updated", four),
-        itemEvent("12", "item.updated", five),
+      copyReplay("12", [
+        copyItemEvent("11", "item.updated", four),
+        copyItemEvent("12", "item.updated", five),
       ]),
     );
     // The first send is cut off; the second is answered from the server's
     // record, with the row as it was at 4; the edit behind it meets a busy
     // server once; the rest reach the door.
+    server.copyAnswer("GET", `/items/${HELD.id}`, () => door.read(HELD.id));
     let sends = 0;
     server.answer("PATCH", /^\/items\/[^/]+$/, (request) => {
       sends += 1;
@@ -5482,10 +5745,10 @@ describe("an edit behind an edit of the same row", () => {
     scriptHydration(server, { head: "10", rows: rows() });
     // The server took the edit at 2 and another device wrote 3; the device
     // hears of both from the stream while its own answer is still lost.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
+      copyReplay("12", [
         edgeEvent(
           "11",
           "edge.updated",
@@ -5507,6 +5770,20 @@ describe("an edit behind an edit of the same row", () => {
         properties: { weight: 2 },
       },
       200,
+    );
+    server.copyAnswer(
+      "GET",
+      `/edges/${EDGE}`,
+      writeAnswers.edge(
+        {
+          id: EDGE,
+          source_id: HELD.id,
+          target_id: QUIET.id,
+          version: 3,
+          properties: { weight: 2, color: "red" },
+        },
+        200,
+      ),
     );
     let sends = 0;
     server.answer("PATCH", /^\/edges\/[^/]+$/, () => {
@@ -5550,6 +5827,14 @@ describe("an edit behind an edit of the same row", () => {
     // The first edit's key is answered as spent, which blocks it, so the
     // second goes as it stands and meets a busy server. Released, the first
     // goes again under a fresh key and lands at 4.
+    let currentRow = wireItem({
+      id: HELD.id,
+      version: HELD.version,
+      properties: { title: "held", body: "held" },
+    });
+    server.copyAnswer("GET", `/items/${HELD.id}`, () =>
+      answers.updated(currentRow),
+    );
     let version = HELD.version;
     let patches = 0;
     server.answer("PATCH", /^\/items\/[^/]+$/, (request) => {
@@ -5560,13 +5845,12 @@ describe("an edit behind an edit of the same row", () => {
       const sent = JSON.parse(request.body) as {
         properties: Record<string, unknown>;
       };
-      return answers.updated(
-        wireItem({
-          id: HELD.id,
-          version,
-          properties: { title: "held", body: "held", ...sent.properties },
-        }),
-      );
+      currentRow = wireItem({
+        id: HELD.id,
+        version,
+        properties: { title: "held", body: "held", ...sent.properties },
+      });
+      return answers.updated(currentRow);
     });
     expect((await device.drain()).ok).toBe(true);
     const released = await device.release({ id: first.value.id });
@@ -5607,16 +5891,16 @@ describe("an edit behind an edit of the same row", () => {
       });
       return row;
     };
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("12", [
-        itemEvent(
+      copyReplay("12", [
+        copyItemEvent(
           "11",
           "item.updated",
           at(4, { title: "held", body: "first" }),
         ),
-        itemEvent(
+        copyItemEvent(
           "12",
           "item.updated",
           at(5, { title: "elsewhere", body: "first" }),
@@ -5630,6 +5914,14 @@ describe("an edit behind an edit of the same row", () => {
         properties: { title: "held", body: "first" },
       }),
     );
+    let currentRow = wireItem({
+      id: HELD.id,
+      version: 5,
+      properties: { title: "elsewhere", body: "first" },
+    });
+    server.copyAnswer("GET", `/items/${HELD.id}`, () =>
+      answers.updated(currentRow),
+    );
     let sends = 0;
     server.answer("PATCH", /^\/items\/[^/]+$/, (request) => {
       sends += 1;
@@ -5640,13 +5932,12 @@ describe("an edit behind an edit of the same row", () => {
       const sent = JSON.parse(request.body) as {
         properties: Record<string, unknown>;
       };
-      return answers.updated(
-        wireItem({
-          id: HELD.id,
-          version: 6,
-          properties: { title: "elsewhere", body: "first", ...sent.properties },
-        }),
-      );
+      currentRow = wireItem({
+        id: HELD.id,
+        version: 6,
+        properties: { title: "elsewhere", body: "first", ...sent.properties },
+      });
+      return answers.updated(currentRow);
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     await edit(device, HELD.id, { body: "first" }, HELD.version);
@@ -5676,10 +5967,10 @@ describe("an edit behind an edit of the same row", () => {
       version: HELD.version + 1,
       properties: { title: "held", body: "theirs" },
     });
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [itemEvent("11", "item.updated", theirs)]),
+      copyReplay("11", [copyItemEvent("11", "item.updated", theirs)]),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     await edit(device, HELD.id, { body: "first" }, HELD.version);
@@ -5870,6 +6161,15 @@ describe("an edit behind an edit of the same row", () => {
     expect(create).not.toContain("waiting on");
     expect(create).not.toContain("after");
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: note.value.item_id!,
+            version: 1,
+            properties: { title: "made here", body: "made here" },
+          }),
+        ),
+      ],
       create: [
         answers.created(
           wireItem({
@@ -5905,11 +6205,11 @@ describe("an edit behind an edit of the same row", () => {
     scriptHydration(server, { head: "10", rows: rows() });
     // Another device's edit, which the copy takes in while its own first
     // edit is still waiting.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("11", [
-        itemEvent(
+      copyReplay("11", [
+        copyItemEvent(
           "11",
           "item.updated",
           wireItem({
@@ -6061,7 +6361,7 @@ describe("an edit behind an edit of the same row", () => {
     });
   });
 
-  it("keeps the row a create refused version_conflict lands on as it read it", async () => {
+  it("adopts the fresh certified row after a create is refused with version_conflict", async () => {
     harness = await hydratedHarness("keyed-create-stale", { rows: rows() });
     const { device, server } = harness;
     const created = await device.create({
@@ -6122,8 +6422,8 @@ describe("an edit behind an edit of the same row", () => {
     if (!holding.ok) return;
     expect(
       [holding.value.version, holding.value.properties],
-      "the copy took the server's newer row after a version_conflict, so the next edit of it would be based on content this device never read",
-    ).toEqual([KEYED.version, { title: "held", body: "held" }]);
+      "the copy did not adopt the fresh certified row after settling the original refusal",
+    ).toEqual([theirs.version, theirs.properties]);
   });
 
   it("sends an edit of its own create on the version that create made where the server answers a repeat of it", async () => {
@@ -6184,6 +6484,11 @@ describe("an edit behind an edit of the same row", () => {
       properties: { weight: 5 },
     };
     server.answer("POST", "/edges", writeAnswers.edgeRepeated(linkNow));
+    server.copyAnswer(
+      "GET",
+      `/edges/${linkId}`,
+      writeAnswers.edge(linkNow, 200),
+    );
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) =>
       (JSON.parse(request.body) as { version: number }).version ===
       linkNow.version
@@ -6254,10 +6559,10 @@ describe("an edit behind an edit of the same row", () => {
         version: HELD.version + 1,
         properties: { title: "held", body: "held", ...change },
       });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/events",
-        replay("11", [itemEvent("11", "item.updated", atFour)]),
+        copyReplay("11", [copyItemEvent("11", "item.updated", atFour)]),
       );
       expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
       expect((await device.catchUp()).ok).toBe(true);
@@ -6440,22 +6745,45 @@ describe("an edit behind an edit of the same row", () => {
   });
 });
 
-/** Answers a create with the row it sent, at version 1. */
-function taking(request: { body: string }): Answer {
-  const sent = JSON.parse(request.body) as {
-    id: string;
-    type: string;
-    tier?: string;
-    properties: Record<string, unknown>;
+function edgeCreateDoor(
+  server: ScriptedServer,
+): Extract<Responder, (...args: never[]) => unknown> {
+  const rows = new Map<string, WireEdgeOptions>();
+  server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {
+    const row = rows.get(request.pathname.split("/").at(-1) ?? "");
+    return row === undefined
+      ? refusal(404, "edge_not_found", "No such edge")
+      : writeAnswers.edge(row, 200);
+  });
+  return (request) => {
+    const row = JSON.parse(request.body) as WireEdgeOptions;
+    rows.set(row.id, row);
+    return writeAnswers.edge(row);
   };
-  return answers.created(
-    wireItem({
+}
+
+/** A create door with an independently readable current row map. */
+function createDoor(
+  server: ScriptedServer,
+): Extract<Responder, (...args: never[]) => unknown> {
+  const rows = new Map<string, ReturnType<typeof wireItem>>();
+  server.copyAnswer("GET", /^\/items\/[^/]+$/, (request) => {
+    const row = rows.get(request.pathname.split("/").at(-1) ?? "");
+    return row === undefined
+      ? refusal(404, "item_not_found", "No such item")
+      : answers.updated(row);
+  });
+  return (request) => {
+    const sent = JSON.parse(request.body);
+    const row = wireItem({
       id: sent.id,
       type: sent.type,
       tier: sent.tier,
       properties: sent.properties,
-    }),
-  );
+    });
+    rows.set(String(row.id), row);
+    return answers.created(row);
+  };
 }
 
 describe("drains that overlap", () => {
@@ -6469,6 +6797,7 @@ describe("drains that overlap", () => {
     }
     let release = (): void => {};
     const until = new Promise<void>((resolve) => (release = resolve));
+    const taking = createDoor(server);
     scriptWrites(server, {
       create: [
         (request) => ({ kind: "gated", until, then: taking(request) }),
@@ -6513,7 +6842,7 @@ describe("drains that overlap", () => {
 describe("a create the slice does not hold", () => {
   const FEED = "01a00000-0000-7000-8000-0000000000f1";
   /** What the next catch-up's stream answers. */
-  let stream: Answer = headRead("10");
+  let stream: Answer = copyHeadRead("10");
 
   async function feedSlice(label: string): Promise<Harness> {
     const started = await startHarness(label);
@@ -6524,8 +6853,8 @@ describe("a create the slice does not hold", () => {
     const hydrated = await started.device.hydrate(["core.note"], "feed");
     expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
     // The hydration's head read answers once more, then `stream` does.
-    stream = headRead("10");
-    started.server.answer("GET", "/events", () => stream);
+    stream = copyHeadRead("10");
+    started.server.copyAnswer("GET", "/events", () => stream);
     expect((await started.device.catchUp()).ok).toBe(true);
     return started;
   }
@@ -6544,7 +6873,7 @@ describe("a create the slice does not hold", () => {
       shown.ok && shown.value.tier,
       "a create naming no tier was shown at a tier the slice does not hold",
     ).toBe("feed");
-    scriptWrites(server, { create: [taking] });
+    scriptWrites(server, { create: [createDoor(server)] });
     expect((await device.drain()).ok).toBe(true);
     const sent = server.requests.find(
       (request) => request.method === "POST" && request.pathname === "/items",
@@ -6566,7 +6895,7 @@ describe("a create the slice does not hold", () => {
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
     const id = created.value.item_id ?? "";
-    scriptWrites(server, { create: [taking] });
+    scriptWrites(server, { create: [createDoor(server)] });
     const drained = await device.drain();
     expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("accepted");
     const { edges: _edges, ...row } = wireItem({
@@ -6574,7 +6903,7 @@ describe("a create the slice does not hold", () => {
       tier: "library",
       properties: { title: "another tier" },
     });
-    stream = replay("11", [itemEvent("11", "item.created", row)]);
+    stream = copyReplay("11", [copyItemEvent("11", "item.created", row)]);
     expect((await device.catchUp()).ok).toBe(true);
     const held = await device.get(id);
     expect(
@@ -6590,7 +6919,7 @@ describe("a create the slice does not hold", () => {
       id: other,
       tier: "library",
     });
-    stream = replay("12", [itemEvent("12", "item.created", theirs)]);
+    stream = copyReplay("12", [copyItemEvent("12", "item.created", theirs)]);
     expect((await device.catchUp()).ok).toBe(true);
     expect((await device.get(other)).ok).toBe(false);
   });

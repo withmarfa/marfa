@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   answers,
-  itemEvent,
+  copyItemEvent,
   refusal,
-  replay,
+  copyReplay,
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { DrainReport } from "../../device/protocol.js";
@@ -101,6 +101,7 @@ describe("the set is closed", () => {
     }> = [
       {
         update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
+        read: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
         expected: "accepted",
       },
       {
@@ -109,6 +110,7 @@ describe("the set is closed", () => {
             title: "last_writer_wins",
           }),
         ],
+        read: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
         expected: "merged",
       },
       {
@@ -119,6 +121,7 @@ describe("the set is closed", () => {
             "01a00000-0000-7000-8000-0000000000bb",
           ),
         ],
+        read: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
         expected: "conflicted",
       },
       {
@@ -218,7 +221,9 @@ describe("the set is closed", () => {
         rows: held(),
       });
       try {
-        const report = await updateAndDrain(own, update);
+        const report = await updateAndDrain(own, update, [
+          answers.updated(row),
+        ]);
         expect(
           report.verdicts[0]?.verdict,
           `three answers carrying the same row were not told apart by the resolution each reported, so a merge reads as a plain success and a caller never learns their value was changed`,
@@ -233,17 +238,31 @@ describe("the set is closed", () => {
 describe("the server took the write", () => {
   it("accepted: adopts the row the server returned", async () => {
     harness = await hydratedHarness("verdicts-accepted", { rows: held() });
-    const report = await updateAndDrain(harness, [
-      answers.updated(
-        wireItem({
-          id: HELD.id,
-          version: 9,
-          properties: { title: "the server's", body: "the server's" },
-          source: "another-device",
-          updated_at: "2026-09-19T11:00:00.000Z",
-        }),
-      ),
-    ]);
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 9,
+            properties: { title: "the server's", body: "the server's" },
+            source: "another-device",
+            updated_at: "2026-09-19T11:00:00.000Z",
+          }),
+        ),
+      ],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 9,
+            properties: { title: "the server's", body: "the server's" },
+            source: "another-device",
+            updated_at: "2026-09-19T11:00:00.000Z",
+          }),
+        ),
+      ],
+    );
     expect(report.verdicts[0]?.verdict).toBe("accepted");
 
     const read = await harness.device.get(HELD.id);
@@ -286,6 +305,7 @@ describe("the server took the write", () => {
           headers: { "Idempotency-Replayed": "true" },
         },
       ],
+      read: [answers.updated(wireItem({ id: theirs, version: 5 }))],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -308,16 +328,28 @@ describe("the server took the write", () => {
 
   it("merged: adopts the row a resolution returned", async () => {
     harness = await hydratedHarness("verdicts-merged", { rows: held() });
-    const report = await updateAndDrain(harness, [
-      answers.resolved(
-        wireItem({
-          id: HELD.id,
-          version: 5,
-          properties: { title: "mine", body: "theirs, kept" },
-        }),
-        { body: "last_writer_wins" },
-      ),
-    ]);
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.resolved(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "mine", body: "theirs, kept" },
+          }),
+          { body: "last_writer_wins" },
+        ),
+      ],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "mine", body: "theirs, kept" },
+          }),
+        ),
+      ],
+    );
     expect(report.verdicts[0]?.verdict).toBe("merged");
     expect(
       report.verdicts[0]?.merged_fields,
@@ -339,17 +371,29 @@ describe("the server took the write", () => {
   it("conflicted: names the sibling the server wrote", async () => {
     harness = await hydratedHarness("verdicts-conflicted", { rows: held() });
     const sibling = "01a00000-0000-7000-8000-0000000000bb";
-    const report = await updateAndDrain(harness, [
-      answers.resolved(
-        wireItem({
-          id: HELD.id,
-          version: 5,
-          properties: { title: "held", body: "the server's" },
-        }),
-        { body: "keep_both_copies" },
-        sibling,
-      ),
-    ]);
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.resolved(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+          { body: "keep_both_copies" },
+          sibling,
+        ),
+      ],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+        ),
+      ],
+    );
     expect(report.verdicts[0]?.verdict).toBe("conflicted");
     expect(
       report.verdicts[0]?.conflicted_copy_id,
@@ -372,11 +416,11 @@ describe("the server took the write", () => {
     scriptHydration(server, { head: "1", rows: held() });
     // The catch-up after the drain reads this: the server logs the sibling
     // as a create of its own, in the same transaction as the update.
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("2", [
-        itemEvent(
+      copyReplay("2", [
+        copyItemEvent(
           "2",
           "item.created",
           wireItem({
@@ -388,17 +432,29 @@ describe("the server took the write", () => {
       ]),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-    const report = await updateAndDrain(harness, [
-      answers.resolved(
-        wireItem({
-          id: HELD.id,
-          version: 5,
-          properties: { title: "held", body: "the server's" },
-        }),
-        { body: "keep_both_copies" },
-        sibling,
-      ),
-    ]);
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.resolved(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+          { body: "keep_both_copies" },
+          sibling,
+        ),
+      ],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+        ),
+      ],
+    );
     expect(report.verdicts[0]?.conflicted_copy_id).toBe(sibling);
 
     // The answer names the sibling and carries only the row written to, so
@@ -475,7 +531,7 @@ describe("the server did not take the write", () => {
     ).toBe("held");
   });
 
-  it("refused: shows the row as the write read it while the read-back fails, and reads it back at the next drain", async () => {
+  it("refused: preserves the local row until a fresh read succeeds at the next drain", async () => {
     harness = await hydratedHarness("verdicts-refused-unread", {
       rows: held(),
     });
@@ -502,8 +558,8 @@ describe("the server did not take the write", () => {
     if (!unread.ok) return;
     expect(
       unread.value.properties.title,
-      "the copy went on showing the edit the server refused because the read that puts it back failed, so a person reads a change that was never saved",
-    ).toBe("held");
+      "the failed read changed local content before a certified response could reconcile the settled refusal",
+    ).toBe("edited");
 
     const again = await harness.device.drain();
     expect(again.ok).toBe(true);
@@ -831,6 +887,15 @@ describe("a verdict is reported, not acted on", () => {
     const sent = JSON.parse(
       await (async () => {
         scriptWrites(harness!.server, {
+          read: [
+            answers.updated(
+              wireItem({
+                id: HELD.id,
+                version: 4,
+                properties: { body: "line one\nline two\ntheirs" },
+              }),
+            ),
+          ],
           update: [
             answers.resolved(
               wireItem({

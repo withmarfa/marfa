@@ -29,13 +29,13 @@ import {
   edgeEvent,
   edgeType,
   edgesPage,
-  headRead,
-  itemEvent,
+  copyHeadRead,
+  copyItemEvent,
   itemsPage,
-  liveReplay,
-  streamCursor,
+  copyLiveReplay,
+  copyStreamCursor,
   refusal,
-  replay,
+  copyReplay,
   SCRIPTED_EDGE_TYPES,
   wireEdge,
   wireItem,
@@ -244,7 +244,7 @@ function scriptFolderWrites(
         return answer;
       },
     ],
-    // A device reads a row by id to reconcile after a refusal.
+    // Reconciliation reads the current server row after each settled write.
     read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     // The tags a row holds move as the tag doors are told.
     tags: [
@@ -271,10 +271,9 @@ function scriptFolderWrites(
     ],
     extensions: [{ kind: "json", status: 200, body: {} }],
   });
-  harness.server.answer("DELETE", /^\/items\/[^/]+$/, {
-    kind: "json",
-    status: 204,
-    body: {},
+  harness.server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
+    door.rows.delete(request.pathname.split("/").at(-1) ?? "");
+    return { kind: "json", status: 204, body: {} };
   });
   harness.server.answer("POST", /^\/items\/[^/]+\/transition$/, (request) =>
     door.transition(
@@ -404,8 +403,17 @@ class EdgeDoor {
       this.log("edge.updated", edge);
       return writeAnswers.edge(edge, 200);
     });
-    // A refused edge write is reconciled by reading its source's edges.
-    server.answer("GET", /^\/items\/[^/]+\/edges$/, (request) => {
+    server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {
+      if (this.failListings > 0) {
+        this.failListings -= 1;
+        return refusal(503, "unavailable", "Try again");
+      }
+      const edge = this.edges.get(request.pathname.split("/").at(-1) ?? "");
+      return edge === undefined
+        ? refusal(404, "edge_not_found", "No such edge")
+        : writeAnswers.edge(edge, 200);
+    });
+    server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, (request) => {
       if (this.failListings > 0) {
         this.failListings -= 1;
         return refusal(503, "unavailable", "Try again");
@@ -473,8 +481,8 @@ class EdgeDoor {
     return (request) => {
       const after = request.headers["last-event-id"];
       const head = String(this.events.length + 1);
-      if (after === undefined) return headRead(head);
-      return liveReplay(
+      if (after === undefined) return copyHeadRead(head);
+      return copyLiveReplay(
         head,
         this.events.filter((frame) => Number(frame.id) > Number(after)),
       );
@@ -490,7 +498,7 @@ class EdgeDoor {
     };
     if (item === undefined) return;
     this.events.push(
-      itemEvent(String(this.events.length + 2), kind, item, {
+      copyItemEvent(String(this.events.length + 2), kind, item, {
         tags: metadata?.tags ?? [],
       }),
     );
@@ -667,8 +675,9 @@ describe("what a folder is", () => {
         ],
       },
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -749,8 +758,9 @@ describe("what a folder is", () => {
         },
         edges: { "parent-of": [] },
         events: [
-          (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-          headRead("3"),
+          (): Answer =>
+            copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+          copyHeadRead("3"),
         ],
       });
       scriptFolderWrites(harness);
@@ -810,12 +820,12 @@ describe("what a folder is", () => {
     ]) {
       const server = await ScriptedServer.start();
       scriptHydration(server, { head: "1" });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/keys/current",
         answers.currentKey("fixture-key", { "*": "write" }),
       );
-      server.answer("GET", `/items/${id}`, answers.updated(row()));
+      server.copyAnswer("GET", `/items/${id}`, answers.updated(row()));
       const dir = join(
         mkdtempSync(join(tmpdir(), "marfa-folder-not-a-folder-")),
         "notes",
@@ -852,8 +862,8 @@ describe("what a folder is", () => {
       [{ "*": "write" }, false],
     ] as const) {
       const server = await ScriptedServer.start();
-      server.answer("GET", `/items/${id}`, answers.itemNotFound(id));
-      server.answer(
+      server.copyAnswer("GET", `/items/${id}`, answers.itemNotFound(id));
+      server.copyAnswer(
         "GET",
         "/keys/current",
         answers.currentKey("fixture-key", { "*": "write" }, types),
@@ -916,7 +926,7 @@ describe("what a folder is", () => {
 
   it("rewrites a settings file whose edit changes no setting", async () => {
     harness = await folderHarness("folder-settings-no-change", {
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     const sent = scriptFolderChanges(harness);
@@ -998,7 +1008,7 @@ describe("what a folder is", () => {
 
   it("sends a settings edit the folder door could not take for now at the next push", async () => {
     harness = await folderHarness("folder-settings-retried", {
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     const sent = scriptFolderChanges(
@@ -1027,12 +1037,12 @@ describe("what a folder is", () => {
 
   it("sends no settings edit while the server cannot say which instance it is", async () => {
     harness = await folderHarness("folder-settings-instance", {
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     const sent = scriptFolderChanges(harness);
     let restarting = true;
-    harness.server.answer("GET", "/", () =>
+    harness.server.copyAnswer("GET", "/", () =>
       restarting
         ? refusal(503, "unavailable", "restarting")
         : answers.root(Number(BUILT_FOR)),
@@ -1060,7 +1070,7 @@ describe("what a folder is", () => {
 
   it("sends an edit to its settings file through the folder door", async () => {
     harness = await folderHarness("folder-settings-edit", {
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     const sent = scriptFolderChanges(harness);
@@ -1208,8 +1218,9 @@ describe("what a folder is", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-rewritten", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -1235,8 +1246,9 @@ describe("what a folder is", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-edit-first", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -1272,8 +1284,9 @@ describe("what a folder is", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-stale-edit", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -1375,7 +1388,7 @@ describe("what a folder is", () => {
     ]) {
       const server = await ScriptedServer.start();
       scriptHydration(server, { head: "1" });
-      server.answer(
+      server.copyAnswer(
         "GET",
         "/keys/current",
         answers.currentKey("fixture-key", { "*": "write" }),
@@ -1424,8 +1437,9 @@ describe("what a folder is", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-defaults-refused-later", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -1918,8 +1932,9 @@ describe("what a folder's search holds", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-search-refused-later", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -2000,7 +2015,7 @@ describe("what a folder's search holds", () => {
     settings: FolderSettings;
     item: { item: WireItemOptions; tags?: string[] };
     edges?: Record<string, Array<ReturnType<typeof parentOf>>>;
-    change: () => ReturnType<typeof itemEvent>;
+    change: () => ReturnType<typeof copyItemEvent>;
   }> = [
     {
       condition: "tag",
@@ -2009,7 +2024,7 @@ describe("what a folder's search holds", () => {
       },
       item: note(joining, "joining"),
       change: () =>
-        itemEvent(
+        copyItemEvent(
           "2",
           "metadata.changed",
           wireItem(note(joining, "joining").item),
@@ -2033,7 +2048,7 @@ describe("what a folder's search holds", () => {
         },
       },
       change: () =>
-        itemEvent(
+        copyItemEvent(
           "2",
           "item.updated",
           wireItem({
@@ -2048,7 +2063,7 @@ describe("what a folder's search holds", () => {
       settings: { search: { types: ["core.note"], state: ["active"] } },
       item: note(joining, "joining", { state: "archived" }),
       change: () =>
-        itemEvent(
+        copyItemEvent(
           "2",
           "item.state_changed",
           wireItem(note(joining, "joining").item),
@@ -2097,7 +2112,7 @@ describe("what a folder's search holds", () => {
         settings,
         rows: { "core.note": [note(root, "the root"), item] },
         edges,
-        events: [replay("2", [change()]), liveReplay("2", [])],
+        events: [copyReplay("2", [change()]), copyLiveReplay("2", [])],
       });
       scriptFolderWrites(harness);
       expect((await harness.folder.pull()).ok).toBe(true);
@@ -2123,8 +2138,8 @@ describe("a search naming no type", () => {
     harness = await folderHarness("folder-every-type", {
       settings: { search: {}, defaults: { type: "core.bookmark" } },
       events: [
-        replay("3", [
-          itemEvent(
+        copyReplay("3", [
+          copyItemEvent(
             "2",
             "item.created",
             wireItem({
@@ -2133,13 +2148,13 @@ describe("a search naming no type", () => {
               properties: { title: "c" },
             }),
           ),
-          itemEvent(
+          copyItemEvent(
             "3",
             "item.created",
             wireItem({ id: note, properties: { title: "n", body: "b\n" } }),
           ),
         ]),
-        liveReplay("3", []),
+        copyLiveReplay("3", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -2287,7 +2302,7 @@ describe("files and items", () => {
           ]),
         ];
         edges.events.push(
-          itemEvent(
+          copyItemEvent(
             String(edges.events.length + 2),
             "metadata.changed",
             wireItem({ id, version: row.version, properties: row.properties }),
@@ -2734,8 +2749,8 @@ describe("files and items", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -2786,8 +2801,8 @@ describe("files and items", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -2830,8 +2845,8 @@ describe("files and items", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -2984,7 +2999,7 @@ describe("files and items", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {
       kind: "sse",
-      frames: [connected, streamCursor("900"), catchupTooOld("500", "1")],
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "1")],
     };
 
     /** A folder with one note written out, whose later hydrations serve
@@ -3021,7 +3036,7 @@ describe("files and items", () => {
     it("hydrates again at a push whose cursor the log has aged past", async () => {
       harness = await behind("folder-push-aged-out", [
         agedOut,
-        headRead("900"),
+        copyHeadRead("900"),
       ]);
       const pushed = await harness.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -3037,8 +3052,8 @@ describe("files and items", () => {
     it("hydrates again while watching when the log ages past its cursor", async () => {
       harness = await behind("folder-watch-aged-out", [
         agedOut,
-        headRead("900"),
-        liveReplay("900", []),
+        copyHeadRead("900"),
+        copyLiveReplay("900", []),
       ]);
       const watching = harness.folder.watch();
       try {
@@ -3060,8 +3075,8 @@ describe("files and items", () => {
         agedOut,
         answers.serverFault(),
         answers.serverFault(),
-        headRead("900"),
-        liveReplay("900", []),
+        copyHeadRead("900"),
+        copyLiveReplay("900", []),
       ]);
       const watching = harness.folder.watch();
       try {
@@ -3095,8 +3110,8 @@ describe("files and items", () => {
       harness = await behind("folder-watch-hydration-limited", [
         agedOut,
         timed(answers.rateLimited()),
-        timed(headRead("900")),
-        liveReplay("900", []),
+        timed(copyHeadRead("900")),
+        copyLiveReplay("900", []),
       ]);
       const watching = harness.folder.watch();
       try {
@@ -3148,8 +3163,8 @@ describe("files and items", () => {
       harness = await behind("folder-push-hydration-fails", [
         agedOut,
         answers.serverFault(),
-        headRead("900"),
-        liveReplay("900", []),
+        copyHeadRead("900"),
+        copyLiveReplay("900", []),
       ]);
       const failed = await harness.folder.push();
       expect(failed.ok, JSON.stringify(failed)).toBe(true);
@@ -3188,8 +3203,8 @@ describe("files and items", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -3903,8 +3918,9 @@ describe("edges in frontmatter", () => {
       ],
       {
         events: [
-          (): Answer => replay("2", [itemEvent("2", "item.created", appeared)]),
-          headRead("3"),
+          (): Answer =>
+            copyReplay("2", [copyItemEvent("2", "item.created", appeared)]),
+          copyHeadRead("3"),
         ],
       },
     );
@@ -4126,8 +4142,10 @@ describe("edges in frontmatter", () => {
       ),
       events: [
         (): Answer =>
-          replay("2", [edgeEvent("2", "edge.created", wireEdge(parentEdge))]),
-        headRead("3"),
+          copyReplay("2", [
+            edgeEvent("2", "edge.created", wireEdge(parentEdge)),
+          ]),
+        copyHeadRead("3"),
       ],
     });
     const door = new EdgeDoor();
@@ -4649,8 +4667,9 @@ describe("edges in frontmatter", () => {
       {
         settings: { search: { types: ["core.note"], state: ["active"] } },
         events: [
-          (): Answer => replay("2", [itemEvent("2", "item.updated", archived)]),
-          headRead("3"),
+          (): Answer =>
+            copyReplay("2", [copyItemEvent("2", "item.updated", archived)]),
+          copyHeadRead("3"),
         ],
       },
     );
@@ -6342,13 +6361,13 @@ describe("embedded files", () => {
       {
         settings: { search: { types: ["core.note"], state: ["active"] } },
         events: [
-          replay("3", [
-            itemEvent(
+          copyReplay("3", [
+            copyItemEvent(
               "2",
               "item.state_changed",
               wireItem({ ...picRow, state: "archived" }),
             ),
-            itemEvent(
+            copyItemEvent(
               "3",
               "item.state_changed",
               wireItem({ ...goneRow, state: "archived" }),
@@ -6391,8 +6410,8 @@ describe("embedded files", () => {
       [attached("01a00000-0000-7000-8000-00000000e2f3", pic, host)],
       {
         events: [
-          replay("2", [
-            itemEvent(
+          copyReplay("2", [
+            copyItemEvent(
               "2",
               "item.deleted",
               wireItem({ ...picRow, state: "trashed" }),
@@ -7189,8 +7208,10 @@ describe("what frontmatter says", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent("2", "item.updated", wireItem(moved), { tags: ["a", "b"] }),
+        copyLiveReplay("2", [
+          copyItemEvent("2", "item.updated", wireItem(moved), {
+            tags: ["a", "b"],
+          }),
         ]),
       ],
     });
@@ -10086,7 +10107,7 @@ describe("where a file sits", () => {
       [words, "words", { body: "plain words\n" }],
     ] as const) {
       placed.edges.events.push(
-        itemEvent(
+        copyItemEvent(
           String(placed.edges.events.length + 2),
           "item.deleted",
           wireItem({
@@ -10796,7 +10817,7 @@ describe("where a file sits", () => {
     // Elsewhere the deleted file's item is archived, and the other item is
     // moved to the path it left.
     placed.edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(placed.edges.events.length + 2),
         "item.state_changed",
         wireItem({
@@ -10842,7 +10863,7 @@ describe("where a file sits", () => {
     const journaled = await harness.folder.scan();
     expect(journaled.ok && journaled.value.missing).toBe(1);
     placed.edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(placed.edges.events.length + 2),
         "item.state_changed",
         wireItem({
@@ -11674,8 +11695,8 @@ describe("writing", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -11888,8 +11909,8 @@ describe("writing", () => {
         ],
       },
       events: [
-        liveReplay("3", [
-          itemEvent(
+        copyLiveReplay("3", [
+          copyItemEvent(
             "3",
             "item.updated",
             wireItem({
@@ -12063,8 +12084,8 @@ describe("writing", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -12124,7 +12145,7 @@ describe("writing", () => {
           },
         ],
       },
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     const rows = scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -12177,7 +12198,7 @@ describe("writing", () => {
           },
         ],
       },
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     expect((await harness.folder.pull()).ok).toBe(true);
@@ -12221,7 +12242,7 @@ describe("writing", () => {
   it("does not rewrite a file for its version line alone", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b3";
     const row = (version: number, body: string, occurred_at?: string) =>
-      itemEvent(
+      copyItemEvent(
         String(version),
         "item.updated",
         wireItem({
@@ -12245,9 +12266,9 @@ describe("writing", () => {
       },
       events: [
         // Another machine moves the item's own time, which no file carries.
-        liveReplay("2", [row(2, "as read\n", "2026-09-19T00:00:00.000Z")]),
-        liveReplay("2", []),
-        liveReplay("4", [row(4, "theirs\n", "2026-09-19T00:00:00.000Z")]),
+        copyLiveReplay("2", [row(2, "as read\n", "2026-09-19T00:00:00.000Z")]),
+        copyLiveReplay("2", []),
+        copyLiveReplay("4", [row(4, "theirs\n", "2026-09-19T00:00:00.000Z")]),
       ],
     });
     let door: FolderDoor | undefined;
@@ -12319,8 +12340,8 @@ describe("writing", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -12330,7 +12351,7 @@ describe("writing", () => {
             }),
           ),
         ]),
-        liveReplay("3", []),
+        copyLiveReplay("3", []),
       ],
     });
     let door: FolderDoor | undefined;
@@ -12388,8 +12409,8 @@ describe("writing", () => {
     harness = await folderHarness("folder-version-pulled-over-waiting", {
       rows: { "core.note": [{ item: { id, version: 1, properties } }] },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -12399,9 +12420,9 @@ describe("writing", () => {
             }),
           ),
         ]),
-        liveReplay("2", []),
-        liveReplay("4", [
-          itemEvent(
+        copyLiveReplay("2", []),
+        copyLiveReplay("4", [
+          copyItemEvent(
             "4",
             "item.updated",
             wireItem({
@@ -12833,7 +12854,7 @@ describe("writing", () => {
           },
         ],
       },
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     let door: FolderDoor | undefined;
     const rows = scriptFolderWrites(harness, {
@@ -12875,7 +12896,7 @@ describe("writing", () => {
           },
         ],
       },
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     let door: FolderDoor | undefined;
     const rows = scriptFolderWrites(harness, {
@@ -13303,7 +13324,7 @@ describe("what a folder takes", () => {
 
   it("ignores what its ignore list names", async () => {
     harness = await folderHarness("folder-ignore", {
-      events: [liveReplay("1", [])],
+      events: [copyLiveReplay("1", [])],
     });
     scriptFolderWrites(harness);
     put(harness, "gone.md", "---\ntitle: Gone\n---\nbody\n");
@@ -13546,10 +13567,10 @@ describe("what a folder takes", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-unreadable-dir", {
       events: [
-        liveReplay("1", []),
+        copyLiveReplay("1", []),
         (): Answer =>
-          liveReplay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+          copyLiveReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -13971,14 +13992,16 @@ describe("what a pull does with a file whose item stops matching", () => {
     return folderHarness(label, {
       rows: { "core.note": [{ item: departed }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.deleted",
             wireItem({ ...departed, state: "trashed" }),
           ),
         ]),
-        replay("3", [itemEvent("3", "item.restored", wireItem(departed))]),
+        copyReplay("3", [
+          copyItemEvent("3", "item.restored", wireItem(departed)),
+        ]),
       ],
     });
   }
@@ -14049,8 +14072,8 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: { search: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...departed, state: "archived" }),
@@ -14084,13 +14107,13 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: { search: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: archived }, { item: trashed }] },
       events: [
-        replay("3", [
-          itemEvent(
+        copyReplay("3", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...archived, state: "archived" }),
           ),
-          itemEvent(
+          copyItemEvent(
             "3",
             "item.deleted",
             wireItem({ ...trashed, state: "trashed" }),
@@ -14167,8 +14190,8 @@ describe("what a pull does with a file whose item stops matching", () => {
     harness = await folderHarness("folder-journaled-revived", {
       rows: { "core.note": [{ item }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -14241,8 +14264,8 @@ describe("what a pull does with a file whose item stops matching", () => {
     harness = await folderHarness("folder-journaled-version-step", {
       rows: { "core.note": [{ item }] },
       events: [
-        replay("2", [
-          itemEvent("2", "item.updated", wireItem({ ...item, version: 2 })),
+        copyReplay("2", [
+          copyItemEvent("2", "item.updated", wireItem({ ...item, version: 2 })),
         ]),
       ],
     });
@@ -14284,8 +14307,8 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: { search: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...departed, state: "archived" }),
@@ -14321,8 +14344,8 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: { search: { types: ["core.note"], state: ["active"] } },
       rows: { "core.note": [{ item: departed }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...departed, state: "archived" }),
@@ -14367,10 +14390,10 @@ describe("what a pull does with a file whose item stops matching", () => {
       },
       rows: { "core.note": [{ item, tags: ["keep"] }] },
       events: [
-        replay("2", [
-          itemEvent("2", "item.updated", wireItem(theirs), { tags: [] }),
+        copyReplay("2", [
+          copyItemEvent("2", "item.updated", wireItem(theirs), { tags: [] }),
         ]),
-        liveReplay("2", []),
+        copyLiveReplay("2", []),
       ],
     });
     let door: FolderDoor | undefined;
@@ -14408,8 +14431,10 @@ describe("what a pull does with a file whose item stops matching", () => {
       },
       rows: { "core.note": [{ item: departed, tags: ["keep"] }] },
       events: [
-        replay("2", [
-          itemEvent("2", "metadata.changed", wireItem(departed), { tags: [] }),
+        copyReplay("2", [
+          copyItemEvent("2", "metadata.changed", wireItem(departed), {
+            tags: [],
+          }),
         ]),
       ],
     });
@@ -14442,9 +14467,10 @@ describe("what a pull does with a file whose item stops matching", () => {
     harness = await folderHarness("folder-narrowed-out", {
       rows: { "core.note": [{ item: departed }] },
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        headRead("3"),
-        liveReplay("3", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyHeadRead("3"),
+        copyLiveReplay("3", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -14469,8 +14495,10 @@ describe("what a pull does with a file whose item stops matching", () => {
     harness = await folderHarness("folder-retyped-out", {
       rows: { "core.note": [{ item: departed }] },
       events: [
-        replay("2", [itemEvent("2", "item.updated", wireItem(retyped))]),
-        liveReplay("2", []),
+        copyReplay("2", [
+          copyItemEvent("2", "item.updated", wireItem(retyped)),
+        ]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness, {
@@ -14892,7 +14920,7 @@ describe("a file that is not a document", () => {
         ],
       },
     });
-    harness.server.answer(
+    harness.server.copyAnswer(
       "GET",
       `/blobs/${hash}/url`,
       refusal(401, "unauthorized", "no credential"),
@@ -14980,8 +15008,8 @@ describe("a file that is not a document", () => {
       rows: { "core.file": [{ item: row }] },
       // Somebody retitles the item once its file is written.
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -15036,8 +15064,8 @@ describe("a file that is not a document", () => {
       settings,
       rows: { "core.file": [{ item: row }] },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -15090,7 +15118,7 @@ describe("a file that is not a document", () => {
       [failing, refusal(503, "service_unavailable", "try again")],
       [limited, answers.rateLimited()],
     ] as const) {
-      harness.server.answer("GET", `/blobs/${hashOf(bytes)}/url`, answer);
+      harness.server.copyAnswer("GET", `/blobs/${hashOf(bytes)}/url`, answer);
       scriptBlob(harness.server, bytes);
     }
     // Held beside the copy already, and unreadable there.
@@ -15738,7 +15766,7 @@ describe("folders on one Mac", () => {
     // Retagged elsewhere: the first folder's search lets it go, the
     // other's takes it.
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(plan),
@@ -15765,7 +15793,7 @@ describe("folders on one Mac", () => {
 
     // Changed elsewhere meanwhile, it is not written back where it was.
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "item.updated",
         wireItem({
@@ -15788,7 +15816,7 @@ describe("folders on one Mac", () => {
     // The other way round: the folder that holds it now hears first and
     // writes a file of its own, and the folder it left lets its file go.
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(brief),
@@ -15859,7 +15887,7 @@ describe("folders on one Mac", () => {
       expect((await b.folder.pull()).ok).toBe(true);
       for (const item of [plan, control]) {
         edges.events.push(
-          itemEvent(
+          copyItemEvent(
             String(edges.events.length + 2),
             "metadata.changed",
             wireItem(item),
@@ -15957,7 +15985,7 @@ describe("folders on one Mac", () => {
         const journaled = await b.folder.scan();
         expect(journaled.ok && journaled.value.missing).toBe(1);
         edges.events.push(
-          itemEvent(
+          copyItemEvent(
             String(edges.events.length + 2),
             "item.state_changed",
             wireItem({ ...gone, state: "archived" }),
@@ -15966,7 +15994,7 @@ describe("folders on one Mac", () => {
         );
       }
       edges.events.push(
-        itemEvent(
+        copyItemEvent(
           String(edges.events.length + 2),
           "metadata.changed",
           wireItem(photo),
@@ -16083,7 +16111,7 @@ describe("folders on one Mac", () => {
 
     // Retagged elsewhere: the other folder takes the file in.
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(photo),
@@ -16133,7 +16161,7 @@ describe("folders on one Mac", () => {
     expect((await a.folder.pull()).ok).toBe(true);
     const held = read(a, "Plan.md");
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(plan),
@@ -16556,7 +16584,11 @@ describe("folders on one Mac", () => {
         "core.note": [note(shown, "Shown"), note(unseen, "Unseen")],
       },
       (server) => {
-        server.answer("GET", `/items/${unseen}`, answers.itemNotFound(unseen));
+        server.copyAnswer(
+          "GET",
+          `/items/${unseen}`,
+          answers.itemNotFound(unseen),
+        );
       },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -16669,7 +16701,7 @@ describe("folders on one Mac", () => {
     );
     expect((await a.folder.pull()).ok).toBe(true);
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(plan),
@@ -16861,12 +16893,12 @@ describe("folders on one Mac", () => {
         // The brief is edited while the pull that would take it in fetches
         // this picture, after it read the brief and before it moves it.
         const hex = hashOf(picture).slice("sha256:".length);
-        server.answer(
+        server.copyAnswer(
           "GET",
           `/blobs/${hashOf(picture)}/url`,
           writeAnswers.link(`${server.url}/links/${hex}`),
         );
-        server.answer("GET", `/links/${hex}`, () => {
+        server.copyAnswer("GET", `/links/${hex}`, () => {
           const path = join(harness!.dir, "Brief.md");
           writeFileSync(
             path,
@@ -16881,7 +16913,7 @@ describe("folders on one Mac", () => {
     );
     expect((await a.folder.pull()).ok).toBe(true);
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "metadata.changed",
         wireItem(plan),
@@ -16906,7 +16938,7 @@ describe("folders on one Mac", () => {
     // before it is taken.
     for (const item of [brief, image]) {
       edges.events.push(
-        itemEvent(
+        copyItemEvent(
           String(edges.events.length + 2),
           "metadata.changed",
           wireItem(item),
@@ -16946,7 +16978,7 @@ describe("folders on one Mac", () => {
     expect((await b.folder.pull()).ok).toBe(true);
     expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "item.updated",
         wireItem({ ...plan, version: 2, state: "archived" }),
@@ -17344,7 +17376,7 @@ describe("folders on one Mac", () => {
     expect((await a.folder.pull()).ok).toBe(true);
     expect((await b.folder.pull()).ok).toBe(true);
     edges.events.push(
-      itemEvent("2", "metadata.changed", wireItem(plan), { tags: ["b"] }),
+      copyItemEvent("2", "metadata.changed", wireItem(plan), { tags: ["b"] }),
     );
     expect((await a.folder.push()).ok).toBe(true);
     await expect(
@@ -17382,7 +17414,7 @@ describe("folders on one Mac", () => {
     expect((await a.folder.pull()).ok).toBe(true);
     expect((await b.folder.pull()).ok).toBe(true);
     edges.events.push(
-      itemEvent("2", "metadata.changed", wireItem(brief), { tags: ["b"] }),
+      copyItemEvent("2", "metadata.changed", wireItem(brief), { tags: ["b"] }),
     );
     const first = await b.folder.push();
     expect(first.ok && first.value.pull?.written).toBe(1);
@@ -17529,7 +17561,7 @@ describe("large removals, status and size", () => {
     const trashed = rows
       .slice(0, 3)
       .map((row, at) =>
-        itemEvent(
+        copyItemEvent(
           String(at + 2),
           "item.deleted",
           wireItem({ ...row.item, state: "trashed" }),
@@ -17538,7 +17570,7 @@ describe("large removals, status and size", () => {
     const departing = (label: string, settings?: Record<string, unknown>) =>
       folderHarness(label, {
         rows: { "core.note": rows },
-        events: [replay("4", trashed)],
+        events: [copyReplay("4", trashed)],
         ...(settings ? { settings } : {}),
       });
     // The witness: at the default threshold the three files are taken away.
@@ -17568,8 +17600,8 @@ describe("large removals, status and size", () => {
     harness = await folderHarness("folder-removal-restore-departed", {
       rows: { "core.note": rows },
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...rows[0]!.item, state: "archived" }),
@@ -17858,8 +17890,8 @@ describe("a file's permission", () => {
         ],
       },
       events: [
-        liveReplay("3", [
-          itemEvent(
+        copyLiveReplay("3", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -17867,7 +17899,7 @@ describe("a file's permission", () => {
               version: 2,
             }),
           ),
-          itemEvent(
+          copyItemEvent(
             "3",
             "item.updated",
             wireItem({
@@ -17935,8 +17967,8 @@ describe("what a folder never does to a person's text", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -17994,8 +18026,8 @@ describe("what a folder never does to a person's text", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -18205,8 +18237,8 @@ describe("what a folder never does to a person's text", () => {
         ],
       },
       events: [
-        liveReplay("2", [
-          itemEvent(
+        copyLiveReplay("2", [
+          copyItemEvent(
             "2",
             "item.updated",
             wireItem({
@@ -18327,7 +18359,7 @@ describe("what a folder never does to a person's text", () => {
     const id = String(sentCreates(harness)[0]?.id);
     const before = readFileSync(join(harness.dir, "whole.txt"));
     edges.events.push(
-      itemEvent(
+      copyItemEvent(
         String(edges.events.length + 2),
         "item.updated",
         wireItem({
@@ -18368,8 +18400,8 @@ describe("what a folder never does to a person's text", () => {
     const id = "01a00000-0000-7000-8000-00000000fa52";
     harness = await folderHarness("folder-new-cut-off", {
       events: [
-        replay("2", [
-          itemEvent(
+        copyReplay("2", [
+          copyItemEvent(
             "2",
             "item.created",
             wireItem({
@@ -18379,7 +18411,7 @@ describe("what a folder never does to a person's text", () => {
             }),
           ),
         ]),
-        liveReplay("2", []),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -18409,8 +18441,9 @@ describe("what a folder never does to a person's text", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-cut-off", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -18445,8 +18478,9 @@ describe("what a folder never does to a person's text", () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-unwritable", {
       events: [
-        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
-        liveReplay("2", []),
+        (): Answer =>
+          copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
+        copyLiveReplay("2", []),
       ],
     });
     scriptFolderWrites(harness);
@@ -18719,13 +18753,13 @@ describe("what a folder never does to a person's text", () => {
         ],
       },
       events: [
-        replay("3", [
-          itemEvent(
+        copyReplay("3", [
+          copyItemEvent(
             "2",
             "item.state_changed",
             wireItem({ ...going, state: "archived" }),
           ),
-          itemEvent(
+          copyItemEvent(
             "3",
             "item.updated",
             wireItem({
@@ -18761,7 +18795,7 @@ describe("a folder that cannot reach the server", () => {
     // Every stream ends as it opens, so the follow asks again while the
     // server is away, as the watch's passes do.
     harness = await folderHarness("folder-watch-reach", {
-      events: [headRead("1")],
+      events: [copyHeadRead("1")],
     });
     scriptFolderWrites(harness);
     const watching = harness.folder.watchText();
@@ -18823,7 +18857,7 @@ describe("a folder that cannot reach the server", () => {
     };
     // The stream and the first create both meet the gateway, then the server.
     harness = await folderHarness("folder-watch-gateway", {
-      events: [unnamed, unnamed, headRead("1")],
+      events: [unnamed, unnamed, copyHeadRead("1")],
     });
     harness.server.answer("POST", "/items", unnamed);
     scriptFolderWrites(harness);
