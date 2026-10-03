@@ -683,7 +683,6 @@ function decomposeCoveredTypes(types: string[]): {
   return { global: false, pairs };
 }
 
-/** The source-filter compiler's predicate for an item held in memory. */
 export function sourceFilterIncludesItem(
   filter: SourceFilterSettings | undefined,
   item: { type: string; source: string },
@@ -698,7 +697,6 @@ export function sourceFilterIncludesItem(
   return !covered || filter.sources.includes(item.source);
 }
 
-/** Canonical covered namespace roots, including declared descendants. */
 export function canonicalSourceFilter(
   filter: SourceFilterSettings | undefined,
 ): { types: string[]; sources: string[] } | null {

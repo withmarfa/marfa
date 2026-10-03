@@ -6,7 +6,7 @@
  * to know it may send the write again once the grant is back. A door that
  * builds its own `type_not_permitted`, `edge_permission_denied` or extension
  * refusal reads as covered from every test of the doors that do not, so this
- * reads the source: every module that raises one of those codes is named here
+ * reads the source: every module that references one of those codes is named here
  * with why, and the grant checks are driven to show what they carry.
  */
 import { readFileSync, readdirSync } from "node:fs";
@@ -24,12 +24,13 @@ import type { TestContext } from "../test-utils.js";
 
 const root = join(import.meta.dirname, "..");
 
-const RAISES = /ErrorCode\.(TYPE_NOT_PERMITTED|EDGE_PERMISSION_DENIED)\b/;
+const REFERENCES = /ErrorCode\.(TYPE_NOT_PERMITTED|EDGE_PERMISSION_DENIED)\b/;
 
-/** Modules that raise one of the codes, each with why. */
-const RAISERS: Record<string, string> = {
+const CODE_REFERENCES: Record<string, string> = {
   "middleware/auth.ts":
     "the grant checks, through `grantRefusal`, and the refusals no grant opens: the reserved fence, a map reaching no type, a natural key resolving an unreadable row",
+  "middleware/read-view.ts":
+    "observes existing route refusals to certify their read view after successful snapshot closure; it builds no grant refusal",
   "routes/_blob-reach.ts":
     "an upload needs write on some type rather than on one, so there is no single grant to name",
 };
@@ -80,11 +81,11 @@ function refusal(fn: () => void): MarfaError {
 }
 
 describe("a refusal for a missing grant is built once and names the grant", () => {
-  it("names every module that raises a grant code", () => {
-    const raisers = sources().filter((rel) =>
-      RAISES.test(readFileSync(join(root, rel), "utf8")),
+  it("accounts for every module referencing a grant code", () => {
+    const references = sources().filter((rel) =>
+      REFERENCES.test(readFileSync(join(root, rel), "utf8")),
     );
-    expect(raisers).toEqual(Object.keys(RAISERS).sort());
+    expect(references).toEqual(Object.keys(CODE_REFERENCES).sort());
   });
 
   it("names the type and the level lacking", () => {

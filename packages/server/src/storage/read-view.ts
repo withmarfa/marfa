@@ -32,7 +32,6 @@ export interface ReadViewAuthority {
   readonly readView: string;
 }
 
-/** Reduce read/write to read reach and erase entries equal to their fallback. */
 function canonicalPatterns(
   map: Record<string, string> | undefined,
   read: (name: string, map: Record<string, string>) => boolean,
