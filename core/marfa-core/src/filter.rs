@@ -205,7 +205,17 @@ impl Condition {
     fn clause(&self, values: &mut Vec<Value>) -> Result<String> {
         Ok(match &self.term {
             Term::System { column, compare } => {
-                compared(&format!("items.{column}"), *compare, &self.value, values)
+                let literal = if matches!(*column, "created_at" | "updated_at" | "occurred_at")
+                    && !matches!(compare, Compare::Contains | Compare::StartsWith)
+                {
+                    let Literal::Text(text) = &self.value else {
+                        return Err(crate::time::invalid(column, "expected a timestamp"));
+                    };
+                    Literal::Text(crate::time::normalize(text, column)?)
+                } else {
+                    self.value.clone()
+                };
+                compared(&format!("items.{column}"), *compare, &literal, values)
             }
             Term::Property { name, op } => {
                 values.push(Value::String(format!("$.{name}")));
@@ -718,6 +728,25 @@ mod tests {
             Ok(_) => None,
             Err(CoreError::Validation { code, .. }) => Some(code),
             Err(other) => Some(format!("{other:?}")),
+        }
+    }
+
+    #[test]
+    fn timestamp_comparisons_normalize_and_validate() {
+        for field in ["created_at", "updated_at", "occurred_at"] {
+            for op in ["eq", "neq", "gt", "gte", "lt", "lte"] {
+                let mut values = Vec::new();
+                parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\""))
+                    .unwrap()
+                    .clause(&mut values)
+                    .unwrap();
+                assert_eq!(values, [Value::String("2026-01-01T00:00:00.500Z".into())]);
+                for invalid in ["42", "true", "null", "\"bad\""] {
+                    assert!(
+                        matches!(check(&format!("{field} {op} {invalid}")), Err(CoreError::Validation { code, .. }) if code == "validation_error")
+                    );
+                }
+            }
         }
     }
 

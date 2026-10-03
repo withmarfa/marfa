@@ -18,6 +18,7 @@ mod scripted;
 mod search;
 mod sse;
 mod store;
+mod time;
 mod wire;
 
 use std::collections::HashSet;
