@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 
 scripts="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/marfa-server-keys.XXXXXX")"
 export MARFA_SERVER_KEEP="${work}/server"
 export MARFA_SERVER_ENV="${work}/server.env"
+: >"${MARFA_SERVER_ENV}"
 trap '"${scripts}/server-down.sh" "${MARFA_SERVER_ENV}" >/dev/null 2>&1 || true; rm -rf "${work}"' EXIT
 
 check_key() {
@@ -23,6 +25,11 @@ up() {
   : "${MARFA_TEST_KEY:?working key was not exported}"
   : "${MARFA_TEST_OPERATOR_KEY:?operator key was not exported}"
   [[ "${MARFA_TEST_KEY}" != "${MARFA_TEST_OPERATOR_KEY}" ]]
+  python3 - "${MARFA_SERVER_ENV}" "${MARFA_SERVER_KEEP}/boot.env" <<'PY'
+import os, stat, sys
+for path in sys.argv[1:]:
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600, "credential file is not private"
+PY
   check_key "${MARFA_TEST_KEY}" working
   check_key "${MARFA_TEST_OPERATOR_KEY}" operator
 }
@@ -31,6 +38,9 @@ up
 first_working="${MARFA_TEST_KEY}"
 first_operator="${MARFA_TEST_OPERATOR_KEY}"
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
+chmod 644 "${MARFA_SERVER_KEEP}/boot.env"
+: >"${MARFA_SERVER_ENV}"
+chmod 644 "${MARFA_SERVER_ENV}"
 up
 [[ "${MARFA_TEST_KEY}" == "${first_working}" ]]
 [[ "${MARFA_TEST_OPERATOR_KEY}" == "${first_operator}" ]]
