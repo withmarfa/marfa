@@ -1,3 +1,4 @@
+import { rememberItemSubject } from "../middleware/replay-requirements.js";
 import type { ApiKey, Item } from "@withmarfa/shared";
 import { mayReadType } from "../middleware/auth.js";
 import { cascadeMark } from "../pubsub.js";
@@ -19,7 +20,14 @@ export async function withCascadeMarks(
   return rows.map((row) => {
     const root = marks.get(row.id);
     return root
-      ? { ...row, ...cascadeMark(root, (type) => mayReadType(key, type)) }
+      ? {
+          ...row,
+          ...cascadeMark(root, (type) => {
+            const readable = mayReadType(key, type);
+            if (readable) rememberItemSubject(root, "read");
+            return readable;
+          }),
+        }
       : row;
   });
 }

@@ -461,6 +461,7 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`response_status` integer,
 	`response_content_type` text,
 	`response_body` text,
+	`authorization` text DEFAULT '[]' NOT NULL,
 	`created_at` text NOT NULL,
 	`completed_at` text
 );

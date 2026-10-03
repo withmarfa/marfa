@@ -1,3 +1,4 @@
+import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * Bulk operations on items.
  *
@@ -945,6 +946,7 @@ export function bulkRoutes(storage: Storage) {
       });
       for (const item of page.data) {
         if (expected && !expected.has(item.id)) continue;
+        rememberItemSubject(item, "write");
         matched.push(item);
         if (matched.length > cap) break;
       }

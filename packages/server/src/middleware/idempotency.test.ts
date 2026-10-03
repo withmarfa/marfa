@@ -852,6 +852,7 @@ describe("a claim the store did not grant", () => {
         // middleware will compute by echoing it — see `fingerprintEcho`.
         fingerprint: fingerprintEcho,
         state: "in_flight",
+        authorization: [],
         response_status: null,
         response_content_type: null,
         response_body: null,

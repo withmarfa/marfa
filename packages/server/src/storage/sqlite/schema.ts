@@ -1057,11 +1057,9 @@ export const enrichmentState = sqliteTable("enrichment_state", {
  * a collision, a version conflict or a missing row depending on the verb,
  * and none of those is the question a retry is asking.
  *
- * A key belongs to the credential that sent it, named by `credential`: a
- * key's id, or for a signed-in app its app and person, so every token of the
- * pair shares one keyspace and two credentials never share one. A replay is
- * served before the door's authorization runs, so a narrower token of the
- * same app and person is handed the answer its earlier token was given.
+ * A key belongs to its credential, a key id or an app grant. Current
+ * authorization is checked before replay without changing that identity.
+ * The saved requirements preserve subjects a destructive write removed.
  *
  * `fingerprint` is what makes a repeat a repeat: a digest of the method,
  * path, query and body. A key arriving with a different one is refused
@@ -1085,6 +1083,7 @@ export const idempotencyRecords = sqliteTable(
     response_content_type: text("response_content_type"),
     /** NULL on a completed row means the body was above the store bound. */
     response_body: text("response_body"),
+    authorization: text("authorization").notNull().default("[]"),
     created_at: text("created_at").notNull(),
     completed_at: text("completed_at"),
   },

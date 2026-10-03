@@ -1,3 +1,4 @@
+import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * /folders: the one door that writes `system.folder`. The item doors refuse
  * every `system.*` write, so a folder's settings are created, changed and
@@ -13,7 +14,6 @@ import {
   isValidId,
   isValidTypeIdentifier,
   parseFilter,
-  resolveTypePermission,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import type { Context } from "hono";
@@ -21,8 +21,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   itemProvenanceSource,
   requireAuth,
+  checkTypePermission,
   standingRule,
-  grantRefusal,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
@@ -266,13 +266,7 @@ function assertSettings(settings: Settings): void {
 /** Asks the type map alone: `checkTypeAccess` fences `system.*` writes off from every key. */
 function requireFolderWrite(c: Context<AppEnv>): void {
   const key = requireAuth(c);
-  if (resolveTypePermission(FOLDER_TYPE, key.type_permissions) !== "write") {
-    throw grantRefusal(
-      ErrorCode.TYPE_NOT_PERMITTED,
-      `Write access to type "${FOLDER_TYPE}" denied`,
-      { kind: "type", name: FOLDER_TYPE, level: "write" },
-    );
-  }
+  checkTypePermission(key, FOLDER_TYPE, "write");
 }
 
 /** Every folder door that writes takes write on `system.folder`. */
@@ -499,6 +493,7 @@ export function folderRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: item.id,
     });
+    rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, credential) },
       201,
@@ -516,7 +511,9 @@ export function folderRoutes(storage: Storage) {
     }
     assertSettings(settings);
     const result = await storage.runInTransaction(async () => {
-      refuseRevoked(await requireFolder(storage, id));
+      const folder = await requireFolder(storage, id);
+      rememberItemSubject(folder, "write", true);
+      refuseRevoked(folder);
       return await writeItem(
         storage,
         { kind: "platform" },
@@ -544,6 +541,7 @@ export function folderRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
     });
+    rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
@@ -555,7 +553,9 @@ export function folderRoutes(storage: Storage) {
     // One change to a subscriber: the stamp rides on the state change that
     // announces both.
     const { item, metadata } = await storage.runInTransaction(async () => {
-      refuseRevoked(await requireFolder(storage, id));
+      const folder = await requireFolder(storage, id);
+      rememberItemSubject(folder, "write", true);
+      refuseRevoked(folder);
       await writeItem(
         storage,
         { kind: "platform" },
@@ -581,6 +581,7 @@ export function folderRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
     });
+    rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,

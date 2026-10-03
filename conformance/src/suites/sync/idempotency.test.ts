@@ -410,6 +410,69 @@ describe("idempotency keys", () => {
     ).toBe("true");
   });
 
+  it("reauthorizes a retained answer after its credential is narrowed", async () => {
+    requireRule(caps, "idempotencyKeys");
+    const label = `sync-current-grant-${randomUUID().slice(0, 8)}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const actor = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    const created = await client.rawRequest<ItemEnvelope>("/items", {
+      method: "POST",
+      body: {
+        type: "core.note",
+        source: ctx.source,
+        properties: { title: "Before", body: "Retained data" },
+      },
+    });
+    expect(created.ok).toBe(true);
+    const item = created.data.item;
+    trackItem(ctx, item.id);
+    const body = { version: item.version, properties: { title: "After" } };
+    const headers = { "Idempotency-Key": `sync-current-grant-${randomUUID()}` };
+    const ask = () =>
+      actor.rawRequest<ItemEnvelope>(`/items/${item.id}`, {
+        method: "PATCH",
+        body,
+        headers,
+      });
+    const first = await ask();
+    expect(first.ok).toBe(true);
+    expect(first.data.item.properties.body).toBe("Retained data");
+    expect((await ask()).headers.get("Idempotency-Replayed")).toBe("true");
+    expect(
+      (
+        await client.updateKey(minted.data.id, {
+          type_permissions: { "core.task": "read" },
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await actor.rawRequest(`/items/${item.id}`)).status).toBe(404);
+    expect(
+      (await actor.rawRequest(`/items/${item.id}`, { method: "PATCH", body }))
+        .status,
+    ).toBe(404);
+    const refused = await ask();
+    expect(refused.status).toBe(404);
+    expect(refused.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(
+      (
+        await client.updateKey(minted.data.id, {
+          type_permissions: { "core.note": "write" },
+        })
+      ).ok,
+    ).toBe(true);
+    const restored = await ask();
+    expect(restored.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(restored.data).toEqual(first.data);
+    const current = await client.rawRequest<ItemEnvelope>(`/items/${item.id}`);
+    expect(current.data.item.version).toBe(first.data.item.version);
+  });
+
   it("holds a key to the credential that sent it", async () => {
     requireRule(caps, "idempotencyKeys");
     const label = `sync-idem-second-${randomUUID().slice(0, 8)}`;

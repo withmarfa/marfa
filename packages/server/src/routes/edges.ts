@@ -1,3 +1,7 @@
+import {
+  rememberEdgeSubject,
+  rememberItemSubject,
+} from "../middleware/replay-requirements.js";
 import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
@@ -156,13 +160,14 @@ async function endsAfterMove(
       await storage.items.get(ends.source_id),
       () => edgeSourceNotFound(ends.source_id),
     );
-    requireTypeAccess(c, source.type, "write");
+    requireTypeAccess(c, source, "write");
   }
   // Before any check that reads the target, so an unreadable one says no more than a missing one.
   const target = await storage.items.get(ends.target_id);
   if (!target || !mayReadEdgeEnd(c)(target.type)) {
     throw edgeTargetNotFound(ends.target_id);
   }
+  rememberItemSubject(target, "read");
   return ends;
 }
 
@@ -188,6 +193,7 @@ async function readableEdge(
   ) {
     throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
   }
+  rememberEdgeSubject(edge, "read", source?.type);
   return { edge, source };
 }
 
@@ -650,7 +656,7 @@ export function edgeRoutes(storage: Storage) {
       await storage.items.get(body.source_id),
       () => edgeSourceNotFound(body.source_id),
     );
-    requireTypeAccess(c, sourceItem.type, "write");
+    requireTypeAccess(c, sourceItem, "write");
     requireEdgePermission(c, body.edge_type, "write");
 
     // A create arriving a second time under an id the caller minted.
@@ -706,6 +712,7 @@ export function edgeRoutes(storage: Storage) {
 
     const alreadyHeld = await repeatedEdge();
     if (alreadyHeld) {
+      rememberEdgeSubject(alreadyHeld, "write", sourceItem.type);
       return c.json({ edge: alreadyHeld, acknowledged: true }, 200);
     }
 
@@ -723,6 +730,8 @@ export function edgeRoutes(storage: Storage) {
           },
           mayReadEdgeEnd(c),
         );
+        const targetSubject = await storage.items.get(body.target_id);
+        if (targetSubject) rememberItemSubject(targetSubject, "read");
         const created = await storage.edges.createRaw({
           id: body.id,
           source_id: body.source_id,
@@ -750,6 +759,7 @@ export function edgeRoutes(storage: Storage) {
       if (!isOwnIdCollision) throw err;
       const raced = await repeatedEdge();
       if (!raced) throw err;
+      rememberEdgeSubject(raced, "write", sourceItem.type);
       return c.json({ edge: raced, acknowledged: true }, 200);
     }
     void storage.audit.log({
@@ -764,6 +774,7 @@ export function edgeRoutes(storage: Storage) {
         target_id: edge.target_id,
       },
     });
+    rememberEdgeSubject(edge, "write", sourceItem.type);
     return c.json({ edge }, 201);
   });
 
@@ -783,8 +794,9 @@ export function edgeRoutes(storage: Storage) {
       storage,
       id,
     );
-    if (srcItem) requireTypeAccess(c, srcItem.type, "write");
+    if (srcItem) requireTypeAccess(c, srcItem, "write");
     requireEdgePermission(c, existing.edge_type, "write");
+    rememberEdgeSubject(existing, "write", srcItem?.type);
     // A stale write is refused for what it was based on, before anything it names is judged.
     const stale = existing.version !== body.version;
     const ends = stale ? null : await endsAfterMove(c, storage, existing, body);
@@ -847,6 +859,11 @@ export function edgeRoutes(storage: Storage) {
             const sourceTypes = await sourceTypesFor(storage, [
               written.edge.source_id,
             ]);
+            rememberEdgeSubject(
+              written.edge,
+              "write",
+              sourceTypes.get(written.edge.source_id),
+            );
             await publishEdge({
               type: "edge_updated",
               edge: written.edge,
@@ -909,8 +926,9 @@ export function edgeRoutes(storage: Storage) {
       storage,
       id,
     );
-    if (srcItem) requireTypeAccess(c, srcItem.type, "write");
+    if (srcItem) requireTypeAccess(c, srcItem, "write");
     requireEdgePermission(c, existing.edge_type, "write");
+    rememberEdgeSubject(existing, "write", srcItem?.type);
     await storage.runInTransaction(async () => {
       await storage.edges.delete(id);
       await publishEdge({
