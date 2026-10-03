@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
-#                                       # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
+#                                       # exports URL, working/operator keys and MARFA_SERVER_ENV
 #   scripts/server-down.sh              # stops it, and removes a directory it made
 #
 # Assign, then eval: `eval "$(…)"` of a failed boot's empty output succeeds.
@@ -9,7 +9,7 @@
 # boot, since the default directory's name is printed only on success.
 # MARFA_SERVER_REPO: the checkout to boot; this one by default.
 # MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
-# secrets, data and key; server-down.sh leaves it in place.
+# secrets, data and keys; server-down.sh leaves it in place.
 # PORT: a free one by default.
 set -euo pipefail
 
@@ -38,6 +38,7 @@ else
 fi
 boot="${state}/boot.env"
 kept_key=""
+kept_operator=""
 if [[ -f "${boot}" ]]; then
   # shellcheck disable=SC1090
   source "${boot}"
@@ -45,6 +46,11 @@ if [[ -f "${boot}" ]]; then
   MARFA_AUTH_SECRET="${BOOT_AUTH_SECRET}"
   API_KEY_SALT="${BOOT_KEY_SALT}"
   kept_key="${BOOT_KEY}"
+  kept_operator="${BOOT_OPERATOR_KEY:-}"
+  if [[ -z "${kept_operator}" ]]; then
+    echo "server-up: kept state has no operator key; use a fresh MARFA_SERVER_KEEP directory" >&2
+    exit 1
+  fi
 fi
 port="${PORT:-$(free_port)}"
 url="http://127.0.0.1:${port}"
@@ -85,6 +91,7 @@ write_env() {
   {
     echo "export MARFA_TEST_URL='${url}'"
     echo "export MARFA_TEST_KEY='${1:-}'"
+    echo "export MARFA_TEST_OPERATOR_KEY='${2:-}'"
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
@@ -114,7 +121,7 @@ done
 curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
 
 if [[ -n "${kept_key}" ]]; then
-  write_env "${kept_key}"
+  write_env "${kept_key}" "${kept_operator}"
   cat "${env_file}"
   exit 0
 fi
@@ -149,13 +156,14 @@ working="$(mint "${operator}" core-proof)"
 key="$(read_key <<<"${working}")"
 [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
-write_env "${key}"
+write_env "${key}" "${operator}"
 if [[ -n "${keep}" ]]; then
   {
     echo "BOOT_PORT='${port}'"
     echo "BOOT_AUTH_SECRET='${MARFA_AUTH_SECRET}'"
     echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
     echo "BOOT_KEY='${key}'"
+    echo "BOOT_OPERATOR_KEY='${operator}'"
   } >"${boot}"
 fi
 cat "${env_file}"

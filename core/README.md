@@ -29,6 +29,8 @@ cargo build -p marfa-cli   # the device fixtures refuse a binary older than its 
 
 Then the same three in `bindings/swift`. `Core checks` in `ci.yml` runs them on a pull request that touches the core, and `core.yml` adds the tests that need a live server (`scripts/server-up.sh` boots one; `--run-ignored only` runs them), the Swift crate's release build and the Node binding's proof. Every test binary runs under `scripts/test-limits.sh`, which caps the file size and processor time it can take.
 
+`scripts/server-up.sh` exports `MARFA_TEST_KEY` for ordinary working requests and `MARFA_TEST_OPERATOR_KEY` for operator-only inspection. With `MARFA_SERVER_KEEP`, both keys are kept and returned on restart. A kept directory without its operator key is refused; use a fresh directory. `scripts/server-keys.test.sh` checks both roles against the server on first boot and after restart.
+
 ## Bindings
 
 Swift: `bindings/swift/build.sh` builds the XCFramework and its glue for macOS, iOS and the simulator. `withmarfa/marfa-swift` runs it at the commit it pins.

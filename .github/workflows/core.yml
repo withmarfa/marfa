@@ -93,6 +93,9 @@ jobs:
       # tsx resolves @withmarfa/shared through its dist.
       - run: pnpm --filter "@withmarfa/server..." build
 
+      - name: Verify local server keys survive a restart
+        run: core/scripts/server-keys.test.sh
+
       - name: Live tests against a booted server
         working-directory: core
         run: |
