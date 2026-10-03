@@ -364,6 +364,7 @@ mod tests {
             CliError::Core(CoreError::Unnamed {
                 origin: String::new(),
                 status: 401,
+                retry_after_seconds: None,
             })
             .code(),
             CliError::Core(CoreError::Decoding(String::new())).code(),

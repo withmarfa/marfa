@@ -2439,6 +2439,8 @@ impl Folder {
             rebased += now;
             let again = self.core.drain_held(&one)?;
             report.answered += again.answered;
+            report.unsent += again.unsent;
+            report.unmade += again.unmade;
             report.held = again.held;
             report.undelivered = again.undelivered;
             report.unavailable = again.unavailable;

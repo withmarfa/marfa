@@ -11106,6 +11106,52 @@ describe("writing", () => {
     expect(now).toContain("marfa_version: 4");
   });
 
+  it("folder rebase accounts for every unmade request", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b2";
+    const { door, held } = await heldWhileRetitled("folder-rebase-counts", id);
+    door.thin(id, 1);
+    put(harness!, "Note.md", held.replace("as read", "my edit"));
+    expect((await harness!.folder.scan()).ok).toBe(true);
+    const path = join(harness!.dir, ".invalid-upload");
+    writeFileSync(path, "bytes");
+    const queued = await harness!.folder
+      .device()
+      .putBlob(path, "text/plain\ninvalid");
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const attempts = pushed.value.drain.verdicts.filter(
+      (v) => v.kind === "upload_blob",
+    );
+    expect(attempts).toHaveLength(2);
+    expect(pushed.value.drain.unmade).toBe(attempts.length);
+  });
+
+  it("folder rebase accounts for writes refused in its later pass", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b2";
+    const { door, held } = await heldWhileRetitled("folder-rebase-counts", id);
+    door.thin(id, 1);
+    put(harness!, "Note.md", held.replace("as read", "my edit"));
+    expect((await harness!.folder.scan()).ok).toBe(true);
+    const path = join(harness!.dir, ".invalid-upload");
+    writeFileSync(path, "bytes");
+    const queued = await harness!.folder
+      .device()
+      .attach(id, path, { mimeType: "text/plain\ninvalid" });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    for (let n = 0; n < 3; n += 1)
+      expect((await harness!.folder.device().drain()).ok).toBe(true);
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const attempts = pushed.value.drain.verdicts.filter(
+      (v) => v.kind === "upload_blob",
+    );
+    expect(attempts).toHaveLength(2);
+    expect(pushed.value.drain.unsent).toBe(2);
+  });
+
   it("sends over a thinned version as a merge, and says so", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b2";
     const { door, rows, held } = await heldWhileRetitled(
