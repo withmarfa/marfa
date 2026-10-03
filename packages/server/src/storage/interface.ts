@@ -1,3 +1,4 @@
+import type { BulkActionErrorEntry } from "../bulk-actions/types.js";
 import type { ReplayRequirement } from "../middleware/replay-requirements.js";
 import type {
   Item,
@@ -2659,6 +2660,11 @@ export interface BulkActionJobRow {
   processed_count: number;
   succeeded_count: number;
   errored_count: number;
+  /** Private durable cursor and owner fence. */
+  claim_generation: number;
+  next_offset: number;
+  checkpoint_json: string;
+  blob_hashes_referenced_count: number;
   /** Final BulkActionResult envelope, JSON-encoded. Populated on
    *  `completed`. */
   result: string | null;
@@ -2688,6 +2694,19 @@ export interface BulkActionJobProgress {
   errored_count: number;
 }
 
+export interface BulkActionJobLease {
+  jobId: string;
+  workerId: string;
+  generation: number;
+}
+
+export interface BulkActionCheckpointDelta {
+  succeeded: readonly string[];
+  errors: readonly BulkActionErrorEntry[];
+  carried?: ReadonlySet<string>;
+  blobHashes?: ReadonlySet<string>;
+}
+
 export interface BulkActionJobStore {
   /** INSERT a fresh row in `queued` state. */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
@@ -2706,6 +2725,34 @@ export interface BulkActionJobStore {
    * claimed row, or `null` if the queue is empty.
    */
   claimNext(workerId: string, now: string): Promise<BulkActionJobRow | null>;
+  /** Refresh and read a still-owned cursor inside the chunk transaction. */
+  beginChunk(
+    lease: BulkActionJobLease,
+    expectedOffset: number,
+    now: string,
+  ): Promise<BulkActionJobRow | null>;
+  /** Commit summaries and ledgers at an owned cursor; refusal throws to roll back the chunk. */
+  checkpointChunk(
+    lease: BulkActionJobLease,
+    fromOffset: number,
+    toOffset: number,
+    delta: BulkActionCheckpointDelta,
+    now: string,
+  ): Promise<BulkActionJobRow>;
+  carriedItems(
+    jobId: string,
+    ids: readonly string[],
+  ): Promise<ReadonlySet<string>>;
+  completeOwned(
+    lease: BulkActionJobLease,
+    expectedOffset: number,
+    now: string,
+  ): Promise<boolean>;
+  failOwned(
+    lease: BulkActionJobLease,
+    reason: string,
+    now: string,
+  ): Promise<boolean>;
   /** Bump progress counts + heartbeat. Idempotent — over-writes
    *  whatever was there before, doesn't sum. */
   updateProgress(

@@ -315,6 +315,20 @@ CREATE TABLE IF NOT EXISTS `blobs` (
 	`created_at` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `bulk_action_job_carried_items` (
+	`job_id` text NOT NULL,
+	`item_id` text NOT NULL,
+	PRIMARY KEY(`job_id`, `item_id`),
+	FOREIGN KEY (`job_id`) REFERENCES `bulk_action_jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `bulk_action_job_purge_hashes` (
+	`job_id` text NOT NULL,
+	`hash` text NOT NULL,
+	PRIMARY KEY(`job_id`, `hash`),
+	FOREIGN KEY (`job_id`) REFERENCES `bulk_action_jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`api_key_id` text,
@@ -324,6 +338,10 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`input` text NOT NULL,
 	`matched_ids` text NOT NULL,
 	`matched_count` integer DEFAULT 0 NOT NULL,
+	`claim_generation` integer DEFAULT 0 NOT NULL,
+	`next_offset` integer DEFAULT 0 NOT NULL,
+	`checkpoint_json` text DEFAULT '{"ids":[],"errors":[]}' NOT NULL,
+	`blob_hashes_referenced_count` integer DEFAULT 0 NOT NULL,
 	`processed_count` integer DEFAULT 0 NOT NULL,
 	`succeeded_count` integer DEFAULT 0 NOT NULL,
 	`errored_count` integer DEFAULT 0 NOT NULL,
