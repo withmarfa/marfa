@@ -891,6 +891,20 @@ pub fn last_write_to(
         .optional()?)
 }
 
+pub fn item_under_key(
+    conn: &Connection,
+    source: &str,
+    source_id: &str,
+) -> Result<Option<Item>, CoreError> {
+    let id: Option<String> = conn.query_row(
+        "SELECT id FROM items WHERE source = ?1 AND source_id = ?2 ORDER BY version DESC, id LIMIT 1",
+        params![source, source_id], |row| row.get(0),
+    ).optional()?;
+    id.map(|id| item_by_id(conn, &id))
+        .transpose()
+        .map(Option::flatten)
+}
+
 /// Orders a create carrying a held row's natural key behind that row's last
 /// unwritten write, since the server lands the create on that row.
 pub fn follow_row_under_key(

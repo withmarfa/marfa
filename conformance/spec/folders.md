@@ -107,6 +107,14 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 52. **A watch says when it cannot reach the server, once, and once when it can again.** Its pass line counts the writes the server answered and, apart from them, the writes still waiting, so a write that went nowhere never reads as sent (`queue-and-verdicts.md` 6); a pass whose drain cannot reach the server, or a stream the watch cannot have (`device.md` 40), says so in one line naming the server and why, and nothing more while it stays so, and the first pass or stream to reach it again says so in one line, and sends what waited. A hydration the watch has to try again while the server is away (40) says so once for each run of failures, not at every attempt. A push says the same of its drain. **Why a drain stopped is said too**, by a push every time and by a watch once each time it changes, so a pass that sent nothing never reads as one with nothing to send. **A refused credential stops a watch with exit 5**, the exit a one-off command gives it, saying that the writes wait until a working credential is kept: nothing it sends can land until a person replaces the key, and a watch left running on one would print the same line for days. The refusal is the server's own, naming its contract: a `401` naming none is from something in front of the server (`device.md` 42), and the watch waits it out as it waits out an unreachable server. A watch that repeated its line every pass while nothing went would read as working to the person who left it running. `device/folders.test.ts › says once that a watch cannot reach the server, and once that it can again`, `› stops a watch whose credential is refused, with the credential's exit`, `› keeps watching through a hydration that failed, and tries it again`, `› waits out a gateway refusing its key, naming no contract, without stopping`, `› says why a push's drain stopped`.
 
+## Local document field refusals
+
+53. When a document create or edit fails local item field validation, the folder MUST flag that document with the refusal, retain its bytes and continue scanning other files. When the document is corrected or its held type permits the same bytes, the folder MUST allow a later scan to retry admission. When a document edit fails because its type is absent from the held catalog, the folder MUST apply the same containment and retry rules.
+
+    **Reason:** One invalid document must not prevent other files from being saved, and admission refusal must not consume or overwrite the person's edit.
+
+    **Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`.
+
 ## What the real server cannot be made to produce
 
 The list and the reason for each entry are in `device.md`; `device/fidelity.test.ts` checks every answer the real server can produce against the scripted server's.

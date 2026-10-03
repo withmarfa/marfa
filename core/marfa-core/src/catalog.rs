@@ -17,7 +17,7 @@ struct Entry {
     body_field: Option<String>,
     /// The properties the type declares itself, not those it inherits.
     fields: Vec<String>,
-    required: HashMap<String, bool>,
+    definitions: Map<String, Value>,
 }
 
 /// The end of an edge whose file writes it.
@@ -377,19 +377,45 @@ impl Catalog {
                     thumbnail_field,
                     body_field,
                     fields: fields.keys().cloned().collect(),
-                    required: fields
-                        .into_iter()
-                        .map(|(name, field)| {
-                            (
-                                name,
-                                field.get("required").and_then(Value::as_bool) == Some(true),
-                            )
-                        })
-                        .collect(),
+                    definitions: fields,
                 },
             );
         }
         Ok(Catalog { entries })
+    }
+
+    pub(crate) fn validate_properties(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        complete: bool,
+    ) -> Result<(), CoreError> {
+        if !self.known(type_id) {
+            return Err(CoreError::UnknownType {
+                message: format!("{type_id} is not a type this copy holds"),
+            });
+        }
+        let mut chain = Vec::new();
+        let mut current = Some(type_id);
+        while let Some(at) = current {
+            let Some(entry) = self.entries.get(at) else {
+                break;
+            };
+            if chain.len() >= MAX_PARENT_WALK || chain.iter().any(|(seen, _)| *seen == at) {
+                return Err(CoreError::Decoding(format!(
+                    "{type_id}'s fields cannot be resolved because its parent chain loops or runs past {MAX_PARENT_WALK} types"
+                )));
+            }
+            chain.push((at, entry));
+            current = entry.parent.as_deref();
+        }
+        let mut fields = BTreeMap::new();
+        for (_, entry) in chain.into_iter().rev() {
+            for (name, definition) in &entry.definitions {
+                fields.insert(name.as_str(), definition);
+            }
+        }
+        crate::validation::properties(&fields, properties, complete)
     }
 
     /// Match the server's null rule in the local projection; the queued
@@ -417,8 +443,8 @@ impl Catalog {
                     let Some(entry) = self.entries.get(current) else {
                         break;
                     };
-                    if let Some(required) = entry.required.get(*name) {
-                        return *required;
+                    if let Some(definition) = entry.definitions.get(*name) {
+                        return definition.get("required").and_then(Value::as_bool) == Some(true);
                     }
                     let Some(parent) = entry.parent.as_deref() else {
                         break;
@@ -562,7 +588,7 @@ mod tests {
                             thumbnail_field: None,
                             body_field: None,
                             fields: Vec::new(),
-                            required: HashMap::new(),
+                            definitions: Map::new(),
                         },
                     )
                 })
@@ -573,9 +599,16 @@ mod tests {
     #[test]
     fn projected_nulls_follow_the_destination_type_and_replace_mode() {
         let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
-        catalog.entries.get_mut("parent").unwrap().required =
-            [("body".into(), true), ("title".into(), false)].into();
-        catalog.entries.get_mut("child").unwrap().required = [("title".into(), true)].into();
+        catalog.entries.get_mut("parent").unwrap().definitions =
+            serde_json::json!({"body": {"required": true}, "title": {"required": false}})
+                .as_object()
+                .unwrap()
+                .clone();
+        catalog.entries.get_mut("child").unwrap().definitions =
+            serde_json::json!({"title": {"required": true}})
+                .as_object()
+                .unwrap()
+                .clone();
         let input =
             serde_json::json!({ "body": null, "title": null, "extra": null, "notes": "kept" });
         let properties = input.as_object().unwrap();
