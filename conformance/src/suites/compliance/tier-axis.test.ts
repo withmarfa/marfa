@@ -219,6 +219,49 @@ describe("tier axis", () => {
     expect(feedItem.data.item.tier).toBe("feed");
   });
 
+  it.each([
+    { mode: "upsert", defaultTier: "feed" },
+    { mode: "create_only", defaultTier: "feed" },
+    { mode: "upsert", defaultTier: "library" },
+    { mode: "create_only", defaultTier: "library" },
+  ] as const)(
+    "uses the credential default and explicit tier on new bulk rows ($mode, $defaultTier)",
+    async ({ mode, defaultTier }) => {
+      const scoped = await makeClient(`${mode}-${defaultTier}`, defaultTier);
+      const override = defaultTier === "feed" ? "library" : "feed";
+      const response = await scoped.bulkItems({
+        mode,
+        items: [
+          {
+            type: "core.note",
+            source_id: `${ctx.runId}-${mode}-${defaultTier}-default`,
+            properties: { body: "credential default" },
+          },
+          {
+            type: "core.note",
+            source_id: `${ctx.runId}-${mode}-${defaultTier}-override`,
+            properties: { body: "explicit override" },
+            tier: override,
+          },
+        ],
+      });
+      expect(response.status, JSON.stringify(response.error)).toBe(200);
+      expect(response.data.counts).toMatchObject({ created: 2, errored: 0 });
+      expect(response.data.results).toHaveLength(2);
+      for (const result of response.data.results) {
+        expect(result.outcome).toBe("created");
+        expect(result.id).toBeDefined();
+        trackItem(ctx, result.id!);
+      }
+      const explicit = await scoped.getItem(response.data.results[1]!.id!);
+      expect(explicit.status).toBe(200);
+      expect(explicit.data.item.tier).toBe(override);
+      const omitted = await scoped.getItem(response.data.results[0]!.id!);
+      expect(omitted.status).toBe(200);
+      expect(omitted.data.item.tier).toBe(defaultTier);
+    },
+  );
+
   it("keeps a row's tier through a natural-key re-sync on both doors", async () => {
     // A person moves a synced row to the feed; the connector's next sync
     // names no tier and must leave it there, whichever door it uses.

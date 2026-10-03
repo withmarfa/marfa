@@ -3,6 +3,7 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { subscribe } from "../pubsub.js";
+import { serve } from "@hono/node-server";
 
 let ctx: TestContext;
 
@@ -15,6 +16,175 @@ afterAll(async () => {
 });
 
 describe("POST /items/bulk", () => {
+  describe("tier parity through the HTTP create doors", () => {
+    let baseUrl: string;
+    let closeHttp: (() => Promise<void>) | undefined;
+    const keys = new Map<"feed" | "library", string>();
+
+    beforeAll(async () => {
+      for (const tier of ["feed", "library"] as const) {
+        const rawKey = `marfa_k1_tier_${tier}_${crypto.randomUUID()}`;
+        await ctx.storage.keys.create(
+          {
+            label: `tier-parity-${tier}`,
+            source: `tier-parity-${tier}`,
+            type_permissions: { "core.note": "write" },
+            default_tier: tier,
+            is_operator: false,
+          },
+          hashApiKey(rawKey, "test-salt"),
+        );
+        keys.set(tier, rawKey);
+      }
+      await new Promise<void>((resolve) => {
+        const server = serve(
+          { fetch: ctx.app.fetch, hostname: "127.0.0.1", port: 0 },
+          (address) => {
+            baseUrl = `http://127.0.0.1:${String(address.port)}`;
+            resolve();
+          },
+        );
+        closeHttp = () =>
+          new Promise<void>((resolve, reject) => {
+            server.close((error) => {
+              if (error) reject(error);
+              else resolve();
+            });
+          });
+      });
+    });
+
+    afterAll(async () => {
+      await closeHttp?.();
+    });
+
+    async function send(
+      key: string,
+      method: string,
+      path: string,
+      body?: Record<string, unknown>,
+    ): Promise<Response> {
+      return fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          ...(body && { "Content-Type": "application/json" }),
+        },
+        ...(body && { body: JSON.stringify(body) }),
+      });
+    }
+
+    async function put(
+      key: string,
+      door: "single" | "upsert" | "create_only",
+      body: Record<string, unknown>,
+      expectedOutcome: "created" | "updated" | "skipped" = "created",
+    ): Promise<string> {
+      const response = await send(
+        key,
+        "POST",
+        door === "single" ? "/items" : "/items/bulk",
+        door === "single" ? body : { mode: door, items: [body] },
+      );
+      const data = (await response.json()) as {
+        item?: { id: string };
+        results?: { id: string; outcome: string }[];
+        counts?: Record<string, number>;
+      };
+      expect(response.status, JSON.stringify(data)).toBe(
+        door === "single" && expectedOutcome === "created" ? 201 : 200,
+      );
+      if (door === "single") {
+        expect(data.item?.id).toBeDefined();
+        return data.item!.id;
+      }
+      expect(data.results).toHaveLength(1);
+      expect(data.results?.[0]?.outcome).toBe(expectedOutcome);
+      expect(data.counts?.[expectedOutcome]).toBe(1);
+      expect(data.counts?.errored).toBe(0);
+      return data.results![0]!.id;
+    }
+
+    async function read(key: string, id: string) {
+      const response = await send(key, "GET", `/items/${id}`);
+      expect(response.status).toBe(200);
+      return (await response.json()) as {
+        item: { id: string; tier: string; properties: { body: string } };
+      };
+    }
+
+    it.each(["feed", "library"] as const)(
+      "uses the %s credential default when every create door omits tier",
+      async (tier) => {
+        const key = keys.get(tier)!;
+        const tiers: Record<string, string> = {};
+        for (const door of ["single", "upsert", "create_only"] as const) {
+          const id = await put(key, door, {
+            type: "core.note",
+            source_id: crypto.randomUUID(),
+            properties: { body: `${door} default` },
+          });
+          tiers[door] = (await read(key, id)).item.tier;
+        }
+        expect(tiers).toEqual({
+          single: tier,
+          upsert: tier,
+          create_only: tier,
+        });
+      },
+    );
+
+    it.each(["feed", "library"] as const)(
+      "lets an explicit tier override the %s credential on every create door",
+      async (defaultTier) => {
+        const tier = defaultTier === "feed" ? "library" : "feed";
+        const key = keys.get(defaultTier)!;
+        for (const door of ["single", "upsert", "create_only"] as const) {
+          const id = await put(key, door, {
+            type: "core.note",
+            source_id: crypto.randomUUID(),
+            properties: { body: `${door} override` },
+            tier,
+          });
+          expect((await read(key, id)).item.tier).toBe(tier);
+        }
+      },
+    );
+
+    it.each(["feed", "library"] as const)(
+      "keeps an existing natural-key row's tier with a %s credential",
+      async (defaultTier) => {
+        const tier = defaultTier === "feed" ? "library" : "feed";
+        const key = keys.get(defaultTier)!;
+        for (const door of ["single", "upsert", "create_only"] as const) {
+          const sourceId = crypto.randomUUID();
+          const id = await put(key, "single", {
+            type: "core.note",
+            source_id: sourceId,
+            properties: { body: "before" },
+            tier,
+          });
+          const again = await put(
+            key,
+            door,
+            {
+              type: "core.note",
+              source_id: sourceId,
+              properties: { body: "after" },
+            },
+            door === "create_only" ? "skipped" : "updated",
+          );
+          expect(again).toBe(id);
+          const stored = (await read(key, id)).item;
+          expect(stored.tier).toBe(tier);
+          expect(stored.properties.body).toBe(
+            door === "create_only" ? "before" : "after",
+          );
+        }
+      },
+    );
+  });
+
   it("creates items in bulk (upsert default)", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {

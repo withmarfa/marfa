@@ -110,8 +110,6 @@ describe("bulk", () => {
       expect(r.id).toBeDefined();
     }
 
-    // Verify the reimported rows exist — /items/bulk stamps tier=feed by
-    // default, so query with tier=all.
     const list = await client.listItems({
       type: "core.note",
       tier: "all",

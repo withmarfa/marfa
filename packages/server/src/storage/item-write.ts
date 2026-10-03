@@ -981,13 +981,12 @@ async function put(
 }
 
 /**
- * The tier a new row takes: the body's, then on `POST /items` the
+ * The tier a new row takes on either create door: the body's, then the
  * credential's default. A `system.*` row takes none, so it never inherits a
  * credential's default.
  */
 function createTier(writer: ItemWriter, write: ItemPut): Tier | undefined {
   if (hasBoundedLifecycle(write.type)) return undefined;
-  if (write.door !== "item") return write.tier;
   return write.tier ?? credentialOf(writer)?.default_tier ?? "library";
 }
 
