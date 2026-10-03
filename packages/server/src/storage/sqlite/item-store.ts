@@ -21,6 +21,7 @@ import {
 } from "drizzle-orm";
 import { softDeleteClock } from "../soft-delete-clock.js";
 import {
+  markStructuralReadChange,
   generateId,
   isValidId,
   getResolvedFields,
@@ -1217,7 +1218,17 @@ export class SqliteItemStore implements ItemStore {
         };
 
         try {
-          await tx.update(items).set(setClause).where(whereClause).run();
+          const written = await tx
+            .update(items)
+            .set(setClause)
+            .where(whereClause)
+            .run();
+          if (
+            written.rowsAffected > 0 &&
+            input.type !== undefined &&
+            input.type !== row.type
+          )
+            markStructuralReadChange();
         } catch (err) {
           if (isSourceDedupViolation(err)) {
             throw new MarfaError(
@@ -1482,7 +1493,17 @@ export class SqliteItemStore implements ItemStore {
       };
 
       try {
-        await tx.update(items).set(mergeSet).where(whereClause).run();
+        const written = await tx
+          .update(items)
+          .set(mergeSet)
+          .where(whereClause)
+          .run();
+        if (
+          written.rowsAffected > 0 &&
+          input.type !== undefined &&
+          input.type !== row.type
+        )
+          markStructuralReadChange();
       } catch (err) {
         if (isSourceDedupViolation(err)) {
           throw new MarfaError(
@@ -1634,7 +1655,11 @@ export class SqliteItemStore implements ItemStore {
         removed.map((row) => row.properties),
       );
     }
-    await tx.delete(items).where(inArray(items.id, list)).run();
+    const deleted = await tx
+      .delete(items)
+      .where(inArray(items.id, list))
+      .returning({ id: items.id });
+    if (deleted.length > 0) markStructuralReadChange();
   }
 
   async purgeTrashedOlderThan(beforeDate: string): Promise<number> {

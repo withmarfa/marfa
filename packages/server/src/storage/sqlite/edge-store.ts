@@ -1,3 +1,4 @@
+import { markStructuralReadChange } from "@withmarfa/shared";
 import {
   eq,
   and,
@@ -326,6 +327,7 @@ export class SqliteEdgeStore implements EdgeStore {
         .where(where)
         .returning();
       if (written) {
+        if (written.source_id !== row.source_id) markStructuralReadChange();
         await liftOrphanReports(tx, [row.properties, written.properties]);
         return { ok: true as const, edge: rowToEdge(written) };
       }

@@ -1,3 +1,8 @@
+import { ReadLifetime, ReadSnapshotUnavailable } from "./read-lifetime.js";
+import {
+  advanceStructuralGeneration,
+  loadStructuralGeneration,
+} from "./structural-generation.js";
 import { assertRegistryReady } from "./registry-context.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { toLoadedTypes } from "../loaded-types.js";
@@ -327,7 +332,11 @@ export async function untilNotBusy<T>(
  * no concurrency, since every statement here is synchronous inside the
  * native call anyway.
  */
-function waitingForTheLock(url: string): Client {
+function waitingForTheLock(url: string): {
+  client: Client;
+  captureRead: CaptureRead;
+  closeReads: () => Promise<void>;
+} {
   const client = createClient({ url });
   const transactions = transactionConnections(url);
   let tail: Promise<unknown> = Promise.resolve();
@@ -339,7 +348,7 @@ function waitingForTheLock(url: string): Client {
     tail = turn.catch(() => undefined);
     return turn;
   };
-  return {
+  const wrapped: Client = {
     get closed() {
       return client.closed;
     },
@@ -369,6 +378,11 @@ function waitingForTheLock(url: string): Client {
     reconnect: () => {
       client.reconnect();
     },
+  };
+  return {
+    client: wrapped,
+    captureRead: transactions.captureRead,
+    closeReads: transactions.closeReads,
   };
 }
 
@@ -421,9 +435,16 @@ const BEGIN: Record<TransactionMode, string> = {
  * still costs a connection per refusal, because no client call resets the
  * refused statement.
  */
+type CaptureRead = <T>(
+  capture: (reader: Transaction) => Promise<T>,
+  lifetime: ReadLifetime,
+) => Promise<{ reader: Transaction; captured: T }>;
+
 function transactionConnections(url: string): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
   close: () => void;
+  captureRead: CaptureRead;
+  closeReads: () => Promise<void>;
 } {
   const idle: Client[] = [];
   let shut = false;
@@ -453,39 +474,60 @@ function transactionConnections(url: string): {
     if (shut) throw new LibsqlError("The client is closed", "CLIENT_CLOSED");
   };
 
-  const begin = async (mode: TransactionMode): Promise<Transaction> => {
+  const admission = async (
+    wait: (turn: Promise<void>) => Promise<void>,
+  ): Promise<() => void> => {
+    const turn = lastWriter;
+    let left = false;
+    let resolve!: () => void;
+    lastWriter = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const leave = () => {
+      if (left) return;
+      left = true;
+      void turn.then(resolve);
+    };
+    try {
+      await wait(turn);
+      refuseOnceShut();
+      return leave;
+    } catch (error) {
+      leave();
+      throw error;
+    }
+  };
+  const begin = async (
+    mode: TransactionMode,
+    independent = false,
+  ): Promise<Transaction> => {
     refuseOnceShut();
     if (mode === "write") assertRegistryReady();
     let leave: () => void = () => undefined;
     if (mode === "write") {
-      const turn = lastWriter;
-      lastWriter = new Promise((resolve) => {
-        // A transaction that gave up waiting still holds its place until
-        // the one ahead of it ends, so the next never overtakes that one.
-        leave = () => {
-          void turn.then(() => {
-            resolve();
-          });
-        };
-      });
+      leave = await admission(awaitTurn);
       try {
-        await awaitTurn(turn);
-        refuseOnceShut();
         assertRegistryReady();
-      } catch (err) {
+      } catch (error) {
         leave();
-        throw err;
+        throw error;
       }
     }
     const conn = idle.pop() ?? createClient({ url });
     try {
+      // The native READONLY begin accepts writes; query_only supplies the backstop.
+      await conn.execute(
+        mode === "read" ? "PRAGMA query_only = ON" : "PRAGMA query_only = OFF",
+      );
       await conn.execute(BEGIN[mode]);
     } catch (err) {
       handBack(conn, false);
       leave();
       throw err;
     }
-    const control = transactionControl.getStore() ?? new TransactionControl();
+    const control =
+      (independent ? undefined : transactionControl.getStore()) ??
+      new TransactionControl();
     control.begun = true;
     let open = true;
     const closedError = () =>
@@ -512,12 +554,16 @@ function transactionConnections(url: string): {
         handBack(conn, false);
       } else finish(false);
     };
-    const loadRegistry = async (): Promise<RegistrySnapshot> => {
+    const loadRegistry = async (): Promise<{
+      registry: RegistrySnapshot;
+      structuralGeneration: string;
+    }> => {
       const reader = createClient({ url });
       let reading = false;
       try {
         await reader.execute("BEGIN TRANSACTION READONLY");
         reading = true;
+        const generation = await loadStructuralGeneration(reader);
         const rows = (
           await reader.execute("SELECT id, schema, origin, family FROM types")
         ).rows.map((row) => {
@@ -558,11 +604,14 @@ function transactionConnections(url: string): {
         await reader.execute("COMMIT");
         reading = false;
         return {
-          platform: projectPlatformRows(loaded),
-          custom: loaded
-            .filter((row) => row.origin !== "platform")
-            .map((row) => row.schema),
-          edges,
+          structuralGeneration: generation,
+          registry: {
+            platform: projectPlatformRows(loaded),
+            custom: loaded
+              .filter((row) => row.origin !== "platform")
+              .map((row) => row.schema),
+            edges,
+          },
         };
       } finally {
         try {
@@ -574,14 +623,28 @@ function transactionConnections(url: string): {
         }
       }
     };
+    let readTail: Promise<unknown> = Promise.resolve();
     const end = async (statement: "COMMIT" | "ROLLBACK") => {
-      if (statement === "COMMIT") control.participant?.prepare();
+      let attempted = false;
       open = false;
       try {
+        if (mode === "read") await readTail.catch(() => undefined);
+        if (statement === "COMMIT") {
+          control.participant?.seal();
+          if (control.participant?.structuralChanged)
+            await advanceStructuralGeneration(conn);
+          control.participant?.prepare();
+        }
+        attempted = true;
         await conn.execute(statement);
+        if (mode === "read") await conn.execute("PRAGMA query_only = OFF");
         control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
         if (statement === "COMMIT") control.participant?.committed();
       } catch (error) {
+        if (!attempted) {
+          await discard();
+          throw error;
+        }
         control.invalidate(
           control.callbackCause ?? error,
           "poisoned",
@@ -635,7 +698,7 @@ function transactionConnections(url: string): {
         return "unknown";
       }
     };
-    const execute = async (
+    const performExecute = async (
       stmtOrSql: InStatement | string,
       args?: InArgs,
     ): Promise<ResultSet> => {
@@ -657,7 +720,7 @@ function transactionConnections(url: string): {
               state === "ended" ? "ended" : "poisoned",
               state === "ended" ? "rolled_back" : "unknown",
             );
-            if (state === "ended") finish(true);
+            if (state === "ended") finish(mode !== "read");
             else await discard();
           }
         }
@@ -665,6 +728,17 @@ function transactionConnections(url: string): {
       }
     };
 
+    const execute: Transaction["execute"] = (
+      statement: InStatement | string,
+      args?: InArgs,
+    ) => {
+      if (mode !== "read") return performExecute(statement, args);
+      const operation = readTail.then(() => performExecute(statement, args));
+      readTail = operation.catch(() => undefined);
+      return operation;
+    };
+
+    let settlement: Promise<void> | undefined;
     return {
       get closed() {
         return !open;
@@ -687,19 +761,124 @@ function transactionConnections(url: string): {
       commit: async () => {
         if (!open) throw closedError();
         control.assertUsable();
-        await end("COMMIT");
+        settlement = end("COMMIT");
+        await settlement;
       },
-      rollback: async () => {
-        if (open) await end("ROLLBACK");
-      },
+      rollback: () =>
+        (settlement ??= open ? end("ROLLBACK") : Promise.resolve()),
       close: () => {
-        if (open) void end("ROLLBACK").catch(() => undefined);
+        if (open) void (settlement ??= end("ROLLBACK")).catch(() => undefined);
       },
     };
   };
 
+  const readers = new Set<() => Promise<void>>();
+  let leases = 0;
+  const slotWaiters: {
+    lifetime: ReadLifetime;
+    resolve: (release: () => void) => void;
+  }[] = [];
+  const takeSlot = (
+    lifetime: ReadLifetime,
+  ): (() => void) | Promise<() => void> => {
+    lifetime.assertAlive();
+    refuseOnceShut();
+    const grant = (): (() => void) => {
+      leases++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        leases--;
+        while (slotWaiters.length) {
+          const next = slotWaiters.shift();
+          if (!next) break;
+          if (next.lifetime.abandoned) continue;
+          next.resolve(grant());
+          break;
+        }
+      };
+    };
+    if (leases < 8) return grant();
+    if (slotWaiters.length >= 8) throw new ReadSnapshotUnavailable();
+    let waiter!: (typeof slotWaiters)[number];
+    const waiting = new Promise<() => void>((resolve) => {
+      waiter = { lifetime, resolve };
+      slotWaiters.push(waiter);
+    });
+    return lifetime.wait(waiting).catch((error: unknown) => {
+      const index = slotWaiters.indexOf(waiter);
+      if (index >= 0) slotWaiters.splice(index, 1);
+      else
+        void waiting.then((release) => {
+          release();
+        });
+      throw error;
+    });
+  };
+  const captureRead: CaptureRead = async (capture, lifetime) => {
+    const slot = takeSlot(lifetime);
+    const release = typeof slot === "function" ? slot : await slot;
+    let leave: (() => void) | undefined;
+    let reader: Transaction | undefined;
+    let pending: Promise<unknown> = Promise.resolve();
+    let cleaning: Promise<void> | undefined;
+    const cleanup = (): Promise<void> =>
+      (cleaning ??= (async () => {
+        try {
+          await pending.catch(() => undefined);
+          if (reader) await reader.rollback();
+        } finally {
+          readers.delete(abandon);
+          release();
+        }
+      })());
+    const abandon = () => {
+      lifetime.abandon();
+      return cleanup();
+    };
+    readers.add(abandon);
+    try {
+      assertRegistryReady();
+      leave = await admission((turn) => lifetime.wait(turn));
+      lifetime.assertAlive();
+      assertRegistryReady();
+      pending = begin("read", true).then((value) => {
+        reader = value;
+        return value;
+      });
+      await lifetime.wait(pending);
+      if (!reader) throw new ReadSnapshotUnavailable();
+      const native = reader;
+      const rollback = native.rollback.bind(native);
+      let rolledBack: Promise<void> | undefined;
+      native.rollback = () =>
+        (rolledBack ??= rollback().finally(() => {
+          readers.delete(abandon);
+          release();
+        }));
+      pending = capture(native);
+      const captured = (await lifetime.wait(pending)) as Awaited<
+        ReturnType<typeof capture>
+      >;
+      lifetime.assertAlive();
+      return { reader: native, captured };
+    } catch (error) {
+      lifetime.abandon();
+      void cleanup().catch(() => undefined);
+      throw error;
+    } finally {
+      leave?.();
+    }
+  };
   return {
     begin,
+    captureRead,
+    closeReads: async () => {
+      shut = true;
+      for (const waiter of slotWaiters) waiter.lifetime.abandon();
+      await Promise.allSettled([...readers].map((cleanup) => cleanup()));
+    },
     close: () => {
       shut = true;
       for (const conn of idle.splice(0)) conn.close();
@@ -737,6 +916,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   db: DrizzleDb;
   raw: RawDb;
   close: () => Promise<void>;
+  captureRead: CaptureRead;
 }> {
   // Ensure the directory exists for filesystem paths (skip for in-memory and
   // an already-formed `file:` URL).
@@ -752,7 +932,9 @@ export async function createConnection(sqlitePath: string): Promise<{
   // The wrapper rather than a `PRAGMA busy_timeout` for the same reason
   // the native option is not used, and because a pragma reaches one
   // connection while the transaction path opens its own.
-  const client = waitingForTheLock(toLibsqlUrl(sqlitePath));
+  const { client, captureRead, closeReads } = waitingForTheLock(
+    toLibsqlUrl(sqlitePath),
+  );
 
   // A database still carrying the retired registry tables is refused, not
   // migrated.
@@ -846,7 +1028,9 @@ export async function createConnection(sqlitePath: string): Promise<{
   return {
     db,
     raw: client,
+    captureRead,
     close: async () => {
+      await closeReads();
       client.close();
     },
   };

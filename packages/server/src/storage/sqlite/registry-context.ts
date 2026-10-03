@@ -7,20 +7,24 @@ import {
   registrySnapshotView,
   setRegistryFrameAccessor,
   type RegistryFrame,
+  type RegistryReadScope,
   type RegistrySnapshot,
   type RegistryView,
 } from "@withmarfa/shared";
 import type { StructuralParticipant } from "./transaction-control.js";
 
-export const registryContext = new AsyncLocalStorage<RegistryFrame>();
+export const registryContext = new AsyncLocalStorage<
+  RegistryFrame | RegistryReadScope
+>();
 let ready = true;
 export function assertRegistryReady(): void {
   if (!ready) throw new Error("Storage registry state is unavailable");
 }
 setRegistryFrameAccessor(() => {
-  assertRegistryReady();
-  return registryContext.getStore();
-});
+  const scope = registryContext.getStore();
+  if (scope?.mode === "read") scope.assertActive();
+  return scope;
+}, assertRegistryReady);
 export function publishBootRegistry(snapshot: RegistrySnapshot): void {
   publishRegistryView(registrySnapshotView(snapshot));
   ready = true;
@@ -31,7 +35,13 @@ export function registryParticipant(
   let prepared: RegistryView | undefined;
   return {
     get changed() {
-      return frame.dirty;
+      return frame.dirty || frame.reachDirty;
+    },
+    get structuralChanged() {
+      return frame.reachDirty;
+    },
+    seal() {
+      frame.sealed = true;
     },
     prepare() {
       prepared = prepareRegistryPublication(frame);
@@ -49,7 +59,8 @@ export function registryParticipant(
     async uncertain(load) {
       ready = false;
       try {
-        publishRegistryView(registrySnapshotView(await load()));
+        const recovered = await load();
+        publishRegistryView(registrySnapshotView(recovered.registry));
         ready = true;
       } finally {
         discardRegistryFrame(frame);

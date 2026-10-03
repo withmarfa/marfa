@@ -1,5 +1,7 @@
 import {
   registryMapFacet,
+  registryMapView,
+  immutableRegistrySchema,
   stageRegistryEdge,
   removeRegistryEdge,
 } from "./registry-view.js";
@@ -23,9 +25,10 @@ export { ALL_EDGE_TYPES, SHIPPED_EDGE_TYPE_SHAPES };
 
 // Core edge types are shipped with @withmarfa/types and resolve for every
 // caller. This map is read-only after construction.
-const _coreRegistry = new Map<string, EdgeTypeSchema>(
-  ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
+const core = new Map<string, EdgeTypeSchema>(
+  ALL_EDGE_TYPES.map((schema) => [schema.id, immutableRegistrySchema(schema)]),
 );
+const _coreRegistry = registryMapView(() => core);
 
 const _customRegistry = registryMapFacet("edges");
 
