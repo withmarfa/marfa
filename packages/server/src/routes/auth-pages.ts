@@ -908,9 +908,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 // Device Authorization Grant — local helpers
 // ---------------------------------------------------------------------------
 
-/** Device code submissions one address may make per window. */
 class DeviceApprovalRefused extends Error {}
 
+/** Device code submissions one address may make per window. */
 export const DEVICE_CODE_ADDRESS_LIMIT = 10;
 
 /** Device code submissions the whole instance takes per window. */

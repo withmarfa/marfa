@@ -44,8 +44,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * In-flight tracking for the fire-and-forget `last_used_at` stamp. The
    * bearer middleware fires the stamp after the response and nothing
    * awaits it, so without tracking a stamp still in flight when the
-   * connection closes surfaces as an unhandled rejection. Same shape as
-   * the audit store's drain.
+   * connection closes can attempt to use a closed database.
    */
   private readonly stamps = new WriteTracker("oauth-grant-stamp");
 

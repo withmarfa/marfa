@@ -827,8 +827,8 @@ export interface ItemStore {
    * Filters on `revoked_at` rather than `updated_at`: `updated_at` moves on
    * any write, and the window here means "how long we keep the record of a
    * withdrawn grant".
+   * One call removes at most 200 matching revoked grants.
    */
-  /** One bounded batch of at most 200 matching revoked grants. */
   purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number>;
   /**
    * Every live app grant nobody has used since `cutoffIso`: kind `app`,
@@ -1502,18 +1502,9 @@ export interface WebhookDeliveryStore {
 // ---------------------------------------------------------------------------
 
 /**
- * Thin read helpers over the @better-auth/oauth-provider plugin's tables
- * (`auth_oauth_client`, `auth_oauth_consent`). Used by:
- *
- *   - the `/auth/authorize` consent route, which needs the client's
- *     friendly name and the user's prior consent (for the re-consent
- *     diff render)
- *   - the grant-projection after-hooks in `auth/oauth-provider.ts`,
- *     which need to resolve the client_id ↔ system.connection link
- *
- * Direct Drizzle reads against the plugin's tables; the plugin itself
- * is the authoritative writer. Kept as a separate store so the consent
- * route doesn't have to peek into the plugin's Drizzle internals.
+ * Provider-table reads and local grant transitions shared by consent routes,
+ * credential transactions, bearer validation, and retention. The provider
+ * adapter and these helpers use the same transaction-aware database handle.
  */
 export interface OauthAccessTokenRow {
   id: string;
@@ -1896,8 +1887,8 @@ export interface OauthProviderStore {
    * any live token — is never reaped. Returns the number of rows deleted.
    *
    * A row with zero grants is dead whoever registered it.
+   * One call removes at most 200 matching grantless clients.
    */
-  /** One bounded batch of at most 200 matching grantless clients. */
   deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
   /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
@@ -1923,9 +1914,7 @@ export interface OauthProviderStore {
   /**
    * Resolves once every in-flight `updateLastUsedAt` stamp has settled.
    * The stamp is fire-and-forget from the bearer middleware, so `close()`
-   * drains it the way the audit store drains its writes — a stamp still
-   * opening a connection when the database closes is otherwise an
-   * unhandled rejection.
+   * drains pending stamps before closing the database connection.
    */
   drain(): Promise<void>;
   /**
@@ -3135,10 +3124,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   blobs: BlobRegistry;
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
-  /** Thin lookup helpers over the @better-auth/oauth-provider plugin's
-   *  tables (`auth_oauth_client`, `auth_oauth_consent`). Used by the
-   *  consent route + grant-projection after-hooks. Optional — test
-   *  contexts that skip the OAuth surface can omit. */
+  /** Provider-table access shared by credential transactions and grant
+   *  lifecycle operations. Test contexts without OAuth can omit it. */
   oauthProvider?: OauthProviderStore;
   outboundWebhooks: WebhookStore;
   outboundWebhookDeliveries: WebhookDeliveryStore;

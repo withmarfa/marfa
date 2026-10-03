@@ -364,8 +364,7 @@ export interface OauthProviderOptions {
    *  `hashApiKey(token, salt)` returns identical output, letting the
    *  middleware look up `auth_oauth_access_token.token` directly. */
   apiKeySalt: string;
-  /** The Storage handle. Threaded into the custom-claim callbacks and the
-   *  grant-projection after-hooks. */
+  /** Storage for custom claims, grant checks, and security observations. */
   storage: Storage;
   /** Base URL for the issuer (used in id_token claims). */
   baseURL: string;
@@ -721,8 +720,8 @@ export function buildOauthProjectionPlugin(opts: {
           ? [
               {
                 // Resolves the token a revoke presents before the plugin
-                // can mark or delete its row, and hands the resolution to
-                // the after-hook above. See `resolveClientRevoke`.
+                // can mark or delete its row. The credential adapter uses
+                // the resolved pair for the audited grant cascade.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
                   resolveClientRevoke(ctx, storage, refreshHasher),
@@ -768,18 +767,9 @@ export function buildOauthProjectionPlugin(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * After-hook for `/oauth2/register`: the client is registered for the scope
- * it asked for, in its stored row and in the answer.
- *
- * The plugin validates a requested `scope` against the registration
- * allowlist and then stores, and answers, the whole allowlist whatever the
- * request named, so a client asking for one type's read was recorded as
- * one that may ask for anything, `keys.mint` and `grants.manage` included.
- * The row is put right before the answer leaves, which is the first moment
- * anybody learns the client's id, so no request ever meets the wider row.
- * A registration naming no scope keeps the plugin's default, which is the
- * allowlist. A failed write fails the registration: the answer would
- * otherwise describe a row that says something else.
+ * Match the registration response to the requested scope stored by the adapter.
+ * The provider otherwise answers with its whole registration allowlist.
+ * A request naming no scope retains that default.
  */
 function keepRequestedRegistrationScope(
   ctx: HookCtxLite,
@@ -876,22 +866,13 @@ export function resolveRevokeClientId(input: {
  * records survive. RFC 7009 is the one thing a client can do to say
  * "disconnect me", and an app that did it correctly was still connected.
  *
- * **Why a before-hook exists at all.** The after-hook cannot learn from the
- * response what happened: the plugin answers a success and the cross-client
- * no-op both with an empty 200, and an unknown token and a replayed one
- * alike with a 400 (its `error.name === "BAD_REQUEST"` branch, meant to
- * answer those 200 as RFC 7009 section 2.2 asks, never matches, since
- * `APIError.name` is `"APIError"`), and on the replay path the row is
- * deleted before any after-hook can read it. So the row is read here, before
- * the plugin runs, together with the client the request authenticates as,
- * and so is whether the token was alive at all, which is what
- * {@link answerDeadTokenRevoked} decides by. Both are handed forward through
- * the context merge Better Auth performs on a before-hook's returned
- * `context`. Nothing is written here; a before-hook runs ahead of the plugin
- * authenticating the client, and a write above that line would be one an
- * unauthenticated caller could drive. The reads it does perform, indexed
- * lookups on a hash the caller chose, are bounded by the endpoint's own
- * per-IP cap and disclose nothing to the caller.
+ * Resolve the pair before the provider can delete a replayed token's row.
+ * The credential request retains that pair for the audited adapter cascade;
+ * the provider must authenticate the client before its mutation reaches it.
+ * Whether the token was already dead is passed through the hook context for
+ * `answerDeadTokenRevoked`, because the provider's response alone does not
+ * distinguish a successful revocation from a no-op. These indexed reads are
+ * bounded by the endpoint's per-IP cap and disclose nothing to the caller.
  */
 async function resolveClientRevoke(
   ctx: HookCtxLite,

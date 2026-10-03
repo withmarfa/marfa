@@ -171,8 +171,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     edges: guardStoreWithReadContext(edgeStore),
     edgeTypes: guardStoreWithReadContext(edgeTypeStore),
     enrichment: guardStoreWithReadContext(enrichmentStore),
-    // Thin reader over the @better-auth/oauth-provider plugin's tables
-    // for the consent route and projection after-hooks. The plugin owns writes.
+    // Shared provider-table access joins credential and grant transactions.
     oauthProvider: guardStoreWithReadContext(oauthProviderStore),
     outboundWebhooks: guardStoreWithReadContext(webhookStore),
     outboundWebhookDeliveries: guardStoreWithReadContext(deliveryStore),

@@ -8,10 +8,10 @@
  * the access tokens under it, and stopped. The app had done the one thing
  * RFC 7009 gives it for "forget me", the security page still listed it,
  * the consent row still stood, and the next authorize was answered
- * silently with a fresh code. The after-hook this file pins runs the same
- * cascade the person's own Disconnect runs, keyed on the row the token
- * resolves to rather than on the endpoint's response, because the endpoint
- * answers 200 with nothing in it whether or not it did anything.
+ * silently with a fresh code. The credential adapter runs the same cascade
+ * as the person's own Disconnect in the provider mutation's transaction.
+ * The presented token identifies the pair; the authenticated provider
+ * mutation establishes that the cascade may run.
  *
  * Two bounds beside the positive case. A refresh token presented under a
  * different registered client is a no-op for the plugin and has to stay a
@@ -544,8 +544,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 
     // A non-Basic Authorization header: the plugin refuses the request
     // before it authenticates anyone, while the resolver ignores the header
-    // and reads the matching body client_id. The row is still there and
-    // unmarked, which is what tells the after-hook the plugin did nothing.
+    // and reads the matching body client_id. No provider mutation reaches
+    // the adapter, so the resolved pair must not trigger a cascade.
     const res = await request(ctx.app, "POST", "/auth/oauth2/revoke", {
       form: { token: tokens.refresh_token as string, client_id: clientId },
       headers: {
