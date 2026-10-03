@@ -427,7 +427,8 @@ impl Draft {
     pub(crate) fn wire(&self, id: &str) -> WireItem {
         let at = self
             .occurred_at
-            .clone()
+            .as_deref()
+            .map(crate::time::projected)
             .unwrap_or_else(crate::store::now_iso);
         WireItem {
             id: id.to_string(),
@@ -1185,6 +1186,21 @@ mod tests {
             "data:{mime_type};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
         )
+    }
+
+    #[test]
+    fn timestamp_projection_keeps_the_original_request() {
+        let draft = Draft {
+            r#type: "core.note".into(),
+            occurred_at: Some("2026-01-01T01:00:00.500+0100".into()),
+            ..Default::default()
+        };
+        let body: Value = serde_json::from_str(&draft.payload("held").unwrap()).unwrap();
+        assert_eq!(body["occurred_at"], "2026-01-01T01:00:00.500+0100");
+        let row = draft.wire("held");
+        assert_eq!(row.occurred_at, "2026-01-01T00:00:00.500Z");
+        assert_eq!(row.created_at, row.occurred_at);
+        assert_eq!(row.updated_at, row.occurred_at);
     }
 
     #[test]

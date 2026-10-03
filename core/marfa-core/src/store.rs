@@ -2471,7 +2471,7 @@ fn lay_write(
                 item.source_id = Some(source_id);
             }
             if let Some(occurred_at) = draft.occurred_at {
-                item.occurred_at = occurred_at;
+                item.occurred_at = crate::time::projected(&occurred_at);
             }
         }
         WriteKind::UpdateItem => {
@@ -3569,6 +3569,49 @@ mod tests {
 
         verdict_row("stray", "blocked", Some("no_such_reason")).unwrap();
         assert!(matches!(queued_writes(&conn), Err(CoreError::Store(_))));
+    }
+
+    #[test]
+    fn timestamp_reprojection_preserves_the_queued_request_and_retry_key() {
+        for (spelling, expected) in [
+            ("2026-01-01T01:00:00.500+0100", "2026-01-01T00:00:00.500Z"),
+            ("invalid", "invalid"),
+        ] {
+            let conn = conn();
+            let row = note("held", "server", "", "2026-01-01T00:00:00.000Z");
+            upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
+            let payload = serde_json::json!({ "type": "core.note", "occurred_at": spelling, "properties": {} }).to_string();
+            let queued = enqueue(
+                &conn,
+                &NewWrite {
+                    kind: WriteKind::CreateItem,
+                    item_id: Some("held"),
+                    target_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: None,
+                    payload: &payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap();
+            for _ in 0..2 {
+                lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
+                let item = items_by_ids(&conn, &["held".into()])
+                    .unwrap()
+                    .pop()
+                    .unwrap();
+                assert_eq!(item.occurred_at, expected);
+                let waiting = waiting_writes_for_item(&conn, "held")
+                    .unwrap()
+                    .pop()
+                    .unwrap();
+                assert_eq!(waiting.body, queued.body);
+                assert_eq!(waiting.idempotency_key, queued.idempotency_key);
+            }
+        }
     }
 
     /// The device fixtures reach an edit, a tag and a delete; this reaches

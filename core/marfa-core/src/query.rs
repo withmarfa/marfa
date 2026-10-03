@@ -38,11 +38,17 @@ pub(crate) fn list(
     // Both ends exclusive, as on the server.
     if let Some(after) = &filters.occurred_after {
         clauses.push("occurred_at > ?".into());
-        values.push(Value::String(after.clone()));
+        values.push(Value::String(crate::time::normalize(
+            after,
+            "occurred_after",
+        )?));
     }
     if let Some(before) = &filters.occurred_before {
         clauses.push("occurred_at < ?".into());
-        values.push(Value::String(before.clone()));
+        values.push(Value::String(crate::time::normalize(
+            before,
+            "occurred_before",
+        )?));
     }
     filter::narrow(
         filters.filter.as_deref(),
@@ -142,29 +148,35 @@ mod tests {
                 "a",
                 "core.note",
                 "active",
-                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00.000Z",
                 vec!["x", "y"],
             ),
             (
                 "b",
                 "core.note.todo",
                 "archived",
-                "2026-01-02T00:00:00Z",
+                "2026-01-02T00:00:00.000Z",
                 vec!["x"],
             ),
-            ("c", "acme.memo", "active", "2026-01-03T00:00:00Z", vec![]),
+            (
+                "c",
+                "acme.memo",
+                "active",
+                "2026-01-03T00:00:00.000Z",
+                vec![],
+            ),
             (
                 "d",
                 "core.file",
                 "active",
-                "2026-01-04T00:00:00Z",
+                "2026-01-04T00:00:00.000Z",
                 vec!["y"],
             ),
             (
                 "e",
                 "core.note",
                 "trashed",
-                "2026-01-05T00:00:00Z",
+                "2026-01-05T00:00:00.000Z",
                 vec!["x", "y"],
             ),
         ] {
@@ -176,7 +188,7 @@ mod tests {
             "f",
             "core.note",
             "active",
-            "2026-01-06T00:00:00Z",
+            "2026-01-06T00:00:00.000Z",
             json!({}),
         );
         feed.tier = Some("feed".into());
@@ -191,6 +203,29 @@ mod tests {
             .into_iter()
             .map(|item| item.id)
             .collect()
+    }
+
+    #[test]
+    fn timestamp_bounds_normalize_before_comparing() {
+        let conn = seeded();
+        let item = wire_item(
+            "half",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00.500Z",
+            json!({}),
+        );
+        store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        let rows = ids(
+            &conn,
+            ListFilters {
+                occurred_after: Some("2026-01-01T00:00:00Z".into()),
+                occurred_before: Some("2026-01-01T00:00:01Z".into()),
+                ..Default::default()
+            },
+            Sort::default(),
+        );
+        assert_eq!(rows, ["half"]);
     }
 
     #[test]
