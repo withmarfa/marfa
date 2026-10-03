@@ -375,10 +375,13 @@ async function scheduleDeliveryRetry(
 export class WebhookScheduler {
   constructor(private context: WebhookDeliveryContext) {}
 
-  /** One event and one bounded subscription page, never the whole backlog. */
+  /** Consecutive events within aggregate scan, subscription and copy budgets. */
   async runOnce(): Promise<{
     examined: number;
     scheduled: number;
+    fetched: number;
+    scannedBytes: number;
+    queuedBytes: number;
     cursor: string;
     event: string | null;
   }> {
@@ -400,10 +403,31 @@ export class WebhookScheduler {
           "Outbound webhook scheduling fell behind event retention",
         );
       }
-      const [event] = await storage.eventLog.getAfter(position.lastEventId, 1);
       const ids: string[] = [];
       let examined = 0;
-      if (event) {
+      let fetched = 0;
+      let considered = 0;
+      let scannedBytes = 0;
+      let queuedBytes = 0;
+      const byteTarget = 8 * 1024 * 1024;
+      const credentials = new Map<string, Promise<LiveCredential | null>>();
+      while (fetched < 128 && examined < 50 && ids.length < 50) {
+        const [event] = await storage.eventLog.getAfter(
+          position.lastEventId,
+          1,
+        );
+        if (!event) {
+          if (position.eventId !== null)
+            throw new Error("Outbound webhook in-progress event is missing");
+          break;
+        }
+        fetched++;
+        const payloadBytes = Buffer.byteLength(event.payload, "utf8");
+        // Measure one candidate at a time. A valid oversized first event must
+        // progress; otherwise leave the candidate unacknowledged for next tick.
+        if (considered > 0 && scannedBytes + payloadBytes > byteTarget) break;
+        scannedBytes += payloadBytes;
+        considered++;
         if (
           event.id !== position.lastEventId + 1n ||
           event.id > head ||
@@ -447,13 +471,12 @@ export class WebhookScheduler {
         }
         let complete = !event.enable_fanout;
         if (event.enable_fanout) {
+          const pageLimit = 50 - examined;
           const subscriptions = await storage.outboundWebhooks.listAfter(
             position.afterSubscriptionId,
-            50,
+            pageLimit,
           );
-          const credentials = new Map<string, Promise<LiveCredential | null>>();
-          const payloadBytes = Buffer.byteLength(event.payload, "utf8");
-          let queuedBytes = 0;
+          let pageExamined = 0;
           for (const subscription of subscriptions) {
             if (subscription.event_start_id > head) {
               throw new Error(
@@ -488,10 +511,7 @@ export class WebhookScheduler {
             if (eligible) {
               // Allow one valid oversized payload; never reject accepted work.
               // A row stopped here is not examined/acknowledged until next pass.
-              if (
-                ids.length > 0 &&
-                queuedBytes + payloadBytes > 8 * 1024 * 1024
-              )
+              if (ids.length > 0 && queuedBytes + payloadBytes > byteTarget)
                 break;
               ids.push(
                 await storage.outboundWebhookDeliveries.schedule({
@@ -505,26 +525,35 @@ export class WebhookScheduler {
               queuedBytes += payloadBytes;
             }
             examined++;
+            pageExamined++;
             position.afterSubscriptionId = subscription.id;
-            if (queuedBytes >= 8 * 1024 * 1024) break;
+            if (queuedBytes >= byteTarget || ids.length >= 50) break;
           }
           // Exactly full pages retain partial state until a bounded next read
           // proves exhaustion. An early byte stop also retains the position.
           complete =
-            subscriptions.length < 50 && examined === subscriptions.length;
+            subscriptions.length < pageLimit &&
+            pageExamined === subscriptions.length;
         }
         if (complete) {
           position.lastEventId = event.id;
           position.eventId = null;
           position.afterSubscriptionId = null;
         }
-        await storage.outboundWebhooks.acknowledge(position);
-      } else if (position.eventId !== null) {
-        throw new Error("Outbound webhook in-progress event is missing");
+        if (
+          !complete ||
+          scannedBytes >= byteTarget ||
+          queuedBytes >= byteTarget
+        )
+          break;
       }
+      if (considered > 0) await storage.outboundWebhooks.acknowledge(position);
       return {
         ids,
         examined,
+        fetched,
+        scannedBytes,
+        queuedBytes,
         cursor: position.lastEventId.toString(),
         event: position.eventId?.toString() ?? null,
       };
@@ -535,6 +564,9 @@ export class WebhookScheduler {
     return {
       examined: result.examined,
       scheduled: result.ids.length,
+      fetched: result.fetched,
+      scannedBytes: result.scannedBytes,
+      queuedBytes: result.queuedBytes,
       cursor: result.cursor,
       event: result.event,
     };

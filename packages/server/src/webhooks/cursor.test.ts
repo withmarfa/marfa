@@ -239,15 +239,121 @@ describe("durable outbound event acknowledgement", () => {
     );
     ctx.storage.eventLog.getMaxId = head;
   });
-  it("considers only one retained event in a pass", async () => {
-    for (let n = 0; n < 2; n++)
+  it("bounds consecutive no-fanout events by the fetched-event budget", async () => {
+    for (let n = 0; n < 129; n++)
       await ctx.storage.eventLog.append({
         event_type: "created",
         payload: quietPayload(),
         enable_fanout: false,
       });
-    expect((await scheduler.runOnce()).cursor).toBe("1");
+    const first = await scheduler.runOnce();
+    expect(first.fetched).toBe(128);
+    expect(first.cursor).toBe("128");
+    expect(first.scheduled).toBe(0);
+    expect((await scheduler.runOnce()).cursor).toBe("129");
+  });
+  it("counts pre-birth skips across consecutive events", async () => {
+    for (let n = 0; n < 100; n++) await write();
+    const id = await subscribe();
+    await write();
+    const first = await scheduler.runOnce();
+    expect(first.examined).toBe(50);
+    expect(first.scheduled).toBe(0);
+    expect(first.cursor).toBe("49");
+    expect(first.event).toBe("50");
+    expect(await queued(id)).toHaveLength(0);
+    const second = await scheduler.runOnce();
+    expect(second.examined).toBe(50);
+    expect(second.scheduled).toBe(0);
+    expect(second.cursor).toBe("99");
+    const last = await scheduler.runOnce();
+    expect(last.scheduled).toBe(1);
+    expect(last.cursor).toBe("101");
+    expect(await queued(id)).toHaveLength(1);
+  });
+  it("bounds examined rows and deliveries across multiple events", async () => {
+    const rows = await subscriptions(30);
+    await write();
+    await write();
+    const first = await scheduler.runOnce();
+    expect(first.examined).toBe(50);
+    expect(first.scheduled).toBe(50);
+    expect(first.cursor).toBe("1");
+    expect(first.event).toBe("2");
+    expect(hits).toBe(50);
+    const next = await scheduler.runOnce();
+    expect(next.examined).toBe(10);
+    expect(next.scheduled).toBe(10);
+    expect(next.cursor).toBe("2");
+    for (const row of rows) expect(await queued(row.id)).toHaveLength(2);
+  });
+  it("rolls back earlier events when a later retained frame is malformed", async () => {
+    const id = await subscribe();
+    await write();
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      payload: JSON.stringify({ type: "item.created", item: null }),
+      enable_fanout: true,
+    });
+    await expect(scheduler.runOnce()).rejects.toThrow("inconsistent");
+    expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
+      0n,
+    );
+    expect(await queued(id)).toHaveLength(0);
+    expect(hits).toBe(0);
+  });
+  it("bounds scanned bytes across skip-only events without stalling an oversized first event", async () => {
+    const frame = JSON.parse(quietPayload()) as {
+      item: { properties: { body?: string } };
+    };
+    frame.item.properties.body = "x".repeat(5 * 1024 * 1024);
+    for (let n = 0; n < 2; n++)
+      await ctx.storage.eventLog.append({
+        event_type: "created",
+        payload: JSON.stringify(frame),
+        enable_fanout: false,
+      });
+    const first = await scheduler.runOnce();
+    expect(first.fetched).toBe(2);
+    expect(first.scannedBytes).toBeLessThan(8 * 1024 * 1024);
+    expect(first.cursor).toBe("1");
     expect((await scheduler.runOnce()).cursor).toBe("2");
+    frame.item.properties.body = "x".repeat(9 * 1024 * 1024);
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      payload: JSON.stringify(frame),
+      enable_fanout: false,
+    });
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      payload: quietPayload(),
+      enable_fanout: false,
+    });
+    const oversized = await scheduler.runOnce();
+    expect(oversized.fetched).toBe(1);
+    expect(oversized.scannedBytes).toBeGreaterThan(8 * 1024 * 1024);
+    expect(oversized.cursor).toBe("3");
+    expect((await scheduler.runOnce()).cursor).toBe("4");
+  });
+  it("bounds copied bytes across completed consecutive events", async () => {
+    await subscribe();
+    await subscribe();
+    await largeWrite(3 * 1024 * 1024);
+    const [event] = await ctx.storage.eventLog.getAfter(0n, 1);
+    if (!event) throw new Error("ordinary large event is missing");
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      payload: event.payload,
+      enable_fanout: true,
+    });
+    const first = await scheduler.runOnce();
+    expect(first.scheduled).toBe(2);
+    expect(first.queuedBytes).toBeLessThan(8 * 1024 * 1024);
+    expect(first.cursor).toBe("1");
+    expect(first.event).toBe("2");
+    const next = await scheduler.runOnce();
+    expect(next.scheduled).toBe(2);
+    expect(next.cursor).toBe("2");
   });
   it("never opens HTTP before its queue and checkpoint commit", async () => {
     const id = await subscribe();
