@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { buildPublishedOpenAPISpec } from "../openapi-published.js";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createWebhookHttpClient } from "./outbound-http.js";
@@ -65,6 +67,43 @@ async function claim(id: string, now = new Date().toISOString()) {
   return row!;
 }
 describe("failed delivery reopening and claim fencing", () => {
+  it("declares the actual standing-permission refusal for redelivery", async () => {
+    const path = "/webhooks/missing/deliveries/missing/redeliver";
+    expect(
+      (await request(ctx.app, "POST", path, { key: ctx.workingKey })).status,
+    ).toBe(404);
+    const withoutManage = await mintWorkingKey(ctx, { permissions: [] });
+    const denied = await request(ctx.app, "POST", path, { key: withoutManage });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: { code: "forbidden" } });
+    interface Specification {
+      paths?: Record<
+        string,
+        { post?: { responses?: Record<string, unknown> } }
+      >;
+    }
+    const generated: Specification = await buildPublishedOpenAPISpec();
+    const committed = JSON.parse(
+      readFileSync(
+        new URL("../../../../openapi.json", import.meta.url),
+        "utf8",
+      ),
+    ) as Specification;
+    for (const spec of [generated, committed]) {
+      const refusal =
+        spec.paths?.["/webhooks/{id}/deliveries/{delivery_id}/redeliver"]?.post
+          ?.responses?.["403"];
+      expect(refusal).toBeDefined();
+      expect(refusal).toMatchObject({
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/ForbiddenRefusal" },
+          },
+        },
+      });
+    }
+  });
+
   it("queues the same failed row once, keeps last accepted outcome, and uses current URL", async () => {
     const { hook, delivery, path } = await seed();
     await request(ctx.app, "PATCH", `/webhooks/${hook.id}`, {

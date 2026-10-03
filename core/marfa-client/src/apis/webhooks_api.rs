@@ -181,6 +181,7 @@ pub enum ListWebhooksError {
 #[serde(untagged)]
 pub enum RedeliverWebhookDeliveryError {
     Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status404(models::WebhookNotFoundRefusal),
     Status409(models::ConflictRefusal),
     Status413(models::RequestTooLargeRefusal),

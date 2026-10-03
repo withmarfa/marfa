@@ -458,6 +458,12 @@ const redeliverRoute = createRoute({
       description: "Delivery queued",
       content: { "application/json": { schema: DeliverySchema } },
     },
+    403: {
+      description: "The credential does not hold webhooks.manage.",
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+    },
     404: {
       description: "Webhook not found",
       content: {
