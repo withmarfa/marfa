@@ -1,4 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  execFile,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -41,50 +46,117 @@ beforeAll(async () => {
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
+const runSqlite = promisify(execFile);
+
+// Exiting an admitted probe rolls it back. A later ROLLBACK statement can
+// overwrite the failed BEGIN diagnostic in the SQLite shell.
+function probeWriteAdmission(sqlitePath: string) {
+  return runSqlite(
+    "sqlite3",
+    ["-bail", "-cmd", ".timeout 0", sqlitePath, "BEGIN IMMEDIATE;"],
+    { timeout: 10_000 },
+  );
+}
+
+async function expectWriteLocked(sqlitePath: string): Promise<void> {
+  await expect(probeWriteAdmission(sqlitePath)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("database is locked"),
+  });
+}
+
 /** A connection sitting in `BEGIN IMMEDIATE` on the server's own file. */
 class HeldLock {
-  private constructor(private readonly child: ChildProcessWithoutNullStreams) {}
+  private readonly closed: Promise<void>;
+  private releasing: Promise<void> | undefined;
+  private stderr = "";
+  private error: Error | undefined;
 
-  static async take(sqlitePath: string): Promise<HeldLock> {
-    const child = spawn("sqlite3", [sqlitePath], { stdio: "pipe" });
-    // `journal_mode` has to match the server's or the lock is a
-    // different one; `BEGIN IMMEDIATE` then takes the write lock at once
-    // rather than on the transaction's first write.
-    child.stdin.write("PRAGMA journal_mode=WAL;\nBEGIN IMMEDIATE;\n");
-    // A statement inside the transaction, so the lock is unambiguously
-    // taken before the caller is told it has it.
-    child.stdin.write("CREATE TABLE IF NOT EXISTS _lock_probe (x);\n");
-    child.stdin.write("SELECT 'held';\n");
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error("sqlite3 did not confirm it holds the lock"));
-      }, 10_000);
-      child.stdout.on("data", (chunk: Buffer) => {
-        if (chunk.toString().includes("held")) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-      child.on("error", reject);
+  private constructor(private readonly child: ChildProcessWithoutNullStreams) {
+    this.closed = new Promise((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      this.stderr += chunk;
     });
-    return new HeldLock(child);
+    const onError = (error: Error) => {
+      this.error = error;
+    };
+    child.on("error", onError);
+    child.stdin.on("error", onError);
   }
 
-  /** Roll the transaction back and close, freeing the lock. */
-  async release(): Promise<void> {
-    if (this.child.exitCode !== null) return;
-    this.child.stdin.write("ROLLBACK;\n.quit\n");
-    this.child.stdin.end();
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.child.kill("SIGKILL");
-        resolve();
-      }, 10_000);
-      this.child.on("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
+  static async take(
+    sqlitePath: string,
+    busyTimeoutMs = 5_000,
+  ): Promise<HeldLock> {
+    const child = spawn("sqlite3", ["-batch", "-bail", sqlitePath], {
+      stdio: "pipe",
     });
+    const lock = new HeldLock(child);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let output = "";
+        const finish = (error?: Error) => {
+          clearTimeout(timer);
+          child.stdout.off("data", onOutput);
+          child.stderr.off("data", onStderr);
+          child.stdin.off("error", onError);
+          child.off("error", onError);
+          child.off("close", onClose);
+          if (error) reject(error);
+          else resolve();
+        };
+        const onOutput = (chunk: string) => {
+          output += chunk;
+          if (output.includes("held\n")) finish();
+        };
+        const onStderr = () =>
+          finish(new Error(`sqlite3 refused lock admission: ${lock.stderr}`));
+        const onError = (error: Error) => finish(error);
+        const onClose = () =>
+          finish(
+            new Error(`sqlite3 exited before lock admission: ${lock.stderr}`),
+          );
+        const timer = setTimeout(
+          () => finish(new Error("sqlite3 did not confirm it holds the lock")),
+          10_000,
+        );
+        child.stdout.setEncoding("utf8").on("data", onOutput);
+        child.stderr.on("data", onStderr);
+        child.stdin.on("error", onError);
+        child.on("error", onError);
+        child.on("close", onClose);
+        // Without bail, a failed BEGIN can still print the marker outside
+        // a transaction. A finite wait admits a transient competing writer.
+        child.stdin.write(
+          `.timeout ${String(busyTimeoutMs)}\nPRAGMA journal_mode=WAL;\nBEGIN IMMEDIATE;\nSELECT 'held';\n`,
+        );
+      });
+      return lock;
+    } catch (error) {
+      child.kill("SIGKILL");
+      await lock.closed;
+      throw error;
+    }
+  }
+
+  /** Closing the shell rolls back its uncommitted transaction. */
+  release(): Promise<void> {
+    this.releasing ??= (async () => {
+      this.child.stdin.end();
+      const timer = setTimeout(() => this.child.kill("SIGKILL"), 10_000);
+      try {
+        await this.closed;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (this.error) throw this.error;
+      if (this.child.exitCode !== 0) {
+        throw new Error(`sqlite3 did not close cleanly: ${this.stderr}`);
+      }
+    })();
+    return this.releasing;
   }
 }
 
@@ -103,6 +175,32 @@ function aNote(title: string) {
 }
 
 describe("contention on the write lock", () => {
+  it("does not report admission when a competing writer keeps the lock", async () => {
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    let unexpected: HeldLock | undefined;
+    try {
+      await expectWriteLocked(impatient!.sqlitePath);
+      await expect(
+        HeldLock.take(impatient!.sqlitePath, 0).then((taken) => {
+          unexpected = taken;
+          return taken;
+        }),
+      ).rejects.toThrow(/database is locked/);
+    } finally {
+      await unexpected?.release();
+      await lock.release();
+    }
+
+    await probeWriteAdmission(impatient!.sqlitePath);
+    const admitted = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      await expectWriteLocked(impatient!.sqlitePath);
+    } finally {
+      await admitted.release();
+    }
+    await probeWriteAdmission(impatient!.sqlitePath);
+  }, 120_000);
+
   it("answers 503 write_contention, never 500", async () => {
     const client = clientFor(impatient!);
     const lock = await HeldLock.take(impatient!.sqlitePath);
@@ -232,18 +330,63 @@ describe("contention on the write lock", () => {
       body: JSON.stringify({ label: "first-use", source: "first-use" }),
     });
     expect(minted.status).toBe(201);
-    const { key } = (await minted.json()) as { key: string };
+    const { id, key, last_used_at } = (await minted.json()) as {
+      id: string;
+      key: string;
+      last_used_at: string | null;
+    };
+    expect(last_used_at).toBeNull();
+
+    const read = () =>
+      fetch(`${impatient!.apiUrl}/items`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+    const operator = new MarfaClient({
+      baseUrl: impatient!.apiUrl,
+      apiKey: impatient!.operatorKey,
+    });
+    const readStamp = async () => {
+      const listed = await operator.listKeys();
+      expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+      const found = listed.data.data.find((row) => row.id === id);
+      expect(found).toBeDefined();
+      return found!.last_used_at;
+    };
 
     const lock = await HeldLock.take(impatient!.sqlitePath);
     try {
-      const refused = await fetch(`${impatient!.apiUrl}/items`, {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      expect(refused.status).toBe(503);
-      const body = (await refused.json()) as { error?: { code?: string } };
-      expect(body.error?.code).toBe("write_contention");
+      await expectWriteLocked(impatient!.sqlitePath);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const refused = await read();
+        expect(refused.status, `read attempt ${String(attempt)}`).toBe(503);
+        const body = (await refused.json()) as { error?: { code?: string } };
+        expect(body.error?.code).toBe("write_contention");
+        expect(await readStamp()).toBeNull();
+      }
+      await expectWriteLocked(impatient!.sqlitePath);
     } finally {
       await lock.release();
+    }
+
+    await probeWriteAdmission(impatient!.sqlitePath);
+    const served = await read();
+    expect(served.status).toBe(200);
+    await served.json();
+    const stamp = await readStamp();
+    expect(stamp).toEqual(expect.any(String));
+
+    // Only a completed stamp skips the next write. Holding the lock again
+    // makes that skip observable rather than relying on equal timestamps.
+    const heldAgain = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      await expectWriteLocked(impatient!.sqlitePath);
+      const debounced = await read();
+      expect(debounced.status).toBe(200);
+      await debounced.json();
+      expect(await readStamp()).toBe(stamp);
+      await expectWriteLocked(impatient!.sqlitePath);
+    } finally {
+      await heldAgain.release();
     }
   }, 120_000);
 
@@ -290,8 +433,8 @@ describe("contention on the write lock", () => {
       // Well inside the five-second default, so the write waits and then
       // lands rather than racing the budget: the margin is the budget
       // itself, which is what keeps this from being a timing test.
-      const releasing = new Promise<void>((resolve) => {
-        setTimeout(() => void lock.release().then(resolve), 400);
+      const releasing = new Promise<void>((resolve, reject) => {
+        setTimeout(() => void lock.release().then(resolve, reject), 400);
       });
 
       const landed = await client.createItem(aNote("waited"));
