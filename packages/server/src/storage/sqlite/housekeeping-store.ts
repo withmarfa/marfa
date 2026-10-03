@@ -172,27 +172,17 @@ export class SqliteHousekeepingStore implements HousekeepingStore {
   }
 
   async wake(name: string, now: string): Promise<boolean> {
-    const row = await this.get(name);
-    if (!row) return false;
-    // A name in the middle of a run is marked due strictly after its start,
-    // so `finish` can tell the wake from the schedule the run was claimed
-    // under and keep it; a wake in the same millisecond as the claim would
-    // otherwise be lost to that comparison.
-    const due =
-      row.running_since !== null && row.running_since >= now
-        ? new Date(new Date(row.running_since).getTime() + 1).toISOString()
-        : now;
-    await this.db
+    // Read the claim in the same writer statement as the wake: a preceding
+    // snapshot can miss a claim or finish. A live run's hint is strictly
+    // after its start so finish preserves even a same-millisecond wake.
+    const result = await this.db
       .update(housekeeping)
       .set({
-        next_run_at:
-          row.running_since === null
-            ? sql`min(${housekeeping.next_run_at}, ${due})`
-            : due,
+        next_run_at: sql`CASE WHEN ${housekeeping.running_since} IS NULL THEN min(${housekeeping.next_run_at}, ${now}) ELSE max(${now}, strftime('%Y-%m-%dT%H:%M:%fZ', ${housekeeping.running_since}, '+0.001 seconds')) END`,
       })
       .where(eq(housekeeping.name, name))
       .run();
-    return true;
+    return result.rowsAffected > 0;
   }
 
   async list(): Promise<HousekeepingRow[]> {

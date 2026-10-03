@@ -7,24 +7,33 @@ import {
 } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { unregisterTypeSchema } from "@withmarfa/shared";
-import { WebhookScheduler, deliveryInReach } from "./delivery.js";
+import {
+  WebhookScheduler,
+  WebhookPoller,
+  deliveryInReach,
+} from "./delivery.js";
 let ctx: TestContext;
 async function claimToken(id: string): Promise<string> {
-  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
-    id,
-    "9999-01-01T00:00:00.000Z",
-    "9998-01-01T00:00:00.000Z",
+  const claimed = await ctx.storage.outboundWebhookDeliveries.getPending(
+    new Date().toISOString(),
+    1,
   );
-  return claimed?.claim_token ?? "stale-fixture-token";
+  expect(claimed.map((row) => row.id)).toEqual([id]);
+  return claimed[0]!.claim_token;
 }
 
 let sent: Record<string, unknown>[];
 let scheduler: WebhookScheduler;
+let poller: WebhookPoller;
 beforeEach(async () => {
   ctx = await createTestContext();
   initEventLog(ctx.storage.eventLog);
   sent = [];
   scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
+  poller = new WebhookPoller({
     storage: ctx.storage,
     http: {
       post: (post) => {
@@ -45,6 +54,10 @@ afterEach(async () => {
   unregisterTypeSchema("demo.root.child");
   await ctx.cleanup();
 });
+async function dispatch() {
+  await scheduler.runOnce();
+  await poller.runOnce();
+}
 async function api(method: string, path: string, body?: unknown) {
   const response = await request(ctx.app, method, path, {
     key: ctx.workingKey,
@@ -73,7 +86,7 @@ describe("webhook identity, outcomes and filters", () => {
   it("carries the originating exact event and stable queue ids", async () => {
     const subscription = await hook();
     await note();
-    await scheduler.runOnce();
+    await dispatch();
     const page = await ctx.storage.outboundWebhookDeliveries.list(
       subscription.id,
       { limit: 10 },
@@ -102,13 +115,13 @@ describe("webhook identity, outcomes and filters", () => {
       webhookUrl: "https://receiver.example/hook",
       nextAttemptAt: new Date().toISOString(),
     });
-    const pending = await ctx.storage.outboundWebhookDeliveries.claimById(
-      id,
-      new Date(Date.now() + 60000).toISOString(),
+    const claims = await ctx.storage.outboundWebhookDeliveries.getPending(
       new Date().toISOString(),
+      1,
     );
-    expect(pending?.event_id).toBe(exact.toString());
-    if (!pending) throw new Error("pending delivery missing");
+    expect(claims.map((row) => row.id)).toEqual([id]);
+    const pending = claims[0]!;
+    expect(pending.event_id).toBe(exact.toString());
     const prepared = await deliveryInReach(ctx.storage, pending);
     expect(prepared).toHaveProperty("body");
     if (!("body" in prepared)) throw new Error("ordinary payload withheld");
@@ -120,7 +133,7 @@ describe("webhook identity, outcomes and filters", () => {
   it("records permanent refusal and clears an earlier error on success", async () => {
     const subscription = await hook();
     await note();
-    const refused = new WebhookScheduler({
+    const refused = new WebhookPoller({
       storage: ctx.storage,
       http: {
         post: () =>
@@ -131,6 +144,7 @@ describe("webhook identity, outcomes and filters", () => {
           } as const),
       },
     });
+    await scheduler.runOnce();
     await refused.runOnce();
     const page = await ctx.storage.outboundWebhookDeliveries.list(
       subscription.id,
@@ -182,7 +196,7 @@ describe("webhook identity, outcomes and filters", () => {
   it("reports cancellation before HTTP without inventing an attempt", async () => {
     const subscription = await hook();
     await note();
-    await scheduler.runOnce();
+    await dispatch();
     expect(sent).toHaveLength(1);
     await note();
     const [event] = await ctx.storage.eventLog.getAfter(1n, 1);
@@ -209,7 +223,7 @@ describe("webhook identity, outcomes and filters", () => {
       attempt: 0,
       status_code: null,
     });
-    await scheduler.runOnce();
+    await dispatch();
     expect(sent).toHaveLength(1);
   });
   it("normalizes blanks and refuses malformed single filters without changing the subscription", async () => {
@@ -284,7 +298,7 @@ describe("webhook identity, outcomes and filters", () => {
     await hook();
     await hook(["item.created"], "core.note");
     await note("demo.declared_note");
-    await scheduler.runOnce();
+    await dispatch();
     expect(sent).toHaveLength(2);
   });
   it("matches dotted children with a positive unfiltered receiver", async () => {
@@ -302,7 +316,7 @@ describe("webhook identity, outcomes and filters", () => {
     await hook();
     await hook(["item.created"], "demo.root");
     await note("demo.root.child");
-    await scheduler.runOnce();
+    await dispatch();
     expect(sent).toHaveLength(2);
   });
   it("delivers independently reachable edges under an item filter", async () => {
@@ -334,7 +348,7 @@ describe("webhook identity, outcomes and filters", () => {
         })
       ).status,
     ).toBe(201);
-    await scheduler.runOnce();
+    await dispatch();
     expect(sent).toHaveLength(2);
     expect(
       (

@@ -2,7 +2,7 @@
  * The housekeeping table's own rules, each asserted from both sides: what
  * the row does under the condition, and what it does without it.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +22,7 @@ async function store(): Promise<HousekeepingStore> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await storage?.close();
   storage = undefined;
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
@@ -113,3 +114,64 @@ describe("SqliteHousekeepingStore", () => {
     expect((await hk.get("sleeper"))?.next_run_at).toBe(at(0));
   });
 });
+
+it.each(["claim", "claimDue"] as const)(
+  "keeps a wake after %s despite an earlier idle snapshot",
+  async (claim) => {
+    const hk = await store();
+    await hk.upsert("webhook-poll", 30000, at(0));
+    const idle = await hk.get("webhook-poll");
+    expect(idle?.running_since).toBeNull();
+    expect(await hk[claim]("webhook-poll", at(0))).not.toBeNull();
+    const staleRead = vi.spyOn(hk, "get").mockResolvedValueOnce(idle);
+    expect(await hk.wake("webhook-poll", at(0))).toBe(true);
+    staleRead.mockRestore();
+    await hk.finish("webhook-poll", {
+      finishedAt: at(10),
+      outcome: "ok",
+      error: null,
+      result: { attempted: 50 },
+      nextRunAt: at(30010),
+    });
+    expect((await hk.get("webhook-poll"))?.next_run_at).toBe(at(1));
+    expect(await hk.listDue(at(10))).toEqual(["webhook-poll"]);
+  },
+);
+
+it.each(["claim", "claimDue"] as const)(
+  "consumes an idle wake in a subsequent %s",
+  async (claim) => {
+    const hk = await store();
+    await hk.upsert("webhook-poll", 30000, at(30000));
+    expect(await hk.wake("webhook-poll", at(0))).toBe(true);
+    expect(await hk[claim]("webhook-poll", at(0))).not.toBeNull();
+    await hk.finish("webhook-poll", {
+      finishedAt: at(10),
+      outcome: "ok",
+      error: null,
+      result: { attempted: 1 },
+      nextRunAt: at(30010),
+    });
+    expect((await hk.get("webhook-poll"))?.next_run_at).toBe(at(30010));
+    expect(await hk.listDue(at(10))).toEqual([]);
+  },
+);
+
+it.each(["claim", "claimDue"] as const)(
+  "preserves a live wake after %s in the same millisecond",
+  async (claim) => {
+    const hk = await store();
+    await hk.upsert("webhook-poll", 30000, at(0));
+    expect(await hk[claim]("webhook-poll", at(0))).not.toBeNull();
+    expect(await hk.wake("webhook-poll", at(0))).toBe(true);
+    await hk.finish("webhook-poll", {
+      finishedAt: at(10),
+      outcome: "ok",
+      error: null,
+      result: { attempted: 1 },
+      nextRunAt: at(30010),
+    });
+    expect((await hk.get("webhook-poll"))?.next_run_at).toBe(at(1));
+    expect(await hk.listDue(at(10))).toEqual(["webhook-poll"]);
+  },
+);

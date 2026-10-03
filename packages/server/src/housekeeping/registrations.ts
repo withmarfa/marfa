@@ -11,6 +11,7 @@ import {
   WebhookPoller,
   WebhookScheduler,
   WEBHOOK_POLL_INTERVAL_MS,
+  WEBHOOK_POLL_BATCH_SIZE,
 } from "../webhooks/delivery.js";
 import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
 import { HeartbeatPinger } from "../heartbeat.js";
@@ -122,9 +123,7 @@ export function registerHousekeepingJobs(
 
   const webhookScheduler = new WebhookScheduler({
     storage,
-    http: createWebhookHttpClient({
-      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
-    }),
+    wakePoller: () => housekeeping.wake("webhook-poll"),
   });
   housekeeping.register({
     name: "webhook-schedule",
@@ -145,7 +144,14 @@ export function registerHousekeepingJobs(
     name: "webhook-poll",
     intervalMs: WEBHOOK_POLL_INTERVAL_MS,
     firstRunDelayMs: 0,
-    run: () => webhookPoller.runOnce(),
+    run: async () => {
+      const report = await webhookPoller.runOnce();
+      // A full batch may leave due work behind. Reuse this tracked job so
+      // backlog drains without waiting for the ordinary retry poll cadence.
+      if (report.attempted === WEBHOOK_POLL_BATCH_SIZE)
+        await housekeeping.wake("webhook-poll");
+      return report;
+    },
   });
 
   // Opt-in liveness heartbeat: off unless the operator names a receiver.

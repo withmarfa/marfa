@@ -1430,13 +1430,8 @@ export interface WebhookStore {
   count(): Promise<number>;
 }
 
-/**
- * Row shape returned by `getPending` and `claimById` — the subset of the
- * delivery row that the poller / direct-dispatcher needs to make an HTTP
- * attempt and write its outcome. `payload` is the event as the log stores
- * it, before it is narrowed to the subscription's credential; the secret is
- * read from the subscription at the attempt.
- */
+/** The payload is retained before credential narrowing. Each attempt reads
+ * the subscription's current secret instead of retaining it in the queue. */
 export interface PendingWebhookDelivery {
   id: string;
   event_id: string;
@@ -1464,18 +1459,6 @@ export interface WebhookDeliveryStore {
     nextAttemptAt: string;
   }): Promise<string>;
   getPending(now: string, limit?: number): Promise<PendingWebhookDelivery[]>;
-  /**
-   * Atomic single-row claim for best-effort direct dispatch. Succeeds only
-   * when the row is still `status = 'pending'` and still past its
-   * `next_attempt_at` — otherwise returns `null`. On success, the row's
-   * `next_attempt_at` is pushed forward to `claimExpiry` so the poller's
-   * next run does not see it. Same lock-ttl semantics as `getPending`.
-   */
-  claimById(
-    id: string,
-    claimExpiry: string,
-    now: string,
-  ): Promise<PendingWebhookDelivery | null>;
   get(webhookId: string, id: string): Promise<WebhookDelivery | null>;
   reopen(
     webhookId: string,

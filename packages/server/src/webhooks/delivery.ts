@@ -70,21 +70,9 @@ const RETRYABLE_4XX = new Set([408, 429]);
  *  doesn't cascade into retry churn. */
 const POLLER_TIMEOUT_MS = 10_000;
 
-/** HTTP timeout for the best-effort direct-dispatch fast path. Kept
- *  short so a slow receiver cannot stall the event handler's task; if
- *  this deadline is missed, the row stays claimed only until the claim
- *  TTL expires, and the 30-second poller catches it on its next run. */
-const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
-
-/**
- * How long a claimed `outbound_webhook_deliveries` row is hidden from the
- * eligibility window. Set generously so a single instance's full HTTP
- * attempt (≤ 10s poller timeout) finishes and writes its outcome before
- * the row becomes visible again; short enough that a crashed worker
- * doesn't stall a delivery indefinitely. Single source of truth — the
- * store imports this value from here so the poller and the
- * direct-dispatcher can never disagree on the reclaim deadline.
- */
+/** Longer than the HTTP timeout, so an ordinary attempt can record its
+ * outcome before a crashed worker's claim becomes eligible again. The store
+ * shares this deadline with the attempt worker. */
 export const CLAIM_LOCK_TTL_MS = 60_000;
 
 /** Parse a Retry-After header value. Supports both delta-seconds (RFC
@@ -114,7 +102,7 @@ export function parseRetryAfter(headerValue: string | null): number | null {
 }
 
 /**
- * What the consumer and the poller send through: the store, from which each
+ * What an attempt runs with: the store, from which each
  * attempt reads the subscription and its owner again, and the
  * address-checked client every delivery is posted with.
  */
@@ -210,20 +198,9 @@ export async function deliveryInReach(
   return { body, secret: subscription.secret };
 }
 
-/**
- * Shared HTTP-attempt logic used by both the 30-second poller and the
- * best-effort direct-dispatch fast path, and the only place a delivery is
- * sent. Narrows it to the subscription's credential, signs, posts through
- * the address-checked client, and updates the delivery row. Never throws:
- * all errors are logged and written to the store. The `direct` flag only
- * influences log tagging so operators can distinguish the two paths; the
- * state transitions are identical.
- */
 export async function deliverWebhookAttempt(
   context: WebhookDeliveryContext,
   delivery: PendingWebhookDelivery,
-  timeoutMs: number,
-  direct: boolean,
 ): Promise<void> {
   const store = context.storage.outboundWebhookDeliveries;
   const nextAttempt = delivery.attempt + 1;
@@ -231,7 +208,6 @@ export async function deliverWebhookAttempt(
     delivery_id: delivery.id,
     webhook_id: delivery.webhook_id,
     event_type: delivery.event_type,
-    direct,
   };
 
   try {
@@ -265,7 +241,7 @@ export async function deliverWebhookAttempt(
         "X-Marfa-Event-Type": delivery.event_type,
       },
       body: prepared.body,
-      timeoutMs,
+      timeoutMs: POLLER_TIMEOUT_MS,
     });
 
     if (outcome.kind === "failed") {
@@ -276,7 +252,6 @@ export async function deliverWebhookAttempt(
         undefined,
         outcome.error,
         undefined,
-        direct,
       );
       return;
     }
@@ -351,7 +326,6 @@ export async function deliverWebhookAttempt(
       outcome.status,
       undefined,
       retryAfterMs ?? undefined,
-      direct,
     );
   } catch (err) {
     log("error", "Webhook attempt failed", {
@@ -368,7 +342,6 @@ async function scheduleDeliveryRetry(
   statusCode: number | undefined,
   error: string | undefined,
   overrideDelayMs: number | undefined,
-  direct: boolean,
 ): Promise<void> {
   if (attempt >= delivery.retry_start_attempt + 8) {
     if (
@@ -389,7 +362,6 @@ async function scheduleDeliveryRetry(
       status: statusCode ?? null,
       attempt,
       error: error ?? null,
-      direct,
     });
     return;
   }
@@ -418,7 +390,6 @@ async function scheduleDeliveryRetry(
     status: statusCode ?? null,
     attempt,
     next_attempt_at: nextAttemptAt,
-    direct,
   });
 }
 
@@ -442,8 +413,13 @@ export function validWebhookFrame(
   );
 }
 
+export interface WebhookSchedulingContext {
+  storage: Storage;
+  wakePoller: () => Promise<void>;
+}
+
 export class WebhookScheduler {
-  constructor(private context: WebhookDeliveryContext) {}
+  constructor(private context: WebhookSchedulingContext) {}
 
   /** Consecutive events within aggregate scan, subscription and copy budgets. */
   async runOnce(): Promise<{
@@ -473,7 +449,7 @@ export class WebhookScheduler {
           "Outbound webhook scheduling fell behind event retention",
         );
       }
-      const ids: string[] = [];
+      let scheduled = 0;
       let examined = 0;
       let fetched = 0;
       let considered = 0;
@@ -481,7 +457,7 @@ export class WebhookScheduler {
       let queuedBytes = 0;
       const byteTarget = 8 * 1024 * 1024;
       const credentials = new Map<string, Promise<LiveCredential | null>>();
-      while (fetched < 128 && examined < 50 && ids.length < 50) {
+      while (fetched < 128 && examined < 50 && scheduled < 50) {
         const [event] = await storage.eventLog.getAfter(
           position.lastEventId,
           1,
@@ -567,24 +543,23 @@ export class WebhookScheduler {
             if (eligible) {
               // Allow one valid oversized payload; never reject accepted work.
               // A row stopped here is not examined/acknowledged until next pass.
-              if (ids.length > 0 && queuedBytes + payloadBytes > byteTarget)
+              if (scheduled > 0 && queuedBytes + payloadBytes > byteTarget)
                 break;
-              ids.push(
-                await storage.outboundWebhookDeliveries.schedule({
-                  webhookId: subscription.id,
-                  eventId: event.id,
-                  eventType,
-                  payload: event.payload,
-                  webhookUrl: subscription.url,
-                  nextAttemptAt: new Date().toISOString(),
-                }),
-              );
+              await storage.outboundWebhookDeliveries.schedule({
+                webhookId: subscription.id,
+                eventId: event.id,
+                eventType,
+                payload: event.payload,
+                webhookUrl: subscription.url,
+                nextAttemptAt: new Date().toISOString(),
+              });
+              scheduled++;
               queuedBytes += payloadBytes;
             }
             examined++;
             pageExamined++;
             position.afterSubscriptionId = subscription.id;
-            if (queuedBytes >= byteTarget || ids.length >= 50) break;
+            if (queuedBytes >= byteTarget || scheduled >= 50) break;
           }
           // Exactly full pages retain partial state until a bounded next read
           // proves exhaustion. An early byte stop also retains the position.
@@ -606,7 +581,7 @@ export class WebhookScheduler {
       }
       if (considered > 0) await storage.outboundWebhooks.acknowledge(position);
       return {
-        ids,
+        scheduled,
         examined,
         fetched,
         scannedBytes,
@@ -615,58 +590,8 @@ export class WebhookScheduler {
         event: position.eventId?.toString() ?? null,
       };
     });
-    await Promise.allSettled(
-      result.ids.map((id) => this.tryDirectDispatch(id)),
-    );
-    return {
-      examined: result.examined,
-      scheduled: result.ids.length,
-      fetched: result.fetched,
-      scannedBytes: result.scannedBytes,
-      queuedBytes: result.queuedBytes,
-      cursor: result.cursor,
-      event: result.event,
-    };
-  }
-
-  /**
-   * Best-effort direct HTTP dispatch for a just-scheduled delivery.
-   * Atomically claims the row via `claimById` (CAS guarded by
-   * `status = 'pending'` and `next_attempt_at <= now`). If the claim
-   * fails — e.g. the poller raced us to it — returns silently; the other
-   * worker is already responsible. If the claim succeeds, the HTTP
-   * attempt runs with a shorter timeout than the poller; outcomes go
-   * through the same `markSuccess` / `markFailed`
-   * state transitions, so on a network error / 5xx the poller picks the
-   * row up on its next run exactly as it would today.
-   *
-   * Fire-and-forget from the caller's perspective; all errors are logged
-   * by `deliverWebhookAttempt`.
-   */
-  private async tryDirectDispatch(deliveryId: string): Promise<void> {
-    try {
-      const nowMs = Date.now();
-      const now = new Date(nowMs).toISOString();
-      const claimExpiry = new Date(nowMs + CLAIM_LOCK_TTL_MS).toISOString();
-      const claimed =
-        await this.context.storage.outboundWebhookDeliveries.claimById(
-          deliveryId,
-          claimExpiry,
-          now,
-        );
-      if (!claimed) return;
-      await deliverWebhookAttempt(
-        this.context,
-        claimed,
-        DIRECT_DISPATCH_TIMEOUT_MS,
-        true,
-      );
-    } catch (err) {
-      log("error", "Direct webhook dispatch failed", {
-        delivery_id: deliveryId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    if (result.scheduled > 0) await this.context.wakePoller();
+    return result;
   }
 }
 
@@ -677,23 +602,20 @@ export class WebhookScheduler {
 // ---------------------------------------------------------------------------
 
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
+export const WEBHOOK_POLL_BATCH_SIZE = 50;
 
 export class WebhookPoller {
   constructor(private context: WebhookDeliveryContext) {}
 
-  /** One poll: every pending delivery that is due is attempted. Reports
-   *  how many were. A failure to read the queue is the scheduler's to
-   *  classify. */
+  /** A failure to read the queue is the scheduler's to classify. */
   async runOnce(): Promise<{ attempted: number }> {
     const pending =
       await this.context.storage.outboundWebhookDeliveries.getPending(
         new Date().toISOString(),
-        50,
+        WEBHOOK_POLL_BATCH_SIZE,
       );
     await Promise.allSettled(
-      pending.map((d) =>
-        deliverWebhookAttempt(this.context, d, POLLER_TIMEOUT_MS, false),
-      ),
+      pending.map((d) => deliverWebhookAttempt(this.context, d)),
     );
     return { attempted: pending.length };
   }

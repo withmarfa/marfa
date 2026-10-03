@@ -21,7 +21,7 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { initEventLog, __resetEventLogForTests, publish } from "../pubsub.js";
-import { WebhookScheduler } from "./delivery.js";
+import { WebhookPoller, WebhookScheduler } from "./delivery.js";
 import type { WebhookHttpClient, WebhookPost } from "./outbound-http.js";
 
 let ctx: TestContext;
@@ -142,10 +142,15 @@ async function delivered(items: Item[]): Promise<string[]> {
     },
   };
   for (const i of items) await publish({ type: "created", item: i });
-  const scheduler = new WebhookScheduler({ storage: ctx.storage, http });
+  const scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
   const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
-  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head)
+  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head) {
     await scheduler.runOnce();
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+  }
   return posts.map(
     (p) => (JSON.parse(p.body) as { item: { id: string } }).item.id,
   );

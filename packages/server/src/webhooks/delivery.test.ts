@@ -22,7 +22,6 @@ import {
 } from "../pubsub.js";
 import {
   DELIVERY_CANCELED,
-  WEBHOOK_POLL_INTERVAL_MS,
   WebhookScheduler,
   WebhookPoller,
   buildSignatureHeader,
@@ -223,10 +222,15 @@ async function dispatch(
   publishAll: () => Promise<void>,
 ): Promise<void> {
   await publishAll();
-  const scheduler = new WebhookScheduler({ storage: ctx.storage, http });
+  const scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
   const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
-  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head)
+  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head) {
     await scheduler.runOnce();
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+  }
 }
 
 function sentBodies(http: Recorder): Record<string, unknown>[] {
@@ -310,16 +314,11 @@ describe("an attempt's outcome", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Signing and the two paths
-// ---------------------------------------------------------------------------
-
-describe("the signature and the direct path", () => {
-  it("signs <t>.<body> under the subscription's secret on both paths, the direct one sooner and with the shorter timeout", async () => {
+describe("the attempt signature", () => {
+  it("signs <t>.<body> under the subscription's secret", async () => {
     const { id } = await owner();
     await subscription(id, ["item.created"]);
     const http = recorder();
-    const t0 = Date.now();
     await dispatch(http, async () => {
       await publish({
         type: "created",
@@ -327,35 +326,19 @@ describe("the signature and the direct path", () => {
       });
     });
     expect(http.posts).toHaveLength(1);
-    expect(Date.now() - t0).toBeLessThan(WEBHOOK_POLL_INTERVAL_MS / 2);
-    const direct = http.posts[0];
-    expect(direct?.timeoutMs).toBe(5_000);
-
-    const webhook = (await ctx.storage.outboundWebhooks.list())[0];
-    if (!webhook) throw new Error("no subscription");
-    await pending(
-      webhook,
-      { type: "created", item: item("01HSIGNEDPOLLEDPOLLEDPOLL0") },
-      "item.created",
+    const post = http.posts[0]!;
+    expect(post.timeoutMs).toBe(10_000);
+    const header = post.headers["X-Marfa-Signature"] ?? "";
+    const match = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header);
+    expect(match).not.toBeNull();
+    const [, t, v1] = match ?? [];
+    expect(v1).toBe(
+      createHmac("sha256", SECRET)
+        .update(`${String(t)}.${post.body}`)
+        .digest("hex"),
     );
-    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
-    const polled = http.posts[1];
-    expect(polled?.timeoutMs).toBe(10_000);
-
-    for (const post of [direct, polled]) {
-      if (!post) throw new Error("missing post");
-      const header = post.headers["X-Marfa-Signature"] ?? "";
-      const match = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header);
-      expect(match).not.toBeNull();
-      const [, t, v1] = match ?? [];
-      expect(v1).toBe(
-        createHmac("sha256", SECRET)
-          .update(`${String(t)}.${post.body}`)
-          .digest("hex"),
-      );
-      expect(header).toBe(buildSignatureHeader(String(t), post.body, SECRET));
-      expect(post.headers["X-Marfa-Event-Type"]).toBe("item.created");
-    }
+    expect(header).toBe(buildSignatureHeader(String(t), post.body, SECRET));
+    expect(post.headers["X-Marfa-Event-Type"]).toBe("item.created");
   });
 });
 

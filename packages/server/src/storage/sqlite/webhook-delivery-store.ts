@@ -221,48 +221,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     }));
   }
 
-  /** SQLite takes one writer at a time, so the compare-and-set is
-   *  serialized by the statement itself. */
-  async claimById(
-    id: string,
-    claimExpiry: string,
-    now: string,
-  ): Promise<PendingWebhookDelivery | null> {
-    const rows = await this.db.all<{
-      id: string;
-      webhook_id: string;
-      event_id: string;
-      event_type: string;
-      payload: string | null;
-      webhook_url: string | null;
-      attempt: number;
-      retry_start_attempt: number;
-      claim_token: string;
-    }>(
-      sql`
-          UPDATE outbound_webhook_deliveries
-          SET next_attempt_at = ${claimExpiry}, claim_token = lower(hex(randomblob(16)))
-          WHERE id = ${id}
-            AND status = 'pending'
-            AND next_attempt_at <= ${now}
-          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, retry_start_attempt, claim_token
-        `,
-    );
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      id: row.id,
-      webhook_id: row.webhook_id,
-      event_id: row.event_id,
-      event_type: row.event_type,
-      payload: row.payload ?? "",
-      webhook_url: row.webhook_url ?? "",
-      attempt: row.attempt,
-      retry_start_attempt: row.retry_start_attempt,
-      claim_token: row.claim_token,
-    };
-  }
-
   async markSuccess(
     id: string,
     token: string,
