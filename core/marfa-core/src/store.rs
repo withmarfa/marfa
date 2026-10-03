@@ -1134,12 +1134,8 @@ fn read_writes(
                 raw.id
             ))
         })?;
-        let refusal = (verdict == Some(Verdict::Refused)).then(|| {
-            crate::model::Refusal::read(
-                raw.reason.as_deref().unwrap_or_default(),
-                raw.answer.as_deref(),
-            )
-        });
+        let refusal =
+            crate::model::Refusal::for_write(verdict, raw.reason.as_deref(), raw.answer.as_deref());
         writes.push(QueuedWrite {
             kind: raw.kind.parse()?,
             id: raw.id,

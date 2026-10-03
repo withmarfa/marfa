@@ -60,7 +60,7 @@ pub struct DrainVerdict {
     /// `None` where the write was sent and not answered.
     pub verdict: Option<Verdict>,
     pub reason: Option<String>,
-    /// Under `refused`, the refusal read from what the queue stored.
+    /// A terminal or credential refusal, read from what the queue stored.
     pub refusal: Option<Refusal>,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
@@ -200,6 +200,13 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // Looks environmental, but clears only when a person replaces the
         // credential.
         (401, _) => Classified::BlockQueue(BlockedReason::CredentialRefused),
+        (403, _)
+            if Refusal::read(&answer.code, Some(&answer.body))
+                .grant
+                .is_some() =>
+        {
+            Classified::Block(BlockedReason::CredentialRefused)
+        }
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
@@ -1005,8 +1012,7 @@ fn verdict_of(row: &QueuedWrite, settled: &Settled, answer: Option<&str>) -> Dra
         edge_id: row.edge_id.clone(),
         verdict: settled.verdict,
         reason: settled.reason.clone(),
-        refusal: (settled.verdict == Some(Verdict::Refused))
-            .then(|| Refusal::read(settled.reason.as_deref().unwrap_or_default(), answer)),
+        refusal: Refusal::for_write(settled.verdict, settled.reason.as_deref(), answer),
         conflicted_copy_id: settled.conflicted_copy_id.clone(),
         refusals: settled.refusals,
         replayed: settled.replayed,

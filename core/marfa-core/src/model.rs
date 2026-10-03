@@ -750,6 +750,18 @@ pub enum GrantLevel {
 }
 
 impl Refusal {
+    pub(crate) fn for_write(
+        verdict: Option<Verdict>,
+        reason: Option<&str>,
+        answer: Option<&str>,
+    ) -> Option<Self> {
+        (verdict == Some(Verdict::Refused)
+            || (verdict == Some(Verdict::Blocked)
+                && reason == Some(BlockedReason::CredentialRefused.as_str())
+                && answer.is_some()))
+        .then(|| Self::read(reason.unwrap_or_default(), answer))
+    }
+
     /// `answer` is the stored answer, which for a create acknowledged onto a
     /// trashed row is the row and not an error. A part the envelope does
     /// not carry, or carries in another shape, reads as absent.
@@ -885,7 +897,7 @@ pub struct QueuedWrite {
     pub reason: Option<String>,
     /// The server's answer, kept whole.
     pub answer: Option<String>,
-    /// The refusal read from `reason` and `answer`, under `refused`.
+    /// The refusal for a terminal answer or a credential-blocked write.
     pub refusal: Option<Refusal>,
     /// What the write sends, or sent: kept so a refused write's content can
     /// be read back from the queue until it is discarded.

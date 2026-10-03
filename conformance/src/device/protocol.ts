@@ -187,8 +187,8 @@ export interface QueuedWrite {
   /** The server's answer, kept whole, because a device reports a verdict and
    *  never acts on one (`queue-and-verdicts.md` 15). */
   answer: string | null;
-  /** The refusal read into its parts, on `refused` (`queue-and-verdicts.md`
-   *  48). */
+  /** The terminal or credential refusal, read into its parts
+   *  (`queue-and-verdicts.md` 48). */
   refusal: WriteRefusal | null;
   /** The body the write carries, as it goes or went to the server, so a
    *  refused write's content can be read back (`queue-and-verdicts.md`
@@ -274,7 +274,7 @@ export interface DrainVerdict {
   replayed: boolean;
   /** The fields the server resolved, on `merged` or `conflicted`. */
   merged_fields: string[];
-  /** The refusal read into its parts, on `refused`. */
+  /** The terminal or credential refusal, read into its parts. */
   refusal: WriteRefusal | null;
 }
 
