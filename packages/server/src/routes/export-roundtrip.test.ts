@@ -163,15 +163,14 @@ describe("export → restore round trip", () => {
     expect(result.edges_imported).toBe(2);
     expect(result.edges_skipped).toBe(0);
 
-    // Items come back under their original ids, with the content-bearing
-    // fields intact. created_at / updated_at are re-stamped by design and
-    // deliberately not compared; `version` is carried, and is covered by
-    // archive-restore-version.test.ts rather than here.
+    // Metadata changes the row's clock, so compare with the stored frame,
+    // not the earlier create result.
     for (const original of [note1, note2, note3]) {
       const restored = await destination.storage.items.get(original.id);
       expect(restored, `item ${original.source_id ?? original.id}`).not.toBe(
         null,
       );
+      expect(restored).toEqual(await source.storage.items.get(original.id));
       expect(restored?.type).toBe(original.type);
       expect(restored?.properties).toEqual(original.properties);
       expect(restored?.state).toBe(original.state);

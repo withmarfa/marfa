@@ -45,10 +45,10 @@ const READS: Record<string, string> = {
 // existing operational exceptions and provider credential boundaries.
 const WRITES: Record<string, string> = {
   ItemStore:
-    "create settleTombstones update delete purge restore restoreBeneath transition purgeTrashedOlderThan purgeRevokedAppGrantsOlderThan",
+    "create settleTombstones update delete purge restore restoreBeneath restoreDates transition purgeTrashedOlderThan purgeRevokedAppGrantsOlderThan",
   MetadataStore:
     "set merge addTags removeTag setExtension setExtensions mutateExtension deleteExtension",
-  VersionStore: "create deleteByIds",
+  VersionStore: "create restore deleteByIds",
   TypeStore: "create update delete seedPlatformTypes deletePlatformType",
   EdgeTypeStore: "create delete",
   SearchStore: "index setTags remove",
@@ -140,6 +140,7 @@ it("classifies every declared method and every production mutation caller", () =
           ts.isFunctionDeclaration(declaration) &&
           [
             "writeItem",
+            "finalizeArchiveItem",
             "runAuditedTransaction",
             "writeInstanceConfig",
           ].includes(declaration.name?.text ?? "")

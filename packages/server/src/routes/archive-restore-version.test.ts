@@ -1,19 +1,5 @@
-/**
- * A restored row keeps the version it was archived at.
- *
- * A row that reached version 12, was archived and was restored used to come
- * back at version 1 while keeping its id. Nothing read a version across a
- * restore, so it cost nothing — until a conflict resolves against a version.
- * Then a client holding (id, 12) from before the archive meets a row climbing
- * back through 12 on unrelated content, and its precondition passes against a
- * row state it never read. That is the one thing a version exists to make
- * impossible.
- *
- * The version was always in the archive: the export serializes the whole row,
- * so `items.ndjson` and `edges.ndjson` have carried it all along. Only the
- * restore was dropping it, which is why this needs no archive format change
- * and why archives written before this still restore correctly.
- */
+/** A restored row retains its version so an old client precondition cannot
+ *  match unrelated content as the row advances after restoration. */
 
 import { itemWrites } from "../storage/item-writes.js";
 import { createGunzip } from "node:zlib";

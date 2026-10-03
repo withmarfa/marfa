@@ -115,7 +115,21 @@ enum Command {
     },
     /// Export the instance's data.
     Export(export::ExportArgs),
-    /// Take an archive back. Operator key only.
+    /// Restore an archive. Operator key only.
+    ///
+    /// Preserves item and edge IDs, created_at and updated_at dates, current
+    /// versions, tags, extensions, and the item's earlier versions carried in
+    /// the archive. Existing items and their history remain unchanged.
+    ///
+    /// The archive contains only data the exporting credential could read,
+    /// including history allowed by each snapshot's type permissions and blobs
+    /// that credential could read. It does not restore keys, webhooks, or
+    /// configuration. Trashed items are absent unless explicitly exported, for
+    /// example with `export --format archive --state any`.
+    ///
+    /// Until the first public release, restore only with the server build that
+    /// wrote the archive. Archive format 0 does not promise compatibility
+    /// between builds.
     Restore(restore::RestoreArgs),
     /// Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
     Webhooks {

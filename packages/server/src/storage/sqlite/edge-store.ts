@@ -71,8 +71,8 @@ export class SqliteEdgeStore implements EdgeStore {
       target_id: input.target_id,
       edge_type: input.edge_type,
       properties: JSON.stringify(properties),
-      created_at: now,
-      updated_at: now,
+      created_at: input.created_at ?? now,
+      updated_at: input.updated_at ?? now,
       // Named rather than left to the column default: this row is also
       // what the method returns, so a create that let the database fill
       // the version in would report one it had not read back.

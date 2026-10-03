@@ -15,6 +15,7 @@ import { versions } from "./schema.js";
 import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToVersion } from "./helpers.js";
+import { isUniqueViolation } from "./pk-violation.js";
 
 /** The base Drizzle handle or a transaction handle from `db.transaction`. */
 type TxOrDb =
@@ -45,6 +46,41 @@ export class SqliteVersionStore implements VersionStore {
     };
     await db.insert(versions).values(row).run();
     return { ...row, properties };
+  }
+
+  /** Replays validated archive snapshots without minting IDs or applying the
+   *  current type schema to properties written under an earlier schema. */
+  async restore(snapshots: readonly Version[]): Promise<void> {
+    if (snapshots.length === 0) return;
+    await this.db.transaction(async (tx) => {
+      for (const snapshot of snapshots) {
+        try {
+          await tx
+            .insert(versions)
+            .values({
+              id: snapshot.id,
+              item_id: snapshot.item_id,
+              version: snapshot.version,
+              properties: JSON.stringify(snapshot.properties),
+              type: snapshot.type,
+              tier: snapshot.tier,
+              occurred_at: snapshot.occurred_at,
+              source_id: snapshot.source_id,
+              created_at: snapshot.created_at,
+            })
+            .run();
+        } catch (err) {
+          if (isUniqueViolation(err, "versions.id")) {
+            throw new MarfaError(
+              ErrorCode.CONFLICT,
+              `Version snapshot ${snapshot.id} already exists`,
+              { snapshot_id: snapshot.id, item_id: snapshot.item_id },
+            );
+          }
+          throw err;
+        }
+      }
+    });
   }
 
   /**

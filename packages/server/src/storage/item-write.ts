@@ -38,6 +38,7 @@ import type {
   ItemState,
   Metadata,
   Tier,
+  Version,
 } from "@withmarfa/shared";
 import {
   checkEdgePermission,
@@ -72,7 +73,12 @@ import { staleVersion } from "./conflict.js";
 import type { ConflictMode, StaleVersionResponse } from "./conflict.js";
 import { readInstanceConfig } from "./instance-config.js";
 import { baseVersion } from "./interface.js";
-import type { CascadeRoot, ResolvedItem, Storage } from "./interface.js";
+import type {
+  ArchivedDates,
+  CascadeRoot,
+  ResolvedItem,
+  Storage,
+} from "./interface.js";
 import type { BlobProof } from "./sqlite/blob-references.js";
 
 /**
@@ -1259,4 +1265,20 @@ async function purgeRow(
     edgeSourceTypes,
     ...(trashedWith && { trashedWith }),
   });
+}
+
+/** Finalizes a newly created archive row after metadata has bumped its clock.
+ *  The archive caller records the returned frame in its audited transaction. */
+export async function finalizeArchiveItem(
+  storage: Storage,
+  id: string,
+  dates: ArchivedDates,
+  snapshots: readonly Version[],
+): Promise<Item> {
+  await storage.versions.restore(snapshots);
+  await itemWrites(storage).restoreDates(id, dates);
+  const item = await storage.items.getIncludingTrashed(id);
+  if (!item)
+    throw new Error(`Restored item ${id} disappeared before finalization`);
+  return item;
 }

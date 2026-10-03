@@ -36,10 +36,6 @@ import {
 } from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
-/** Bounds an archive the same way the item and edge counts are bounded. */
-export const MAX_ARCHIVE_TYPES = 200;
-export const MAX_ARCHIVE_EDGE_TYPES = 200;
-
 export interface ArchiveTypeEntry {
   type?: unknown;
   edge_type?: unknown;
@@ -291,19 +287,6 @@ export async function registerArchiveTypes(
   actor: Pick<AuditLogEntry, "key_id" | "client_ip"> = { client_ip: null },
 ): Promise<ArchiveTypeResult> {
   const { types, edgeTypes } = parseTypeEntries(entries);
-
-  if (types.length > MAX_ARCHIVE_TYPES) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Maximum ${String(MAX_ARCHIVE_TYPES)} type registrations per archive`,
-    );
-  }
-  if (edgeTypes.length > MAX_ARCHIVE_EDGE_TYPES) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Maximum ${String(MAX_ARCHIVE_EDGE_TYPES)} edge-type registrations per archive`,
-    );
-  }
 
   // What is registered is a question about this database,
   // not about the in-memory registry: the registry is process state

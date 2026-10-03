@@ -70,3 +70,63 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 ## Archived row scalars
 
 32. **An archived item or edge's present `version` is a positive safe integer, from 1 through 9007199254740991 inclusive, and a present item `tier` is `library` or `feed`.** A different value, including zero, a fractional or unsafe number, a string or null, refuses the whole archive `400 validation_error`, naming the offending row and field, before type registrations, blob placement, items, metadata, edges or events are written. A valid row ahead of the invalid one is not written either. These checks apply even when a row would otherwise be counted as a duplicate or an edge skipped. Omitted versions retain the restore's default of 1, and an omitted canonical item tier defaults to `library`; a valid recorded version or tier is preserved. Zero can be a write precondition but is never a stored version (`versions.md` 18). `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`, `› refuses invalid %s even when the row already exists`, `› refuses an invalid edge version even when its endpoint is missing`, `› restores $name without changing their meaning`.
+
+## Complete archive restoration
+
+33. When an operator restores an archive produced by the same server build, the server MUST accept its item, edge, type-registration and edge-type-registration counts without a separate restore count limit.
+
+    Reason: an export that the same build cannot restore is not a usable backup. Resource protection is independent of the number of rows an export carries.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › restores an actual export with $items items and $edges edges`; `packages/server/src/routes/archive-type-registrations.test.ts › restores more than 200 %s registered and exported through their routes`.
+
+34. When an archive creates an item or edge, the server MUST preserve its recorded `created_at` and `updated_at` instants in canonical UTC millisecond form and its current `version` exactly.
+
+    Reason: restored dates describe the original record, and canonical UTC values remain comparable with list filters and cursors. Resetting a version can make an old write precondition match unrelated content.
+
+    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps restored %s discoverable by instant-based date filters`.
+
+35. When exporting an archive, the server MUST include every stored snapshot below each selected item's recorded current version that the exporting credential can read under that snapshot's historical type permissions.
+
+    Reason: a current type grant does not grant access to an item's earlier type, and one page of history is not complete history. A concurrent write may snapshot the selected current version after selection; that snapshot belongs to the next version and cannot be included beside the selected row.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves every snapshot across history pages and leaves duplicate live history untouched`, `› exports snapshots by their historical type permissions`, `› fences exported history below the selected row's version during a concurrent patch`.
+
+36. When restoring an item's archived history, the server MUST preserve each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at` exactly, without validating historical properties against the current type schema.
+
+    Reason: changing a type schema does not rewrite the past.
+
+    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps historical properties after the current type changes their shape`; `packages/server/src/storage/archive-history-storage.test.ts › stores every historical field exactly without requiring the historical type's current schema`.
+
+37. When a readable archived snapshot references a blob, the archive MUST include its bytes if and only if the exporting credential could read that blob through the blob doors.
+
+    Reason: a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs.md` 21).
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › carries readable bytes referenced only by selected history without widening blob access`.
+
+38. When an archived item is counted as a duplicate, the restore MUST leave the existing item's row, metadata and history unchanged.
+
+    Reason: replaying a backup must not overwrite work made since the backup.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › leaves an existing item and its live history unchanged on repeated restores`; `packages/server/src/routes/export-roundtrip.test.ts › re-restoring the same archive changes nothing and counts duplicates`.
+
+39. If an archive contains an invalid present item or edge date, or malformed history, the restore MUST refuse the whole archive with `400 validation_error` before writing rows, including when a row would otherwise be duplicated or skipped.
+
+    History shape: each snapshot is an object with a valid unique snapshot ID across the archive, the enclosing item's ID, a positive safe integer version below the current item version and unique within that item's history, object properties, a type identifier, a `library` or `feed` tier, valid `created_at` and `occurred_at` instants, and a string or null `source_id`. History, when present, is an array. Present row dates are valid instants. Validation uses the ordinary instant rules. Current row dates use canonical UTC millisecond form; historical snapshot dates retain their archived spelling.
+
+    Reason: a malformed later row must not leave a partially restored archive.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › refuses malformed item %s before any row writes`, `› refuses malformed edge %s even when its endpoints are missing`, `› refuses history with $name before writing valid rows ahead of it`, `› refuses duplicate history %s values before row writes`.
+
+40. If a snapshot being restored has an ID already held by existing history, the restore MUST refuse the row transaction with `409 conflict` without changing the existing history.
+
+    Reason: a history collision is not a duplicate current item and cannot overwrite another item's past.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › refuses a snapshot ID already held by unrelated history without treating it as a duplicate item`.
+
+41. If a row write fails during archive restoration, the server MUST roll back every item, metadata, history, edge and event write in the restore's row transaction.
+
+    Reason: snapshot restoration is part of restoring the item that owns it. Type registration atomicity is a separate requirement.
+
+    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › rolls back items, metadata, history and events when a later edge insert fails`, `› rolls back earlier snapshots and row writes when a native history insert fails`.
+
+Archive scope: keys, webhooks, configuration and tombstones are not carried. Trashed items are carried only when selected explicitly, such as with `state=any` (16). An archive remains format 0 and is supported only by the build that wrote it (27).
