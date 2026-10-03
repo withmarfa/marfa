@@ -31,6 +31,7 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+import { pageLimit, pageCursor } from "../page-limits.js";
 
 /** How deep the ranking is read; a cursor past it is refused. */
 const MAX_SEARCH_DEPTH = 10_000;
@@ -134,18 +135,8 @@ const searchRoute = createRoute({
         .string()
         .describe("Comma-separated tags; items must match all (AND).")
         .optional(),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Maximum results to return."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Opaque cursor from a previous page's `next_cursor`."),
+      limit: pageLimit({ max: 100, default: 20 }),
+      cursor: pageCursor(),
       filter: z
         .string()
         .describe(

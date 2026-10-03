@@ -70,7 +70,12 @@ import {
   mayHaveCommitted,
   isEntryVerdict,
 } from "./_bulk-rollback.js";
-import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
+import {
+  BulkResponseSchema,
+  ItemStateEnum,
+  TierEnum,
+  type BulkSkipReason,
+} from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
@@ -432,7 +437,7 @@ interface BulkItemResult {
   index: number;
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
-  reason?: string;
+  reason?: BulkSkipReason;
   error?: {
     code: string;
     message: string;
@@ -542,6 +547,11 @@ async function processBulkItem(
         result: { index, outcome: result.outcome, id: result.item.id },
       };
     case "unchanged":
+      // A repeat is the single create door's answer to its own id; a bulk
+      // entry naming one the caller wrote is an upsert onto it instead.
+      if (result.reason === "repeat") {
+        throw new Error("unreachable: a bulk entry answered as a repeat");
+      }
       return {
         result: {
           index,

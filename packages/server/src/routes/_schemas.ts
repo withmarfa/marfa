@@ -302,6 +302,16 @@ export const EdgeResponseSchema = z
   .object({ edge: EdgeSchema })
   .openapi("EdgeResponse");
 
+/** Why a bulk entry was skipped, across both bulk doors. */
+export const BULK_SKIP_REASONS = [
+  "duplicate_edge",
+  "duplicate_id",
+  "duplicate_source",
+  "trashed",
+] as const;
+
+export type BulkSkipReason = (typeof BULK_SKIP_REASONS)[number];
+
 /** What one entry of a bulk page came out as, on either bulk door. */
 export const BulkResultEntrySchema = z
   .object({
@@ -313,7 +323,12 @@ export const BulkResultEntrySchema = z
       .describe(
         "The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row.",
       ),
-    reason: z.string().optional(),
+    reason: z
+      .enum(BULK_SKIP_REASONS)
+      .optional()
+      .describe(
+        "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, the edge exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.",
+      ),
     error: BulkEntryErrorSchema.optional(),
   })
   .openapi("BulkResultEntry");
