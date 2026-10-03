@@ -1589,9 +1589,11 @@ export interface paths {
          * Stream change events
          * @description Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.
          *
+         *     For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.
+         *
          *     The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.
          *
-         *     Treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.
+         *     For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.
          *
          *     Once the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ "type": "stream_live", "cursor": "<event id>" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.
          *
@@ -1825,8 +1827,12 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape. */
-        ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemWithMetadata"];
+        /** @description An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape. */
+        ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemReadWithMetadata"];
+        ItemReadWithMetadata: components["schemas"]["ItemWithMetadata"] & {
+            /** @description Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection. */
+            listed?: boolean;
+        };
         MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
@@ -1843,7 +1849,9 @@ export interface components {
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
-            neighbors?: components["schemas"]["ItemWithMetadata"][];
+            /** @description Required on conditional copy reads; direct authority is independent of this item-set membership. */
+            listed?: boolean;
+            neighbors?: components["schemas"]["ItemReadWithMetadata"][];
             neighbors_truncated?: boolean;
             neighbors_omitted?: number;
             versions?: components["schemas"]["VersionPage"];
@@ -3177,6 +3185,16 @@ export interface components {
                 };
             };
         };
+        ReadViewChangedRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "read_view_changed";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         IdempotencyKeyInFlightRefusal: {
             error: {
                 /** @enum {string} */
@@ -3214,6 +3232,8 @@ export interface components {
     headers: {
         /** @description The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it. */
         "X-Marfa-Contract": number;
+        /** @description A matching opaque read-view certificate, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none. */
+        "X-Marfa-Read-View": string;
         /** @description This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again. */
         "X-Request-ID": string;
         /** @description The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record. */
@@ -3267,7 +3287,10 @@ export interface operations {
                 /** @description Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. */
                 include?: string;
             };
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3281,6 +3304,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3326,10 +3350,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -3706,7 +3746,10 @@ export interface operations {
                 /** @description Comma-separated extras to hydrate inline: backrefs, neighbors, versions. */
                 include?: string;
             };
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path: {
                 /** @description Item id */
                 id: string;
@@ -3723,6 +3766,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3768,6 +3812,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3783,10 +3828,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -7052,7 +7113,10 @@ export interface operations {
                 /** @description Pagination cursor from a previous response. */
                 cursor?: string;
             };
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path: {
                 /** @description Item id. */
                 id: string;
@@ -7069,6 +7133,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7114,6 +7179,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7129,10 +7195,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -7308,7 +7390,10 @@ export interface operations {
                 /** @description Pagination cursor from a previous response. */
                 cursor?: string;
             };
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -7322,6 +7407,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7367,10 +7453,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -7608,7 +7710,10 @@ export interface operations {
     getEdge: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path: {
                 /** @description Edge id. */
                 id: string;
@@ -7625,6 +7730,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7655,6 +7761,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7670,10 +7777,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -8232,7 +8355,10 @@ export interface operations {
     listEdgeTypes: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -8246,6 +8372,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8265,6 +8392,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -8586,7 +8728,10 @@ export interface operations {
     listTypes: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -8600,6 +8745,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8619,6 +8765,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -13998,7 +14159,10 @@ export interface operations {
     getCurrentKey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                "X-Marfa-Read-View"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14012,6 +14176,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14042,10 +14207,26 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Read-View": components["headers"]["X-Marfa-Read-View"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -16254,13 +16435,17 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
+                /** @description Select certified copy mode; requires explicit edges=all and forbids every other query key. */
+                copy?: "1";
                 /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces — to receive everything, omit the parameter — and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
                 type?: string;
                 /** @description Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame. */
                 edges?: "all" | "none";
             };
             header?: {
-                /** @description Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor. */
+                /** @description In copy mode, send one certificate together with Last-Event-ID to resume. Bootstrap omits both headers. This header is invalid on an ordinary stream. */
+                "X-Marfa-Read-View"?: string;
+                /** @description Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor only for an ordinary stream; copy mode refuses it. */
                 "Last-Event-ID"?: string;
             };
             path?: never;
@@ -16325,6 +16510,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */

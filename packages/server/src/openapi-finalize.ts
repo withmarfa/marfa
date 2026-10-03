@@ -19,6 +19,7 @@
  * drift.
  */
 
+import { CONDITIONAL_READ_OPERATIONS } from "./middleware/read-view.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 import { refusalComponentName } from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
@@ -207,6 +208,16 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
       "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.",
     schema: { type: "integer", minimum: 0 },
   },
+  "X-Marfa-Read-View": {
+    description:
+      "A matching opaque read-view certificate, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none.",
+    schema: {
+      type: "string",
+      pattern: "^[0-9a-f]{64}$",
+      minLength: 64,
+      maxLength: 64,
+    },
+  },
   "X-Request-ID": {
     description:
       "This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again.",
@@ -365,6 +376,24 @@ export const CHAIN_REFUSALS = {
   ),
 } as const;
 
+const READ_VIEW_REFUSAL = chainRefusal(
+  ["read_view_changed"],
+  "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+);
+const READ_VIEW_PARAMETER = {
+  name: "X-Marfa-Read-View",
+  in: "header",
+  required: false,
+  schema: {
+    type: "string",
+    pattern: "^[0-9a-f]{64}$",
+    minLength: 64,
+    maxLength: 64,
+  },
+  description:
+    "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.",
+};
+
 function declaresSecurity(operation: Record<string, unknown>): boolean {
   const security = operation.security;
   return Array.isArray(security) && security.length > 0;
@@ -522,6 +551,13 @@ function withResponseHeaders(
     }
     if (code === 429) names.push("Retry-After");
     if (
+      typeof operation.operationId === "string" &&
+      CONDITIONAL_READ_OPERATIONS.has(operation.operationId) &&
+      ((code >= 200 && code < 300) || code === 403 || code === 404)
+    ) {
+      names.push("X-Marfa-Read-View");
+    }
+    if (
       replays &&
       !NEVER_REPLAYED_STATUSES.has(code) &&
       !ANSWERED_AHEAD_OF_THE_LIMITER.has(code)
@@ -598,8 +634,9 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       summary: "Stream change events",
       description:
         "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
+        'For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.\n\n' +
         'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
-        "Treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\n" +
+        "For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\n" +
         'Once the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ "type": "stream_live", "cursor": "<event id>" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.\n\n' +
         "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
         "An item frame carries `type` and `item`, and an edge frame `type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.\n\n" +
@@ -608,6 +645,19 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         'A `Last-Event-ID` past the log\'s head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ "type": "cursor_ahead", "requested": "<event id>", "head": "<event id>" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.',
       security: [{ bearerAuth: [] }],
       parameters: [
+        {
+          name: "copy",
+          in: "query",
+          required: false,
+          schema: { type: "string", enum: ["1"] },
+          description:
+            "Select certified copy mode; requires explicit edges=all and forbids every other query key.",
+        },
+        {
+          ...READ_VIEW_PARAMETER,
+          description:
+            "In copy mode, send one certificate together with Last-Event-ID to resume. Bootstrap omits both headers. This header is invalid on an ordinary stream.",
+        },
         {
           name: "type",
           in: "query",
@@ -630,7 +680,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor.",
+            "Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor only for an ordinary stream; copy mode refuses it.",
         },
       ],
       responses: {
@@ -840,6 +890,21 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       const responses = {
         ...((operation.responses as Record<string, unknown> | undefined) ?? {}),
       };
+      const conditionalRead =
+        typeof operation.operationId === "string" &&
+        CONDITIONAL_READ_OPERATIONS.has(operation.operationId);
+      if (conditionalRead) {
+        operation.parameters = [
+          ...((operation.parameters as unknown[] | undefined) ?? []),
+          READ_VIEW_PARAMETER,
+        ];
+      }
+      if (conditionalRead || operation.operationId === "streamEvents") {
+        responses["409"] =
+          responses["409"] === undefined
+            ? READ_VIEW_REFUSAL.response
+            : withExtraBranch(responses["409"], READ_VIEW_REFUSAL);
+      }
       if (declaresSecurity(operation)) {
         responses["401"] ??= CHAIN_REFUSALS.unauthorized.response;
       }

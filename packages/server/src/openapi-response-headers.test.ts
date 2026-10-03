@@ -218,6 +218,46 @@ describe("the published spec declares the headers the server sets", () => {
     expect(wrong.sort()).toEqual([]);
   });
 
+  it("declares copy proof only on supported read outcomes", () => {
+    const reads = new Set([
+      "GET /items",
+      "GET /items/{id}",
+      "GET /items/{id}/edges",
+      "GET /edges",
+      "GET /edges/{id}",
+      "GET /types",
+      "GET /edge-types",
+      "GET /keys/current",
+    ]);
+    const declared = new Set<string>();
+    for (const [key, responses] of operations) {
+      for (const [status, response] of Object.entries(responses)) {
+        const code = Number(status);
+        const supported =
+          reads.has(key) &&
+          ((code >= 200 && code < 300) || code === 403 || code === 404);
+        expect(
+          "X-Marfa-Read-View" in (response.headers ?? {}),
+          `${key} ${status}`,
+        ).toBe(supported);
+        if (supported) declared.add(key);
+      }
+    }
+    expect([...declared].sort()).toEqual([...reads].sort());
+    const paths = spec.paths as Record<string, Record<string, Operation>>;
+    for (const key of [...reads, "GET /events"]) {
+      const path = key.slice(4);
+      const operation = paths[path]!.get!;
+      const parameters = operation.parameters as { name: string; in: string }[];
+      expect(
+        parameters.filter(
+          (p) => p.name === "X-Marfa-Read-View" && p.in === "header",
+        ),
+      ).toHaveLength(1);
+      expect(operations.get(key)).toHaveProperty("409");
+    }
+  });
+
   it("declares Idempotency-Replayed on exactly the write doors", () => {
     // Derived from `IDEMPOTENT_WRITE_DOORS` rather than a list written
     // here, so a door added or removed moves this expectation with it.
