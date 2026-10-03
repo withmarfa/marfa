@@ -12,9 +12,10 @@
 #
 # A server that stops because the database on the volume was written by
 # another build has not crashed: starting it again meets the same file. It
-# says so with its own exit status, and the container then stays up, and
-# unhealthy, with the server's message in the log, so that no restart policy
-# turns the refusal into a loop. A stop for any other reason ends the
+# says so with its own exit status, which this script writes down, and the
+# container then stays up, and unhealthy, with the server's message in the
+# log, so that no restart policy turns the refusal into a loop, with a bucket
+# or without one. A stop for any other reason ends the
 # container with the server's status, and a supervisor may start it again.
 set -eu
 
@@ -58,20 +59,33 @@ supervise() {
   return "$status"
 }
 
+# The server itself, as `litestream replicate -exec` runs it. Litestream ends
+# with status 1 whatever status its child ended with, so the refusal cannot
+# travel back as an exit status: it is written down where the entrypoint that
+# started this one looks, and the server's own status is passed on as it was.
+if [ "${1:-}" = run-server ]; then
+  code=0
+  supervise node --import ./dist/instrumentation.js dist/index.js || code=$?
+  if [ "$code" -eq "$REFUSED_DATABASE" ]; then : > "$MARFA_RUN_DIR/refused-database"; fi
+  exit "$code"
+fi
+
+MARFA_RUN_DIR=$(mktemp -d)
+export MARFA_RUN_DIR
 code=0
 if [ -z "${S3_BUCKET:-}" ]; then
   echo "S3_BUCKET is not set: the database is not streamed off-site and no object store is attached" >&2
-  supervise node --import ./dist/instrumentation.js dist/index.js || code=$?
+  supervise /bin/sh "$0" run-server || code=$?
 else
   # `-if-db-not-exists` leaves a database already on the volume alone;
   # `-if-replica-exists` makes a bucket holding no replica yet, the first boot
   # of a new instance, a fresh start rather than a failure.
   litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
 
-  supervise litestream replicate -config /etc/litestream.yml -exec "node --import ./dist/instrumentation.js dist/index.js" || code=$?
+  supervise litestream replicate -config /etc/litestream.yml -exec "/bin/sh $0 run-server" || code=$?
 fi
 
-if [ "$code" -eq "$REFUSED_DATABASE" ]; then
+if [ -e "$MARFA_RUN_DIR/refused-database" ]; then
   echo "The database at $SQLITE_PATH was written by another build, so this server will not start on it, and the message above says how to carry its data forward. This container stays up, unhealthy, so that nothing restarts it into the same refusal; stop it to remove it." >&2
   trap 'kill "$napping" 2>/dev/null || true; exit 0' TERM INT
   while :; do

@@ -33,7 +33,7 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
    Tests: `compliance/backup-restore.test.ts › answers every write the instance had acknowledged before the copy began, and every blob they name`. The server's own suite holds the database half under a stopped writer and a killed one, in `packages/server/src/storage/sqlite/backup-copy.test.ts`.
 
-7. When the server stops on `SIGTERM` or `SIGINT`, it SHALL move every write it has acknowledged into the database file, so that the file alone holds them.
+7. When the server stops on `SIGTERM` or `SIGINT` and no other connection holds the log, it SHALL move every write it has acknowledged into the database file, so that the file alone holds them. When another connection holds the log, it SHALL leave the writes in the log, which the next start applies.
 
    Reason: an owner who stops the instance and copies the data directory must not lose the writes the log still held. A replicator that holds the log can refuse the move, and the next start applies the log as it always does.
 
@@ -67,7 +67,7 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
     Tests: `compliance/instance.test.ts › answers /health without a credential and names its components`. A `down` component cannot be produced against a server the referee booted, so the server's own suite drives each: `packages/server/src/routes/health.test.ts › GET /health failing status`, and with the real app and database, `packages/server/src/routes/health.app.test.ts`.
 
-12. The server SHALL probe each component, within two seconds, as follows: `database` reads a row; `database_write` commits one write; `blob_storage` asks the disk store for a blob; `disk` measures the bytes available on whichever of the database's volume and the disk store's volume has the least. A probe the database or disk refused is `down`. A probe that gave no answer within two seconds is `degraded`. A `disk` below 1 MiB available is `down`, below 64 MiB is `degraded`, and one whose space could not be read is `degraded`, never `down`.
+12. The server SHALL probe each component, within two seconds, as follows: `database` reads a row; `database_write` commits one write; `blob_storage` asks the disk store for a blob; `disk` measures the bytes available on whichever of the database's volume and the disk store's volume has the least. A probe the database or the disk store refused is `down`. A probe that gave no answer within two seconds is `degraded`. A `disk` below 1 MiB available is `down`, below 64 MiB is `degraded`, and one whose space could not be read is `degraded`, never `down`.
 
     Reason: a refusal is known and a silence is not. A database that reads can still refuse every write, because the volume is read-only or full, and only a committed write shows it.
 
@@ -89,7 +89,7 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
 Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
 
-15. When the server starts on a database whose schema differs from its own, or that still holds a registry or a setting this build does not read, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
+15. When the server starts on a database whose schema differs from its own, or that still holds a retired registry table or the retired setting `space_config`, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
 
     Reason: an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. The message does not promise a restore the contract does not.
 

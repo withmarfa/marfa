@@ -70,9 +70,25 @@ function start(options: { body: string; bucket?: boolean }): Run {
   };
   mkdirSync(bin);
   wrapper("bin/node", `#!/bin/sh\nexec "${join(dir, "stand-in.sh")}" "$@"\n`);
+  // Litestream's `replicate -exec` runs the command, forwards the signals
+  // that stop it, and ends 1 whatever status the command ended with
+  // (verified against 0.5.17): so a status cannot travel through it.
   wrapper(
     "bin/litestream",
-    `#!/bin/sh\ncase "$1" in restore) exit 0 ;; esac\nexec "${join(dir, "stand-in.sh")}" "$@"\n`,
+    [
+      "#!/bin/sh",
+      'case "$1" in restore) exit 0 ;; esac',
+      'while [ $# -gt 0 ]; do if [ "$1" = -exec ]; then command=$2; break; fi; shift; done',
+      "signalled=0",
+      `trap 'signalled=1; kill -TERM "$child" 2>/dev/null' TERM INT`,
+      'sh -c "$command" &',
+      "child=$!",
+      'wait "$child"; status=$?',
+      'if [ "$signalled" = 1 ]; then wait "$child"; status=$?; fi',
+      'if [ "$status" -eq 0 ]; then exit 0; fi',
+      "exit 1",
+      "",
+    ].join("\n"),
   );
 
   const child = spawn("/bin/sh", [ENTRYPOINT], {
@@ -144,11 +160,25 @@ describe("deploy/entrypoint.sh", () => {
     expect(run.output()).toContain("stays up");
   });
 
-  it("stays up the same way under Litestream, which passes on the status of the server it runs", async () => {
+  it("stays up the same way under Litestream, which ends 1 whatever status the server ended with", async () => {
     const run = start({ bucket: true, body: `exit ${String(REFUSED)}` });
 
     expect(await stillRunningAfter(run, 1_500)).toBe(true);
     expect(run.output()).toContain("will not start on it");
+  });
+
+  it("ends 1, and does not stay up, when the server under Litestream stops for another reason", async () => {
+    // The witness for the case above: the same Litestream, the same status
+    // for the container to read, and no refusal to stay up for.
+    for (const status of [1, 2, 77, 79]) {
+      const run = start({ bucket: true, body: `exit ${String(status)}` });
+      expect(await run.exited).toBe(1);
+    }
+  });
+
+  it("ends 0 under Litestream when the server stops cleanly", async () => {
+    const run = start({ bucket: true, body: "exit 0" });
+    expect(await run.exited).toBe(0);
   });
 
   it("ends 0 on the signal that stops the container, once it has stayed up", async () => {
