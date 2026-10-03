@@ -60,7 +60,7 @@ describe("a folder round trip", () => {
     await c.cli.json(["folders", "hydrate", folder]);
     const path = join(folder, "authored.md");
     const title = unique("authored-yaml");
-    const prefix = `---\r\n# Authored café\r\nnumber: 1.10 # precision\r\ninteger: 1.00\r\ntitle: '${title}'\r\nlist: [one, 'two']\r\nnested: {keep: 'é', change: old}\r\ntags: beta, alpha\r\nstate: null\r\nblock: |\r\n  text\r\n`;
+    const prefix = `---\r\n# Authored café\r\nnumber: 1.10 # precision\r\ninteger: 1.00\r\ntitle: '${title}'\r\nlist: [one, 'two']\r\nnested: {keep: 'é', change: old}\r\nflow: {a: 1}\r\nmoved:\r\n  - 'one' # first\r\n  - 'two' # second\r\ntags: beta, alpha\r\nstate: null\r\nblock: |\r\n  text\r\n`;
     writeFileSync(path, `${prefix}---\r\nBody\r\n`);
     const pushed = await c.cli.json<PushReport>(["folders", "push", folder]);
     expect(pushed.scan.created).toBe(1);
@@ -108,6 +108,31 @@ describe("a folder round trip", () => {
       folder,
     ]);
     expect(settled.updated).toBe(0);
+    await c.cli.json([
+      "items",
+      "update",
+      id!,
+      "--version",
+      "2",
+      "--properties",
+      JSON.stringify({ flow: { b: 2 }, moved: ["two", "one"] }),
+    ]);
+    await c.cli.json(["device", "--db", store, "catch-up"]);
+    await c.cli.json(["folders", "pull", folder]);
+    const rearranged = styled
+      .replace("flow: {a: 1}", "flow: {b: 2}")
+      .replace(
+        "  - 'one' # first\r\n  - 'two' # second\r\n",
+        "  - 'two' # second\r\n  - 'one' # first\r\n",
+      )
+      .replace('marfa_version: "2"', "marfa_version: 3");
+    expect(readFileSync(path, "utf8")).toBe(rearranged);
+    const afterCollections = await c.cli.json<{ updated: number }>([
+      "folders",
+      "scan",
+      folder,
+    ]);
+    expect(afterCollections.updated).toBe(0);
   });
 
   it("pushes a dropped note, takes an agent's change back into the file, and keeps the item's id", async () => {

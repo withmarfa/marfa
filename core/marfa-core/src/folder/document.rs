@@ -798,6 +798,207 @@ mod tests {
     }
 
     #[test]
+    fn flow_replacement_uses_surviving_separators() {
+        for (yaml, desired) in [
+            ("{a: 1}", serde_json::json!({"b": 2})),
+            (
+                "{keep: 1, a: 2, b: 3}",
+                serde_json::json!({"keep": 1, "new": 4}),
+            ),
+            (
+                "{a: 1, keep: 'é', b: 3,}",
+                serde_json::json!({"keep": "é", "new": 4}),
+            ),
+        ] {
+            let original = read(&format!("---\nnested: {yaml}\n---\n"));
+            let mut front = original.front.clone();
+            front["nested"] = desired;
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert_eq!(read(&output).front, front);
+            if yaml.contains("'é'") {
+                assert!(output.contains("keep: 'é'"));
+            }
+        }
+    }
+
+    #[test]
+    fn mapping_keys_participate_in_anchor_lifetimes() {
+        for (yaml, remove) in [
+            ("a: &k key\n*k : old\n", None),
+            ("&k first: old\nb: *k\n", Some("first")),
+            (
+                "&k first: old\na: *k\n&k second: other\nb: *k\n",
+                Some("first"),
+            ),
+        ] {
+            let source = format!("---\n{yaml}---\n");
+            let original = read(&source);
+            assert_eq!(original.unreadable, None);
+            let mut front = original.front.clone();
+            if let Some(key) = remove {
+                front.remove(key);
+            }
+            front.insert("metadata".into(), Value::String("added".into()));
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert_eq!(read(&output).front, front);
+            if remove.is_none() {
+                assert!(output.starts_with(&format!("---\n{yaml}")));
+            }
+            if yaml.contains("second") {
+                assert!(output.contains("&k second: other\nb: *k\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn moved_sequence_children_keep_their_syntax_and_comments() {
+        let source = "---\r\nitems:\r\n  - 'one' # first\r\n  - 'two' # second\r\n  - {keep: 'é', count: 1.00} # third\r\n---\r\n";
+        let original = read(source);
+        for desired in [
+            serde_json::json!([{"keep":"é", "count":1}, "two", "one"]),
+            serde_json::json!(["two", "new", {"keep":"é", "count":1}, "one"]),
+        ] {
+            let mut front = original.front.clone();
+            front["items"] = desired;
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            for unchanged in [
+                "'one' # first\r\n",
+                "'two' # second\r\n",
+                "{keep: 'é', count: 1.00} # third\r\n",
+            ] {
+                assert!(output.contains(unchanged), "{output}");
+            }
+            assert!(same_value(
+                &Value::Object(read(&output).front),
+                &Value::Object(front)
+            ));
+        }
+    }
+
+    #[test]
+    fn moved_flow_children_keep_comments_quotes_and_duplicate_spellings() {
+        let source = "---\r\nitems: ['same', # first\r\n {keep: 'é', number: 1.00}, # nested\r\n \"same\", # second\r\n 'last']\r\n---\r\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front["items"] = serde_json::json!(["last", "same", "same", {"keep":"é", "number":1}]);
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        for kept in [
+            "'same', # first\r\n",
+            "\"same\", # second\r\n",
+            "{keep: 'é', number: 1.00} # nested\r\n",
+            "'last'",
+        ] {
+            assert!(output.contains(kept), "{output}");
+        }
+        assert!(same_value(
+            &Value::Object(read(&output).front),
+            &Value::Object(front)
+        ));
+    }
+
+    #[test]
+    fn moved_block_children_keep_literal_content_nested_syntax_and_duplicates() {
+        let source = "---\r\nitems:\r\n  - | # literal\r\n    text\r\n  - ['é', 'x'] # nested\r\n  - 'same' # first\r\n  - \"same\" # second\r\n---\r\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front["items"] = serde_json::json!(["same", ["é", "x"], "same", "text\n"]);
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        for kept in [
+            "- | # literal\r\n    text\r\n",
+            "- ['é', 'x'] # nested\r\n",
+            "- 'same' # first\r\n",
+            "- \"same\" # second\r\n",
+        ] {
+            assert!(output.contains(kept), "{output}");
+        }
+        assert_eq!(read(&output).front, front);
+    }
+
+    #[test]
+    fn moved_aliases_expand_only_when_the_preceding_anchor_no_longer_agrees() {
+        for source in [
+            "---\nitems:\n  - {label: first, value: &k 'one'} # anchor\n  - {label: second, value: *k} # alias\n---\n",
+            "---\nitems: [{label: first, value: &k 'one'}, {label: second, value: *k}]\n---\n",
+        ] {
+            let original = read(source);
+            let mut front = original.front.clone();
+            front["items"].as_array_mut().unwrap().reverse();
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert!(source.contains("value: *k"));
+            assert!(!output.contains("value: *k"), "{output}");
+            assert!(output.contains("value: &k 'one'"), "{output}");
+            assert_eq!(read(&output).front, front);
+        }
+    }
+
+    #[test]
+    fn reordered_reused_anchor_names_resolve_at_each_alias_position() {
+        let source = "---\nitems:\n  - {label: first, value: &k 'one'}\n  - {label: second, value: *k}\n  - {label: third, value: &k 'two'}\n  - {label: fourth, value: *k}\nother: &other 'keep'\ncopy: *other\n---\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        let before = front["items"].as_array().unwrap();
+        front["items"] = Value::Array([2, 1, 0, 3].map(|i| before[i].clone()).to_vec());
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert_eq!(source.matches("value: *k").count(), 2);
+        assert!(!output.contains("value: *k"), "{output}");
+        assert!(output.contains("value: &k 'one'"));
+        assert!(output.contains("value: &k 'two'"));
+        assert!(output.contains("other: &other 'keep'\ncopy: *other\n"));
+        assert_eq!(read(&output).front, front);
+    }
+
+    #[test]
+    fn every_flow_survivor_subset_can_append_without_losing_comments() {
+        for trailing in ["", ","] {
+            let source = format!(
+                "---\r\nnested: {{a: 'one', # first\r\n b: 'two', # second\r\n c: 'three'{trailing}}}\r\n---\r\n"
+            );
+            let original = read(&source);
+            for mask in 0..8 {
+                let mut front = original.front.clone();
+                let map = front["nested"].as_object_mut().unwrap();
+                for (i, key) in ["a", "b", "c"].iter().enumerate() {
+                    if mask & (1 << i) == 0 {
+                        map.remove(*key);
+                    }
+                }
+                map.insert("added".into(), Value::String("new".into()));
+                let output = write(&front, &original.body, Some(&original)).unwrap();
+                assert_eq!(read(&output).front, front);
+                assert!(output.contains("# first\r\n"));
+                assert!(output.contains("# second\r\n"));
+                for (i, kept) in ["a: 'one'", "b: 'two'", "c: 'three'"].iter().enumerate() {
+                    if mask & (1 << i) != 0 {
+                        assert!(output.contains(kept));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_implicit_alias_key_can_gain_a_value() {
+        let original = read("---\na: &k key\nnested: {*k}\n---\n");
+        assert_eq!(original.unreadable, None);
+        let mut front = original.front.clone();
+        front["nested"]["key"] = Value::String("new".into());
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert!(output.contains("nested: {*k : new}"), "{output}");
+        assert_eq!(read(&output).front, front);
+    }
+
+    #[test]
+    fn joint_anchor_and_alias_changes_keep_the_reference() {
+        let source = "---\na: &a old\nb: *a # reference\n---\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front["a"] = Value::String("new".into());
+        front["b"] = Value::String("new".into());
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert_eq!(output, source.replace("&a old", "&a new"));
+    }
+
+    #[test]
     fn duplicate_mapping_keys_stay_unreadable() {
         assert!(read("---\na: one\na: two\n---\n").unreadable.is_some());
         assert!(

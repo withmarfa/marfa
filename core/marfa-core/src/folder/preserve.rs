@@ -1,6 +1,6 @@
 //! Local YAML edits use grammar-owned byte ranges, never token guesses. The
 //! existing semantic reader validates the complete result before it can land.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use serde_json::Value;
@@ -51,27 +51,68 @@ fn value_node(mut node: Node<'_>) -> Node<'_> {
     node
 }
 
-fn key(node: Node<'_>, source: &str) -> Result<String> {
-    let value =
-        yaml_rust2::YamlLoader::load_from_str(&source[node.byte_range()]).map_err(invalid)?;
-    value
-        .first()
-        .and_then(yaml_rust2::Yaml::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| invalid("a mapping key is not text"))
+/// Resolve keys in their complete document context: aliases can name keys, and
+/// YAML's ordered mapping preserves the correspondence to grammar entries.
+fn keys(
+    node: Node<'_>,
+    yaml: &yaml_rust2::Yaml,
+    result: &mut HashMap<usize, String>,
+) -> Result<()> {
+    let node = value_node(node);
+    match (node.kind(), yaml) {
+        ("block_mapping" | "flow_mapping", yaml_rust2::Yaml::Hash(map)) => {
+            let pairs = children(node);
+            if pairs.len() != map.len() {
+                return Err(invalid("syntax and mapping values disagree"));
+            }
+            for (pair, (key, value)) in pairs.into_iter().zip(map.iter()) {
+                result.insert(
+                    pair.start_byte(),
+                    key.as_str()
+                        .ok_or_else(|| invalid("a mapping key is not text"))?
+                        .into(),
+                );
+                if let Some(child) = pair.child_by_field_name("value") {
+                    keys(child, value, result)?;
+                }
+            }
+        }
+        ("block_sequence" | "flow_sequence", yaml_rust2::Yaml::Array(values)) => {
+            let nodes = children(node);
+            if nodes.len() != values.len() {
+                return Err(invalid("syntax and sequence values disagree"));
+            }
+            for (child, value) in nodes.into_iter().zip(values) {
+                if let Some(child) = sequence_value(child) {
+                    keys(child, value, result)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
-fn entries<'a>(node: Node<'a>, source: &str) -> Result<Vec<(String, Node<'a>)>> {
+fn entries<'a>(node: Node<'a>, keys: &HashMap<usize, String>) -> Result<Vec<(String, Node<'a>)>> {
     children(node)
         .into_iter()
         .map(|pair| {
-            let k = pair
-                .child_by_field_name("key")
-                .or_else(|| (pair.kind() == "flow_node").then_some(pair))
-                .ok_or_else(|| invalid("a mapping entry has no key"))?;
-            Ok((key(k, source)?, pair))
+            Ok((
+                keys.get(&pair.start_byte())
+                    .ok_or_else(|| invalid("a mapping entry has no key"))?
+                    .clone(),
+                pair,
+            ))
         })
         .collect()
+}
+
+fn sequence_value(child: Node<'_>) -> Option<Node<'_>> {
+    if child.kind() == "block_sequence_item" {
+        children(child).first().copied()
+    } else {
+        Some(child)
+    }
 }
 
 fn json(value: &Value) -> String {
@@ -111,6 +152,8 @@ struct Editor<'a> {
     source: &'a str,
     newline: &'a str,
     edits: Vec<Edit>,
+    keys: &'a HashMap<usize, String>,
+    safe_aliases: &'a HashSet<usize>,
 }
 
 impl Editor<'_> {
@@ -142,22 +185,38 @@ impl Editor<'_> {
             span,
             text: String::new(),
         });
-        if collection.kind().starts_with("flow_") {
-            let mut cursor = collection.walk();
-            let tokens: Vec<_> = collection.children(&mut cursor).collect();
-            let at = tokens.iter().position(|n| *n == node).unwrap_or(0);
-            let comma = tokens[at + 1..]
-                .iter()
-                .find(|n| !n.is_extra())
-                .filter(|n| n.kind() == ",")
-                .or_else(|| {
-                    tokens[..at]
-                        .iter()
-                        .rev()
-                        .find(|n| !n.is_extra())
-                        .filter(|n| n.kind() == ",")
-                });
-            if let Some(comma) = comma {
+    }
+
+    /// Keep exactly one existing comma between each surviving pair of entries.
+    /// A trailing comma remains only when the original collection had one.
+    fn separators(&mut self, collection: Node<'_>, surviving: &[Node<'_>]) {
+        let mut cursor = collection.walk();
+        let commas: Vec<_> = collection
+            .children(&mut cursor)
+            .filter(|n| n.kind() == ",")
+            .collect();
+        let original = children(collection);
+        let trailing = commas.last().is_some_and(|comma| {
+            original
+                .last()
+                .is_some_and(|last| comma.start_byte() >= last.end_byte())
+        });
+        let mut kept = HashSet::new();
+        for pair in surviving.windows(2) {
+            if let Some(comma) = commas.iter().find(|comma| {
+                comma.start_byte() >= pair[0].end_byte() && comma.end_byte() <= pair[1].start_byte()
+            }) {
+                kept.insert(comma.start_byte());
+            }
+        }
+        if trailing
+            && let (Some(last), Some(comma)) = (surviving.last(), commas.last())
+            && comma.start_byte() >= last.end_byte()
+        {
+            kept.insert(comma.start_byte());
+        }
+        for comma in commas {
+            if !kept.contains(&comma.start_byte()) {
                 self.edits.push(Edit {
                     span: comma.byte_range(),
                     text: String::new(),
@@ -174,11 +233,18 @@ impl Editor<'_> {
         let (offset, text) = if flow {
             let end = collection.end_byte() - 1;
             let mut cursor = collection.walk();
+            let retained = |node: &Node<'_>| {
+                !self.edits.iter().any(|edit| {
+                    edit.text.is_empty()
+                        && edit.span.start <= node.start_byte()
+                        && edit.span.end >= node.end_byte()
+                })
+            };
             let last = collection
                 .children(&mut cursor)
-                .filter(|n| !n.is_extra() && n.end_byte() <= end)
+                .filter(|n| !n.is_extra() && n.end_byte() <= end && retained(n))
                 .last();
-            let prefix = if children(collection).is_empty() {
+            let prefix = if children(collection).iter().all(|n| !retained(n)) {
                 ""
             } else if last.is_some_and(|n| n.kind() == ",") {
                 " "
@@ -211,66 +277,176 @@ impl Editor<'_> {
         });
     }
 
-    fn insert_before(&mut self, collection: Node<'_>, item: Node<'_>, values: &[Value]) {
-        let (offset, text) = if collection.kind() == "flow_sequence" {
-            (
-                item.start_byte(),
-                format!(
-                    "{}, ",
-                    values.iter().map(json).collect::<Vec<_>>().join(", ")
-                ),
-            )
+    fn through_line(&self, end: usize) -> usize {
+        if self.source[..end].ends_with('\n') {
+            end
         } else {
-            let start = self.source[..item.start_byte()]
-                .rfind('\n')
-                .map_or(0, |at| at + 1);
-            let indent = " ".repeat(collection.start_position().column);
+            end + self.source[end..]
+                .find('\n')
+                .map_or(self.source.len() - end, |at| at + 1)
+        }
+    }
+
+    fn sequence(&mut self, node: Node<'_>, old: &[Value], new: &[Value]) -> Result<()> {
+        let nodes = children(node);
+        if nodes.len() != old.len() {
+            return Err(invalid("syntax and sequence values disagree"));
+        }
+        let matches = aligned(old, new);
+        let flow = node.kind() == "flow_sequence";
+        let indent = " ".repeat(node.start_position().column);
+        let end = if flow {
+            node.end_byte()
+        } else {
+            self.through_line(nodes.last().unwrap().end_byte())
+        };
+        let mut pieces = Vec::new();
+        for (target, desired) in new.iter().enumerate() {
+            if let Some(i) = matches.iter().position(|m| *m == Some(target)) {
+                let child = nodes[i];
+                let span = if flow {
+                    child.byte_range()
+                } else {
+                    child.start_byte()
+                        ..nodes
+                            .get(i + 1)
+                            .map_or(end, |next| next.start_byte() - indent.len())
+                };
+                let before = self.edits.len();
+                if let Some(value) = sequence_value(child) {
+                    self.edit(value, &old[i], desired)?;
+                } else if !desired.is_null() {
+                    self.edits.push(Edit {
+                        span: child.end_byte()..child.end_byte(),
+                        text: format!(" {}", json(desired)),
+                    });
+                }
+                let mut edits = self.edits.split_off(before);
+                for edit in &mut edits {
+                    if edit.span.start < span.start || edit.span.end > span.end {
+                        return Err(invalid("a child edit exceeds its source range"));
+                    }
+                    edit.span = (edit.span.start - span.start)..(edit.span.end - span.start);
+                }
+                let rendered = apply(&self.source[span], edits)?;
+                let tail = if flow {
+                    // Commas belong to the collection. All other bytes in the
+                    // gap travel with the child, including inline comments.
+                    let tail = child.end_byte()
+                        ..nodes
+                            .get(i + 1)
+                            .map_or(node.end_byte() - 1, Node::start_byte);
+                    let mut cursor = node.walk();
+                    let edits = node
+                        .children(&mut cursor)
+                        .filter(|n| {
+                            n.kind() == ","
+                                && n.start_byte() >= tail.start
+                                && n.end_byte() <= tail.end
+                        })
+                        .map(|comma| Edit {
+                            span: (comma.start_byte() - tail.start)
+                                ..(comma.end_byte() - tail.start),
+                            text: String::new(),
+                        })
+                        .collect();
+                    apply(&self.source[tail], edits)?
+                } else {
+                    String::new()
+                };
+                pieces.push((rendered, tail));
+            } else {
+                pieces.push(if flow {
+                    (json(desired), String::new())
+                } else {
+                    (
+                        format!("- {}{}", json(desired), self.newline),
+                        String::new(),
+                    )
+                });
+            }
+        }
+        let (span, text) = if flow {
+            let mut text = self.source
+                [node.start_byte()..nodes.first().map_or(node.end_byte() - 1, Node::start_byte)]
+                .to_owned();
+            let mut cursor = node.walk();
+            let trailing = node.children(&mut cursor).any(|n| {
+                n.kind() == ","
+                    && nodes
+                        .last()
+                        .is_some_and(|last| n.start_byte() >= last.end_byte())
+            });
+            for (i, (piece, tail)) in pieces.iter().enumerate() {
+                text.push_str(piece);
+                if i + 1 < pieces.len() || trailing {
+                    text.push(',');
+                }
+                text.push_str(tail);
+            }
+            text.push(']');
+            (node.byte_range(), text)
+        } else {
             (
-                start,
-                values
-                    .iter()
-                    .map(|v| format!("{indent}- {}{}", json(v), self.newline))
-                    .collect(),
+                node.start_byte()..end,
+                pieces
+                    .into_iter()
+                    .map(|(piece, _)| piece)
+                    .collect::<Vec<_>>()
+                    .join(&indent),
             )
         };
-        self.edits.push(Edit {
-            span: offset..offset,
-            text,
-        });
+        if self.source[span.clone()] != text {
+            self.edits.push(Edit { span, text });
+        }
+        Ok(())
     }
 
     fn edit(&mut self, wrapper: Node<'_>, old: &Value, new: &Value) -> Result<()> {
-        if same_value(old, new) {
+        let node = value_node(wrapper);
+        if node.kind() == "alias" {
+            if !self.safe_aliases.contains(&node.start_byte()) {
+                self.replace(node, new);
+            }
             return Ok(());
         }
-        let node = value_node(wrapper);
         match (old, new, node.kind()) {
             (Value::Object(old), Value::Object(new), "block_mapping" | "flow_mapping")
                 if !new.is_empty() =>
             {
                 let mut present = Vec::new();
-                for (name, pair) in entries(node, self.source)? {
+                let mut surviving = Vec::new();
+                for (name, pair) in entries(node, self.keys)? {
                     present.push(name.clone());
                     let old = old
                         .get(&name)
                         .ok_or_else(|| invalid("syntax and field values disagree"))?;
                     match new.get(&name) {
                         None => self.remove(pair, node),
-                        Some(new) => match pair.child_by_field_name("value") {
-                            Some(value) => self.edit(value, old, new)?,
-                            None if !same_value(old, new) => {
-                                self.edits.push(Edit {
-                                    span: pair.end_byte()..pair.end_byte(),
-                                    text: format!(
-                                        "{} {}",
-                                        if pair.kind() == "flow_node" { ":" } else { "" },
-                                        json(new)
-                                    ),
-                                });
+                        Some(new) => {
+                            surviving.push(pair);
+                            let key_node = pair.child_by_field_name("key").unwrap_or(pair);
+                            let key_value = Value::String(name.clone());
+                            self.edit(key_node, &key_value, &key_value)?;
+                            match pair.child_by_field_name("value") {
+                                Some(value) => self.edit(value, old, new)?,
+                                None if !same_value(old, new) => {
+                                    self.edits.push(Edit {
+                                        span: pair.end_byte()..pair.end_byte(),
+                                        text: format!(
+                                            "{} {}",
+                                            if pair.kind() == "flow_node" { " :" } else { "" },
+                                            json(new)
+                                        ),
+                                    });
+                                }
+                                None => {}
                             }
-                            None => {}
-                        },
+                        }
                     }
+                }
+                if node.kind() == "flow_mapping" {
+                    self.separators(node, &surviving);
                 }
                 self.append(
                     node,
@@ -283,49 +459,17 @@ impl Editor<'_> {
             (Value::Array(old), Value::Array(new), "block_sequence" | "flow_sequence")
                 if !new.is_empty() =>
             {
-                let nodes = children(node);
-                if nodes.len() != old.len() {
-                    return Err(invalid("syntax and sequence values disagree"));
-                }
-                let matches = aligned(old, new);
-                let mut next = 0;
-                for (i, child) in nodes.iter().enumerate() {
-                    let Some(target) = matches[i] else {
-                        self.remove(*child, node);
-                        continue;
-                    };
-                    if next < target {
-                        self.insert_before(node, *child, &new[next..target]);
-                    }
-                    let value = &new[target];
-                    let value_node = if child.kind() == "block_sequence_item" {
-                        children(*child).first().copied()
-                    } else {
-                        Some(*child)
-                    };
-                    if let Some(child) = value_node {
-                        self.edit(child, &old[i], value)?;
-                    } else if !value.is_null() {
-                        self.edits.push(Edit {
-                            span: child.end_byte()..child.end_byte(),
-                            text: format!(" {}", json(value)),
-                        });
-                    }
-                    next = target + 1;
-                }
-                let prefix = if node.kind() == "block_sequence" {
-                    "- "
+                if old.len() != new.len() || old.iter().zip(new).any(|(a, b)| !same_value(a, b)) {
+                    self.sequence(node, old, new)?;
                 } else {
-                    ""
-                };
-                self.append(
-                    node,
-                    new[next..]
-                        .iter()
-                        .map(|v| format!("{prefix}{}", json(v)))
-                        .collect(),
-                );
+                    for (child, value) in children(node).into_iter().zip(old) {
+                        if let Some(child) = sequence_value(child) {
+                            self.edit(child, value, value)?;
+                        }
+                    }
+                }
             }
+            _ if same_value(old, new) => {}
             _ => {
                 for child in children(wrapper)
                     .into_iter()
@@ -343,105 +487,94 @@ impl Editor<'_> {
     }
 }
 
-/// Retain equal sequence children across insertions/removals. Between equal
-/// children, pair replacements so nested values can still be edited locally.
+/// Match equal children globally before pairing changed children. Each source
+/// child is used once, so reorderings and duplicate values keep their spelling.
 fn aligned(old: &[Value], new: &[Value]) -> Vec<Option<usize>> {
     let mut result = vec![None; old.len()];
-    let (mut a, mut b) = (0, 0);
-    while a < old.len() && b < new.len() {
-        if same_value(&old[a], &new[b]) {
-            result[a] = Some(b);
-            a += 1;
-            b += 1;
-            continue;
+    let mut used = vec![false; new.len()];
+    for (i, value) in old.iter().enumerate() {
+        if let Some(j) = new
+            .iter()
+            .enumerate()
+            .position(|(j, target)| !used[j] && same_value(value, target))
+        {
+            result[i] = Some(j);
+            used[j] = true;
         }
-        let old_match = old[a + 1..]
-            .iter()
-            .position(|v| same_value(v, &new[b]))
-            .map(|i| a + 1 + i);
-        let new_match = new[b + 1..]
-            .iter()
-            .position(|v| same_value(v, &old[a]))
-            .map(|i| b + 1 + i);
-        match (old_match, new_match) {
-            (Some(next), None) => a = next,
-            (None, Some(next)) => b = next,
-            (Some(next_a), Some(next_b)) if next_a - a <= next_b - b => a = next_a,
-            (Some(_), Some(next)) => b = next,
-            (None, None) => {
-                result[a] = Some(b);
-                a += 1;
-                b += 1;
-            }
+    }
+    let mut remaining = used
+        .iter()
+        .enumerate()
+        .filter_map(|(i, used)| (!used).then_some(i));
+    for matched in &mut result {
+        if matched.is_none() {
+            *matched = remaining.next();
         }
     }
     result
 }
 
+/// Visit the planned source order, including mapping keys. An alias can retain
+/// its spelling exactly when the preceding surviving anchor has its desired
+/// value. This also handles reused names and sequence children that move.
 fn aliases(
-    node: Node<'_>,
+    wrapper: Node<'_>,
     source: &str,
     old: &Value,
-    new: Option<&Value>,
-    anchors: &mut HashMap<String, bool>,
-    expand: &mut Vec<Edit>,
+    new: &Value,
+    keys: &HashMap<usize, String>,
+    anchors: &mut HashMap<String, Value>,
+    safe: &mut HashSet<usize>,
 ) -> Result<()> {
-    for child in children(node) {
+    for child in children(wrapper) {
         if child.kind() == "anchor" {
             anchors.insert(
                 source[child.start_byte() + 1..child.end_byte()].into(),
-                !new.is_some_and(|new| same_value(old, new)),
+                new.clone(),
             );
         }
     }
-    let value = value_node(node);
-    match value.kind() {
-        "alias"
-            if anchors.get(&source[value.start_byte() + 1..value.end_byte()]) == Some(&true) =>
-        {
-            expand.push(Edit {
-                span: value.byte_range(),
-                text: json(old),
-            });
+    let node = value_node(wrapper);
+    match (node.kind(), old, new) {
+        ("alias", _, _) => {
+            if anchors
+                .get(&source[node.start_byte() + 1..node.end_byte()])
+                .is_some_and(|referent| same_value(referent, new))
+            {
+                safe.insert(node.start_byte());
+            }
         }
-        "block_mapping" | "flow_mapping" => {
-            for (name, pair) in entries(value, source)? {
-                if let Some(child) = pair.child_by_field_name("value") {
+        ("block_mapping" | "flow_mapping", Value::Object(old), Value::Object(new))
+            if !new.is_empty() =>
+        {
+            for (name, pair) in entries(node, keys)? {
+                if let Some(desired) = new.get(&name) {
+                    let key = Value::String(name.clone());
                     aliases(
-                        child,
+                        pair.child_by_field_name("key").unwrap_or(pair),
                         source,
-                        &old[&name],
-                        new.and_then(|n| n.get(&name)),
+                        &key,
+                        &key,
+                        keys,
                         anchors,
-                        expand,
+                        safe,
                     )?;
+                    if let Some(value) = pair.child_by_field_name("value") {
+                        aliases(value, source, &old[&name], desired, keys, anchors, safe)?;
+                    }
                 }
             }
         }
-        "block_sequence" | "flow_sequence" => {
-            let matches = aligned(
-                old.as_array().map_or(&[], Vec::as_slice),
-                new.and_then(Value::as_array).map_or(&[], Vec::as_slice),
-            );
-            for (i, child) in children(value).iter().enumerate() {
-                let child = if child.kind() == "block_sequence_item" {
-                    children(*child).first().copied()
-                } else {
-                    Some(*child)
-                };
-                if let Some(child) = child {
-                    aliases(
-                        child,
-                        source,
-                        &old[i],
-                        matches
-                            .get(i)
-                            .copied()
-                            .flatten()
-                            .and_then(|j| new.and_then(|n| n.get(j))),
-                        anchors,
-                        expand,
-                    )?;
+        ("block_sequence" | "flow_sequence", Value::Array(old), Value::Array(new))
+            if !new.is_empty() =>
+        {
+            let nodes = children(node);
+            let matches = aligned(old, new);
+            for (j, desired) in new.iter().enumerate() {
+                if let Some(i) = matches.iter().position(|m| *m == Some(j))
+                    && let Some(child) = sequence_value(nodes[i])
+                {
+                    aliases(child, source, &old[i], desired, keys, anchors, safe)?;
                 }
             }
         }
@@ -452,25 +585,28 @@ fn aliases(
 
 pub(super) fn write(source: &str, old: &Value, new: &Value, newline: &str) -> Result<String> {
     let tree = parse(source)?;
-    let mut editor = Editor {
-        source,
-        newline,
-        edits: Vec::new(),
-    };
+    let semantic = yaml_rust2::YamlLoader::load_from_str(source).map_err(invalid)?;
+    let mut key_names = HashMap::new();
+    if let Some(yaml) = semantic.first() {
+        keys(tree.root_node(), yaml, &mut key_names)?;
+    }
+    let mut safe_aliases = HashSet::new();
     aliases(
         tree.root_node(),
         source,
         old,
-        Some(new),
+        new,
+        &key_names,
         &mut HashMap::new(),
-        &mut editor.edits,
+        &mut safe_aliases,
     )?;
-    // Descendants with affected aliases must be visited even when their values
-    // stay equal. Expand them first, then parse again for the ordinary edits.
-    if !editor.edits.is_empty() {
-        let expanded = apply(source, editor.edits)?;
-        return write(&expanded, old, new, newline);
-    }
+    let mut editor = Editor {
+        source,
+        newline,
+        edits: Vec::new(),
+        keys: &key_names,
+        safe_aliases: &safe_aliases,
+    };
     let root = value_node(tree.root_node());
     if source.trim().is_empty() || root.kind() == "stream" {
         let Value::Object(map) = new else {
