@@ -3173,7 +3173,8 @@ impl Folder {
         }
 
         // Written over an edit still waiting, the line it writes is spent
-        // too, since the file holds that edit.
+        // too, since the file holds that edit. A dead edit remains projected,
+        // but cannot spend a newer line until it is released.
         let mut writes = bound
             .as_ref()
             .map(|bound| bound.writes.clone())
@@ -3182,6 +3183,7 @@ impl Folder {
         let waiting: HashSet<String> =
             crate::store::waiting_writes_for_item(&*self.core.conn()?, &item.id)?
                 .into_iter()
+                .filter(|write| write.verdict != Some(crate::model::Verdict::Dead))
                 .map(|write| write.id)
                 .collect();
         if carries_frontmatter(Path::new(&want)) && !waiting.is_empty() {
