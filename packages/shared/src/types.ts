@@ -628,4 +628,6 @@ export interface InstanceConfig {
   audit_retention_days?: number;
   event_log_retention_hours?: number;
   trash_retention_days?: number;
+  inbound_handled_retention_days?: number;
+  inbound_pending_retention_days?: number;
 }

@@ -495,6 +495,7 @@ CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
 	`query` text NOT NULL,
 	`headers` text NOT NULL,
 	`size` integer NOT NULL,
+	`stored_bytes` integer NOT NULL,
 	`sha256` text NOT NULL,
 	`dedupe_key` text,
 	`handled_at` text,
@@ -505,6 +506,8 @@ CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_connector_handled` ON `inbound_deliveries` (`connector_id`,`handled_at`,`received_at`,`id`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_endpoint_dedupe` ON `inbound_deliveries` (`endpoint_id`,`dedupe_key`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_received` ON `inbound_deliveries` (`received_at`);
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_handled_age` ON `inbound_deliveries` (`handled_at`,`id`) WHERE "inbound_deliveries"."handled_at" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_inbound_deliveries_pending_age` ON `inbound_deliveries` (`received_at`,`id`) WHERE "inbound_deliveries"."handled_at" IS NULL;
 CREATE TABLE IF NOT EXISTS `inbound_delivery_bodies` (
 	`delivery_id` text PRIMARY KEY NOT NULL,
 	`body` blob NOT NULL,

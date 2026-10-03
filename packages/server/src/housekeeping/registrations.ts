@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { itemWrites } from "../storage/item-writes.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
@@ -260,14 +261,19 @@ export function registerHousekeepingJobs(
   const inbound = config.inbound ?? DEFAULT_INBOUND_LIMITS;
   housekeeping.register({
     name: "inbound-delivery-cleanup",
-    intervalMs: 3_600_000,
+    intervalMs: inbound.cleanupIntervalMs,
     firstRunDelayMs: 30_000,
-    run: async () => ({
-      deleted: await storage.inbound.cleanup({
-        handledDays: inbound.handledRetentionDays,
-        pendingDays: inbound.pendingRetentionDays,
-      }),
-    }),
+    run: async () => {
+      const overrides = await readInstanceConfig(storage.settings);
+      return storage.inbound.cleanup({
+        handledDays:
+          overrides?.inbound_handled_retention_days ??
+          inbound.handledRetentionDays,
+        pendingDays:
+          overrides?.inbound_pending_retention_days ??
+          inbound.pendingRetentionDays,
+      });
+    },
   });
 
   // Reap grantless DCR clients so unauthenticated registration doesn't grow

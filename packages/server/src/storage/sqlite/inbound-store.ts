@@ -1,16 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  inArray,
-  isNull,
-  lt,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type {
@@ -112,7 +101,15 @@ export class SqliteInboundStore implements InboundStore {
   }
 
   async target(tokenHash: string): Promise<InboundTarget | null> {
-    const row = await this.db
+    return this.liveTarget(this.db, tokenHash, new Date().toISOString());
+  }
+
+  private async liveTarget(
+    db: Pick<DrizzleDb, "select">,
+    tokenHash: string,
+    now: string,
+  ): Promise<InboundTarget | null> {
+    const row = await db
       .select({
         endpoint_id: inboundEndpoints.id,
         connector_id: inboundEndpoints.connector_id,
@@ -126,10 +123,7 @@ export class SqliteInboundStore implements InboundStore {
           eq(inboundEndpoints.token_hash, tokenHash),
           isNull(inboundEndpoints.retired_at),
           isNull(apiKeys.revoked_at),
-          or(
-            isNull(apiKeys.expires_at),
-            gt(apiKeys.expires_at, new Date().toISOString()),
-          ),
+          or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, now)),
         ),
       )
       .get();
@@ -155,41 +149,72 @@ export class SqliteInboundStore implements InboundStore {
     return { count: row?.count ?? 0, bytes: row?.bytes ?? 0 };
   }
 
-  async receive(input: {
-    endpointId: string;
-    connectorId: string;
-    method: string;
-    query: string;
-    headers: [string, string][];
-    body: Buffer;
-    dedupeKey: string | null;
-  }): Promise<string> {
+  async receive(
+    input: Parameters<InboundStore["receive"]>[0],
+    limits: Parameters<InboundStore["receive"]>[1],
+  ): ReturnType<InboundStore["receive"]> {
     const id = generateId();
     const sha256 = createHash("sha256").update(input.body).digest("hex");
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
+      const now = new Date().toISOString();
+      const target = await this.liveTarget(tx, input.tokenHash, now);
+      if (target === null) return { kind: "not_found" };
+      const dedupeKey =
+        target.duplicate_header === null
+          ? null
+          : (input.headers.find(
+              ([name]) => name.toLowerCase() === target.duplicate_header,
+            )?.[1] ?? null);
+      const metadata = {
+        id,
+        endpoint_id: target.endpoint_id,
+        connector_id: target.connector_id,
+        received_at: now,
+        method: input.method,
+        query: input.query,
+        headers: input.headers,
+        size: input.body.length,
+        sha256,
+        dedupe_key: dedupeKey,
+        handled_at: null,
+        outcome: null,
+      };
+      // Reserve handled_at/outcome growth so handling cannot need capacity.
+      const storedBytes =
+        input.body.length +
+        Buffer.byteLength(JSON.stringify(metadata), "utf8") +
+        32;
+      if (!Number.isSafeInteger(storedBytes))
+        throw new Error("Inbound charge exceeds safe integer range");
+      const capacity = await tx.all<{ fits: number }>(sql`
+        SELECT
+          retained_count < ${limits.retainedDeliveries}
+          AND retained_bytes <= ${limits.retainedBytes - storedBytes}
+          AND pending_count < ${limits.backlogDeliveries}
+          AND pending_bytes <= ${limits.backlogBytes - input.body.length} AS fits
+        FROM (
+          SELECT COUNT(*) AS retained_count,
+            COALESCE(SUM(stored_bytes), 0) AS retained_bytes,
+            COUNT(CASE WHEN handled_at IS NULL THEN 1 END) AS pending_count,
+            COALESCE(SUM(CASE WHEN handled_at IS NULL THEN size ELSE 0 END), 0) AS pending_bytes
+          FROM inbound_deliveries WHERE connector_id = ${target.connector_id}
+        )
+      `);
+      if (capacity[0]?.fits !== 1) return { kind: "capacity" };
       await tx
         .insert(inboundDeliveries)
         .values({
-          id,
-          endpoint_id: input.endpointId,
-          connector_id: input.connectorId,
-          received_at: new Date().toISOString(),
-          method: input.method,
-          query: input.query,
+          ...metadata,
           headers: JSON.stringify(input.headers),
-          size: input.body.length,
-          sha256,
-          dedupe_key: input.dedupeKey,
-          handled_at: null,
-          outcome: null,
+          stored_bytes: storedBytes,
         })
         .run();
       await tx
         .insert(inboundDeliveryBodies)
         .values({ delivery_id: id, body: input.body })
         .run();
+      return { kind: "accepted", id };
     });
-    return id;
   }
 
   async listDeliveries(
@@ -304,29 +329,60 @@ export class SqliteInboundStore implements InboundStore {
   async cleanup(retention: {
     handledDays: number;
     pendingDays: number;
-  }): Promise<number> {
+  }): Promise<{ deleted: number; remaining: boolean }> {
     const now = Date.now();
     const cutoff = (days: number): string =>
       new Date(now - days * DAY_MS).toISOString();
-    // A retention of zero or less keeps that kind whatever its age, as every
-    // other retention the instance names does.
-    const expired = [
-      retention.handledDays > 0
-        ? lt(inboundDeliveries.handled_at, cutoff(retention.handledDays))
-        : undefined,
-      retention.pendingDays > 0
-        ? and(
-            isNull(inboundDeliveries.handled_at),
-            lt(inboundDeliveries.received_at, cutoff(retention.pendingDays)),
+    const handledCutoff =
+      retention.handledDays > 0 ? cutoff(retention.handledDays) : null;
+    const pendingCutoff =
+      retention.pendingDays > 0 ? cutoff(retention.pendingDays) : null;
+    if (handledCutoff === null && pendingCutoff === null)
+      return { deleted: 0, remaining: false };
+    return this.db.transaction(async (tx) => {
+      const candidates = await tx.all<{ id: string; stored_bytes: number }>(sql`
+        SELECT id, stored_bytes FROM (
+          SELECT * FROM (
+            SELECT id, stored_bytes, handled_at AS stamp FROM inbound_deliveries
+            WHERE handled_at IS NOT NULL AND handled_at < ${handledCutoff}
+            ORDER BY handled_at, id LIMIT 500
           )
-        : undefined,
-    ].filter((condition) => condition !== undefined);
-    if (expired.length === 0) return 0;
-    const result = await this.db
-      .delete(inboundDeliveries)
-      .where(or(...expired))
-      .run();
-    return result.rowsAffected;
+          UNION ALL
+          SELECT * FROM (
+            SELECT id, stored_bytes, received_at AS stamp FROM inbound_deliveries
+            WHERE handled_at IS NULL AND received_at < ${pendingCutoff}
+            ORDER BY received_at, id LIMIT 500
+          )
+        ) ORDER BY stamp, id LIMIT 500
+      `);
+      const ids: string[] = [];
+      let chargedBytes = 0;
+      for (const row of candidates) {
+        if (
+          ids.length > 0 &&
+          row.stored_bytes > 32 * 1024 * 1024 - chargedBytes
+        )
+          break;
+        ids.push(row.id);
+        chargedBytes += row.stored_bytes;
+      }
+      if (ids.length > 0) {
+        await tx
+          .delete(inboundDeliveries)
+          .where(inArray(inboundDeliveries.id, ids))
+          .run();
+      }
+      const remaining = await tx.all<{ present: number }>(sql`
+        SELECT 1 AS present FROM (
+          SELECT id FROM inbound_deliveries
+          WHERE handled_at IS NOT NULL AND handled_at < ${handledCutoff}
+          UNION ALL
+          SELECT id FROM inbound_deliveries
+          WHERE handled_at IS NULL AND received_at < ${pendingCutoff}
+        ) LIMIT 1
+      `);
+      return { deleted: ids.length, remaining: remaining.length > 0 };
+    });
   }
 
   private async withDuplicates(

@@ -3081,16 +3081,27 @@ export interface InboundStore {
   /** How many deliveries the registration has not handled, and their
    *  bytes. */
   backlog(connectorId: string): Promise<{ count: number; bytes: number }>;
-  /** Store a delivery and its body together; answers its id. */
-  receive(input: {
-    endpointId: string;
-    connectorId: string;
-    method: string;
-    query: string;
-    headers: [string, string][];
-    body: Buffer;
-    dedupeKey: string | null;
-  }): Promise<string>;
+  /** Recheck standing and prospective registration capacity, then insert
+   * metadata and body in one writer transaction after the body arrives. */
+  receive(
+    input: {
+      tokenHash: string;
+      method: string;
+      query: string;
+      headers: [string, string][];
+      body: Buffer;
+    },
+    limits: {
+      backlogDeliveries: number;
+      backlogBytes: number;
+      retainedDeliveries: number;
+      retainedBytes: number;
+    },
+  ): Promise<
+    | { kind: "accepted"; id: string }
+    | { kind: "not_found" }
+    | { kind: "capacity" }
+  >;
   /** A registration's deliveries, oldest first, one page at a time. */
   listDeliveries(
     connectorId: string,
@@ -3108,13 +3119,13 @@ export interface InboundStore {
     ids: string[],
     outcome: InboundOutcome,
   ): Promise<InboundDelivery[] | null>;
-  /** Remove handled deliveries past one retention and unhandled ones past
-   *  the other, keeping a kind whose retention is zero or less. Answers how
-   *  many went. */
+  /** Delete one age-eligible batch, at most 500 projected candidates and a
+   *  32 MiB charged-byte target with one oversized first-row exception.
+   *  Zero retention keeps its class. Capacity never triggers eviction. */
   cleanup(retention: {
     handledDays: number;
     pendingDays: number;
-  }): Promise<number>;
+  }): Promise<{ deleted: number; remaining: boolean }>;
 }
 
 /** The item store's methods that write an item row. Taken through `Pick`,

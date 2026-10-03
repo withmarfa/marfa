@@ -84,7 +84,7 @@ function isMarfaError(err: unknown): err is ShapedError {
  * The walk is bounded, because a `cause` chain is data and a cycle in
  * one should not hang the error handler.
  */
-function shapedError(err: unknown): ShapedError | undefined {
+export function shapedError(err: unknown): ShapedError | undefined {
   if (isMarfaError(err)) return err;
   for (let step: unknown = err, depth = 0; depth < 8; depth++) {
     if (step === null || typeof step !== "object") return undefined;

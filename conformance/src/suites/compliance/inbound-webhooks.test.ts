@@ -544,11 +544,14 @@ describe("the receiving door on an instance that names its limits", () => {
     await server?.stop();
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  async function freshConnector(label: string): Promise<Connector> {
-    if (server === undefined) throw new Error("no server");
+  async function freshConnector(
+    label: string,
+    target = server,
+  ): Promise<Connector> {
+    if (target === undefined) throw new Error("no server");
     const minter = new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: server.workingKey,
+      baseUrl: target.apiUrl,
+      apiKey: target.workingKey,
     });
     const minted = await minter.createKey({
       label,
@@ -557,7 +560,7 @@ describe("the receiving door on an instance that names its limits", () => {
     });
     expect(minted.status).toBe(201);
     const own = new MarfaClient({
-      baseUrl: server.apiUrl,
+      baseUrl: target.apiUrl,
       apiKey: minted.data.key,
     });
     const registered = await own.registerConnector({ name: label });
@@ -617,6 +620,17 @@ describe("the receiving door on an instance that names its limits", () => {
     expect((await pending(owner)).map((d) => d.size)).toEqual([6]);
   });
 
+  it("checks prospective bytes and accepts a zero body at exactly full pending bytes", async () => {
+    const owner = await freshConnector("prospective-bytes");
+    const made = await endpoint(owner);
+    const over = await send(server!.apiUrl, made.path, "x".repeat(7));
+    expect(over.status).toBe(503);
+    expect(codeOf(over)).toBe("inbound_unavailable");
+    idOf(await send(server!.apiUrl, made.path, "x".repeat(6)));
+    idOf(await send(server!.apiUrl, made.path, ""));
+    expect((await pending(owner)).map((d) => d.size)).toEqual([6, 0]);
+  });
+
   it("answers request_timeout to a body that does not arrive in time, and stores nothing", async () => {
     const owner = await freshConnector("stalled");
     const made = await endpoint(owner);
@@ -654,18 +668,30 @@ describe("the receiving door on an instance that names its limits", () => {
     idOf(await send(server!.apiUrl, made.path, "whole"));
   });
 
-  it("refuses a body that would pass the bytes the instance holds in flight", async () => {
-    const owner = await freshConnector("in-flight");
-    const made = await endpoint(owner);
-    // First, with nothing waiting, so the backlog's own caps cannot answer.
-    const held = await send(server!.apiUrl, made.path, "x".repeat(9));
-    expect(held.status).toBe(503);
-    expect(codeOf(held)).toBe("inbound_unavailable");
-    expect(await pending(owner)).toEqual([]);
-    // Witness: a body within the budget is taken.
-    idOf(await send(server!.apiUrl, made.path, "x".repeat(8)));
-    expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
-  });
+  it(
+    "refuses a body that would pass the bytes the instance holds in flight",
+    async () => {
+      const flight = await bootFreshServer("inbound-in-flight", {
+        RATE_LIMIT_ENABLED: "false",
+        MARFA_INBOUND_BACKLOG_BYTES: "64",
+        MARFA_INBOUND_MAX_BYTES: "64",
+        MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
+      });
+      try {
+        const owner = await freshConnector("in-flight", flight);
+        const made = await endpoint(owner);
+        const held = await send(flight.apiUrl, made.path, "x".repeat(9));
+        expect(held.status).toBe(503);
+        expect(codeOf(held)).toBe("inbound_unavailable");
+        expect(await pending(owner)).toEqual([]);
+        idOf(await send(flight.apiUrl, made.path, "x".repeat(8)));
+        expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
+      } finally {
+        await flight.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("reading and handling", () => {
@@ -857,5 +883,117 @@ describe("reading and handling", () => {
     });
     const after = (await pending(owner)).find((d) => d.id === repeat);
     expect(after?.duplicate_of).toEqual({ id: original, outcome: "processed" });
+  });
+});
+
+describe("retained inbound capacity", () => {
+  let server: FreshServer | undefined;
+  let minter: MarfaClient;
+  beforeAll(async () => {
+    server = await bootFreshServer("inbound-retained", {
+      RATE_LIMIT_ENABLED: "false",
+      MARFA_INBOUND_RETAINED_DELIVERIES: "3",
+      MARFA_INBOUND_RETAINED_BYTES: "4096",
+      MARFA_INBOUND_HANDLED_RETENTION_DAYS: "0",
+      MARFA_INBOUND_PENDING_RETENTION_DAYS: "0",
+    });
+    minter = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    });
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(async () => {
+    await server?.stop();
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+  async function own(label: string): Promise<Connector> {
+    const key = await minter.createKey({
+      label,
+      source: label,
+      default_tier: "library",
+    });
+    expect(key.status).toBe(201);
+    const client = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: key.data.key,
+    });
+    const registration = await client.registerConnector({ name: label });
+    expect(registration.status).toBe(201);
+    return { client, id: registration.data.id };
+  }
+  it("bounds handled zero-body receipts across live and retired endpoints of a registration", async () => {
+    const owner = await own("retained-rows");
+    const first = await endpoint(owner);
+    const second = await endpoint(owner);
+    for (const path of [first.path, first.path, second.path]) {
+      const id = idOf(await send(server!.apiUrl, path, ""));
+      expect(
+        (
+          await owner.client.markInboundDeliveriesHandled(owner.id, {
+            ids: [id],
+            outcome: "processed",
+          })
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (await owner.client.retireInboundEndpoint(owner.id, first.id)).status,
+    ).toBe(200);
+    const refused = await send(server!.apiUrl, second.path, "");
+    expect(refused.status).toBe(503);
+    expect(codeOf(refused)).toBe("inbound_unavailable");
+    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
+    const rows = await owner.client.listInboundDeliveries(owner.id, {
+      state: "any",
+    });
+    expect(rows.status).toBe(200);
+    expect(rows.data.data).toHaveLength(3);
+    expect(
+      rows.data.data.every(
+        (row) =>
+          row.size === 0 &&
+          row.outcome === "processed" &&
+          !("stored_bytes" in row),
+      ),
+    ).toBe(true);
+    const other = await own("retained-independent");
+    idOf(await send(server!.apiUrl, (await endpoint(other)).path, ""));
+  });
+  it("counts query metadata when every retained body has zero bytes", async () => {
+    const owner = await own("retained-metadata");
+    const made = await endpoint(owner);
+    idOf(
+      await send(
+        server!.apiUrl,
+        made.path + "?metadata=" + "x".repeat(3500),
+        "",
+      ),
+    );
+    const refused = await send(server!.apiUrl, made.path, "");
+    expect(refused.status).toBe(503);
+    expect(codeOf(refused)).toBe("inbound_unavailable");
+    expect((await pending(owner)).map((row) => row.size)).toEqual([0]);
+  });
+  it("round trips retention overrides and refuses invalid values", async () => {
+    const before = await minter.getConfig();
+    expect(before.status).toBe(200);
+    const changed = await minter.updateConfig({
+      ...(before.data as Record<string, unknown>),
+      inbound_handled_retention_days: 0,
+      inbound_pending_retention_days: 2,
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.data).toMatchObject({
+      inbound_handled_retention_days: 0,
+      inbound_pending_retention_days: 2,
+    });
+    for (const value of [-1, 1.5])
+      expect(
+        (await minter.updateConfig({ inbound_pending_retention_days: value }))
+          .status,
+      ).toBe(400);
+    expect((await minter.updateConfig({})).status).toBe(200);
+    const cleared = await minter.getConfig();
+    expect(cleared.data).not.toHaveProperty("inbound_handled_retention_days");
+    expect(cleared.data).not.toHaveProperty("inbound_pending_retention_days");
   });
 });

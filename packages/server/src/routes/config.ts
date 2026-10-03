@@ -30,6 +30,8 @@ const instanceConfigShape = (strict: boolean) => ({
   audit_retention_days: z.number().int().min(0).optional(),
   event_log_retention_hours: z.number().int().min(0).optional(),
   trash_retention_days: z.number().int().min(0).optional(),
+  inbound_handled_retention_days: z.number().int().min(0).optional(),
+  inbound_pending_retention_days: z.number().int().min(0).optional(),
 });
 
 /**

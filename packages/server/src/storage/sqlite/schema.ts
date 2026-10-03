@@ -1254,6 +1254,7 @@ export const inboundDeliveries = sqliteTable(
     /** `[name, value]` pairs in the order and case they arrived. */
     headers: text("headers").notNull(),
     size: integer("size").notNull(),
+    stored_bytes: integer("stored_bytes").notNull(),
     sha256: text("sha256").notNull(),
     dedupe_key: text("dedupe_key"),
     handled_at: text("handled_at"),
@@ -1274,6 +1275,12 @@ export const inboundDeliveries = sqliteTable(
       table.dedupe_key,
     ),
     index("idx_inbound_deliveries_received").on(table.received_at),
+    index("idx_inbound_deliveries_handled_age")
+      .on(table.handled_at, table.id)
+      .where(sql`${table.handled_at} IS NOT NULL`),
+    index("idx_inbound_deliveries_pending_age")
+      .on(table.received_at, table.id)
+      .where(sql`${table.handled_at} IS NULL`),
   ],
 );
 
