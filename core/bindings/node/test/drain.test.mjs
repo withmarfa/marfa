@@ -5,13 +5,13 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MarfaCore, Tier } from "../index.js";
+import { MarfaCore, Tier, BlockedReason, GrantKind, GrantLevel } from "../index.js";
 
 const CONTRACT = /** @type {{ info: { version: string } }} */ (
   JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
 ).info.version;
 
-async function unclaiming() {
+async function unclaiming(missingGrant = false) {
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
     const json = (
@@ -40,7 +40,9 @@ async function unclaiming() {
         error: {
           code: "forbidden",
           message: "not claimed",
-          details: { source: "notes" },
+          details: missingGrant
+            ? { grant: { kind: "type", name: "core.note", level: "write" } }
+            : { source: "notes" },
         },
       });
     } else if (path === "/items") {
@@ -293,4 +295,26 @@ test("reads a refusal into its parts, and keeps the refused body until it is dis
   );
   assert.equal(core.discard(created.id), true);
   assert.deepEqual(core.queue(), []);
+});
+
+
+test("reports a missing grant in both the drain and queued blocked verdict", async (t) => {
+  const server = await unclaiming(true);
+  t.after(server.close);
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
+  await core.hydrate(["core.note"], Tier.Library);
+  core.createItem({ type: "core.note", properties: { title: "kept" } });
+  const report = await core.drain();
+  const queued = core.queue();
+  for (const verdict of [report.verdicts[0]?.verdict, queued[0]?.verdict]) {
+    assert.equal(verdict?.verdict, "blocked");
+    if (verdict?.verdict !== "blocked") throw new Error("expected a blocked verdict");
+    assert.equal(verdict.reason, BlockedReason.CredentialRefused);
+    assert.equal(verdict.refusal?.code, "forbidden");
+    assert.deepEqual(verdict.refusal?.grant, { kind: GrantKind.Type, name: "core.note", level: GrantLevel.Write });
+  }
+  assert.equal(queued[0]?.waiting, false);
+  assert.deepEqual(queued[0]?.body, { type: "core.note", properties: { title: "kept" }, tier: "library", id: queued[0]?.itemId });
 });

@@ -60,7 +60,7 @@ pub struct DrainVerdict {
     /// `None` where the write was sent and not answered.
     pub verdict: Option<Verdict>,
     pub reason: Option<String>,
-    /// Under `refused`, the refusal read from what the queue stored.
+    /// A terminal or credential refusal, read from what the queue stored.
     pub refusal: Option<Refusal>,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
@@ -200,6 +200,13 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // Looks environmental, but clears only when a person replaces the
         // credential.
         (401, _) => Classified::BlockQueue(BlockedReason::CredentialRefused),
+        (403, _)
+            if Refusal::read(&answer.code, Some(&answer.body))
+                .grant
+                .is_some() =>
+        {
+            Classified::Block(BlockedReason::CredentialRefused)
+        }
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
@@ -708,14 +715,18 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         }
         waited(&mut report, settled.retry_after_seconds);
         answers.insert(row.id.clone(), settled.verdict);
-        if settled.verdict.is_none() {
+        // A credential refusal can hide a receipt for a committed write.
+        // Its followers must keep their bodies unsent until that receipt arrives.
+        let credential_block = settled.verdict == Some(Verdict::Blocked)
+            && settled.reason.as_deref() == Some(BlockedReason::CredentialRefused.as_str());
+        if settled.verdict.is_none() || credential_block {
             waiting.insert(row.id.clone());
         }
         // A refused credential is not about the edit.
         if matches!(
             settled.verdict,
             Some(Verdict::Refused | Verdict::Blocked | Verdict::Dead)
-        ) && !settled.stops_the_drain
+        ) && !credential_block
         {
             let conn = core.conn()?;
             move_edits_back(&conn, row)?;
@@ -859,6 +870,11 @@ fn move_edits_behind(
             }
             WriteKind::UpdateItem | WriteKind::UpdateEdge => {
                 let before = base.is_some_and(|base| base < version);
+                // Catch-up can already have supplied this receipt's version.
+                // A later edit that read its values has no base to rewind.
+                if landed && base == Some(version) && holds(conn, &id, at)? {
+                    continue;
+                }
                 // An edge is never merged, so its answer is the edit applied
                 // to the version it named.
                 let onto = landed
@@ -1005,8 +1021,7 @@ fn verdict_of(row: &QueuedWrite, settled: &Settled, answer: Option<&str>) -> Dra
         edge_id: row.edge_id.clone(),
         verdict: settled.verdict,
         reason: settled.reason.clone(),
-        refusal: (settled.verdict == Some(Verdict::Refused))
-            .then(|| Refusal::read(settled.reason.as_deref().unwrap_or_default(), answer)),
+        refusal: Refusal::for_write(settled.verdict, settled.reason.as_deref(), answer),
         conflicted_copy_id: settled.conflicted_copy_id.clone(),
         refusals: settled.refusals,
         replayed: settled.replayed,

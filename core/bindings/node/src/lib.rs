@@ -344,6 +344,7 @@ pub enum Verdict {
     /// verdict, and its `waiting` says so.
     Blocked {
         reason: BlockedReason,
+        refusal: Option<Refusal>,
     },
     /// Refused until the ceiling; released by id. The row's `answer` holds
     /// the last answer it got.
@@ -707,8 +708,9 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
         Some(O::Refused(refusal)) => Verdict::Refused {
             refusal: refusal.into(),
         },
-        Some(O::Blocked { reason }) => Verdict::Blocked {
+        Some(O::Blocked { reason, refusal }) => Verdict::Blocked {
             reason: reason.into(),
+            refusal: refusal.map(Into::into),
         },
         Some(O::Dead) => Verdict::Dead,
     };
@@ -1683,6 +1685,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blocked_grant_crosses_without_losing_the_refusal() {
+        let refusal = marfa_core::Refusal::read(
+            "credential_refused",
+            Some(
+                r#"{"error":{"code":"type_not_permitted","message":"No write access","details":{"grant":{"kind":"type","name":"core.note","level":"write"}}}}"#,
+            ),
+        );
+        let outcome = marfa_core::Outcome::of(
+            Some(marfa_core::Verdict::Blocked),
+            Some("credential_refused"),
+            None,
+            Vec::new(),
+            Some(&refusal),
+        )
+        .unwrap();
+        let (
+            Some(Verdict::Blocked {
+                refusal: Some(refusal),
+                ..
+            }),
+            false,
+        ) = crossed(outcome)
+        else {
+            panic!("the blocked grant lost its parsed refusal");
+        };
+        assert_eq!(refusal.code.as_deref(), Some("type_not_permitted"));
+        assert_eq!(refusal.message.as_deref(), Some("No write access"));
+        assert_eq!(
+            refusal.grant,
+            Some(MissingGrant {
+                kind: GrantKind::Type,
+                name: "core.note".into(),
+                level: GrantLevel::Write
+            })
+        );
+    }
+
+    #[test]
     fn a_contract_refusal_crosses_under_its_own_code() {
         let error = failure(marfa_core::CoreError::ContractMismatch {
             origin: "https://marfa.example".into(),
@@ -1742,8 +1782,16 @@ mod tests {
             })
         );
         for reason in marfa_core::BlockedReason::ALL {
-            let (Some(Verdict::Blocked { reason: crossed }), false) =
-                crossed(Some(O::Blocked { reason }))
+            let (
+                Some(Verdict::Blocked {
+                    reason: crossed,
+                    refusal: None,
+                }),
+                false,
+            ) = crossed(Some(O::Blocked {
+                reason,
+                refusal: None,
+            }))
             else {
                 panic!("a blocked outcome crossed as another verdict");
             };
