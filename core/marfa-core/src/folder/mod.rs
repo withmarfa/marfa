@@ -3064,7 +3064,6 @@ impl Folder {
                     }
                     None => match self.core.blob(blob).map(std::fs::read) {
                         Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
-                        // Credential and address failures stop the pull.
                         Err(
                             error @ (CoreError::Unauthorized { .. }
                             | CoreError::RenewalFailed(_)
