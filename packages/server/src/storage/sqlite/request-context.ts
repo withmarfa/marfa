@@ -1,3 +1,14 @@
+import {
+  createRegistryFrame,
+  mergeRegistryFrame,
+  discardRegistryFrame,
+  type RegistryFrame,
+} from "@withmarfa/shared";
+import {
+  registryContext,
+  rootRegistryParticipant,
+  assertRegistryReady,
+} from "./registry-context.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DrizzleDb } from "./connection.js";
 import {
@@ -46,12 +57,6 @@ import {
  * the *unwrapped* base db (`storage.betterAuthDb`). Auth runs its own
  * context-management (cookies, sessions) outside the request middleware
  * and would be confused by a substituted db.
- *
- * **Non-HTTP code paths.** Retention jobs, the webhook poller, and
- * server boot all run without an ALS context. Their queries fall
- * through the proxy to the base db (no ALS context → no transaction
- * substitution) and execute non-transactionally. Correct: these paths
- * are intentionally non-transactional.
  */
 
 /**
@@ -99,27 +104,43 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
             transactionControl.getStore() ?? new TransactionControl();
           return transactionControl.run(root, async () => {
             root.assertUsable();
+            assertRegistryReady();
+            const parentFrame = registryContext.getStore();
+            if (parentFrame && !parentFrame.active)
+              throw new Error("Registry transaction context is closed");
+            let frame: RegistryFrame | undefined;
             const previousCause = root.callbackCause;
             const callbackState: { failed: boolean; error?: unknown } = {
               failed: false,
             };
             try {
-              return await bound(
-                (newTx: SqliteTxContext) =>
-                  sqliteRequestContext.run({ tx: newTx }, async () => {
-                    try {
-                      const result = await callback(newTx);
-                      root.assertUsable();
-                      return result;
-                    } catch (error) {
-                      callbackState.failed = true;
-                      callbackState.error = error;
-                      root.callbackCause = error;
-                      throw error;
-                    }
-                  }),
+              const result = await bound(
+                (newTx: SqliteTxContext) => {
+                  if (parentFrame) frame = createRegistryFrame(parentFrame);
+                  else {
+                    const structural = rootRegistryParticipant();
+                    frame = structural.frame;
+                    root.participant = structural.participant;
+                  }
+                  return registryContext.run(frame, () =>
+                    sqliteRequestContext.run({ tx: newTx }, async () => {
+                      try {
+                        const result = await callback(newTx);
+                        root.assertUsable();
+                        return result;
+                      } catch (error) {
+                        callbackState.failed = true;
+                        callbackState.error = error;
+                        root.callbackCause = error;
+                        throw error;
+                      }
+                    }),
+                  );
+                },
                 ...rest,
               );
+              if (frame?.parent) mergeRegistryFrame(frame);
+              return result;
             } catch (error) {
               if (!root.begun && !ctx) throw error;
               if (!callbackState.failed || error !== callbackState.error) {
@@ -134,6 +155,7 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
               root.assertUsable();
               throw error;
             } finally {
+              if (frame?.active) discardRegistryFrame(frame);
               root.callbackCause = previousCause;
             }
           });

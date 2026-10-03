@@ -1,5 +1,10 @@
 import { eq } from "drizzle-orm";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  registerEdgeTypeSchema,
+  unregisterEdgeTypeSchema,
+} from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore } from "../interface.js";
 import { edgeTypes } from "./schema.js";
@@ -27,28 +32,33 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   }
 
   async create(schema: EdgeTypeSchema): Promise<EdgeTypeSchema> {
-    const existing = await this.get(schema.id);
-    if (existing) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Edge type ${schema.id} already exists`,
-        { edge_type: schema.id },
-      );
-    }
-    const now = new Date().toISOString();
-    await this.db
-      .insert(edgeTypes)
-      .values({
-        id: schema.id,
-        schema: JSON.stringify(schema),
-        created_at: now,
-        updated_at: now,
-      })
-      .run();
-    return schema;
+    return this.db.transaction(async (tx) => {
+      const existing = await this.get(schema.id);
+      if (existing)
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `Edge type ${schema.id} already exists`,
+          { edge_type: schema.id },
+        );
+      const now = new Date().toISOString();
+      await tx
+        .insert(edgeTypes)
+        .values({
+          id: schema.id,
+          schema: JSON.stringify(schema),
+          created_at: now,
+          updated_at: now,
+        })
+        .run();
+      registerEdgeTypeSchema(schema);
+      return schema;
+    });
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
+    await this.db.transaction(async (tx) => {
+      await tx.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
+      unregisterEdgeTypeSchema(id);
+    });
   }
 }

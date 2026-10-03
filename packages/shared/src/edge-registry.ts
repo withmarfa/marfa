@@ -1,4 +1,9 @@
 import {
+  registryMapFacet,
+  stageRegistryEdge,
+  removeRegistryEdge,
+} from "./registry-view.js";
+import {
   ALL_EDGE_TYPES,
   SHIPPED_EDGE_TYPE_SHAPES,
   isRoleConstraint,
@@ -22,9 +27,7 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
   ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
 );
 
-/** Custom edge types registered on this instance, keyed by id. One bucket:
- *  a registration is visible to every caller. */
-const _customRegistry = new Map<string, EdgeTypeSchema>();
+const _customRegistry = registryMapFacet("edges");
 
 /**
  * The core edge-type registry — the nine shipped edge types by identifier.
@@ -62,13 +65,12 @@ export function isCoreEdgeType(edgeTypeId: string): boolean {
  * here (they live in the global map); callers filter them out before calling.
  */
 export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
-  const bucket = _customRegistry;
-  bucket.set(schema.id, schema);
+  stageRegistryEdge(schema);
 }
 
 /** Removes a custom edge-type schema from the runtime overlay. */
 export function unregisterEdgeTypeSchema(id: string): void {
-  _customRegistry.delete(id);
+  removeRegistryEdge(id);
 }
 
 /**

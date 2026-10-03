@@ -223,8 +223,6 @@ const REGISTRY_WRITERS: Record<string, string> = {
   "routes/types.ts": "POST, PUT and DELETE /types, held to the type map",
   "routes/edge-types.ts":
     "POST and DELETE /edge-types, held to the edge map on the id and reverse name",
-  "routes/_type-write.ts":
-    "puts the in-memory registry back when a type write it wraps does not commit",
   "routes/admin-archive-types.ts":
     "the restore's type registrations, reached only through POST /admin/restore-archive",
   "routes/admin-platform-types.ts": "DELETE /admin/platform-types/:id",

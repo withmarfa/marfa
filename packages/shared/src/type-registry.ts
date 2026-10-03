@@ -1,3 +1,11 @@
+import {
+  registryMapFacet,
+  registrySystemIds,
+  registryView,
+  seedRegistryPlatform,
+  stageRegistryType,
+  removeRegistryType,
+} from "./registry-view.js";
 import { z } from "zod";
 import {
   ALL_TYPES,
@@ -89,9 +97,11 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 // set and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
 // identically; the split decides the lifecycle and search restrictions
 // `system.*` carries, not how a lookup behaves.
-const _coreRegistry = new Map<string, TypeSchema>(
-  [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
-);
+const _coreRegistry = registryMapFacet("platform");
+seedRegistryPlatform([
+  ...ALL_TYPES.map((schema) => ({ schema, family: "core" as const })),
+  ...ALL_SYSTEM_TYPES.map((schema) => ({ schema, family: "system" as const })),
+]);
 
 /**
  * Which shipped family a platform type belongs to. The lifecycle and search
@@ -192,42 +202,16 @@ export function isValidTypeOrigin(value: unknown): value is TypeOrigin {
 /**
  * Refill the platform registry from seeded rows.
  *
- * The compiled arrays remain the map's contents until this is called, which is
- * what keeps anything that runs before a boot, this package's tests among
- * them, resolving the shipped vocabulary with no database in sight. A server
- * calls this once at boot so an instance's vocabulary is the
- * data it holds rather than the build it happens to be running.
+ * Standalone clients begin with the build's shipped vocabulary. A selected
+ * transaction stages the replacement in its own view.
  *
- * The Map and the Set are mutated in place rather than replaced, because
+ * The Map and Set facades retain their identity, because
  * `TYPE_REGISTRY` and `SYSTEM_TYPE_IDS` are exported bindings that consumers
  * capture at import time. Handing back new objects
  * would leave every existing reference pointing at the pre-seed contents.
  */
 export function seedPlatformTypes(seeded: readonly SeededPlatformType[]): void {
-  _coreRegistry.clear();
-  _systemTypeIds.clear();
-  for (const { schema, family } of seeded) {
-    _coreRegistry.set(schema.id, schema);
-    // Exhaustive rather than an `if`, so a family added to the union fails
-    // to compile here instead of being treated as core by default. The set
-    // decides lifecycle and whether a caller may set `tier`, so a family
-    // that misses it is not inert: it silently gives a new shipped type the
-    // three-state lifecycle and an open `tier`.
-    switch (family) {
-      case "system":
-        _systemTypeIds.add(schema.id);
-        break;
-      case "core":
-        break;
-      default: {
-        const _exhaustive: never = family;
-        void _exhaustive;
-      }
-    }
-  }
-  // Every cached Zod schema was compiled against the pre-seed field set.
-  zodSchemaCache.clear();
-  zodSchemaStrictCache.clear();
+  seedRegistryPlatform(seeded);
 }
 
 /**
@@ -247,11 +231,9 @@ export function shippedPlatformTypes(): SeededPlatformType[] {
 }
 
 /**
- * Custom types registered on this instance, keyed by id. One bucket: a
- * registration is visible to every caller, and the lifecycle rules key on
- * the identifier rather than on which map holds the schema.
+ * Lifecycle rules key on the identifier rather than on which facet holds it.
  */
-const _customRegistry = new Map<string, TypeSchema>();
+const _customRegistry = registryMapFacet("custom");
 
 /**
  * Resolves a type schema: the shipped registry first, then the instance's
@@ -263,12 +245,8 @@ function resolveSchema(typeId: string): TypeSchema | undefined {
   return _coreRegistry.get(typeId) ?? _customRegistry.get(typeId);
 }
 
-// Mutable behind the readonly exports below, so `seedPlatformTypes` can refill
-// them in place without invalidating references consumers captured at import.
-const _systemTypeIds = new Set<string>(ALL_SYSTEM_TYPES.map((s) => s.id));
-
 /** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
-export const SYSTEM_TYPE_IDS: ReadonlySet<string> = _systemTypeIds;
+export const SYSTEM_TYPE_IDS: ReadonlySet<string> = registrySystemIds;
 
 /**
  * First-class field names on the `Item` wire shape. Re-exported from
@@ -429,58 +407,13 @@ export function isSystemType(id: string): boolean {
  * for such a type identically wherever it sits.
  */
 export function registerTypeSchema(schema: TypeSchema): void {
-  const bucket = _customRegistry;
-  // Read before the write: on an update the descendants are the same either
-  // way, but the flag is what keeps the walk off the boot path, where every
-  // registration is a first one and the cache is empty anyway.
-  const replacing = bucket.has(schema.id);
-  bucket.set(schema.id, schema);
-  evictCompiledSchema(schema.id);
-  if (replacing) {
-    for (const descendant of declaredDescendants(schema.id)) {
-      evictCompiledSchema(descendant);
-    }
-  }
+  stageRegistryType(schema);
 }
 
-/**
- * Removes a custom type schema from the runtime overlay and clears the
- * compiled schemas its removal invalidates.
- */
 export function unregisterTypeSchema(id: string): void {
-  // Every descendant's compiled schema carries fields this type contributes,
-  // so removing it invalidates all of them and not only its own.
-  const invalidated = declaredDescendants(id);
-  _customRegistry.delete(id);
-  evictCompiledSchema(id);
-  for (const descendant of invalidated) {
-    evictCompiledSchema(descendant);
-  }
+  removeRegistryType(id);
 }
 
-/**
- * Drop a type's compiled Zod schemas.
- */
-function evictCompiledSchema(id: string): void {
-  zodSchemaCache.delete(zodCacheKey(id));
-  zodSchemaStrictCache.delete(zodCacheKey(id));
-}
-
-/**
- * Every registered type whose declared parent chain reaches `rootId`,
- * excluding `rootId` itself.
- *
- * A compiled Zod schema is built from a type's RESOLVED fields, so changing
- * or removing a type invalidates every compiled schema below it as well as
- * its own. Nothing else evicts those, and a stale one goes on validating
- * writes against a shape the type no longer has.
- *
- * Downward, unlike every other walk here, and by declared parent alone. This
- * is not {@link declaredDescendantsOutsideNamespace}, which deliberately
- * omits descendants sitting under the root's own namespace because its caller
- * unions it with a name-prefix match. A short answer there is correct; a
- * short answer here leaves a cache entry nobody clears.
- */
 function declaredDescendants(rootId: string): string[] {
   const byParent = new Map<string, string[]>();
   for (const schema of listTypes()) {
@@ -958,13 +891,6 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
     .transform((value) => (value === null ? undefined : value));
 }
 
-// Cache generated Zod schemas to avoid re-creation on every validation call.
-// Two caches: one for the default permissive shape, one for strict — strict
-// mode flips z.looseObject (passes unknown properties) to z.strictObject
-// (rejects them). Keyed on the type id: one registry, one shape per id.
-const zodSchemaCache = new Map<string, z.ZodType>();
-const zodSchemaStrictCache = new Map<string, z.ZodType>();
-
 function zodCacheKey(typeId: string): string {
   return typeId;
 }
@@ -974,7 +900,7 @@ function getZodSchema(
   options?: { strict?: boolean },
 ): z.ZodType | undefined {
   const strict = options?.strict === true;
-  const cache = strict ? zodSchemaStrictCache : zodSchemaCache;
+  const cache = strict ? registryView().strict : registryView().permissive;
   const key = zodCacheKey(typeId);
   const cached = cache.get(key);
   if (cached) return cached;

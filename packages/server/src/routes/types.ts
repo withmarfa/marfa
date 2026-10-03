@@ -28,7 +28,6 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
-import { writeTypesInTransaction } from "./_type-write.js";
 import {
   changesSchema,
   registersType,
@@ -763,36 +762,32 @@ export function typeRoutes(storage: Storage) {
       // parent changed or deleted meanwhile has to be the one it is judged
       // against. A delete waiting on this write finds the child and is
       // refused instead.
-      const created = await writeTypesInTransaction(
-        storage,
-        typeof body.id === "string" ? [body.id] : [],
-        async () => {
-          const result = validateTypeSchema(body);
-          if (!result.success) {
-            throw schemaRefusal(result.errors);
-          }
+      const created = await storage.runInTransaction(async () => {
+        const result = validateTypeSchema(body);
+        if (!result.success) {
+          throw schemaRefusal(result.errors);
+        }
 
-          const schema = result.data;
+        const schema = result.data;
 
-          if (!schema.label) {
-            const lastSegment = schema.id.split(".").pop() ?? schema.id;
-            schema.label = lastSegment
-              .replace(/[_-]/g, " ")
-              .replace(/\b\w/g, (ch) => ch.toUpperCase());
-          }
+        if (!schema.label) {
+          const lastSegment = schema.id.split(".").pop() ?? schema.id;
+          schema.label = lastSegment
+            .replace(/[_-]/g, " ")
+            .replace(/\b\w/g, (ch) => ch.toUpperCase());
+        }
 
-          if (schema.parent) {
-            validateParentChain(schema.id, schema.parent);
-          }
-          if (getTypeSchema(schema.id)) {
-            throw new MarfaError(
-              ErrorCode.TYPE_ALREADY_EXISTS,
-              `Type "${schema.id}" already exists`,
-            );
-          }
-          return await storage.types.create(schema);
-        },
-      );
+        if (schema.parent) {
+          validateParentChain(schema.id, schema.parent);
+        }
+        if (getTypeSchema(schema.id)) {
+          throw new MarfaError(
+            ErrorCode.TYPE_ALREADY_EXISTS,
+            `Type "${schema.id}" already exists`,
+          );
+        }
+        return await storage.types.create(schema);
+      });
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
@@ -815,7 +810,7 @@ export function typeRoutes(storage: Storage) {
       // the subtypes whose fields a new field may not clash with. Each can
       // be changed by another write, and one checked before the lock is a
       // check of a registry that may have moved by the time the row does.
-      const updated = await writeTypesInTransaction(storage, [id], async () => {
+      const updated = await storage.runInTransaction(async () => {
         if (!getTypeSchema(id)) {
           throw new MarfaError(
             ErrorCode.TYPE_NOT_FOUND,
@@ -867,7 +862,7 @@ export function typeRoutes(storage: Storage) {
     // create asks the registry inside its own transaction, so an item written
     // meanwhile either lands first and is counted or comes after and is
     // refused; of two deletes in flight, the second finds no type.
-    await writeTypesInTransaction(storage, [id], async () => {
+    await storage.runInTransaction(async () => {
       const existing = getTypeSchema(id);
       if (!existing) {
         throw new MarfaError(

@@ -34,7 +34,6 @@ import { operatorOnly } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import { platformDrift } from "../storage/platform-drift.js";
-import { writeTypesInTransaction } from "./_type-write.js";
 
 const DriftedTypeSchema = z
   .object({
@@ -224,7 +223,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     // registry before it commits, and an item create asks the registry
     // inside its own transaction, so an item written meanwhile either lands
     // first and is counted or comes after and is refused.
-    await writeTypesInTransaction(storage, [id], async () => {
+    await storage.runInTransaction(async () => {
       // Recomputed, never the listing's copy. This is the one part of the
       // report that changes without a restart, and a removal reasoning from
       // a stale count is the failure this route exists to avoid.
