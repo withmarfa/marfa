@@ -17,6 +17,7 @@ struct Entry {
     body_field: Option<String>,
     /// The properties the type declares itself, not those it inherits.
     fields: Vec<String>,
+    required: HashMap<String, bool>,
 }
 
 /// The end of an edge whose file writes it.
@@ -355,7 +356,7 @@ impl Catalog {
         let mut statement = conn.prepare(
             "SELECT id, parent, title_field, thumbnail_field,
                     json_extract(json, '$.display_hints.body_field'),
-                    (SELECT json_group_array(key) FROM json_each(types.json, '$.fields')),
+                    json_extract(json, '$.fields'),
                     json_type(json, '$.display_hints') IS NOT NULL
                FROM types",
         )?;
@@ -373,6 +374,10 @@ impl Catalog {
         let mut entries = HashMap::new();
         for row in rows {
             let (id, parent, title_field, thumbnail_field, body_field, fields, hinted) = row?;
+            let fields: Map<String, Value> = fields
+                .map(|fields| serde_json::from_str(&fields))
+                .transpose()?
+                .unwrap_or_default();
             entries.insert(
                 id,
                 Entry {
@@ -381,13 +386,59 @@ impl Catalog {
                     title_field,
                     thumbnail_field,
                     body_field,
-                    fields: fields
-                        .and_then(|fields| serde_json::from_str(&fields).ok())
-                        .unwrap_or_default(),
+                    fields: fields.keys().cloned().collect(),
+                    required: fields
+                        .into_iter()
+                        .map(|(name, field)| {
+                            (
+                                name,
+                                field.get("required").and_then(Value::as_bool) == Some(true),
+                            )
+                        })
+                        .collect(),
                 },
             );
         }
         Ok(Catalog { entries })
+    }
+
+    /// Match the server's null rule in the local projection; the queued
+    /// request stays unchanged so the server validates what the caller sent.
+    pub fn projected_properties(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        replace: bool,
+    ) -> Map<String, Value> {
+        properties
+            .iter()
+            .filter(|(name, value)| {
+                if !value.is_null() {
+                    return true;
+                }
+                if replace {
+                    return false;
+                }
+                if !self.known(type_id) {
+                    return true;
+                }
+                let mut current = type_id;
+                for _ in 0..MAX_PARENT_WALK {
+                    let Some(entry) = self.entries.get(current) else {
+                        break;
+                    };
+                    if let Some(required) = entry.required.get(*name) {
+                        return *required;
+                    }
+                    let Some(parent) = entry.parent.as_deref() else {
+                        break;
+                    };
+                    current = parent;
+                }
+                false
+            })
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
     }
 
     /// `core.media.*` and `core.media` name the same subtree.
@@ -521,11 +572,40 @@ mod tests {
                             thumbnail_field: None,
                             body_field: None,
                             fields: Vec::new(),
+                            required: HashMap::new(),
                         },
                     )
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn projected_nulls_follow_the_destination_type_and_replace_mode() {
+        let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
+        catalog.entries.get_mut("parent").unwrap().required =
+            [("body".into(), true), ("title".into(), false)].into();
+        catalog.entries.get_mut("child").unwrap().required = [("title".into(), true)].into();
+        let input =
+            serde_json::json!({ "body": null, "title": null, "extra": null, "notes": "kept" });
+        let properties = input.as_object().unwrap();
+        assert_eq!(
+            serde_json::Value::Object(catalog.projected_properties("parent", properties, false)),
+            serde_json::json!({ "body": null, "notes": "kept" })
+        );
+        assert_eq!(
+            serde_json::Value::Object(catalog.projected_properties("child", properties, false)),
+            serde_json::json!({ "body": null, "title": null, "notes": "kept" })
+        );
+        assert_eq!(
+            serde_json::Value::Object(catalog.projected_properties("child", properties, true)),
+            serde_json::json!({ "notes": "kept" })
+        );
+        assert_eq!(
+            catalog.projected_properties("unknown", properties, false),
+            *properties
+        );
+        assert!(properties["title"].is_null());
     }
 
     #[test]

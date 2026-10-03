@@ -2419,9 +2419,19 @@ fn lay_write(
                 if let Some(read) = read {
                     lay_changes(&mut item.properties, properties, &read);
                 } else {
-                    for (key, value) in properties {
-                        item.properties.insert(key.clone(), value.clone());
-                    }
+                    let projected = if properties.values().any(Value::is_null) {
+                        crate::catalog::Catalog::load(conn)?.projected_properties(
+                            payload
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or(&item.r#type),
+                            properties,
+                            replaces_properties(payload),
+                        )
+                    } else {
+                        properties.clone()
+                    };
+                    item.properties.extend(projected);
                 }
             }
             if let Some(Value::String(key)) = payload.get("source_id") {
@@ -2653,6 +2663,9 @@ pub fn move_edit(
 fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &Map<String, Value>) {
     for (key, was) in read {
         match sent.get(key) {
+            Some(Value::Null) => {
+                row.shift_remove(key);
+            }
             Some(value) if value != was => {
                 row.insert(key.clone(), value.clone());
             }
@@ -2663,7 +2676,7 @@ fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &M
         }
     }
     for (key, value) in sent {
-        if !read.contains_key(key) {
+        if !read.contains_key(key) && !value.is_null() {
             row.insert(key.clone(), value.clone());
         }
     }

@@ -1296,14 +1296,18 @@ fn queue_update(
         )));
     }
     let payload = edit.payload(base)?;
+    let projected = catalog.projected_properties(
+        edit.r#type.as_deref().unwrap_or(&held.r#type),
+        &edit.properties,
+        edit.replace_properties,
+    );
     // Recorded only where based on the held version: an edit based on an
     // earlier one was not made against the copy's row. A whole-properties
     // edit also changes every property it leaves out.
     let read = (base == held.version).then(|| {
         let cleared = held.properties.keys().filter(|_| edit.replace_properties);
         serde_json::json!({
-            "properties": edit
-                .properties
+            "properties": projected
                 .keys()
                 .chain(cleared)
                 .map(|key| (key.clone(), held.properties.get(key).cloned().unwrap_or(Value::Null)))
@@ -1313,9 +1317,9 @@ fn queue_update(
     let mut next = held.clone();
     // Only an edit that read the copy knows which properties it cleared.
     if edit.replace_properties && read.is_some() {
-        next.properties = edit.properties.clone();
+        next.properties = projected.clone();
     } else {
-        for (key, value) in &edit.properties {
+        for (key, value) in &projected {
             next.properties.insert(key.clone(), value.clone());
         }
     }

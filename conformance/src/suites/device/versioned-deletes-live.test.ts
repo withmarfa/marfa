@@ -31,6 +31,8 @@ function value<T>(result: Outcome<T>): T {
 it.each([
   "newer-edit",
   "own-edit",
+  "own-null-edit",
+  "own-null-replace",
   "own-create",
   "merged-newer",
   "conflicted-newer",
@@ -72,7 +74,11 @@ it.each([
       value(
         await device.update(id, {
           version,
-          properties: { body: "first local edit" },
+          properties: {
+            body: "first local edit",
+            ...(scenario.startsWith("own-null") ? { title: null } : {}),
+          },
+          ...(scenario === "own-null-replace" ? { replace: true } : {}),
         }),
       );
       if (scenario === "own-edit" || scenario === "own-create")
@@ -82,6 +88,16 @@ it.each([
             properties: { body: "second local edit" },
           }),
         );
+    }
+    if (scenario.startsWith("own-null")) {
+      expect(
+        value(await device.queue()).find((row) => row.kind === "update_item")
+          ?.body,
+      ).toMatchObject({ properties: { title: null } });
+      const expected = scenario === "own-null-replace" ? undefined : scenario;
+      expect(value(await device.get(id)).properties.title).toBe(expected);
+      value(await device.catchUp());
+      expect(value(await device.get(id)).properties.title).toBe(expected);
     }
     const queued = value(await device.deleteItem(id));
     if (["newer-edit", "merged-newer", "conflicted-newer"].includes(scenario)) {
@@ -96,7 +112,7 @@ it.each([
     }
     const report = value(await device.drain());
     const deletion = report.verdicts.find((row) => row.id === queued.id);
-    const safe = scenario === "own-edit" || scenario === "own-create";
+    const safe = scenario.startsWith("own-");
     expect(deletion, JSON.stringify(report)).toMatchObject(
       safe
         ? { verdict: "accepted" }
