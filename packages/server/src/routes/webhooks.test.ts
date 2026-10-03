@@ -4,12 +4,12 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 async function claimToken(id: string): Promise<string> {
-  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
-    id,
-    "9999-01-01T00:00:00.000Z",
-    "9998-01-01T00:00:00.000Z",
+  const claimed = await ctx.storage.outboundWebhookDeliveries.getPending(
+    new Date().toISOString(),
+    1,
   );
-  return claimed?.claim_token ?? "stale-fixture-token";
+  expect(claimed.map((row) => row.id)).toEqual([id]);
+  return claimed[0]!.claim_token;
 }
 
 beforeAll(async () => {
@@ -300,7 +300,7 @@ describe("GET /webhooks/:id/deliveries", () => {
         eventType: "item.created",
         payload: "{}",
         webhookUrl: created.url,
-        nextAttemptAt: new Date(Date.now() + 86_400_000).toISOString(),
+        nextAttemptAt: new Date().toISOString(),
       });
       await ctx.storage.outboundWebhookDeliveries.markSuccess(
         id,

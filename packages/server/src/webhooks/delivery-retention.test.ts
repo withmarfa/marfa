@@ -7,12 +7,12 @@ import { writeInstanceConfig } from "../storage/instance-config.js";
 
 let ctx: TestContext;
 async function claimToken(id: string): Promise<string> {
-  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
-    id,
-    "9999-01-01T00:00:00.000Z",
-    "9998-01-01T00:00:00.000Z",
+  const claimed = await ctx.storage.outboundWebhookDeliveries.getPending(
+    new Date().toISOString(),
+    1,
   );
-  return claimed?.claim_token ?? "stale-fixture-token";
+  expect(claimed.map((row) => row.id)).toEqual([id]);
+  return claimed[0]!.claim_token;
 }
 
 beforeAll(async () => {
@@ -199,38 +199,47 @@ describe("settling an outbound delivery", () => {
     );
     const due = await ctx.storage.outboundWebhookDeliveries.getPending(
       new Date().toISOString(),
+      1,
     );
-    expect(due.find((row) => row.id === id)).toMatchObject({
+    expect(due.map((row) => row.id)).toEqual([id]);
+    expect(due[0]).toMatchObject({
       payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.com/hook",
       attempt: 1,
     });
   });
 
-  it("keeps the first outcome when an attempt whose claim lapsed reports after it", async () => {
+  it("keeps the first terminal outcome when the settled attempt reports again", async () => {
     const id = await schedule("lapsed-subscription");
-    await ctx.storage.outboundWebhookDeliveries.markSuccess(
-      id,
-      await claimToken(id),
-      200,
-      1,
-    );
-    await ctx.storage.outboundWebhookDeliveries.markFailed(
-      id,
-      await claimToken(id),
-      503,
-      "unavailable",
-      2,
-      new Date(Date.now() - 1_000).toISOString(),
-    );
-    await ctx.storage.outboundWebhookDeliveries.markFailed(
-      id,
-      await claimToken(id),
-      400,
-      "HTTP 400",
-      1,
-      null,
-    );
+    const token = await claimToken(id);
+    expect(
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(
+        id,
+        token,
+        200,
+        1,
+      ),
+    ).toBe(true);
+    expect(
+      await ctx.storage.outboundWebhookDeliveries.markFailed(
+        id,
+        token,
+        503,
+        "unavailable",
+        2,
+        new Date(Date.now() - 1_000).toISOString(),
+      ),
+    ).toBe(false);
+    expect(
+      await ctx.storage.outboundWebhookDeliveries.markFailed(
+        id,
+        token,
+        400,
+        "HTTP 400",
+        1,
+        null,
+      ),
+    ).toBe(false);
     const [row] = await raw().all(
       `SELECT status, attempt, status_code FROM outbound_webhook_deliveries WHERE id = '${id}'`,
     );
@@ -249,16 +258,18 @@ describe("settling an outbound delivery", () => {
 describe("the retention outbound delivery history leaves with", () => {
   it("is the instance's /config override when one is set", async () => {
     const webhookId = "override-subscription";
-    const older = await schedule(webhookId);
-    const newer = await schedule(webhookId);
-    for (const id of [older, newer]) {
+    const settled: string[] = [];
+    for (let n = 0; n < 2; n++) {
+      const id = await schedule(webhookId);
       await ctx.storage.outboundWebhookDeliveries.markSuccess(
         id,
         await claimToken(id),
         200,
         1,
       );
+      settled.push(id);
     }
+    const [older, newer] = settled as [string, string];
     await age(older, 8);
     await age(newer, 6);
     await writeInstanceConfig(ctx.storage.settings, {

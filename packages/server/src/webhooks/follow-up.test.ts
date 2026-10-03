@@ -14,12 +14,12 @@ import {
 } from "./delivery.js";
 let ctx: TestContext;
 async function claimToken(id: string): Promise<string> {
-  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
-    id,
-    "9999-01-01T00:00:00.000Z",
-    "9998-01-01T00:00:00.000Z",
+  const claimed = await ctx.storage.outboundWebhookDeliveries.getPending(
+    new Date().toISOString(),
+    1,
   );
-  return claimed?.claim_token ?? "stale-fixture-token";
+  expect(claimed.map((row) => row.id)).toEqual([id]);
+  return claimed[0]!.claim_token;
 }
 
 let sent: Record<string, unknown>[];
@@ -115,13 +115,13 @@ describe("webhook identity, outcomes and filters", () => {
       webhookUrl: "https://receiver.example/hook",
       nextAttemptAt: new Date().toISOString(),
     });
-    const pending = await ctx.storage.outboundWebhookDeliveries.claimById(
-      id,
-      new Date(Date.now() + 60000).toISOString(),
+    const claims = await ctx.storage.outboundWebhookDeliveries.getPending(
       new Date().toISOString(),
+      1,
     );
-    expect(pending?.event_id).toBe(exact.toString());
-    if (!pending) throw new Error("pending delivery missing");
+    expect(claims.map((row) => row.id)).toEqual([id]);
+    const pending = claims[0]!;
+    expect(pending.event_id).toBe(exact.toString());
     const prepared = await deliveryInReach(ctx.storage, pending);
     expect(prepared).toHaveProperty("body");
     if (!("body" in prepared)) throw new Error("ordinary payload withheld");

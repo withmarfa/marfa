@@ -12,6 +12,7 @@ import {
   request,
   type TestContext,
 } from "../test-utils.js";
+import type { PendingWebhookDelivery } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
@@ -63,13 +64,25 @@ async function seed(key = ctx.workingKey) {
   };
 }
 async function claim(id: string, now = new Date().toISOString()) {
-  const row = await ctx.storage.outboundWebhookDeliveries.claimById(
-    id,
-    new Date(Date.parse(now) + 60000).toISOString(),
-    now,
+  const rows = await ctx.storage.outboundWebhookDeliveries.getPending(now, 1);
+  expect(rows.map((row) => row.id)).toEqual([id]);
+  return rows[0]!;
+}
+async function expireClaim(row: PendingWebhookDelivery) {
+  expect(
+    await ctx.storage.outboundWebhookDeliveries.getPending(
+      new Date().toISOString(),
+      1,
+    ),
+  ).toEqual([]);
+  const raw = ctx.storage as typeof ctx.storage & {
+    __sqliteRun(sql: string, args: unknown[]): Promise<{ changes: number }>;
+  };
+  const result = await raw.__sqliteRun(
+    "UPDATE outbound_webhook_deliveries SET next_attempt_at = ? WHERE id = ? AND claim_token = ?",
+    [new Date(Date.now() - 1).toISOString(), row.id, row.claim_token],
   );
-  expect(row).not.toBeNull();
-  return row!;
+  expect(result.changes).toBe(1);
 }
 describe("failed delivery reopening and claim fencing", () => {
   it("declares the actual standing-permission refusal for redelivery", async () => {
@@ -187,14 +200,10 @@ describe("failed delivery reopening and claim fencing", () => {
     expect(
       (await request(ctx.app, "POST", path, { key: ctx.workingKey })).status,
     ).toBe(202);
-    const a = await ctx.storage.outboundWebhookDeliveries.claimById(
-      delivery.id,
-      "2000-01-01T00:00:01.000Z",
-      "9998-01-01T00:00:00.000Z",
-    );
-    expect(a).not.toBeNull();
+    const a = await claim(delivery.id);
+    await expireClaim(a);
     const b = await claim(delivery.id);
-    expect(b.claim_token).not.toBe(a!.claim_token);
+    expect(b.claim_token).not.toBe(a.claim_token);
     expect(
       await ctx.storage.outboundWebhookDeliveries.markFailed(
         b.id,
@@ -210,16 +219,16 @@ describe("failed delivery reopening and claim fencing", () => {
     ).toBe(202);
     expect(
       await ctx.storage.outboundWebhookDeliveries.markSuccess(
-        a!.id,
-        a!.claim_token,
+        a.id,
+        a.claim_token,
         200,
         2,
       ),
     ).toBe(false);
     expect(
       await ctx.storage.outboundWebhookDeliveries.markFailed(
-        a!.id,
-        a!.claim_token,
+        a.id,
+        a.claim_token,
         503,
         "HTTP 503",
         2,
@@ -228,8 +237,8 @@ describe("failed delivery reopening and claim fencing", () => {
     ).toBe(false);
     expect(
       await ctx.storage.outboundWebhookDeliveries.markCanceled(
-        a!.id,
-        a!.claim_token,
+        a.id,
+        a.claim_token,
         "old reach",
       ),
     ).toBe(false);
@@ -388,20 +397,16 @@ describe("failed delivery reopening and claim fencing", () => {
       expect(
         (await request(ctx.app, "POST", path, { key: ctx.workingKey })).status,
       ).toBe(202);
-      const a = await ctx.storage.outboundWebhookDeliveries.claimById(
-        delivery.id,
-        "2000-01-01T00:00:01.000Z",
-        "9998-01-01T00:00:00.000Z",
-      );
-      expect(a).not.toBeNull();
+      const a = await claim(delivery.id);
       inFlight = deliverWebhookAttempt(
         {
           storage: ctx.storage,
           http: createWebhookHttpClient({ allowPrivateAddresses: true }),
         },
-        a!,
+        a,
       );
       await received;
+      await expireClaim(a);
       const b = await claim(delivery.id);
       expect(
         await ctx.storage.outboundWebhookDeliveries.markFailed(
