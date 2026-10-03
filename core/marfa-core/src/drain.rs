@@ -1351,6 +1351,11 @@ fn settle(
             }
         }
         Classified::Environmental => Ok(Settled {
+            retry_after_seconds: answer
+                .as_ref()
+                .err()
+                .and_then(CoreError::retry_after)
+                .map(|wait| wait.as_secs()),
             unavailable: unavailable(answer),
             ..Settled::plain(None, None, row.refusals)
         }),
@@ -1572,9 +1577,9 @@ fn finish_counted(
 
 /// A read rather than a wait for catch-up: a refused write produces no
 /// event. The verdict and the copy put back are recorded already, and so is
-/// the read owed, so a read that fails is tried by the next drain; only an
-/// answer on another contract fails this, ending the pass. Answers why where
-/// the server could not be read, which ends the pass too.
+/// the read owed, so a read that fails is tried by the next drain. A contract
+/// mismatch, failed renewal or full store ends the pass with its typed error.
+/// Other unavailable reads return their reason and end the pass too.
 fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
@@ -2378,6 +2383,48 @@ mod tests {
                 assert!(row.verdict.is_none());
             }
             assert_eq!(server.seen("/items/current").len(), 1);
+            assert!(server.seen("/items/later").is_empty());
+        }
+    }
+
+    #[test]
+    fn rate_limited_renewal_reports_its_wait_without_counting_the_write() {
+        for (requested, expected) in [
+            (Some(120), Some(120)),
+            (Some(86_400), Some(300)),
+            (None, None),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = deleting(&server, &["current", "later"]);
+            server.on(
+                "/items/current",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            core.renew_credential_with(Box::new(move |_| {
+                Err(CoreError::RateLimited {
+                    code: "rate_limited".into(),
+                    message: "wait before renewing".into(),
+                    retry_after_seconds: requested,
+                })
+            }));
+            let before = core.queue().unwrap();
+            let payload = store::payload_of(&core.conn().unwrap(), &before[0].id).unwrap();
+            let report = core.drain().unwrap();
+            assert_eq!(report.retry_after_seconds, expected);
+            assert_eq!((report.answered, report.undelivered), (0, 2));
+            assert!(report.unavailable.is_some());
+            assert!(report.stopped.is_none());
+            assert_eq!(core.queue().unwrap(), before);
+            assert_eq!(
+                store::payload_of(&core.conn().unwrap(), &before[0].id).unwrap(),
+                payload
+            );
+            assert!(
+                report
+                    .verdicts
+                    .iter()
+                    .all(|row| row.verdict.is_none() && row.refusals == 0)
+            );
             assert!(server.seen("/items/later").is_empty());
         }
     }
