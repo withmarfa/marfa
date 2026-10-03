@@ -1,21 +1,3 @@
-/**
- * In-process worker loop over `bulk_action_jobs`.
- *
- * One loop per server process, and `claimNext`'s bounded UPDATE is what
- * stops two of them running the same job: each claim is one statement, so
- * the second loop's subquery runs after the first loop's claim committed
- * and picks the next queued row instead. It comes back empty only when the
- * queue is.
- *
- * Lifecycle: `start()` schedules a poll tick on an interval and runs
- * `runOnce()` immediately. `runOnce()` claims at most one job per call
- * and runs it through to a terminal state (cooperative cancellation
- * check between chunks). Tests drive `runOnce()` directly without
- * starting the timer.
- *
- * Recovery checks run at startup, idle polls and committed chunk boundaries.
- * A recovered owner resumes at its durable cursor. Default stale age 60s.
- */
 import {
   ErrorCode,
   generateId,
@@ -112,17 +94,9 @@ export class BulkActionWorker {
     this.currentPollMs = this.pollIntervalMs;
   }
 
-  /** Start the periodic poll. Recovers stale jobs first, then schedules
-   *  the first tick immediately. */
   async start(): Promise<void> {
     this.stopped = false;
-    const recovered = await this.recoverStale();
-    if (recovered > 0) {
-      log("info", "bulk_action_worker.recovered_stale_jobs", {
-        recovered,
-        workerId: this.workerId,
-      });
-    }
+    await this.tryRecoverStale();
     this.scheduleNext(0);
   }
 
@@ -140,6 +114,8 @@ export class BulkActionWorker {
    *  Called throughout the worker loop; exposed so tests can drive directly. */
   async recoverStale(): Promise<number> {
     const now = this.nowFn().getTime();
+    // Failed sweeps share the cadence of successful ones; a failure must not
+    // cause every subsequent chunk or idle poll to retry and log it again.
     this.lastRecoveryAt = now;
     const cutoff = new Date(now - this.staleAfterMs).toISOString();
     return this.jobs.recoverStale(cutoff);
@@ -259,7 +235,25 @@ export class BulkActionWorker {
   private async maybeRecoverStale(): Promise<void> {
     const interval = Math.max(1, Math.min(this.staleAfterMs / 4, 10_000));
     if (this.nowFn().getTime() - this.lastRecoveryAt >= interval)
-      await this.recoverStale();
+      await this.tryRecoverStale();
+  }
+
+  private async tryRecoverStale(): Promise<void> {
+    // Recovery is auxiliary. The active chunk still obtains its writer turn
+    // and checks its lease independently, even if this sweep cannot run.
+    try {
+      const recovered = await this.recoverStale();
+      if (recovered > 0)
+        log("info", "bulk_action_worker.recovered_stale_jobs", {
+          recovered,
+          workerId: this.workerId,
+        });
+    } catch (error) {
+      log("warn", "bulk_action_worker.stale_recovery_failed", {
+        workerId: this.workerId,
+        error: originalErrorMessage(error),
+      });
+    }
   }
 
   private async readDurableState(
