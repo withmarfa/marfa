@@ -17,6 +17,7 @@ import { writeInstanceConfig } from "../storage/instance-config.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import {
   WebhookScheduler,
+  WebhookPoller,
   deliverWebhookAttempt,
   RETRY_DELAYS,
 } from "./delivery.js";
@@ -42,6 +43,10 @@ async function seed(key = ctx.workingKey) {
     body: { type: "core.note", properties: { body: "ordinary retry" } },
   });
   await new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  }).runOnce();
+  await new WebhookPoller({
     storage: ctx.storage,
     http: {
       post: () =>
@@ -302,8 +307,6 @@ describe("failed delivery reopening and claim fencing", () => {
     await deliverWebhookAttempt(
       { storage: ctx.storage, http },
       await claim(delivery.id),
-      1000,
-      false,
     );
     expect(http.post).not.toHaveBeenCalled();
     expect(
@@ -397,8 +400,6 @@ describe("failed delivery reopening and claim fencing", () => {
           http: createWebhookHttpClient({ allowPrivateAddresses: true }),
         },
         a!,
-        5000,
-        false,
       );
       await received;
       const b = await claim(delivery.id);
@@ -459,8 +460,6 @@ describe("failed delivery reopening and claim fencing", () => {
           },
         },
         row,
-        1000,
-        false,
       );
       const state = await ctx.storage.outboundWebhookDeliveries.get(
         row.webhook_id,

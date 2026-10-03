@@ -10,26 +10,20 @@ import {
 } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
-import { WebhookScheduler } from "./delivery.js";
+import { WebhookPoller, WebhookScheduler } from "./delivery.js";
 
 let ctx: TestContext;
 let scheduler: WebhookScheduler;
-let hits: number;
+let wakes: number;
 beforeEach(async () => {
   ctx = await createTestContext({ maxRequestBytes: 20 * 1024 * 1024 });
   initEventLog(ctx.storage.eventLog);
-  hits = 0;
+  wakes = 0;
   scheduler = new WebhookScheduler({
     storage: ctx.storage,
-    http: {
-      post: () => {
-        hits++;
-        return Promise.resolve({
-          kind: "answered",
-          status: 200,
-          retryAfter: null,
-        } as const);
-      },
+    wakePoller: () => {
+      wakes++;
+      return Promise.resolve();
     },
   });
 });
@@ -117,7 +111,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(await queued(id)).toHaveLength(0);
     ctx.storage.outboundWebhooks.listAfter = list;
     expect((await scheduler.runOnce()).scheduled).toBe(1);
-    expect(hits).toBe(1);
+    expect(wakes).toBe(1);
   });
   it("rolls back partial fan-out and acknowledgement together", async () => {
     const first = await subscribe();
@@ -137,7 +131,7 @@ describe("durable outbound event acknowledgement", () => {
     expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
       0n,
     );
-    expect(hits).toBe(0);
+    expect(wakes).toBe(0);
     ctx.storage.outboundWebhookDeliveries.schedule = schedule;
     expect((await scheduler.runOnce()).scheduled).toBe(2);
   });
@@ -152,7 +146,7 @@ describe("durable outbound event acknowledgement", () => {
     await expect(scheduler.runOnce()).rejects.toThrow("commit response lost");
     ctx.storage.runInTransaction = transaction;
     expect(await queued(id)).toHaveLength(1);
-    expect(hits).toBe(0);
+    expect(wakes).toBe(0);
     expect((await scheduler.runOnce()).scheduled).toBe(0);
     expect(await queued(id)).toHaveLength(1);
   });
@@ -217,7 +211,7 @@ describe("durable outbound event acknowledgement", () => {
     ]);
     expect(results.reduce((sum, result) => sum + result.scheduled, 0)).toBe(1);
     expect(await queued(id)).toHaveLength(1);
-    expect(hits).toBe(1);
+    expect(wakes).toBe(1);
   });
   it("stores birth and checkpoint IDs without number conversion", async () => {
     const id = 9_007_199_254_740_993n;
@@ -345,7 +339,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(first.scheduled).toBe(50);
     expect(first.cursor).toBe("1");
     expect(first.event).toBe("2");
-    expect(hits).toBe(50);
+    expect(wakes).toBe(1);
     const next = await scheduler.runOnce();
     expect(next.examined).toBe(10);
     expect(next.scheduled).toBe(10);
@@ -365,7 +359,7 @@ describe("durable outbound event acknowledgement", () => {
       0n,
     );
     expect(await queued(id)).toHaveLength(0);
-    expect(hits).toBe(0);
+    expect(wakes).toBe(0);
   });
   it("bounds scanned bytes across skip-only events without stalling an oversized first event", async () => {
     const frame = JSON.parse(quietPayload()) as {
@@ -420,7 +414,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(next.scheduled).toBe(2);
     expect(next.cursor).toBe("2");
   });
-  it("never opens HTTP before its queue and checkpoint commit", async () => {
+  it("wakes the poller only after its queue and checkpoint commit", async () => {
     const id = await subscribe();
     await write();
     let committed = false;
@@ -432,20 +426,44 @@ describe("durable outbound event acknowledgement", () => {
     };
     const checked = new WebhookScheduler({
       storage: ctx.storage,
-      http: {
-        post: async () => {
-          expect(committed).toBe(true);
-          expect(await queued(id)).toHaveLength(1);
-          expect(
-            (await ctx.storage.outboundWebhooks.checkpoint()).lastEventId,
-          ).toBe(1n);
-          hits++;
-          return { kind: "answered", status: 200, retryAfter: null };
-        },
+      wakePoller: async () => {
+        expect(committed).toBe(true);
+        expect(await queued(id)).toHaveLength(1);
+        expect(
+          (await ctx.storage.outboundWebhooks.checkpoint()).lastEventId,
+        ).toBe(1n);
+        wakes++;
       },
     });
     await checked.runOnce();
-    expect(hits).toBe(1);
+    expect(wakes).toBe(1);
+  });
+  it("keeps a committed queue and cursor when the poll wake fails", async () => {
+    const id = await subscribe();
+    await write();
+    const refused = new WebhookScheduler({
+      storage: ctx.storage,
+      wakePoller: () => Promise.reject(new Error("wake refusal witness")),
+    });
+    await expect(refused.runOnce()).rejects.toThrow("wake refusal witness");
+    expect(await queued(id)).toHaveLength(1);
+    expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
+      1n,
+    );
+    expect((await scheduler.runOnce()).scheduled).toBe(0);
+    expect(await queued(id)).toHaveLength(1);
+    const attempt = await new WebhookPoller({
+      storage: ctx.storage,
+      http: {
+        post: () =>
+          Promise.resolve({ kind: "answered", status: 200, retryAfter: null }),
+      },
+    }).runOnce();
+    expect(attempt.attempted).toBe(1);
+    expect((await queued(id))[0]).toMatchObject({
+      status: "success",
+      attempt: 1,
+    });
   });
   it("reports ahead state as a failed scheduling job", async () => {
     await ctx.storage.runInTransaction(() =>
@@ -569,7 +587,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(next.cursor).toBe("1");
     expect(await queued(rows[0]!.id)).toHaveLength(1);
     expect(await queued(newborn)).toHaveLength(0);
-    expect(hits).toBe(50);
+    expect(wakes).toBe(1);
   });
   it("rolls back a failed partial page without moving its committed position", async () => {
     const rows = await subscriptions(53);
@@ -591,7 +609,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(await queued(rows[50]!.id)).toHaveLength(0);
     ctx.storage.outboundWebhookDeliveries.schedule = schedule;
     expect((await scheduler.runOnce()).scheduled).toBe(3);
-    expect(hits).toBe(53);
+    expect(wakes).toBe(2);
   });
   it("resumes a committed partial page after its commit response is lost", async () => {
     const rows = await subscriptions(51);
@@ -618,14 +636,7 @@ describe("durable outbound event acknowledgement", () => {
     try {
       const second = new WebhookScheduler({
         storage: other,
-        http: {
-          post: () =>
-            Promise.resolve({
-              kind: "answered",
-              status: 200,
-              retryAfter: null,
-            } as const),
-        },
+        wakePoller: () => Promise.resolve(),
       });
       const results = await Promise.all([
         scheduler.runOnce(),
@@ -684,7 +695,7 @@ describe("durable outbound event acknowledgement", () => {
     expect(next.examined).toBe(1);
     expect(next.scheduled).toBe(1);
     expect(next.cursor).toBe("1");
-    expect(hits).toBe(2);
+    expect(wakes).toBe(2);
   });
   it("refuses an inconsistent partial checkpoint rather than advancing", async () => {
     const raw = ctx.storage as unknown as {
@@ -749,7 +760,7 @@ describe("durable outbound event acknowledgement", () => {
       await subscribe();
       await write();
       expect((await scheduler.runOnce()).scheduled).toBe(1);
-      expect(hits).toBe(1);
+      expect(wakes).toBe(1);
       const before = await ctx.storage.outboundWebhooks.checkpoint();
       await ctx.storage.eventLog.append({
         event_type: eventType,
