@@ -14,7 +14,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
 
-A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core`, `@withmarfa/client` and the `marfa-client` crate, publishes them and attaches them to a GitHub release. The Swift package lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
+A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core` and `@withmarfa/client`, publishes the packages and attaches all three artifacts to a GitHub release. The Swift package lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
 
 ## Quick start
 
