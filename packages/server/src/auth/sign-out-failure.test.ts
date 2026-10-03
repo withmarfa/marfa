@@ -1,3 +1,7 @@
+import {
+  requireSuccessfulSignOut,
+  withSignOutFailureReporting,
+} from "./sign-out-failure.js";
 import { afterEach, expect, it } from "vitest";
 import {
   createTestAccount,
@@ -93,3 +97,94 @@ it("keeps concurrent sign-out outcomes isolated between sessions", async () => {
   expect((await signOut(refusedCookie)).status).toBe(200);
   expect(await (await session(refusedCookie)).json()).toBeNull();
 });
+
+it("refuses sign-out when native lookup cannot determine whether to delete the session, then retries successfully", async () => {
+  ctx = await createTestContext();
+  const cookie = await signIn(ctx, "reader@example.test");
+  const db = native(ctx);
+  const before = await db.__sqliteAll("SELECT id FROM auth_session");
+  expect(before).toHaveLength(1);
+  const columns = (await db.__sqliteAll("PRAGMA table_info(auth_session)")) as {
+    name: string;
+  }[];
+  await db.__sqliteRun(
+    "ALTER TABLE auth_session RENAME TO auth_session_saved",
+    [],
+  );
+  await db.__sqliteRun(
+    `CREATE VIEW auth_session AS SELECT ${columns.map(({ name }) => (name === "id" ? "json_extract('malformed', '$') AS id" : `"${name}"`)).join(",")} FROM auth_session_saved`,
+    [],
+  );
+  const signOut = (headers: Record<string, string>) =>
+    request(ctx!.app, "POST", "/auth/sign-out", {
+      body: {},
+      headers: { ...headers, origin },
+    });
+  const [refused, anonymous] = await Promise.all([
+    signOut({ cookie }),
+    signOut({}),
+  ]);
+  expect(refused.status).toBe(500);
+  expect(refused.headers.getSetCookie()).toEqual([]);
+  expect(anonymous.status).toBe(200);
+  expect(await db.__sqliteAll("SELECT id FROM auth_session_saved")).toEqual(
+    before,
+  );
+  await db.__sqliteRun("DROP VIEW auth_session", []);
+  await db.__sqliteRun(
+    "ALTER TABLE auth_session_saved RENAME TO auth_session",
+    [],
+  );
+  const session = () =>
+    request(ctx!.app, "GET", "/auth/get-session", { headers: { cookie } });
+  expect(await (await session()).json()).not.toBeNull();
+  const accepted = await signOut({ cookie });
+  expect(accepted.status).toBe(200);
+  expect(accepted.headers.get("set-cookie")).toContain("Max-Age=0");
+  expect(await db.__sqliteAll("SELECT id FROM auth_session")).toEqual([]);
+  expect(await (await session()).json()).toBeNull();
+});
+
+it.each(["findOne", "findMany", "delete"] as const)(
+  "retains the first %s failure if later provider operations continue",
+  async (firstOperation) => {
+    let failure: Error | undefined = new Error("first session failure");
+    const original = (args: { model: string; where: unknown[] }) => {
+      expect(args.model).toBe("session");
+      return failure ? Promise.reject(failure) : Promise.resolve(null);
+    };
+    const adapter = withSignOutFailureReporting(() => ({
+      findOne: original,
+      findMany: original,
+      delete: original,
+    }))();
+    const firstFailure = failure;
+    const args = { model: "session", where: [] };
+    await expect(
+      requireSuccessfulSignOut(async () => {
+        await adapter[firstOperation](args).catch(() => undefined);
+        failure = new Error("later session failure");
+        await adapter.delete(args).catch(() => undefined);
+        failure = undefined;
+        await adapter.findMany(args);
+        return new Response(null, { status: 200 });
+      }),
+    ).rejects.toBe(firstFailure);
+    failure = firstFailure;
+    await expect(
+      requireSuccessfulSignOut(async () => {
+        await adapter[firstOperation](args).catch(() => undefined);
+        throw new Error("later provider exception");
+      }),
+    ).rejects.toBe(firstFailure);
+    failure = undefined;
+    expect(
+      (
+        await requireSuccessfulSignOut(async () => {
+          await adapter.findMany(args);
+          return new Response(null, { status: 200 });
+        })
+      ).status,
+    ).toBe(200);
+  },
+);

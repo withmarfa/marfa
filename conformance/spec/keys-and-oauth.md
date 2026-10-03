@@ -92,8 +92,8 @@
 
 ## Browser sign-out
 
-46. WHEN deleting the current session fails during `POST /auth/sign-out`, the server MUST return an error without clearing the session cookies.
+46. WHEN a session lookup or deletion fails during `POST /auth/sign-out`, the server MUST return an error without clearing the session cookies.
 
-    Reason: a success response must not tell a person that a session has ended while it remains usable.
+    Reason: a success response must not claim that a session has ended when the database operation failed to establish that outcome.
 
-    Tests: `packages/server/src/auth/sign-out-failure.test.ts › refuses sign-out without clearing cookies when native session deletion fails, then retries successfully`.
+    Tests: `packages/server/src/auth/sign-out-failure.test.ts › refuses sign-out without clearing cookies when native session deletion fails, then retries successfully`, `› refuses sign-out when native lookup cannot determine whether to delete the session, then retries successfully`.
