@@ -1,3 +1,7 @@
+import {
+  requireSuccessfulSignOut,
+  withSignOutFailureReporting,
+} from "./sign-out-failure.js";
 import { betterAuth } from "better-auth";
 import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -283,8 +287,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     // `consent-idempotent-adapter.ts`. Paired with the unique constraint
     // on `auth_oauth_consent (client_id, user_id)`; neither half is safe
     // to ship without the other.
-    database: withIdempotentConsent(
-      drizzleAdapter(options.db, { provider: "sqlite", schema }),
+    database: withSignOutFailureReporting(
+      withIdempotentConsent(
+        drizzleAdapter(options.db, { provider: "sqlite", schema }),
+      ),
     ),
     onAPIError: {
       // Better Auth answers anything its handler throws that is not one of
@@ -606,7 +612,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       if (clientAddress !== null) {
         request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
       }
-      return instance.handler(request);
+      return new URL(request.url).pathname === "/auth/sign-out"
+        ? requireSuccessfulSignOut(() => instance.handler(request))
+        : instance.handler(request);
     },
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
