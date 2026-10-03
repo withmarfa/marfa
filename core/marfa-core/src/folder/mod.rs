@@ -3376,10 +3376,19 @@ impl Folder {
         )?;
         let moved = self.inside(path.parent()).and_then(|()| {
             landing::crash_if_asked(&path);
+            landing::appear_if_asked(&path, "create-before-move")?;
             // Copied where a rename cannot cross volumes, landing whole or
             // not at all; a source left behind is still its folder's,
             // which lets it go later.
-            std::fs::rename(from, &path).or_else(|_| {
+            let renamed = if fault::named("cross-volume-move").is_some() {
+                Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
+            } else {
+                landing::rename_new(from, &path)
+            };
+            renamed.or_else(|error| {
+                if error.kind() != std::io::ErrorKind::CrossesDevices {
+                    return Err(error);
+                }
                 self.land(
                     &path,
                     |_, beside| std::fs::copy(from, beside).map(drop),
