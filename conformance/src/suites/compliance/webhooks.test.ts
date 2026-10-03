@@ -142,6 +142,17 @@ describe("outbound webhooks", () => {
         { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } },
       );
       expect(response.status).toBe(202);
+      const audit = await client.listAudit({
+        action: "webhook.delivery.redeliver",
+        resource_id: failed!.id,
+      });
+      expect(audit.status).toBe(200);
+      expect(audit.data.data).toHaveLength(1);
+      expect(audit.data.data[0]).toMatchObject({
+        resource_type: "webhook_delivery",
+        resource_id: failed!.id,
+        details: { webhook_id: created.data.id },
+      });
       const queued = (await response.json()) as {
         id: string;
         status: string;

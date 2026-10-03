@@ -407,10 +407,64 @@ const doors: [string, () => Door | Promise<Door>][] = [
     "connector_state.clear",
     async () => {
       const row = await connector();
+      expect(
+        (
+          await send({
+            method: "POST",
+            path: `/connectors/${row.id}/hold`,
+            key: row.key,
+            body: { process: "audit-proof" },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await send({
+            method: "PUT",
+            path: `/connectors/${row.id}/state`,
+            key: row.key,
+            body: { process: "audit-proof", state: { cursor: "retained" } },
+          })
+        ).status,
+      ).toBe(200);
       return {
         method: "DELETE",
         path: `/connectors/${row.id}/state`,
         key: row.key,
+      };
+    },
+  ],
+  [
+    "items.tombstones",
+    async () => {
+      const sourceId = generateId();
+      const created = await send({
+        method: "POST",
+        path: "/items",
+        body: {
+          type: "core.note",
+          source_id: sourceId,
+          properties: { body: "tombstone" },
+        },
+      });
+      expect(created.status).toBe(201);
+      const row = ((await created.json()) as { item: Item }).item;
+      expect(
+        (await send({ method: "DELETE", path: `/items/${row.id}` })).status,
+      ).toBe(200);
+      expect(
+        (await send({ method: "DELETE", path: `/items/${row.id}/purge` }))
+          .status,
+      ).toBe(200);
+      return {
+        method: "POST",
+        path: "/items/tombstones",
+        body: {
+          type: row.type,
+          source: row.source,
+          source_ids: [sourceId],
+          settled_at: new Date(Date.now() + 60_000).toISOString(),
+        },
       };
     },
   ],
@@ -442,6 +496,9 @@ async function domainSnapshot() {
     "settings",
     "connectors",
     "connector_states",
+    "connector_agreements",
+    "link_tombstones",
+    "natural_key_tombstones",
     "inbound_endpoints",
     "outbound_webhooks",
     "outbound_webhook_deliveries",
@@ -464,11 +521,19 @@ describe.each(doors)("%s transaction", (action, prepare) => {
       edges = collectEdgeEvents(abort.signal);
     try {
       const first = await prepare();
+      const beforeSuccess = await domainSnapshot();
       const res = await send(first);
       expect(res.status, await res.clone().text()).toBeLessThan(300);
       expect(
         (await ctx.storage.audit.list({ action })).data.length,
       ).toBeGreaterThan(0);
+      const afterSuccess = await domainSnapshot();
+      // An audit-only implementation must not satisfy the positive control.
+      for (const snapshot of [beforeSuccess, afterSuccess]) {
+        delete snapshot.rows.audit_log;
+        delete snapshot.rows.event_log;
+      }
+      expect(afterSuccess).not.toEqual(beforeSuccess);
       const second = await prepare();
       await ctx.storage.audit.drain();
       await settle();

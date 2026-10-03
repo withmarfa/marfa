@@ -49,6 +49,46 @@ describe("audit log", () => {
     expect(row?.details.type).toBe("core.note");
   });
 
+  it("exposes each committed best-effort entry immediately with one operation context", async () => {
+    const page = await client.bulkItems({
+      atomic: false,
+      items: [
+        createNote({ source: ctx.source }),
+        { type: "audit_missing_type", properties: {} },
+        createNote({ source: ctx.source }),
+      ],
+    });
+    expect(page.status).toBe(200);
+    expect(page.data.results.map((row) => row.outcome)).toEqual([
+      "created",
+      "errored",
+      "created",
+    ]);
+    const operations: unknown[] = [];
+    for (const index of [0, 2]) {
+      const id = page.data.results[index].id!;
+      trackItem(ctx, id);
+      expect((await client.getItem(id)).status).toBe(200);
+      const rows = await client.listAudit({
+        action: "items.bulk",
+        resource_id: id,
+      });
+      expect(rows.status).toBe(200);
+      expect(rows.data.data).toHaveLength(1);
+      const row = rows.data.data[0];
+      expect(row.key_id).toBe(ctx.trackedKeys[0]);
+      expect(row.details).toMatchObject({
+        atomic: false,
+        index,
+        outcome: "created",
+        total: 3,
+      });
+      expect(typeof row.details.operation_id).toBe("string");
+      operations.push(row.details.operation_id);
+    }
+    expect(new Set(operations).size).toBe(1);
+  });
+
   it("filters by action and resource type with an excluded control", async () => {
     const item = await client.createItem(createNote({ source: ctx.source }));
     expect(item.ok).toBe(true);
