@@ -2,7 +2,12 @@ import { unregisterTypeSchema } from "@withmarfa/shared";
 import { join } from "node:path";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 import { WebhookScheduler } from "./delivery.js";
@@ -73,6 +78,23 @@ async function largeWrite(bytes: number) {
     },
   });
   expect(response.status).toBe(201);
+}
+function quietPayload(): string {
+  return JSON.stringify({
+    type: "item.created",
+    item: {
+      id: "quiet",
+      type: "core.note",
+      state: "active",
+      properties: {},
+      version: 1,
+      schema_version: 1,
+      source: "test",
+      occurred_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  });
 }
 async function queued(id: string) {
   return (await ctx.storage.outboundWebhookDeliveries.list(id, { limit: 100 }))
@@ -148,7 +170,7 @@ describe("durable outbound event acknowledgement", () => {
     await subscribe();
     const id = await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: "{}",
+      payload: quietPayload(),
       enable_fanout: false,
     });
     expect((await scheduler.runOnce()).scheduled).toBe(0);
@@ -172,12 +194,12 @@ describe("durable outbound event acknowledgement", () => {
   it("refuses a retention gap without advancing", async () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: "{}",
+      payload: quietPayload(),
       enable_fanout: false,
     });
     await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: "{}",
+      payload: quietPayload(),
       enable_fanout: false,
     });
     await ctx.storage.eventLog.cleanup(-1);
@@ -221,7 +243,7 @@ describe("durable outbound event acknowledgement", () => {
     for (let n = 0; n < 2; n++)
       await ctx.storage.eventLog.append({
         event_type: "created",
-        payload: "{}",
+        payload: quietPayload(),
         enable_fanout: false,
       });
     expect((await scheduler.runOnce()).cursor).toBe("1");
@@ -456,7 +478,7 @@ describe("durable outbound event acknowledgement", () => {
     const before = await ctx.storage.outboundWebhooks.checkpoint();
     await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: "{}",
+      payload: quietPayload(),
       enable_fanout: false,
     });
     await ctx.storage.eventLog.cleanup(-1);
@@ -507,5 +529,116 @@ describe("durable outbound event acknowledgement", () => {
     await expect(ctx.storage.outboundWebhooks.checkpoint()).rejects.toThrow(
       "checkpoint is inconsistent",
     );
+  });
+  it.each([
+    {
+      name: "null item",
+      eventType: "created",
+      frame: { type: "item.created", item: null },
+    },
+    {
+      name: "null no-fanout item",
+      eventType: "created",
+      frame: { type: "item.created", item: null },
+      fanout: false,
+    },
+    {
+      name: "incomplete item",
+      eventType: "created",
+      frame: { type: "item.created", item: { type: "core.note" } },
+    },
+    {
+      name: "edge in an item event",
+      eventType: "created",
+      frame: { type: "item.created", edge: {} },
+    },
+    {
+      name: "null edge",
+      eventType: "edge_created",
+      frame: { type: "edge.created", edge: null },
+    },
+    {
+      name: "incomplete edge",
+      eventType: "edge_created",
+      frame: { type: "edge.created", edge: { edge_type: "references" } },
+    },
+    {
+      name: "unknown discriminator",
+      eventType: "unknown",
+      frame: { type: "item.unknown", item: {} },
+    },
+    {
+      name: "mismatched discriminator",
+      eventType: "created",
+      frame: { type: "item.deleted", item: {} },
+    },
+  ])(
+    "fails the scheduling job on a $name without acknowledging it",
+    async ({ eventType, frame, ...options }) => {
+      await subscribe();
+      await write();
+      expect((await scheduler.runOnce()).scheduled).toBe(1);
+      expect(hits).toBe(1);
+      const before = await ctx.storage.outboundWebhooks.checkpoint();
+      await ctx.storage.eventLog.append({
+        event_type: eventType,
+        payload: JSON.stringify(frame),
+        enable_fanout: "fanout" in options ? options.fanout : true,
+      });
+      registerHousekeepingJobs(
+        ctx.housekeeping,
+        ctx.storage,
+        ctx.blobs,
+        ctx.config,
+      );
+      await ctx.housekeeping.start();
+      try {
+        const result = await ctx.housekeeping.runNow("webhook-schedule");
+        expect(result.kind).toBe("ran");
+        if (result.kind !== "ran") throw new Error("job did not run");
+        expect(result.run.outcome).toBe("error");
+        expect(result.run.error).toContain("payload is inconsistent");
+        expect(await ctx.storage.outboundWebhooks.checkpoint()).toEqual(before);
+        expect(
+          (await ctx.storage.housekeeping.get("webhook-schedule"))
+            ?.last_outcome,
+        ).toBe("error");
+      } finally {
+        await ctx.housekeeping.stop();
+      }
+    },
+  );
+  it("acknowledges a valid denied-reach frame as a successful skip", async () => {
+    const key = await mintWorkingKey(ctx, {
+      permissions: ["webhooks.manage"],
+      type_permissions: { "core.task": "read" },
+    });
+    const subscribed = await request(ctx.app, "POST", "/webhooks", {
+      key,
+      body: { url: "https://receiver.example/hook", events: ["item.created"] },
+    });
+    expect(subscribed.status).toBe(201);
+    const { id } = (await subscribed.json()) as { id: string };
+    await write();
+    registerHousekeepingJobs(
+      ctx.housekeeping,
+      ctx.storage,
+      ctx.blobs,
+      ctx.config,
+    );
+    await ctx.housekeeping.start();
+    try {
+      const result = await ctx.housekeeping.runNow("webhook-schedule");
+      expect(result.kind).toBe("ran");
+      if (result.kind !== "ran") throw new Error("job did not run");
+      expect(result.run.outcome).toBe("ok");
+      expect(result.run.result?.scheduled).toBe(0);
+      expect(
+        (await ctx.storage.outboundWebhooks.checkpoint()).lastEventId,
+      ).toBe(1n);
+      expect(await queued(id)).toHaveLength(0);
+    } finally {
+      await ctx.housekeeping.stop();
+    }
   });
 });

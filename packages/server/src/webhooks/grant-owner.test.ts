@@ -121,10 +121,12 @@ function item(id: string, type = "core.note"): Item {
     state: "active",
     tier: "library",
     source: "test",
+    schema_version: 1,
+    occurred_at: new Date().toISOString(),
     properties: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  } as unknown as Item;
+  };
 }
 
 async function delivered(items: Item[]): Promise<string[]> {

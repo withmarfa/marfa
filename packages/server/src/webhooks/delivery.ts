@@ -13,6 +13,8 @@ import {
   resolveLiveGrant,
   type LiveCredential,
 } from "../auth/live-credential.js";
+import { ItemSchema, EdgeSchema, MetadataSchema } from "../routes/_schemas.js";
+import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
 import { frameInReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 
@@ -410,27 +412,41 @@ export class WebhookScheduler {
           throw new Error("Outbound webhook event log is inconsistent");
         }
         position.eventId = event.id;
+        let stored: unknown;
+        try {
+          stored = JSON.parse(event.payload);
+        } catch {
+          throw new Error("Outbound webhook event payload cannot be read");
+        }
+        if (typeof stored !== "object" || stored === null) {
+          throw new Error("Outbound webhook event payload is not a frame");
+        }
+        const frame = stored as Record<string, unknown>;
+        const eventType = toWebhookEventType(
+          event.event_type as ItemEvent["type"] | EdgeEvent["type"],
+        );
+        // Validate the retained frame independently of subscription matching
+        // and authorization: malformed history is a failed job, not a skip.
+        const isEdge = eventType.startsWith("edge.");
+        const shapeValid = isEdge
+          ? !("item" in frame) &&
+            EdgeSchema.safeParse(frame.edge).success &&
+            (frame.source_type === undefined ||
+              typeof frame.source_type === "string")
+          : !("edge" in frame) &&
+            ItemSchema.safeParse(frame.item).success &&
+            ((frame.metadata === undefined &&
+              eventType !== "metadata.changed") ||
+              MetadataSchema.safeParse(frame.metadata).success);
+        if (
+          !WEBHOOK_EVENTS.some((known) => known === eventType) ||
+          frame.type !== eventType ||
+          !shapeValid
+        ) {
+          throw new Error("Outbound webhook event payload is inconsistent");
+        }
         let complete = !event.enable_fanout;
         if (event.enable_fanout) {
-          let stored: unknown;
-          try {
-            stored = JSON.parse(event.payload);
-          } catch {
-            throw new Error("Outbound webhook event payload cannot be read");
-          }
-          if (typeof stored !== "object" || stored === null) {
-            throw new Error("Outbound webhook event payload is not a frame");
-          }
-          const frame = stored as Record<string, unknown>;
-          const eventType = toWebhookEventType(
-            event.event_type as ItemEvent["type"] | EdgeEvent["type"],
-          );
-          if (
-            frame.type !== eventType ||
-            !("item" in frame || "edge" in frame)
-          ) {
-            throw new Error("Outbound webhook event payload is inconsistent");
-          }
           const subscriptions = await storage.outboundWebhooks.listAfter(
             position.afterSubscriptionId,
             50,

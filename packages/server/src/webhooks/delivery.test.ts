@@ -195,10 +195,12 @@ function item(id: string, type = "core.note"): Item {
     state: "active",
     tier: "library",
     source: "test",
+    schema_version: 1,
+    occurred_at: new Date().toISOString(),
     properties: { title: id },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  } as unknown as Item;
+  };
 }
 
 function edge(id: string, sourceId: string, edgeType = "references"): Edge {
