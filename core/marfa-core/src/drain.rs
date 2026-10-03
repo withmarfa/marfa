@@ -872,7 +872,7 @@ fn move_edits_behind(
                 let before = base.is_some_and(|base| base < version);
                 // Catch-up can already have supplied this receipt's version.
                 // A later edit that read its values has no base to rewind.
-                if landed && !before && holds(conn, &id, at)? {
+                if landed && base == Some(version) && holds(conn, &id, at)? {
                     continue;
                 }
                 // An edge is never merged, so its answer is the edit applied
