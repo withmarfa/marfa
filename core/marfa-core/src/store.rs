@@ -1546,7 +1546,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE edges SET source_id = ?2 WHERE source_id = ?1",
         "UPDATE edges SET target_id = ?2 WHERE target_id = ?1",
         "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
-         (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted')))",
+         (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted', 'refused')))",
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
         "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
     ] {

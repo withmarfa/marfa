@@ -506,6 +506,55 @@ mod tests {
         assert_eq!(revision(&core.conn().unwrap(), GENERATION).unwrap(), 0);
     }
     #[test]
+    fn read_view_refused_overlay_is_removed_after_a_certified_older_read() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        let mut baseline = store::testing::note("x", "newer", "", "2026-03-02T00:00:00Z");
+        baseline.version = 1;
+        {
+            let conn = core.conn().unwrap();
+            store::replace_types(
+                &conn,
+                &[store::testing::wire_type("core.note", None, Some("title"))],
+            )
+            .unwrap();
+            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            set_listed(&conn, "x", true).unwrap();
+        }
+        core.update_item(
+            "x",
+            &crate::Edit {
+                properties: serde_json::json!({"title":"refused"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                base_version: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            core.get("x").unwrap().unwrap().properties["title"],
+            "refused"
+        );
+        let mut read: serde_json::Value =
+            serde_json::from_str(&item_payload("item.updated", "x", "core.note", 1)).unwrap();
+        read["item"]["updated_at"] = "2026-03-01T00:00:00Z".into();
+        read["item"]["properties"]["title"] = "stale".into();
+        read["listed"] = true.into();
+        let read = read.to_string();
+        server.on(
+            "/items/x",
+            vec![refusal(403, "type_forbidden"), certified(json(200, &read))],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.verdicts[0].verdict, Some(crate::Verdict::Refused));
+        assert_eq!(core.get("x").unwrap().unwrap().properties["title"], "newer");
+    }
+
+    #[test]
     fn read_view_own_create_outside_listing_is_held_only_while_local_work_waits() {
         use crate::scripted::*;
         let server = Scripted::start();

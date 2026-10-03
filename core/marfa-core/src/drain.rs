@@ -1529,9 +1529,10 @@ fn land(
     let tx = conn.transaction()?;
     same_attempt(&tx, row)?;
     check_read_back(&tx, &read)?;
-    // Land on a freshly certified baseline before moving the dependent edits.
-    apply_read_back_unchecked(&tx, &read)?;
+    // The checked response must be admitted under the pin and waiting work
+    // that move from the local identity in this same transaction.
     let refused = store::land_on_held_row(&tx, row, id)?;
+    apply_read_back_unchecked(&tx, &read)?;
     let catalog = Catalog::load(&tx)?;
     store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
     store::settle_read_back(&tx, Subject::Item, id)?;
@@ -1568,9 +1569,9 @@ fn finish_counted(
 }
 
 /// A read rather than a wait for catch-up: a refused write produces no
-/// event. The verdict and the copy put back are recorded already, and so is
-/// the read owed, so a read that fails is tried by the next drain. A contract
-/// mismatch, failed renewal or full store ends the pass with its typed error.
+/// event. The verdict and debt survive a failed read; the refused overlay
+/// is removed only after a fresh response passes the local context guard.
+/// A contract mismatch, redirect, failed renewal or full store ends the pass.
 /// Other unavailable reads return their reason and end the pass too.
 fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
@@ -1581,6 +1582,7 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
         let tx = conn.transaction()?;
         check_read_back(&tx, &read)?;
         same_attempt(&tx, row)?;
+        store::put_back(&tx, row)?;
         move_edits_back(&tx, row)?;
         apply_read_back_unchecked(&tx, &read)?;
         store::settle_read_back(&tx, owed.subject, &owed.id)?;
@@ -2466,6 +2468,73 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn natural_key_landing_admits_source_excluded_row_under_its_moved_pin() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let create = {
+            let conn = core.conn().unwrap();
+            store::upsert_item(
+                &conn,
+                &store::testing::note("local", "mine", "", "2026-01-01T00:00:00Z"),
+                None,
+                &Default::default(),
+            )
+            .unwrap();
+            store::pin(&conn, "local").unwrap();
+            store::enqueue(
+                &conn,
+                &write(WriteKind::CreateItem, "local", None, None, &[]),
+            )
+            .unwrap()
+        };
+        let mut body: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "server",
+            "core.note",
+            1,
+        ))
+        .unwrap();
+        body["listed"] = false.into();
+        server.on(
+            "/items/server",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &body.to_string(),
+            ))],
+        );
+        let answer = Ok(Answer {
+            status: 409,
+            code: "version_conflict".into(),
+            body: "{}".into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        });
+        let settled = land(
+            &core,
+            &create,
+            &answer,
+            Shape::Item,
+            "server",
+            "version_conflict".into(),
+        )
+        .unwrap();
+        assert_eq!(settled.verdict, Some(Verdict::Refused));
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &create.id)
+                .unwrap()
+                .unwrap()
+                .item_id
+                .as_deref(),
+            Some("server")
+        );
+        assert!(store::pinned(&conn, "server").unwrap());
+        assert!(store::item_held(&conn, "server").unwrap());
+        assert!(!store::item_held(&conn, "local").unwrap());
     }
 
     #[test]
