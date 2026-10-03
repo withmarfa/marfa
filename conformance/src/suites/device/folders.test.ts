@@ -2455,7 +2455,11 @@ describe("files and items", () => {
   it("removes no edge at all when a link in the body names nothing", async () => {
     harness = await folderHarness("folder-unresolved-link");
     scriptFolderWrites(harness);
-    put(harness, "target.md", "---\ntitle: Target\n---\nthe other end\n");
+    put(
+      harness,
+      "target.md",
+      "---\ntitle: Different target\n---\nthe other end\n",
+    );
     put(harness, "other.md", "---\ntitle: Other\n---\nanother end\n");
     expect((await harness.folder.scan()).ok).toBe(true);
     put(
@@ -2528,7 +2532,7 @@ describe("files and items", () => {
     harness = await folderHarness("folder-stand-down-memory");
     scriptFolderWrites(harness);
     put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
-    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    put(harness, "two.md", "---\ntitle: Different second\n---\nsecond\n");
     expect((await harness.folder.scan()).ok).toBe(true);
     put(
       harness,
@@ -4130,6 +4134,245 @@ describe("edges in frontmatter", () => {
       frontOf(harness, "New.md"),
       "the pull wrote the target's title over the file name the person typed",
     ).toContain('"[[g-file]]"');
+  });
+
+  it("resolves body links by title and nested filename without repeating references on pull", async () => {
+    const made = await edgeHarness("folder-body-names", [], []);
+    harness = made.harness;
+    put(
+      harness,
+      "projects/file-name.md",
+      "---\ntitle: A different title\n---\ntarget\n",
+    );
+    put(
+      harness,
+      "Source.md",
+      "---\ntitle: Source\n---\n[[file-name#Heading|shown]] [[A different title]] [[projects/file-name.md#Heading]] [[#local]]\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([]);
+    const creates = sentCreates(harness);
+    const target = String(
+      creates.find(
+        (row) =>
+          (row.properties as Record<string, unknown>).title ===
+          "A different title",
+      )?.id,
+    );
+    const source = String(
+      creates.find(
+        (row) => (row.properties as Record<string, unknown>).title === "Source",
+      )?.id,
+    );
+    expect(heldEdges(made.door)).toEqual([`${source} references ${target}`]);
+    expect(frontOf(harness, "Source.md")).not.toContain("references:");
+    expect(bodyOf(harness, "Source.md")).toContain(
+      "[[file-name#Heading|shown]]",
+    );
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(frontOf(harness, "Source.md")).not.toContain("references:");
+    edit(harness, "Source.md", bodyOf(harness, "Source.md"), "links removed\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toEqual([]);
+  });
+
+  it("reports missing body links and preserves removals until all links resolve", async () => {
+    const made = await edgeHarness(
+      "folder-body-missing",
+      [titled(alpha, "Alpha"), titled(beta, "Beta")],
+      [],
+    );
+    harness = made.harness;
+    put(harness, "Source.md", "---\ntitle: Source\n---\n[[Alpha]] [[Beta]]\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toHaveLength(2);
+    edit(harness, "Source.md", "[[Alpha]] [[Beta]]", "[[Alpha]] [[Nowhere]]");
+    const missing = await harness.folder.push();
+    expect(missing.ok, JSON.stringify(missing)).toBe(true);
+    if (!missing.ok) return;
+    expect(missing.value.scan.flagged).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "Source.md",
+          flag: "edges",
+          reason: expect.stringContaining(
+            "[[Nowhere]] in its body matches no item",
+          ),
+        }),
+      ]),
+    );
+    expect(heldEdges(made.door)).toHaveLength(2);
+    expect(bodyOf(harness, "Source.md")).toContain("[[Nowhere]]");
+    edit(harness, "Source.md", " [[Nowhere]]", "");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toEqual([
+      `${String(sentCreates(harness)[0]?.id)} references ${alpha}`,
+    ]);
+  });
+
+  it("ignores body links in code and comments while sending visible links", async () => {
+    const made = await edgeHarness(
+      "folder-body-code",
+      [titled(alpha, "Alpha"), titled(beta, "Beta")],
+      [],
+    );
+    harness = made.harness;
+    put(harness, "Source.md", "---\ntitle: Source\n---\n[[Alpha]] [[Beta]]\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toHaveLength(2);
+    edit(
+      harness,
+      "Source.md",
+      "[[Alpha]] [[Beta]]",
+      "[[Alpha]] `[[Beta]]` <!-- [[Beta]] --> %% [[Beta]] %%\n```md\n[[Beta]]\n```\n~~~\n[[Beta]]\n~~~\n[[#local]]",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([]);
+    expect(heldEdges(made.door)).toEqual([
+      `${String(sentCreates(harness)[0]?.id)} references ${alpha}`,
+    ]);
+    expect(frontOf(harness, "Source.md")).not.toContain("references:");
+  });
+
+  it.each([
+    ["inline triple backticks", "```literal```\n[[Alpha]] `[[Beta]]`\n"],
+    ["multiline code spans", "`first\n[[Beta]]\nlast`\n[[Alpha]]\n"],
+    ["quoted fences", "> ```\n> [[Beta]]\n> ```\n\n[[Alpha]]\n"],
+  ])(
+    "keeps visible references and removes code-only references with %s",
+    async (_name, body) => {
+      const made = await edgeHarness(
+        "folder-body-code-boundary",
+        [titled(alpha, "Alpha"), titled(beta, "Beta")],
+        [],
+      );
+      harness = made.harness;
+      put(
+        harness,
+        "Source.md",
+        "---\ntitle: Source\n---\n[[Alpha]] [[Beta]]\n",
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(heldEdges(made.door)).toHaveLength(2);
+      edit(harness, "Source.md", "[[Alpha]] [[Beta]]\n", body);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.scan.flagged).toEqual([]);
+      expect(heldEdges(made.door)).toEqual([
+        `${String(sentCreates(harness)[0]?.id)} references ${alpha}`,
+      ]);
+      expect(bodyOf(harness, "Source.md")).toBe(body);
+    },
+  );
+
+  it("reports ambiguous body links including whole names with heading or alias marks", async () => {
+    const made = await edgeHarness(
+      "folder-body-ambiguous",
+      [
+        titled(alpha, "Shared"),
+        titled(beta, "Shared"),
+        titled(gamma, "C"),
+        titled(third, "C# notes"),
+        titled(project, "C|shown"),
+      ],
+      [],
+    );
+    harness = made.harness;
+    put(
+      harness,
+      "Source.md",
+      "---\ntitle: Source\n---\n[[Shared]] [[C# notes]] [[C|shown]]\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const reason =
+      pushed.value.scan.flagged.find((row) => row.path === "Source.md")
+        ?.reason ?? "";
+    for (const raw of ["Shared", "C# notes", "C|shown"])
+      expect(reason).toContain(
+        `[[${raw}]] in its body matches more than one item`,
+      );
+    expect(sentEdgeWrites(harness)).toEqual([]);
+    edit(
+      harness,
+      "Source.md",
+      "[[Shared]] [[C# notes]] [[C|shown]]",
+      `[[${alpha}]] [[${third}#Heading]]`,
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toHaveLength(2);
+  });
+
+  it("waits for body link lookups and retries them when the server returns", async () => {
+    const made = await edgeHarness(
+      "folder-body-waits",
+      [titled(alpha, "Only on server", "core.bookmark")],
+      [],
+    );
+    harness = made.harness;
+    put(
+      harness,
+      "Source.md",
+      "---\ntitle: Source\n---\n[[Only on server#Heading|shown]]\n",
+    );
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.flagged[0]?.reason).toContain(
+      "once the server can be asked",
+    );
+    await harness.server.offline();
+    const offline = await harness.folder.push();
+    await harness.server.online();
+    expect(offline.ok, JSON.stringify(offline)).toBe(true);
+    expect(sentEdgeWrites(harness)).toEqual([]);
+    const online = await harness.folder.push();
+    expect(online.ok, JSON.stringify(online)).toBe(true);
+    expect(heldEdges(made.door)).toEqual([
+      `${String(sentCreates(harness)[0]?.id)} references ${alpha}`,
+    ]);
+    expect(frontOf(harness, "Source.md")).not.toContain("references:");
+    edit(harness, "Source.md", "[[Only on server#Heading|shown]]", "gone");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(heldEdges(made.door)).toEqual([]);
+  });
+
+  it("does not choose between existing references answering to the same body name", async () => {
+    const made = await edgeHarness(
+      "folder-body-existing-ambiguous",
+      [titled(alpha, "Alpha"), titled(beta, "Shared"), titled(gamma, "Shared")],
+      [
+        {
+          id: "01a00000-0000-7000-8000-00000000e1a1",
+          source_id: alpha,
+          target_id: beta,
+          edge_type: "references",
+        },
+        {
+          id: "01a00000-0000-7000-8000-00000000e1a2",
+          source_id: alpha,
+          target_id: gamma,
+          edge_type: "references",
+        },
+      ],
+    );
+    harness = made.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(heldEdges(made.door)).toHaveLength(2);
+    edit(harness, "Alpha.md", /references:[\s\S]*?(?=marfa_id:)/, "");
+    edit(harness, "Alpha.md", "\n---\nAlpha\n", "\n---\n[[Shared]]\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.find((row) => row.path === "Alpha.md")?.reason,
+      JSON.stringify(pushed),
+    ).toContain("matches more than one item");
+    expect(heldEdges(made.door)).toHaveLength(2);
   });
 
   it("flags a name more common than the lookup reads", async () => {

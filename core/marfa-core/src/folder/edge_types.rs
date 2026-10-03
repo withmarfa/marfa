@@ -66,6 +66,21 @@ pub struct Typed {
     pub name: String,
 }
 
+impl Typed {
+    pub fn new(raw: &str) -> Typed {
+        let raw = raw.trim();
+        Typed {
+            raw: raw.to_string(),
+            name: raw
+                .split(['|', '#'])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        }
+    }
+}
+
 /// The targets a line names, once each whatever their case or form; unquoted
 /// `[[name]]` is YAML for a list inside a list.
 pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
@@ -89,18 +104,15 @@ pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
         let Some(raw) = text else {
             return Err(format!("{value} is not written as [[name]]"));
         };
-        let name = raw.split(['|', '#']).next().unwrap_or_default().trim();
-        if name.is_empty() {
+        let target = Typed::new(&raw);
+        if target.name.is_empty() {
             return Err("[[]] names nothing".into());
         }
         if !found
             .iter()
             .any(|held| super::names::same(&held.raw, raw.trim()))
         {
-            found.push(Typed {
-                raw: raw.trim().to_string(),
-                name: name.to_string(),
-            });
+            found.push(target);
         }
     }
     Ok(found)

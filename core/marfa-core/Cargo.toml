@@ -10,6 +10,7 @@ publish.workspace = true
 base64.workspace = true
 globset = "0.4"
 ignore = "0.4"
+pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -138,7 +138,7 @@ impl Resolved {
                 format!("could not be looked up ({why}); name it by its id, [[<id>]]")
             }
         };
-        reasons.push(format!("[[{raw}]] in its {name} line {why}"));
+        reasons.push(format!("[[{raw}]] in its {name} {why}"));
         None
     }
 }
@@ -580,11 +580,27 @@ impl Folder {
         let mut queued: Vec<String> = Vec::new();
         let mut waiting = false;
 
+        let edges = self.edges_at(item_id)?;
+        let references: Vec<&Edge> = edges
+            .iter()
+            .filter(|edge| edge.edge_type == LINK_EDGE && edge.source_id == item_id)
+            .collect();
         let mut named: Vec<String> = Vec::new();
         let mut links_resolved = true;
-        for text in &work.links {
-            match self.resolve_link(text)? {
-                Some(id) if !named.contains(&id) => named.push(id),
+        for raw in &work.links {
+            let typed = edge_types::Typed::new(raw);
+            let resolved = resolve_reference(&typed, |text| {
+                self.resolve_typed(
+                    text,
+                    &references,
+                    &|edge| edge.target_id.clone(),
+                    catalog,
+                    resolver,
+                )
+            })?;
+            match resolved.settled(raw, "body", &mut reasons, &mut waiting) {
+                Some((id, _)) if id == item_id => {}
+                Some((id, _)) if !named.contains(&id) => named.push(id),
                 Some(_) => {}
                 // A link naming nothing looks like a link removed.
                 None => links_resolved = false,
@@ -660,7 +676,6 @@ impl Folder {
             });
         }
 
-        let edges = self.edges_at(item_id)?;
         let mut lines: Vec<Line> = Vec::new();
         for ((edge_type, end), group) in &groups {
             let (edge_type, end) = (edge_type.as_str(), *end);
@@ -882,26 +897,15 @@ impl Folder {
         let mut stood_down = false;
         for typed in texts {
             let raw = &typed.raw;
-            let Some((id, r#type)) = self
-                .resolve_typed(&typed.name, current, other_of, catalog, resolver)?
-                .settled(raw, name, reasons, waiting)
+            let resolved = resolve_reference(typed, |text| {
+                self.resolve_typed(text, current, other_of, catalog, resolver)
+            })?;
+            let Some((id, r#type)) =
+                resolved.settled(raw, &format!("{name} line"), reasons, waiting)
             else {
                 stood_down = true;
                 continue;
             };
-            // `[[C# notes]]` read as `[[C]]` would guess; a whole name that
-            // names something else says the text is ambiguous.
-            if raw != &typed.name
-                && let Resolved::Found { id: whole, .. } =
-                    self.resolve_typed(raw, current, other_of, catalog, resolver)?
-                && whole != id
-            {
-                reasons.push(format!(
-                    "[[{raw}]] in its {name} line names one item whole and another before its | or #; name one by its id, [[<id>]]"
-                ));
-                stood_down = true;
-                continue;
-            }
             if id == item_id {
                 reasons.push(format!("its {name} line names this file's own item"));
                 stood_down = true;
@@ -944,6 +948,84 @@ impl Folder {
         Ok(Some(found.into_iter().map(|(id, _)| id).collect()))
     }
 
+    fn existing_reference(
+        &self,
+        text: &str,
+        current: &[&Edge],
+        other_of: &dyn Fn(&Edge) -> String,
+        catalog: &Catalog,
+    ) -> Result<Option<Resolved>> {
+        let mut found = BTreeSet::new();
+        for edge in current {
+            let other = other_of(edge);
+            if self.answers_to(text, &other, catalog)? {
+                found.insert(other);
+            }
+        }
+        Ok(match found.len() {
+            0 => None,
+            1 => {
+                let id = found.into_iter().next().expect("one");
+                let r#type = self.core.get(&id)?.map(|item| item.r#type);
+                Some(Resolved::Found { id, r#type })
+            }
+            _ => Some(Resolved::Ambiguous),
+        })
+    }
+
+    /// Rendering is also used to detect unsaved edits, so it must resolve
+    /// names from the copy alone, without a network-dependent answer.
+    pub(super) fn body_links(
+        &self,
+        item: &Item,
+        body: &str,
+        catalog: &Catalog,
+        names: &Names,
+    ) -> Result<Vec<String>> {
+        let edges = self.core.edges_from(&item.id)?;
+        let references: Vec<&Edge> = edges
+            .iter()
+            .filter(|edge| edge.edge_type == LINK_EDGE)
+            .collect();
+        let mut found = Vec::new();
+        for raw in document::links(body) {
+            let resolved = resolve_reference(&edge_types::Typed::new(&raw), |text| {
+                if let Some(resolved) = self.existing_reference(
+                    text,
+                    &references,
+                    &|edge| edge.target_id.clone(),
+                    catalog,
+                )? {
+                    return Ok(resolved);
+                }
+                if is_id(text) {
+                    return Ok(match self.core.get(text)? {
+                        Some(item) => Resolved::Found {
+                            id: item.id,
+                            r#type: Some(item.r#type),
+                        },
+                        None => Resolved::Unmatched,
+                    });
+                }
+                Ok(match names.of(text) {
+                    Some(ids) if ids.len() == 1 => Resolved::Found {
+                        id: ids.iter().next().expect("one").clone(),
+                        r#type: None,
+                    },
+                    Some(_) => Resolved::Ambiguous,
+                    None => Resolved::Unmatched,
+                })
+            })?;
+            if let Resolved::Found { id, .. } = resolved
+                && id != item.id
+                && !found.contains(&id)
+            {
+                found.push(id);
+            }
+        }
+        Ok(found)
+    }
+
     /// A typed name as the edge it already names, or else as the resolver
     /// reads it.
     fn resolve_typed(
@@ -954,13 +1036,92 @@ impl Folder {
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
     ) -> Result<Resolved> {
-        for edge in current {
-            let other = other_of(edge);
-            if self.answers_to(text, &other, catalog)? {
-                let r#type = self.core.get(&other)?.map(|item| item.r#type);
-                return Ok(Resolved::Found { id: other, r#type });
-            }
+        if let Some(resolved) = self.existing_reference(text, current, other_of, catalog)? {
+            return Ok(resolved);
         }
         resolver.resolve(text)
+    }
+}
+
+/// Keep both spellings until resolution: C# notes may be a whole title,
+/// and reading it as a heading on C must not quietly choose another item.
+fn resolve_reference(
+    typed: &edge_types::Typed,
+    mut resolve: impl FnMut(&str) -> Result<Resolved>,
+) -> Result<Resolved> {
+    if typed.name.is_empty() {
+        return Ok(Resolved::Unmatched);
+    }
+    let found = resolve(&typed.name)?;
+    if let Resolved::Found { id, .. } = &found
+        && typed.raw != typed.name
+    {
+        match resolve(&typed.raw)? {
+            Resolved::Found { id: whole, .. } if whole != *id => return Ok(Resolved::Ambiguous),
+            Resolved::Ambiguous => return Ok(Resolved::Ambiguous),
+            Resolved::Waiting => return Ok(Resolved::Waiting),
+            Resolved::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
+            _ => {}
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_body_reference_never_guesses_when_the_whole_name_is_unsettled() {
+        let typed = edge_types::Typed::new("Note#part|shown");
+        for whole in [
+            Resolved::Ambiguous,
+            Resolved::Waiting,
+            Resolved::Unanswered("permission_denied".into()),
+            Resolved::Found {
+                id: "other".into(),
+                r#type: None,
+            },
+        ] {
+            let actual = resolve_reference(&typed, |text| {
+                Ok(if text == "Note" {
+                    Resolved::Found {
+                        id: "note".into(),
+                        r#type: None,
+                    }
+                } else {
+                    whole.clone()
+                })
+            })
+            .unwrap();
+            assert!(!matches!(actual, Resolved::Found { .. }));
+            if matches!(whole, Resolved::Waiting) {
+                assert!(matches!(actual, Resolved::Waiting));
+            }
+        }
+    }
+
+    #[test]
+    fn a_body_reference_keeps_the_target_when_its_suffix_is_unambiguous() {
+        for whole in [
+            Resolved::Unmatched,
+            Resolved::Found {
+                id: "note".into(),
+                r#type: None,
+            },
+        ] {
+            let actual = resolve_reference(&edge_types::Typed::new("Note#part"), |text| {
+                Ok(if text == "Note" {
+                    Resolved::Found {
+                        id: "note".into(),
+                        r#type: None,
+                    }
+                } else {
+                    whole.clone()
+                })
+            })
+            .unwrap();
+            assert!(matches!(actual, Resolved::Found { id, .. } if id == "note"));
+        }
     }
 }

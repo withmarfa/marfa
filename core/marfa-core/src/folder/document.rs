@@ -233,6 +233,7 @@ fn to_yaml(value: &Value) -> Yaml {
 
 /// An embed, `![[target]]`, is not a link.
 pub fn links(body: &str) -> Vec<String> {
+    let body = without_code(body);
     let mut found = Vec::new();
     let bytes = body.as_bytes();
     let mut at = 0usize;
@@ -243,9 +244,13 @@ pub fn links(body: &str) -> Vec<String> {
         };
         let embedded = at + start > 0 && bytes[at + start - 1] == b'!';
         let target = body[open..open + end].trim();
-        // An alias, `[[id|shown]]`, links to what is before the bar.
-        let target = target.split('|').next().unwrap_or(target).trim();
-        if !embedded && !target.is_empty() && !found.iter().any(|held| held == target) {
+        // A heading without a note stays within this document, so it is no edge.
+        if !embedded
+            && !target.is_empty()
+            && !target.starts_with('#')
+            && !target.contains('\n')
+            && !found.iter().any(|held| held == target)
+        {
             found.push(target.to_string());
         }
         at = open + end + 2;
@@ -339,100 +344,81 @@ pub fn embeds(body: &str) -> Vec<Embed> {
 /// A body with its code and comments blanked, byte for byte, since Obsidian
 /// shows an embed in either as text: fenced blocks, inline spans, `%%` and `<!-- -->`.
 fn without_code(body: &str) -> String {
-    let mut out = body.as_bytes().to_vec();
     let blank = |out: &mut [u8]| {
         out.iter_mut()
-            .filter(|byte| **byte != b'\n')
+            .filter(|byte| !matches!(**byte, b'\n' | b'\r'))
             .for_each(|byte| *byte = b' ');
     };
-    // A fence closes on a run of its own mark at least as long as it opened with.
-    let mut fence: Option<(u8, usize)> = None;
-    let mut comment: Option<&[u8]> = None;
-    let mut from = 0;
-    for line in body.split_inclusive('\n') {
-        let (start, end) = (from, from + line.len());
-        from = end;
-        let lead = line.len() - line.trim_start_matches([' ', '\t']).len();
-        let mark = line.as_bytes().get(lead).copied();
-        let run = |of: u8| line[lead..].bytes().take_while(|byte| *byte == of).count();
-        if let Some((of, length)) = fence {
-            if mark == Some(of) && run(of) >= length && line[lead + run(of)..].trim().is_empty() {
-                fence = None;
-            }
-            blank(&mut out[start..end]);
+    let code_ranges = |text: &str| {
+        pulldown_cmark::Parser::new(text)
+            .into_offset_iter()
+            .filter_map(|(event, range)| {
+                matches!(
+                    event,
+                    pulldown_cmark::Event::Code(_)
+                        | pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+                )
+                .then_some(range)
+            })
+            .collect::<Vec<_>>()
+    };
+    let bytes = body.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut comments = vec![false; bytes.len()];
+    let mut codes = code_ranges(body).into_iter().peekable();
+    let mut at = 0;
+    // Obsidian comments are not Markdown syntax. A comment marker inside
+    // code is literal, but code opened inside a comment cannot extend past it.
+    while at < bytes.len() {
+        while codes.peek().is_some_and(|range| range.end <= at) {
+            codes.next();
+        }
+        if codes.peek().is_some_and(|range| range.start <= at) {
+            at = codes.next().expect("checked above").end;
             continue;
         }
-        if comment.is_none()
-            && let Some(of) = mark.filter(|of| matches!(of, b'`' | b'~'))
-            && run(of) >= 3
-        {
-            fence = Some((of, run(of)));
-            blank(&mut out[start..end]);
+        let comment = if bytes[at..].starts_with(b"%%") {
+            Some((2, &b"%%"[..]))
+        } else if bytes[at..].starts_with(b"<!--") {
+            Some((4, &b"-->"[..]))
+        } else {
+            None
+        };
+        let Some((opened, close)) = comment else {
+            at += 1;
             continue;
+        };
+        let end = bytes[at + opened..]
+            .windows(close.len())
+            .position(|window| window == close)
+            .map_or(bytes.len(), |offset| at + opened + offset + close.len());
+        blank(&mut out[at..end]);
+        comments[at..end].fill(true);
+        while codes.peek().is_some_and(|range| range.start < end) {
+            codes.next();
         }
-        let bytes = line.as_bytes();
-        let mut at = 0;
-        while at < bytes.len() {
-            if let Some(close) = comment {
-                match bytes[at..]
-                    .windows(close.len())
-                    .position(|window| window == close)
-                {
-                    Some(found) => {
-                        blank(&mut out[start + at..start + at + found + close.len()]);
-                        at += found + close.len();
-                        comment = None;
-                    }
-                    None => {
-                        blank(&mut out[start + at..end]);
-                        at = bytes.len();
-                    }
-                }
-                continue;
-            }
-            if bytes[at..].starts_with(b"%%") || bytes[at..].starts_with(b"<!--") {
-                comment = Some(if bytes[at] == b'%' { b"%%" } else { b"-->" });
-                let opened = if bytes[at] == b'%' { 2 } else { 4 };
-                blank(&mut out[start + at..start + at + opened]);
-                at += opened;
-                continue;
-            }
-            if bytes[at] != b'`' {
-                at += 1;
-                continue;
-            }
-            let ticks = |from: usize| {
-                bytes[from..]
-                    .iter()
-                    .take_while(|byte| **byte == b'`')
-                    .count()
-            };
-            let opened = ticks(at);
-            let mut next = at + opened;
-            let mut closed = None;
-            while next < bytes.len() {
-                if bytes[next] == b'`' {
-                    let found = ticks(next);
-                    if found == opened {
-                        closed = Some(next + found);
-                        break;
-                    }
-                    next += found;
-                } else {
-                    next += 1;
-                }
-            }
-            match closed {
-                Some(close) => {
-                    blank(&mut out[start + at..start + close]);
-                    at = close;
-                }
-                None => at += opened,
-            }
-        }
+        at = end;
     }
-    // Only whole characters were blanked, each byte to a space.
-    String::from_utf8(out).unwrap_or_default()
+    // Parse again without comments: a fence or span inside one must not hide
+    // visible text after it. A comment before visible text must not turn its
+    // replacement spaces into an indented code block.
+    let mut parsing = out.clone();
+    let mut start = 0;
+    for line in out.split_inclusive(|byte| *byte == b'\n') {
+        if let Some(visible) = line.iter().position(|byte| !byte.is_ascii_whitespace())
+            && let Some(comment) = comments[start..start + visible]
+                .iter()
+                .position(|held| *held)
+        {
+            parsing[start + comment] = b'x';
+        }
+        start += line.len();
+    }
+    let uncommented = String::from_utf8(parsing).expect("only whole characters were blanked");
+    for range in code_ranges(&uncommented) {
+        blank(&mut out[range]);
+    }
+    String::from_utf8(out).expect("only whole characters were blanked")
 }
 
 enum Image {
@@ -677,8 +663,8 @@ mod tests {
     fn links_are_read_in_order_and_once_each() {
         assert_eq!(
             links("see [[one]] and [[two|as shown]] and [[one]] again"),
-            vec!["one", "two"],
-            "a link was missed, repeated or read past its alias, so the edges \
+            vec!["one", "two|as shown"],
+            "a link was missed, repeated or lost its alias, so the edges \
              this body becomes are not the links it carries"
         );
         assert!(links("a [[ ]] and an [[unclosed").is_empty());
@@ -688,6 +674,47 @@ mod tests {
             "an embed was read as a link, so a picture shown in a note became a reference"
         );
         assert_eq!(render_link("abc"), "[[abc]]");
+    }
+
+    #[test]
+    fn body_links_keep_names_and_ignore_code_comments_and_self_headings() {
+        assert_eq!(
+            links(
+                "[[Note#Heading|shown]] [[#local]] `[[inline]]` <!-- [[html]] --> %% [[comment]] %% ![[embed]]\n```md\n[[fenced]]\n```\n~~~\n[[tilde]]\n~~~\n[[real]]"
+            ),
+            ["Note#Heading|shown", "real"]
+        );
+    }
+
+    #[test]
+    fn code_masking_preserves_visible_links_and_ignores_markdown_code() {
+        for body in [
+            "```literal```\n[[Visible]] `[[Hidden]]`\n",
+            "`first\n[[Hidden]]\nlast`\n[[Visible]]\n",
+            "> ```\n> [[Hidden]]\n> ```\n\n[[Visible]]\n",
+            "- item\n\n  ```\n  [[Hidden]]\n  ```\n\n[[Visible]]\n",
+            "    [[Hidden]]\n\n[[Visible]]\n",
+            "- outer\n\n    [[Visible]]\n",
+        ] {
+            assert_eq!(links(body), ["Visible"], "{body}");
+            let embedded = body.replace("[[", "![[");
+            assert_eq!(embeds(&embedded).len(), 1, "{embedded}");
+        }
+    }
+
+    #[test]
+    fn comment_markers_in_code_and_code_markers_in_comments_stay_literal() {
+        for body in [
+            "`%%` [[Visible]]",
+            "`<!--` [[Visible]]",
+            "%%\n```\n[[Hidden]]\n%%\n[[Visible]]",
+            "<!--\n```\n[[Hidden]]\n-->\n[[Visible]]",
+            "%% ` %% [[Visible]] `",
+            "%% [[Hidden]] %% [[Visible]] <!-- [[Hidden]] -->",
+            "[[Visible]] %% [[Hidden]]",
+        ] {
+            assert_eq!(links(body), ["Visible"], "{body}");
+        }
     }
 
     #[test]
