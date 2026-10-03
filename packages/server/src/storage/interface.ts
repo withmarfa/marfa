@@ -1417,7 +1417,14 @@ export interface WebhookCheckpoint {
 export interface WebhookStore {
   checkpoint(): Promise<WebhookCheckpoint>;
   acknowledge(position: WebhookCheckpoint): Promise<void>;
-  listAfter(afterId: string | null, limit: number): Promise<StoredWebhook[]>;
+  /** Project one ordered page; scheduling excludes later births but includes
+   * invalid/ahead births so they cannot be hidden from validation. This bounds
+   * returned rows, not SQLite's internal scan of the subscription table. */
+  listAfter(
+    afterId: string | null,
+    limit: number,
+    context?: { eventId: bigint; headId: bigint },
+  ): Promise<StoredWebhook[]>;
   create(
     input: CreateWebhookInput & { owner: WebhookOwner },
   ): Promise<StoredWebhook>;

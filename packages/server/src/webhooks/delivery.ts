@@ -475,6 +475,7 @@ export class WebhookScheduler {
           const subscriptions = await storage.outboundWebhooks.listAfter(
             position.afterSubscriptionId,
             pageLimit,
+            { eventId: event.id, headId: head },
           );
           let pageExamined = 0;
           for (const subscription of subscriptions) {

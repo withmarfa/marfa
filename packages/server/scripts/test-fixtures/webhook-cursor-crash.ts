@@ -34,12 +34,12 @@ process.once(
       const list = storage.outboundWebhooks.listAfter.bind(
         storage.outboundWebhooks,
       );
-      storage.outboundWebhooks.listAfter = async (after, limit) => {
+      storage.outboundWebhooks.listAfter = async (after, limit, context) => {
         if (armed) {
           process.send?.({ kind: "blocked" });
           await new Promise(() => undefined);
         }
-        return list(after, limit);
+        return list(after, limit, context);
       };
       registerHousekeepingJobs(housekeeping, storage, blobs, {
         ...config,

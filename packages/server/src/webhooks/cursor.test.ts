@@ -252,24 +252,89 @@ describe("durable outbound event acknowledgement", () => {
     expect(first.scheduled).toBe(0);
     expect((await scheduler.runOnce()).cursor).toBe("129");
   });
-  it("counts pre-birth skips across consecutive events", async () => {
+  it("excludes valid pre-birth subscriptions while draining consecutive events", async () => {
     for (let n = 0; n < 100; n++) await write();
     const id = await subscribe();
     await write();
-    const first = await scheduler.runOnce();
-    expect(first.examined).toBe(50);
-    expect(first.scheduled).toBe(0);
-    expect(first.cursor).toBe("49");
-    expect(first.event).toBe("50");
-    expect(await queued(id)).toHaveLength(0);
-    const second = await scheduler.runOnce();
-    expect(second.examined).toBe(50);
-    expect(second.scheduled).toBe(0);
-    expect(second.cursor).toBe("99");
-    const last = await scheduler.runOnce();
-    expect(last.scheduled).toBe(1);
-    expect(last.cursor).toBe("101");
+    const result = await scheduler.runOnce();
+    expect(result.examined).toBe(1);
+    expect(result.scheduled).toBe(1);
+    expect(result.cursor).toBe("101");
     expect(await queued(id)).toHaveLength(1);
+  });
+  it("selects births numerically at decimal-width and adjacent bigint boundaries", async () => {
+    const rows = await subscriptions(4);
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    async function births(values: string[]) {
+      for (let n = 0; n < values.length; n++)
+        await raw.__sqliteRun(
+          "UPDATE outbound_webhooks SET event_start_id = ? WHERE id = ?",
+          [values[n], rows[n]!.id],
+        );
+    }
+    await births(["9", "10", "99", "100"]);
+    expect(
+      (
+        await ctx.storage.outboundWebhooks.listAfter(null, 50, {
+          eventId: 10n,
+          headId: 100n,
+        })
+      ).map((row) => row.id),
+    ).toEqual([rows[0]!.id]);
+    expect(
+      (
+        await ctx.storage.outboundWebhooks.listAfter(null, 50, {
+          eventId: 100n,
+          headId: 100n,
+        })
+      ).map((row) => row.id),
+    ).toEqual(rows.slice(0, 3).map((row) => row.id));
+    await births([
+      "9007199254740992",
+      "9007199254740993",
+      "9007199254740994",
+      "9007199254740995",
+    ]);
+    expect(
+      (
+        await ctx.storage.outboundWebhooks.listAfter(null, 50, {
+          eventId: 9007199254740993n,
+          headId: 9007199254740995n,
+        })
+      ).map((row) => row.id),
+    ).toEqual([rows[0]!.id]);
+  });
+  it("includes malformed, negative, overflow and ahead births for visible validation", async () => {
+    const id = await subscribe();
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(sql: string, params: unknown[]): Promise<unknown>;
+    };
+    for (const birth of ["01", "99junk", "-1", "9223372036854775808"]) {
+      await raw.__sqliteRun(
+        "UPDATE outbound_webhooks SET event_start_id = ? WHERE id = ?",
+        [birth, id],
+      );
+      await expect(
+        ctx.storage.outboundWebhooks.listAfter(null, 50, {
+          eventId: 1n,
+          headId: 9223372036854775807n,
+        }),
+      ).rejects.toThrow("Invalid outbound webhook event checkpoint");
+    }
+    await raw.__sqliteRun(
+      "UPDATE outbound_webhooks SET event_start_id = ? WHERE id = ?",
+      ["100", id],
+    );
+    expect(
+      (
+        await ctx.storage.outboundWebhooks.listAfter(null, 50, {
+          eventId: 1n,
+          headId: 99n,
+        })
+      ).map((row) => row.id),
+    ).toEqual([id]);
   });
   it("bounds examined rows and deliveries across multiple events", async () => {
     const rows = await subscriptions(30);
@@ -499,7 +564,7 @@ describe("durable outbound event acknowledgement", () => {
     });
     const newborn = await subscribe();
     const next = await scheduler.runOnce();
-    expect(next.examined).toBe(3);
+    expect(next.examined).toBe(2);
     expect(next.scheduled).toBe(0);
     expect(next.cursor).toBe("1");
     expect(await queued(rows[0]!.id)).toHaveLength(1);

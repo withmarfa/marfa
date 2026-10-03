@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import {
   generateId,
   isValidId,
@@ -122,11 +122,29 @@ export class SqliteWebhookStore implements WebhookStore {
   async listAfter(
     afterId: string | null,
     limit: number,
+    context?: { eventId: bigint; headId: bigint },
   ): Promise<StoredWebhook[]> {
     const rows = await this.db
       .select()
       .from(outboundWebhooks)
-      .where(afterId === null ? undefined : gt(outboundWebhooks.id, afterId))
+      .where(
+        and(
+          afterId === null ? undefined : gt(outboundWebhooks.id, afterId),
+          // Birth is canonical decimal TEXT. SQLite's signed-i64 cast compares
+          // exactly above 2^53; round-trip and sign guards include malformed or
+          // overflowing values for projection to reject, rather than hiding
+          // them behind the later-birth exclusion. Ahead births also remain
+          // visible to the scheduler's frozen-head check.
+          context === undefined
+            ? undefined
+            : sql`(
+                ${outboundWebhooks.event_start_id} != CAST(CAST(${outboundWebhooks.event_start_id} AS INTEGER) AS TEXT)
+                OR CAST(${outboundWebhooks.event_start_id} AS INTEGER) < 0
+                OR CAST(${outboundWebhooks.event_start_id} AS INTEGER) > CAST(${context.headId.toString()} AS INTEGER)
+                OR CAST(${outboundWebhooks.event_start_id} AS INTEGER) < CAST(${context.eventId.toString()} AS INTEGER)
+              )`,
+        ),
+      )
       .orderBy(outboundWebhooks.id)
       .limit(limit)
       .all();
