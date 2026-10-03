@@ -601,12 +601,19 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        if !store::item_held(&conn, id)? {
+        let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
             });
-        }
+        };
+        let deleting = kind == WriteKind::DeleteItem;
+        let versioned = serde_json::json!({ "version": held.version }).to_string();
+        let payload = if deleting {
+            versioned.as_str()
+        } else {
+            payload
+        };
         // Only the create, for the reason `queue_update` gives.
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
@@ -622,11 +629,14 @@ impl Core {
                 namespace: None,
                 tag: None,
                 blob: None,
-                base_version: None,
+                base_version: deleting.then_some(held.version),
                 payload,
                 depends_on: &depends_on,
             },
         )?;
+        if deleting {
+            store::record_read(&tx, &queued.id, &serde_json::to_value(&held)?)?;
+        }
         tx.commit()?;
         Ok(queued)
     }

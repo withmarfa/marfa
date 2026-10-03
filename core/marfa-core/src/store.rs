@@ -2706,13 +2706,22 @@ pub fn edits_behind(
     answered: &QueuedWrite,
     subject: &str,
 ) -> Result<Vec<(String, Option<i64>)>, CoreError> {
-    let Some((kind, column)) = answered
-        .kind
-        .edit()
-        .and_then(|kind| Some((kind, kind.subject()?.column())))
-    else {
+    let Some(kind) = answered.kind.edit() else {
         return Ok(Vec::new());
     };
+    unsent_writes_behind(conn, answered, subject, kind)
+}
+
+pub fn unsent_writes_behind(
+    conn: &Connection,
+    answered: &QueuedWrite,
+    subject: &str,
+    kind: WriteKind,
+) -> Result<Vec<(String, Option<i64>)>, CoreError> {
+    let Some(subject_kind) = kind.subject() else {
+        return Ok(Vec::new());
+    };
+    let column = subject_kind.column();
     let mut statement = conn.prepare(&format!(
         "SELECT id, base_version FROM queue
           WHERE kind = ?1 AND {column} = ?2 AND sent = 0
