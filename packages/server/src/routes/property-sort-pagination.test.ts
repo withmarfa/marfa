@@ -71,6 +71,48 @@ async function walk(
 }
 
 describe("property-sort pagination", () => {
+  it.each(["asc", "desc"] as const)(
+    "walks large and fractional numeric ties with the null tail in %s order",
+    async (direction) => {
+      const field = `numeric_${direction}_probe`;
+      const groups: string[][] = [];
+      for (const value of [
+        -1e30, -9223372036854776000, -9223372036854775000, -1000000000000000100,
+        -0.125, 1.25, 1000000000000000100, 9223372036854775000,
+        9223372036854776000, 1e30,
+      ]) {
+        const ids: string[] = [];
+        for (let i = 0; i < 3; i++) {
+          const row = await create({ [field]: value });
+          expect(row.properties[field]).toBe(value);
+          ids.push(row.id);
+        }
+        groups.push(ids.sort());
+      }
+      const tail: string[] = [];
+      for (const value of [null, undefined, { nested: 1 }, [2, 3]]) {
+        const row = await create(value === undefined ? {} : { [field]: value });
+        tail.push(row.id);
+      }
+      tail.sort();
+      const expected = [
+        ...(direction === "asc" ? groups : [...groups].reverse()).flat(),
+        ...tail,
+      ];
+      for (const limit of [1, 2]) {
+        expect(
+          await walk(
+            field,
+            direction,
+            "core.media.book",
+            limit,
+            new Set(expected),
+          ),
+        ).toEqual(expected);
+      }
+    },
+  );
+
   it("walks numeric values under concrete, wildcard and absent type filters", async () => {
     const rows = [];
     for (const page_count of [2, 10, 20, 30, 40, 50]) {

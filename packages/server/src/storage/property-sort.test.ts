@@ -16,12 +16,43 @@ afterAll(() => {
 
 describe("property SQL and cursor scalar agreement", () => {
   it.each([
-    { value: -2, expected: -2, kind: "integer" },
+    "1000000000000000100",
+    "9223372036854775000",
+    "-1000000000000000100",
+    "-9223372036854775000",
+    "9223372036854775807",
+    "9223372036854775808",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "1.0000000000000001e18",
+    "-9.223372036854775e18",
+    "1.25",
+    "-0.125",
+  ])(
+    "compares stored JSON number %s with its API cursor value",
+    async (number) => {
+      const json = `{"probe":${number}}`;
+      const expression = buildPropertySortExpr(sql`${json}`, "probe");
+      const properties = JSON.parse(json) as Record<string, unknown>;
+      const encoded = propertySortValue(properties, {
+        kind: "property",
+        field: "probe",
+      });
+      const bound = propertySortBound(encoded!);
+      const compared = await db.get<{ same: number }>(
+        sql`SELECT ${expression} = ${bound} AS same`,
+      );
+      expect(compared.same).toBe(1);
+    },
+  );
+
+  it.each([
+    { value: -2, expected: -2, kind: "real" },
     { value: false, expected: 0, kind: "integer" },
     { value: true, expected: 1, kind: "integer" },
     { value: 0.1, expected: 0.1, kind: "real" },
     { value: 1e30, expected: 1e30, kind: "real" },
-    { value: 9007199254740991, expected: 9007199254740991, kind: "integer" },
+    { value: 9007199254740991, expected: 9007199254740991, kind: "real" },
     { value: "", expected: "", kind: "text" },
     { value: "2", expected: "2", kind: "text" },
     { value: 'é " \\ \n', expected: 'é " \\ \n', kind: "text" },
