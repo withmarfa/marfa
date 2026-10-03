@@ -112,6 +112,18 @@ impl Context {
         Ok(())
     }
 
+    pub(crate) fn change_pins<T>(
+        &mut self,
+        conn: &Connection,
+        change: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        self.check(conn)?;
+        let value = change()?;
+        self.same_copy(conn)?;
+        self.pins = revision(conn, PINS)?;
+        Ok(value)
+    }
+
     fn changed() -> CoreError {
         CoreError::StreamIncomplete {
             reason: "local_copy_changed".into(),
@@ -338,6 +350,30 @@ mod tests {
     }
 
     #[test]
+    fn read_view_local_pin_change_keeps_guard_but_external_change_refuses_it() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        let conn = core.conn().unwrap();
+        let mut context = Context::capture(&conn).unwrap();
+        context
+            .change_pins(&conn, || store::pin(&conn, "bound"))
+            .unwrap();
+        context.check(&conn).unwrap();
+        store::unpin(&conn, "bound").unwrap();
+        let mut changed = false;
+        assert!(matches!(
+            context.change_pins(&conn, || {
+                changed = true;
+                store::pin(&conn, "bound")
+            }),
+            Err(CoreError::StreamIncomplete { .. })
+        ));
+        assert!(!changed);
+        assert!(!store::pinned(&conn, "bound").unwrap());
+    }
+
+    #[test]
     fn read_view_pin_aba_and_old_generation_reply_cannot_change_rebuilt_copy() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);
@@ -551,6 +587,65 @@ mod tests {
         );
         let report = core.drain().unwrap();
         assert_eq!(report.verdicts[0].verdict, Some(crate::Verdict::Refused));
+        assert_eq!(core.get("x").unwrap().unwrap().properties["title"], "newer");
+    }
+
+    #[test]
+    fn read_view_accepted_retry_removes_overlay_over_a_newer_event_baseline() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        let mut baseline = store::testing::note("x", "before", "", "2026-01-01T00:00:00Z");
+        baseline.version = 1;
+        {
+            let conn = core.conn().unwrap();
+            store::replace_types(
+                &conn,
+                &[store::testing::wire_type("core.note", None, Some("title"))],
+            )
+            .unwrap();
+            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            set_listed(&conn, "x", true).unwrap();
+        }
+        core.update_item(
+            "x",
+            &crate::Edit {
+                properties: serde_json::json!({"title":"mine"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                base_version: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        server.on("/items/x", vec![refusal(503, "unavailable")]);
+        assert!(core.drain().unwrap().unavailable.is_some());
+        baseline.version = 2;
+        baseline.updated_at = "2026-03-02T00:00:00Z".into();
+        baseline.properties.insert("title".into(), "newer".into());
+        {
+            let conn = core.conn().unwrap();
+            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            store::lay_waiting_writes_over(&conn, "x", &|_| Default::default()).unwrap();
+        }
+        assert_eq!(core.get("x").unwrap().unwrap().properties["title"], "mine");
+        let mut receipt: serde_json::Value =
+            serde_json::from_str(&item_payload("item.updated", "x", "core.note", 2)).unwrap();
+        receipt["item"]["updated_at"] = "2026-03-01T00:00:00Z".into();
+        receipt["item"]["properties"]["title"] = "mine".into();
+        let mut fresh = receipt.clone();
+        fresh["listed"] = true.into();
+        server.on(
+            "/items/x",
+            vec![
+                json(200, &receipt.to_string()),
+                certified(json(200, &fresh.to_string())),
+            ],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.verdicts[0].verdict, Some(crate::Verdict::Accepted));
         assert_eq!(core.get("x").unwrap().unwrap().properties["title"], "newer");
     }
 

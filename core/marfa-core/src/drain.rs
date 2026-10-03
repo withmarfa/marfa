@@ -1287,6 +1287,7 @@ fn settle_success(
     let tx = conn.transaction()?;
     same_attempt(&tx, row)?;
     check_read_back(&tx, &read)?;
+    restore_settled_overlay(&tx, row, &read)?;
     if let Some(parsed) = &item {
         if row.kind == WriteKind::CreateItem
             && let Some(local) = row.item_id.as_deref()
@@ -1582,7 +1583,7 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
         let tx = conn.transaction()?;
         check_read_back(&tx, &read)?;
         same_attempt(&tx, row)?;
-        store::put_back(&tx, row)?;
+        restore_settled_overlay(&tx, row, &read)?;
         move_edits_back(&tx, row)?;
         apply_read_back_unchecked(&tx, &read)?;
         store::settle_read_back(&tx, owed.subject, &owed.id)?;
@@ -1790,6 +1791,22 @@ pub(crate) fn withdraw_read_backs(
 pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
     check_read_back(conn, read)?;
     apply_read_back_unchecked(conn, read)
+}
+
+fn restore_settled_overlay(
+    conn: &rusqlite::Connection,
+    row: &QueuedWrite,
+    read: &ReadBack,
+) -> Result<()> {
+    if !matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge)
+        && matches!(
+            read,
+            ReadBack::Item { held: Some(_), .. } | ReadBack::Edge { held: Some(_), .. }
+        )
+    {
+        store::put_back(conn, row)?;
+    }
+    Ok(())
 }
 
 fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {

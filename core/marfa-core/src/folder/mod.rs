@@ -2943,7 +2943,7 @@ impl Folder {
         context.same_copy(&*self.core.conn()?)?;
         let filesystem = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let rendering = Rendering {
-            context: &filesystem,
+            context: std::cell::RefCell::new(filesystem),
             catalog: &catalog,
             edge_types: &edge_types,
             names: &names,
@@ -3036,7 +3036,7 @@ impl Folder {
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
     ) -> Result<PlacementWrite> {
-        rendering.context.check(&*self.core.conn()?)?;
+        rendering.context.borrow().check(&*self.core.conn()?)?;
         let Placing {
             item,
             bound,
@@ -3046,8 +3046,8 @@ impl Folder {
         } = entry;
         let (item, want) = (*item, want.clone());
         let catalog = rendering.catalog;
-        if let Some((from, theirs)) = taken {
-            match self.take_in(item, &want, from, theirs, withheld, report)? {
+        if taken.is_some() {
+            match self.take_in(entry, rendering, withheld, report)? {
                 TakeIn::Taken => return Ok(PlacementWrite::Done),
                 TakeIn::Refused => {
                     report.unwritten += 1;
@@ -3111,7 +3111,7 @@ impl Folder {
                 (rendered.text.into_bytes(), rendered.links, rendered.lines)
             }
         };
-        rendering.context.check(&*self.core.conn()?)?;
+        rendering.context.borrow().check(&*self.core.conn()?)?;
         let hash = state::hash(&bytes);
         let presentation = if bytes_of(item, catalog).is_none() {
             std::str::from_utf8(&bytes).ok().map(|text| {
@@ -3173,7 +3173,7 @@ impl Folder {
         }
         if rebound {
             let conn = self.core.conn()?;
-            state::bind(
+            rendering.bind(
                 &conn,
                 &state::Bound {
                     path: want.clone(),
@@ -3264,7 +3264,7 @@ impl Folder {
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses, or a write that fails part way, leaves the old
         // file, and every other, as it was.
-        state::bind(
+        rendering.bind(
             &*self.core.conn()?,
             &state::Bound {
                 writes: state::Writes {
@@ -3285,7 +3285,7 @@ impl Folder {
                 )),
             );
         }
-        rendering.context.check(&*self.core.conn()?)?;
+        rendering.context.borrow().check(&*self.core.conn()?)?;
         let written = self.land(
             &path,
             |file, beside| {
@@ -3306,14 +3306,14 @@ impl Folder {
             // file again would make it a new item.
             let conn = self.core.conn()?;
             match &before {
-                Some(before) => state::bind(&conn, before)?,
-                None => state::unbind(&conn, &want)?,
+                Some(before) => rendering.bind(&conn, before)?,
+                None => rendering.unbind(&conn, &want)?,
             }
             report.unwritten += 1;
             return Ok(PlacementWrite::Refused);
         }
         // Landed: the old bytes are no longer the folder's own.
-        state::bind(&*self.core.conn()?, &binding(None))?;
+        rendering.bind(&*self.core.conn()?, &binding(None))?;
         if let Some(blob) = bytes_of(item, catalog) {
             self.core.let_go_blob(blob);
         }
@@ -3331,14 +3331,14 @@ impl Folder {
             // Unbound even where not removed: a bound path the walk cannot
             // reach is journaled and deleted. One changed since the scan read
             // it holds the person's edit, and stays for the next scan.
-            rendering.context.check(&*self.core.conn()?)?;
+            rendering.context.borrow().check(&*self.core.conn()?)?;
             if plainly_inside(&self.root, &bound.path) {
                 let _ = landing::remove(&self.root.join(&bound.path), |found| {
                     state::hash(found) == bound.content_hash
                 });
             }
             let conn = self.core.conn()?;
-            state::unbind(&conn, &bound.path)?;
+            rendering.unbind(&conn, &bound.path)?;
             if journaled_for(&conn, &bound.path, &item.id)? {
                 report.revived += 1;
             }
@@ -3350,7 +3350,7 @@ impl Folder {
         if let Ok(metadata) = std::fs::symlink_metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
-            state::bind(&*self.core.conn()?, &binding(Some(found.key())))?;
+            rendering.bind(&*self.core.conn()?, &binding(Some(found.key())))?;
         }
         if bound.is_none() {
             report.written += 1;
@@ -3364,13 +3364,16 @@ impl Folder {
     /// fall through to writing or adopting a byte-identical competing file.
     fn take_in(
         &self,
-        item: &Item,
-        want: &str,
-        from: &Path,
-        theirs: &state::Bound,
+        entry: &Placing<'_>,
+        rendering: &Rendering<'_>,
         withheld: &placement::Withheld,
         report: &mut PullReport,
     ) -> Result<TakeIn> {
+        let item = entry.item;
+        let want = entry.want.as_str();
+        let Some((from, theirs)) = &entry.taken else {
+            return Ok(TakeIn::Inapplicable);
+        };
         let path = self.root.join(want);
         if path.exists() {
             return Ok(TakeIn::Inapplicable);
@@ -3396,7 +3399,7 @@ impl Folder {
         };
         // Kept beside the new binding until the file is here, as a write's is.
         let before = state::bound_at(&*self.core.conn()?, want)?;
-        state::bind(
+        rendering.bind(
             &*self.core.conn()?,
             &state::Bound {
                 writes: state::Writes {
@@ -3438,17 +3441,17 @@ impl Folder {
         if moved.is_err() {
             let conn = self.core.conn()?;
             match &before {
-                Some(before) => state::bind(&conn, before)?,
-                None => state::unbind(&conn, want)?,
+                Some(before) => rendering.bind(&conn, before)?,
+                None => rendering.unbind(&conn, want)?,
             }
             return Ok(TakeIn::Refused);
         }
-        state::bind(&*self.core.conn()?, &binding(None))?;
+        rendering.bind(&*self.core.conn()?, &binding(None))?;
         state::journal_clear_for(&*self.core.conn()?, want, &item.id)?;
         if let Ok(metadata) = std::fs::symlink_metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
-            state::bind(&*self.core.conn()?, &binding(Some(found.key())))?;
+            rendering.bind(&*self.core.conn()?, &binding(Some(found.key())))?;
         }
         report.placed += usize::from(self.place(&item.id, want, withheld)?);
         report.taken += 1;
@@ -3522,7 +3525,7 @@ impl Folder {
         refused: &HashSet<String>,
         report: &mut PullReport,
     ) -> Result<()> {
-        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let mut context = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let (bound, of) = {
             let conn = self.core.conn()?;
             (state::every_bound(&conn)?, state::bound_count(&conn)?)
@@ -3550,7 +3553,7 @@ impl Folder {
         state::set_paused(&*self.core.conn()?, state::Removal::Pull, &[])?;
         for row in going {
             context.check(&*self.core.conn()?)?;
-            if self.take_away(&row)? {
+            if self.take_away(&row, &mut context)? {
                 report.removed += 1;
             } else {
                 report.kept += 1;
@@ -3598,7 +3601,13 @@ impl Folder {
     /// nothing now. Answers `false`, and keeps the file bound, where it
     /// changed since it was found to be the folder's own: the person's edit
     /// is theirs.
-    fn take_away(&self, row: &state::Bound) -> Result<bool> {
+    fn take_away(
+        &self,
+        row: &state::Bound,
+        context: &mut crate::read_view::Context,
+    ) -> Result<bool> {
+        let conn = self.core.conn()?;
+        context.check(&conn)?;
         let path = self.root.join(&row.path);
         if plainly_inside(&self.root, &row.path) {
             let still =
@@ -3612,8 +3621,7 @@ impl Folder {
                 return Ok(false);
             }
         }
-        let conn = self.core.conn()?;
-        state::unbind(&conn, &row.path)?;
+        context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
         state::journal_clear(&conn, &row.path)?;
         Ok(true)
     }
@@ -3868,10 +3876,24 @@ impl Folder {
 type LinesBy<'a> = (&'a Names, Option<&'a document::Document>, &'a [state::Line]);
 
 struct Rendering<'a> {
-    context: &'a crate::read_view::Context,
+    context: std::cell::RefCell<crate::read_view::Context>,
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     names: &'a Names,
+}
+
+impl Rendering<'_> {
+    fn bind(&self, conn: &rusqlite::Connection, bound: &state::Bound) -> Result<()> {
+        self.context
+            .borrow_mut()
+            .change_pins(conn, || state::bind(conn, bound))
+    }
+
+    fn unbind(&self, conn: &rusqlite::Connection, path: &str) -> Result<()> {
+        self.context
+            .borrow_mut()
+            .change_pins(conn, || state::unbind(conn, path))
+    }
 }
 
 struct Rendered {
@@ -4373,7 +4395,7 @@ mod tests {
             let edge_types = EdgeTypes::default();
             let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {
-                context: &context,
+                context: std::cell::RefCell::new(context),
                 catalog: &catalog,
                 names: &names,
                 edge_types: &edge_types,

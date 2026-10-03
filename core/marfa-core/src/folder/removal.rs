@@ -28,6 +28,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.refuse_if_gone()?;
+        let copy = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let (disk, pull, journaled) = {
@@ -58,6 +59,8 @@ impl Folder {
                 }
             }
         }
+        copy.same_copy(&*self.core.conn()?)?;
+        let mut context = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let members = self.members(&settings)?;
         for path in &pull {
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
@@ -66,7 +69,7 @@ impl Folder {
             if matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) && self.take_away(&row)?
+            ) && self.take_away(&row, &mut context)?
             {
                 confirmed.removed += 1;
             }
