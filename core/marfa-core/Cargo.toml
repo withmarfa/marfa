@@ -22,6 +22,7 @@ uuid.workspace = true
 yaml-rust2.workspace = true
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["hooks"] }
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
