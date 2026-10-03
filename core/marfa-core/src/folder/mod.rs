@@ -3064,9 +3064,11 @@ impl Folder {
                     }
                     None => match self.core.blob(blob).map(std::fs::read) {
                         Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
-                        // A refused credential refuses every file alike.
+                        // Credential and address failures stop the pull.
                         Err(
-                            error @ (CoreError::Unauthorized { .. } | CoreError::RenewalFailed(_)),
+                            error @ (CoreError::Unauthorized { .. }
+                            | CoreError::RenewalFailed(_)
+                            | CoreError::Redirected { .. }),
                         ) => return Err(error),
                         // A held copy that cannot be read is one file's failure too.
                         Ok(Err(_)) | Err(_) => {
@@ -4256,7 +4258,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blob_renewal_failure_does_not_complete_a_folder_pull() {
+    fn blob_transport_failure_does_not_complete_a_folder_pull() {
         use crate::store;
         for cause in [
             CoreError::SignedOut {
@@ -4264,6 +4266,11 @@ mod tests {
             },
             CoreError::NoKeychain("locked".into()),
             CoreError::Network("token endpoint unavailable".into()),
+            CoreError::Redirected {
+                origin: String::new(),
+                status: 307,
+                location: Some("/next".into()),
+            },
         ] {
             let server = crate::scripted::Scripted::start();
             let dir = tempfile::tempdir().unwrap();
@@ -4309,15 +4316,31 @@ mod tests {
             )
             .unwrap();
             let before = folder.core.queue().unwrap();
-            let expected = cause.clone();
-            folder
-                .core
-                .renew_credential_with(Box::new(move |_| Err(cause.clone())));
+            let (expected, answer) = if let CoreError::Redirected {
+                status, location, ..
+            } = cause
+            {
+                (
+                    CoreError::Redirected {
+                        origin: server.url(),
+                        status,
+                        location,
+                    },
+                    crate::scripted::Answer::Json {
+                        status,
+                        body: "{}".into(),
+                        headers: vec![("Location".into(), "/next".into())],
+                    },
+                )
+            } else {
+                let expected = CoreError::RenewalFailed(Box::new(cause.clone()));
+                folder
+                    .core
+                    .renew_credential_with(Box::new(move |_| Err(cause.clone())));
+                (expected, crate::scripted::refusal(401, "unauthorized"))
+            };
             let hash = crate::blob::name_of(b"fixture");
-            server.on(
-                &format!("/blobs/{hash}/url"),
-                vec![crate::scripted::refusal(401, "unauthorized")],
-            );
+            server.on(&format!("/blobs/{hash}/url"), vec![answer]);
             let mut item = store::testing::note("file", "fixture.bin", "", "2026-01-01T00:00:00Z");
             item.r#type = "core.file".into();
             item.properties
@@ -4345,10 +4368,7 @@ mod tests {
             let mut report = PullReport::default();
             let outcome =
                 folder.write_placed(&entry, &rendering, &Default::default(), None, &mut report);
-            assert_eq!(
-                outcome.err(),
-                Some(CoreError::RenewalFailed(Box::new(expected)))
-            );
+            assert_eq!(outcome.err(), Some(expected));
             assert_eq!(report.absent, 0);
             assert_eq!(folder.core.queue().unwrap(), before);
             assert!(!dir.path().join("fixture.bin").exists());

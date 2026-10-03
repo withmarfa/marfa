@@ -216,8 +216,7 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // Not only 400, 403 and 404: a 405 or 410 read as retryable would
         // loop on a refusal that never changes.
         (400..=499, _) => Classified::Contract,
-        // A 1xx or 3xx here is one the HTTP agent did not resolve, and the
-        // next attempt may.
+        // An unexpected informational answer may clear on the next attempt.
         _ => Classified::Counted,
     }
 }
@@ -700,7 +699,8 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         let answer = match answer {
             Err(error @ CoreError::RenewalFailed(_)) if error.is_environmental() => Err(error),
             Err(
-                error @ (CoreError::ContractMismatch { .. }
+                error @ (CoreError::Redirected { .. }
+                | CoreError::ContractMismatch { .. }
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
@@ -716,7 +716,8 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         let settled = match settle(core, row, &answer, class, shape) {
             Ok(settled) => settled,
             Err(
-                error @ (CoreError::ContractMismatch { .. }
+                error @ (CoreError::Redirected { .. }
+                | CoreError::ContractMismatch { .. }
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
@@ -1504,7 +1505,8 @@ fn land(
             // Not read, as for any answer on another contract: the pass
             // ends, and the create goes again under its key.
             Err(
-                error @ (CoreError::ContractMismatch { .. }
+                error @ (CoreError::Redirected { .. }
+                | CoreError::ContractMismatch { .. }
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
@@ -1578,7 +1580,7 @@ fn finish_counted(
 /// A read rather than a wait for catch-up: a refused write produces no
 /// event. The verdict and the copy put back are recorded already, and so is
 /// the read owed, so a read that fails is tried by the next drain. A contract
-/// mismatch, failed renewal or full store ends the pass with its typed error.
+/// mismatch, redirect, failed renewal or full store ends the pass with its typed error.
 /// Other unavailable reads return their reason and end the pass too.
 fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
@@ -1586,7 +1588,8 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     };
     match read_owed(core, &owed).and_then(|read| apply_owed(core, &owed, &read)) {
         Err(
-            error @ (CoreError::ContractMismatch { .. }
+            error @ (CoreError::Redirected { .. }
+            | CoreError::ContractMismatch { .. }
             | CoreError::RenewalFailed(_)
             | CoreError::StorageFull(_)),
         ) => Err(error),
@@ -1621,7 +1624,8 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
     for entry in owed {
         match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
             Err(
-                error @ (CoreError::ContractMismatch { .. }
+                error @ (CoreError::Redirected { .. }
+                | CoreError::ContractMismatch { .. }
                 | CoreError::RenewalFailed(_)
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
@@ -2149,6 +2153,46 @@ mod tests {
             core.delete_item(id).unwrap();
         }
         (dir, core)
+    }
+
+    #[test]
+    fn redirected_writes_and_read_backs_leave_the_queue_uncounted() {
+        for read_back in [false, true] {
+            let server = crate::scripted::Scripted::start();
+            let redirect = crate::scripted::Answer::Json {
+                status: 307,
+                body: "{}".into(),
+                headers: vec![("Location".into(), "/next".into())],
+            };
+            let mut answers = Vec::new();
+            if read_back {
+                answers.push(crate::scripted::refusal(400, "invalid"));
+            }
+            answers.push(redirect);
+            server.on("/items/a", answers);
+            let (_dir, core) = deleting(&server, &["a", "b"]);
+            let before = core.queue().unwrap();
+            for _ in 0..6 {
+                assert_eq!(
+                    core.drain().unwrap_err(),
+                    CoreError::Redirected {
+                        origin: server.url(),
+                        status: 307,
+                        location: Some("/next".into()),
+                    }
+                );
+                let after = core.queue().unwrap();
+                for (old, new) in before.iter().zip(&after) {
+                    assert_eq!(old.idempotency_key, new.idempotency_key);
+                    assert_eq!(old.body, new.body);
+                    assert_eq!(new.refusals, 0);
+                }
+                assert_eq!(after[0].verdict, read_back.then_some(Verdict::Refused));
+                assert_eq!(after[1].verdict, None);
+            }
+            assert!(server.seen("/next").is_empty());
+            assert!(server.seen("/items/b").is_empty());
+        }
     }
 
     #[test]

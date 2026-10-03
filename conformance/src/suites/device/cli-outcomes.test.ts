@@ -96,6 +96,45 @@ describe("CLI outcomes preserve the result", () => {
     },
   );
 
+  it.each(["/next", null])(
+    "preserves a redirected queued write without following %s",
+    async (location) => {
+      const h = await prepared();
+      const before = await h.device.queue();
+      scriptWrites(h.server, {
+        update: [
+          {
+            kind: "json",
+            status: 307,
+            body: {},
+            contract: "999999",
+            headers: location ? { Location: location } : {},
+          },
+        ],
+      });
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const result = await h.cli.run([
+          "--json",
+          "device",
+          "--db",
+          h.device.store,
+          "drain",
+        ]);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toBe("");
+        const error = JSON.parse(result.stderr).error;
+        expect(error.code).toBe("redirect");
+        expect(error.server.status).toBe(307);
+        expect(error.message).toContain(h.server.url);
+        expect(error.message).toContain(location ?? "nowhere it named");
+        expect(await h.device.queue()).toEqual(before);
+      }
+      expect(
+        h.server.requests.filter((request) => request.pathname === "/next"),
+      ).toHaveLength(0);
+    },
+  );
+
   it("preserves answered writes before an interrupted later write", async () => {
     const h = await prepared();
     expect(
