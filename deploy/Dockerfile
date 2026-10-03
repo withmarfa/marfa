@@ -49,8 +49,8 @@ RUN printf '{"sha":"%s","deployed_at":"%s"}\n' "$VERSION_SHA" "$(date -u +%Y-%m-
 USER node
 VOLUME /data
 EXPOSE 8600
-# `/health` answers 200 with a status of ok or degraded; slim carries no
-# curl, so the probe is Node's own fetch.
+# `/health` answers 200 with a status of ok or degraded and 503 when a
+# component is down; slim carries no curl, so the probe is Node's own fetch.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8600)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/usr/local/bin/marfa-entrypoint"]

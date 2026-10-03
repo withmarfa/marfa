@@ -39,6 +39,19 @@ docker run --rm -p 8600:8600 -v marfa-data:/data --env-file <your env> marfa-ser
 
 Without `S3_BUCKET` the container runs the server alone and says so in its log: nothing is streamed and no object store is attached. That is a local trial, not a deployment.
 
+## Watching the instance
+
+The image's health check reads `GET /health`, which answers without a credential. It marks the container unhealthy when the answer is `503`, which is when a component is `down`:
+
+| Component        | What it probes                                                    | `down` when                                                         | `degraded` when                                                 |
+| ---------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `database`       | Reads a row.                                                      | The database refuses the read.                                      | It gives no answer within two seconds, as a held database does. |
+| `database_write` | Commits one write, at most once every ten seconds.                | The database refuses the write, as a full or read-only volume does. | It commits nothing within two seconds.                          |
+| `disk`           | Measures the room on the volume of the database and of the blobs. | Less than 1 MiB is available.                                       | Less than 64 MiB is available, or the room could not be read.   |
+| `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses.                                             | It gives no answer within two seconds.                          |
+
+A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. The operator key gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
+
 ## Backing up the machine
 
 Litestream and the bucket are the recovery path that needs no care. If you also back up the machine the instance runs on, with Time Machine, a host's disk snapshots or a file-copying tool, back up two things:

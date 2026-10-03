@@ -56,3 +56,31 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
     Reason: the database holds a hash of each key, made with the salt, and the salt is a setting outside the data directory. A restore without it has every row and no key that opens one.
 
     Tests: `compliance/backup-restore.test.ts › refuses a key it holds when started with a different API_KEY_SALT`.
+
+## Health
+
+`GET /health` answers without a credential (`keys-and-oauth.md` 17). It names four components, `database`, `database_write`, `disk` and `blob_storage`, each with a `status` of `ok`, `degraded` or `down`, and an overall `status` that is `down` when any component is, otherwise `degraded` when any is, otherwise `ok`.
+
+11. When any component is `down`, the server SHALL answer `GET /health` with `503`. In every other case it SHALL answer `200`, whether the overall `status` is `ok` or `degraded`.
+
+    Reason: a container's health check and a deploy gate read the status code, an instance whose database, disk or blob folder refuses is not serving, and a `degraded` instance still is.
+
+    Tests: `compliance/instance.test.ts › answers /health without a credential and names its components`. A `down` component cannot be produced against a server the referee booted, so the server's own suite drives each: `packages/server/src/routes/health.test.ts › GET /health failing status`, and with the real app and database, `packages/server/src/routes/health.app.test.ts`.
+
+12. The server SHALL probe each component, within two seconds, as follows: `database` reads a row; `database_write` commits one write; `blob_storage` asks the disk store for a blob; `disk` measures the bytes available on whichever of the database's volume and the disk store's volume has the least. A probe the database or disk refused is `down`. A probe that gave no answer within two seconds is `degraded`. A `disk` below 1 MiB available is `down`, below 64 MiB is `degraded`, and one whose space could not be read is `degraded`, never `down`.
+
+    Reason: a refusal is known and a silence is not. A database that reads can still refuse every write, because the volume is read-only or full, and only a committed write shows it.
+
+    Tests: `packages/server/src/routes/health.test.ts › GET /health failing status`.
+
+13. The server SHALL commit the write of `database_write` at most once every ten seconds, and answer every call in between with the outcome of the last.
+
+    Reason: the door takes no credential, so what a caller can make the server do through it stays small.
+
+    Tests: `packages/server/src/routes/health.test.ts › the probes the app mounts`.
+
+14. The server SHALL include the text of a component's error in the answer only when the request carries the operator key. A request with no credential, a key that is not the operator key or a key the instance does not hold gets the same answer without it, and gets it whether or not the database can look the key up.
+
+    Reason: the text is the database's or the operating system's own and carries paths and driver detail.
+
+    Tests: `packages/server/src/routes/health.test.ts › GET /health error text`; `packages/server/src/routes/health.app.test.ts › answers 503 with the database down, and tells only the operator key why`; `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`.
