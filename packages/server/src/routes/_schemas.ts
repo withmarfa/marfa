@@ -226,6 +226,15 @@ export const ItemWithMetadataSchema = z
   })
   .openapi("ItemWithMetadata");
 
+export const ItemReadWithMetadataSchema = ItemWithMetadataSchema.extend({
+  listed: z
+    .boolean()
+    .optional()
+    .describe(
+      "Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection.",
+    ),
+}).openapi("ItemReadWithMetadata");
+
 /**
  * How a collision on one field is resolved.
  *
@@ -390,7 +399,13 @@ export const ItemDetailSchema = z
     item: ItemSchema,
     metadata: MetadataSchema,
     backrefs: z.record(z.string(), EdgePageSchema).optional(),
-    neighbors: z.array(ItemWithMetadataSchema).optional(),
+    listed: z
+      .boolean()
+      .optional()
+      .describe(
+        "Required on conditional copy reads; direct authority is independent of this item-set membership.",
+      ),
+    neighbors: z.array(ItemReadWithMetadataSchema).optional(),
     neighbors_truncated: z.boolean().optional(),
     neighbors_omitted: z.number().int().optional(),
     versions: VersionPageSchema.optional(),

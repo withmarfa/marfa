@@ -4,6 +4,7 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
+import { itemListed } from "../storage/read-view.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -69,6 +70,7 @@ import {
 import {
   ItemSchema,
   ItemWithMetadataSchema,
+  ItemReadWithMetadataSchema,
   ItemDetailSchema,
   MetadataResponseSchema,
   MergePolicySchema,
@@ -605,9 +607,9 @@ const listItemsRoute = createRoute({
         "application/json": {
           schema: pageOf(
             z
-              .union([ItemSchema, ItemWithMetadataSchema])
+              .union([ItemSchema, ItemReadWithMetadataSchema])
               .describe(
-                "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.",
+                "An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape.",
               )
               // `oneOf`, not the `anyOf` a union gets by default: the two
               // shapes share no required key, so a row is exactly one of
@@ -1756,6 +1758,7 @@ export function itemRoutes(storage: Storage) {
         {
           data: rows.map((item) => ({
             item: decorate(item),
+            ...(c.get("readViewAuthority") && { listed: true }),
             metadata: readableMetadata(
               metadataMap.get(item.id) ?? {
                 item_id: item.id,
@@ -1924,14 +1927,23 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
+    const readAuthority = c.get("readViewAuthority");
     return c.json(
       {
         item: { ...item, edges },
+        ...(readAuthority && {
+          listed: itemListed(readAuthority, item),
+        }),
         metadata: readableMetadata(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
         ...(neighbors !== undefined
           ? {
-              neighbors,
+              neighbors: readAuthority
+                ? neighbors.map((neighbor) => ({
+                    ...neighbor,
+                    listed: itemListed(readAuthority, neighbor.item),
+                  }))
+                : neighbors,
               neighbors_truncated: neighborsTruncated,
               neighbors_omitted: neighborsOmitted,
             }

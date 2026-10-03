@@ -29,4 +29,5 @@ export function deriveKey(masterSecret: string, info: string): Buffer {
 export const SECRET_INFO = {
   /** The MAC over an instance-served blob link's hash and expiry. */
   blobLink: "blob-link",
+  readView: "read-view",
 } as const;

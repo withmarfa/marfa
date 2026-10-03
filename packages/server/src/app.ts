@@ -12,6 +12,11 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { AppConfig } from "./config.js";
 import { DEFAULT_KEYS_RATE_LIMIT, getPermissionBundles } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
+import {
+  copyReadBoundary,
+  invalidReadViewRequest,
+} from "./middleware/read-view.js";
+import { deriveKey, SECRET_INFO } from "./crypto/derive-key.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
@@ -111,6 +116,8 @@ export function createApp(
   }
 
   const app = new OpenAPIHono<AppEnv>();
+  const readViewKey = deriveKey(config.authSecret, SECRET_INFO.readView);
+  const readBoundary = copyReadBoundary(storage, instanceId, readViewKey);
 
   // Global error handler. Held in a variable because the idempotency
   // middleware renders a thrown error through this same handler rather
@@ -130,6 +137,13 @@ export function createApp(
   // every other error: a page for a browser, the documented JSON shape for
   // everything else.
   app.notFound((c) => {
+    if (
+      c.req.method === "GET" &&
+      c.req.header("X-Marfa-Read-View") !== undefined
+    )
+      throw invalidReadViewRequest(
+        "This door does not support conditional copy reads",
+      );
     const body = {
       error: { code: "not_found", message: "Not found" },
     };
@@ -153,6 +167,21 @@ export function createApp(
   // rather than re-reading `process.env`.
   app.use("*", async (c, next) => {
     c.set("config", config);
+    c.set("copyReadBoundary", readBoundary);
+    await next();
+  });
+
+  app.use("*", async (c, next) => {
+    if (
+      c.req.method === "GET" &&
+      c.req.header("X-Marfa-Read-View") !== undefined &&
+      !/^(?:\/items(?:\/[^/]+(?:\/edges)?)?|\/edges(?:\/[^/]+)?|\/types|\/edge-types|\/keys\/current|\/events)\/?$/.test(
+        c.req.path,
+      )
+    )
+      throw invalidReadViewRequest(
+        "This door does not support conditional copy reads",
+      );
     await next();
   });
 
@@ -609,6 +638,7 @@ export function createApp(
   app.route(
     "/events",
     eventRoutes(storage, {
+      readView: { instanceId, signingKey: readViewKey },
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );

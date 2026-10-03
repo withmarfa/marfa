@@ -21,6 +21,7 @@ export enum ErrorCode {
   UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
+  READ_VIEW_CHANGED = "read_view_changed",
   /**
    * The write was based on a version with no snapshot it may be merged
    * against: none is held (never issued, or thinned away), or the one held
@@ -315,6 +316,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.UNKNOWN_TYPE]: 400,
   [ErrorCode.INVALID_ID]: 400,
   [ErrorCode.VERSION_CONFLICT]: 409,
+  [ErrorCode.READ_VIEW_CHANGED]: 409,
   [ErrorCode.ANCESTOR_UNAVAILABLE]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
