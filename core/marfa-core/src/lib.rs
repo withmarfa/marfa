@@ -2473,17 +2473,15 @@ mod tests {
     }
 
     #[test]
-    fn a_thumbnail_leaves_the_index_when_the_catalog_learns_it() {
+    fn a_field_leaves_the_index_when_the_catalog_stops_declaring_it_a_string() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
-        let photo = |thumbnail: bool, title_field: &str| {
-            let mut wire = store::testing::wire_type("acme.photo", None, Some(title_field));
-            if thumbnail {
-                wire.rest.insert(
-                    "fields".into(),
-                    serde_json::json!({ "thumbnail": { "type": "thumbnail" } }),
-                );
-            }
+        let photo = |cover: &str| {
+            let mut wire = store::testing::wire_type("acme.photo", None, Some("title"));
+            wire.rest.insert(
+                "fields".into(),
+                serde_json::json!({ "cover": { "type": cover } }),
+            );
             wire
         };
         {
@@ -2493,14 +2491,15 @@ mod tests {
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.photo\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
-            store::replace_types(&conn, &[photo(false, "title")]).unwrap();
+            store::replace_types(&conn, &[photo("string")]).unwrap();
         }
         let id = core
             .create_item(&Draft {
                 r#type: "acme.photo".into(),
                 properties: serde_json::json!({
                     "title": "Holiday",
-                    "thumbnail": "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+                    "cover": "unicornsXYZ",
+                    "undeclared": "narwhalsABC",
                 })
                 .as_object()
                 .unwrap()
@@ -2518,23 +2517,22 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
+        assert!(
+            found("narwhalsABC").is_empty(),
+            "a property the type does not declare was indexed"
+        );
         let adopt = |wire| {
             let conn = core.conn().unwrap();
             store::replace_types(&conn, &[wire]).unwrap();
         };
-        adopt(photo(true, "title"));
+        adopt(photo("thumbnail"));
         assert!(
             found("unicornsXYZ").is_empty(),
-            "the catalog learned the thumbnail and the row's index entry still holds its base64"
+            "the catalog made the field a thumbnail and the row's index entry still holds its text"
         );
         assert_eq!(found("Holiday"), vec![id.clone()]);
-        adopt(photo(false, "thumbnail"));
+        adopt(photo("string"));
         assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
-        adopt(photo(true, "thumbnail"));
-        assert!(
-            found("unicornsXYZ").is_empty(),
-            "a title field naming the thumbnail put its base64 in the index"
-        );
     }
 
     #[test]

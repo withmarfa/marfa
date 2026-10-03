@@ -1511,13 +1511,8 @@ mod tests {
                 "2026-01-01T00:00:00Z",
                 serde_json::json!({ "title": "row" }),
             );
-            store::upsert_item(
-                &conn,
-                &row,
-                Some(&[]),
-                &crate::catalog::Indexing::titled("title"),
-            )
-            .unwrap();
+            store::upsert_item(&conn, &row, Some(&[]), &crate::catalog::Indexing::default())
+                .unwrap();
         }
         let run = follow_on(&core, QUICK, None);
         let change = run.change();
