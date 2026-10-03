@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
@@ -22,12 +22,12 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 let c: CliContext;
 let dir: string;
 
-beforeAll(async () => {
+beforeEach(async () => {
   c = await cliContext("folder");
   dir = mkdtempSync(join(tmpdir(), "marfa-cli-folder-"));
 });
 
-afterAll(async () => {
+afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
