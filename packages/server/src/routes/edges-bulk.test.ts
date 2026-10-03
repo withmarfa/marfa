@@ -309,7 +309,7 @@ describe("POST /edges/bulk", () => {
       results: { error?: { code: string } }[];
     };
     expect(body.counts.errored).toBe(1);
-    // `about` is not one of the cycle-prone types the BFS walks, which is
+    // `about` is not one of the cycle-prone types checked for reachability, which is
     // the point: a self-loop is the one cycle every edge type can close in a
     // single edge, so it is refused on all of them.
     expect(body.results[0]!.error?.code).toBe("edge_cycle");

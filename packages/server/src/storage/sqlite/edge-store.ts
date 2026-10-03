@@ -567,6 +567,38 @@ export class SqliteEdgeStore implements EdgeStore {
     return out;
   }
 
+  async wouldCreateCycle(
+    edgeType: string,
+    sourceId: string,
+    targetId: string,
+    pendingEdges: { source_id: string; target_id: string }[],
+  ): Promise<boolean> {
+    const pendingJson = JSON.stringify(
+      pendingEdges.map((edge) => [edge.source_id, edge.target_id]),
+    );
+    const found = await this.db.all<{ found: number }>(sql`
+      WITH RECURSIVE
+        pending(source_id, target_id) AS (
+          SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]')
+          FROM json_each(${pendingJson})
+        ),
+        relation(source_id, target_id) AS (
+          SELECT source_id, target_id FROM edges
+          WHERE edge_type = ${edgeType}
+          UNION ALL
+          SELECT source_id, target_id FROM pending
+        ),
+        reachable(id) AS (
+          SELECT ${targetId}
+          UNION
+          SELECT relation.target_id FROM relation
+          JOIN reachable ON relation.source_id = reachable.id
+        )
+      SELECT 1 AS found FROM reachable WHERE id = ${sourceId} LIMIT 1
+    `);
+    return found.length > 0;
+  }
+
   async listOutboundOfType(
     sourceId: string,
     edgeType: string,
