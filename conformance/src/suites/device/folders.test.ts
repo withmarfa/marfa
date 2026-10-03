@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import {
   answers,
   catchupTooOld,
@@ -6225,9 +6226,14 @@ describe("embedded files", () => {
       }),
     ]);
     expect(
-      frontOf(harness, "Note.md"),
+      (
+        parseYaml(frontOf(harness, "Note.md").slice(4, -4)) as Record<
+          string,
+          unknown
+        >
+      )["has-attachment"],
       "an attachment the body no longer shows is not listed",
-    ).toContain('has-attachment:\n  - "[[renamed.png]]"');
+    ).toEqual(["[[renamed.png]]"]);
     expect(renamed.value.pull?.unmatched).toBe(1);
 
     // The link mended, the body shows it again.
