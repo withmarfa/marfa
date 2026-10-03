@@ -1265,7 +1265,7 @@ impl Folder {
                     item_id,
                     bound: Some(bound),
                 }) if bound.path == file.key => {
-                    if bound.content_hash == file.hash {
+                    if bound.content_hash == file.hash && !local_properties_refusal(&bound) {
                         // A permission changed alone leaves the bytes as they
                         // were.
                         if let Some(runs) = file.executable
@@ -1940,7 +1940,16 @@ impl Folder {
             tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
             ..Default::default()
         };
-        let item_id = named_item(self.core.create_item(&draft)?, &file.key)?;
+        let created = match self.core.create_item(&draft) {
+            Err(error) if local_admission_refusal(&error) => {
+                return Ok(Some(Flagged::of(
+                    &file.key,
+                    &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),
+                )));
+            }
+            other => other?,
+        };
+        let item_id = named_item(created, &file.key)?;
         let mut writes = state::Writes {
             save: 1,
             ..state::Writes::default()
@@ -2161,7 +2170,9 @@ impl Folder {
         // A save that changes nothing the item holds, a reformatting or only
         // the id or version line, sends nothing.
         let in_step = unchanged && changes.is_empty()
-            || bound.is_some_and(|bound| bound.content_hash == file.hash);
+            || bound.is_some_and(|bound| {
+                bound.content_hash == file.hash && !local_properties_refusal(bound)
+            });
         let mut writes = bound.map(|bound| bound.writes.clone()).unwrap_or_default();
         let fresh = bound.is_none_or(|bound| bound.content_hash != file.hash);
         if fresh {
@@ -2175,7 +2186,16 @@ impl Folder {
                 .as_deref()
                 .and_then(|to| unsuited_type(to, catalog))
             {
-                let held_for = format!("{}{reason}", state::REFUSED);
+                let prefix = if changes
+                    .r#type
+                    .as_deref()
+                    .is_some_and(|to| !catalog.known(to))
+                {
+                    LOCAL_ADMISSION_REFUSAL
+                } else {
+                    state::REFUSED
+                };
+                let held_for = format!("{prefix}{reason}");
                 flagged.push(Flagged::of(&file.key, &held_for));
                 return self
                     .bind_held(file, item_id, bound, held_for)
@@ -2195,10 +2215,20 @@ impl Folder {
                     replace_properties: whole,
                     ..Edit::default()
                 };
-                let id = if read_at.is_some() {
-                    self.core.update_item_as_read(item_id, &edit)?.id
+                let updated = if read_at.is_some() {
+                    self.core.update_item_as_read(item_id, &edit)
                 } else {
-                    self.core.update_item(item_id, &edit)?.id
+                    self.core.update_item(item_id, &edit)
+                };
+                let id = match updated {
+                    Err(error) if local_admission_refusal(&error) => {
+                        let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+                        flagged.push(Flagged::of(&file.key, &held_for));
+                        return self
+                            .bind_held(file, item_id, bound, held_for)
+                            .map(|()| false);
+                    }
+                    other => other?.id,
                 };
                 queued.push((id, Some(file.line.unwrap_or(0))));
             }
@@ -2350,6 +2380,20 @@ impl Folder {
             },
         )
     }
+}
+
+const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
+
+fn local_admission_refusal(error: &CoreError) -> bool {
+    matches!(error, CoreError::Validation {code, ..} if code == "invalid_properties")
+        || matches!(error, CoreError::UnknownType { .. })
+}
+
+fn local_properties_refusal(bound: &state::Bound) -> bool {
+    bound
+        .held
+        .as_deref()
+        .is_some_and(|reason| reason.starts_with(LOCAL_ADMISSION_REFUSAL))
 }
 
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {

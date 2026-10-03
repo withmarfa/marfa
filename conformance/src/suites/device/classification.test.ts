@@ -158,7 +158,7 @@ describe("an environmental failure retries and is never counted", () => {
     for (const title of ["first", "second", "third"]) {
       const queued = await device.create({
         type: "core.note",
-        properties: { title },
+        properties: { title, body: title },
       });
       expect(queued.ok, JSON.stringify(queued)).toBe(true);
     }
@@ -240,7 +240,12 @@ describe("an environmental failure retries and is never counted", () => {
     const { server, device } = harness;
     for (const title of ["refused", "unsent"]) {
       expect(
-        (await device.create({ type: "core.note", properties: { title } })).ok,
+        (
+          await device.create({
+            type: "core.note",
+            properties: { title, body: title },
+          })
+        ).ok,
       ).toBe(true);
     }
     scriptWrites(server, {
@@ -309,7 +314,7 @@ describe("an environmental failure retries and is never counted", () => {
     const { server, device } = harness;
     const created = await device.create({
       type: "core.note",
-      properties: { title: "refused" },
+      properties: { title: "refused", body: "held" },
     });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -352,7 +357,7 @@ describe("an environmental failure retries and is never counted", () => {
       (
         await device.create({
           type: "core.note",
-          properties: { title: "behind" },
+          properties: { title: "behind", body: "held" },
         })
       ).ok,
     ).toBe(true);
@@ -476,7 +481,7 @@ describe("the class that is neither retries and is counted", () => {
       (
         await device.create({
           type: "core.note",
-          properties: { title: "next" },
+          properties: { title: "next", body: "held" },
         })
       ).ok,
     ).toBe(true);

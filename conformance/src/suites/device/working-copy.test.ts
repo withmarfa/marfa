@@ -1588,7 +1588,7 @@ describe("who may read a store", () => {
       (
         await device.create({
           type: "core.note",
-          properties: { title: "held" },
+          properties: { title: "held", body: "held" },
         })
       ).ok,
     ).toBe(true);
@@ -1636,7 +1636,7 @@ describe("who may read a store", () => {
       (
         await device.create({
           type: "core.note",
-          properties: { title: "held" },
+          properties: { title: "held", body: "held" },
         })
       ).ok,
     ).toBe(true);

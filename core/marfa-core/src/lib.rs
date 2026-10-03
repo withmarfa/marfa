@@ -20,6 +20,7 @@ mod search;
 mod sse;
 mod store;
 mod time;
+mod validation;
 mod wire;
 
 use std::collections::HashSet;
@@ -574,8 +575,8 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
+        let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[])?;
         tx.commit()?;
         Ok(queued)
@@ -585,8 +586,8 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
+        let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_update(&tx, &catalog, id, edit, &[], Based::OnHeld)?;
         tx.commit()?;
         Ok(queued)
@@ -599,8 +600,8 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
+        let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_update(&tx, &catalog, id, edit, &[], Based::AsRead)?;
         tx.commit()?;
         Ok(queued)
@@ -1228,6 +1229,34 @@ fn queue_create(
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
+    let target = match (&draft.source, &draft.source_id) {
+        (Some(source), Some(source_id)) => store::item_under_key(tx, source, source_id)?,
+        _ => None,
+    };
+    let unresolved = target
+        .as_ref()
+        .map(|held| store::unanswered_keyed_create(tx, held))
+        .transpose()?
+        .unwrap_or(false);
+    let current = target.as_ref().filter(|held| {
+        !unresolved
+            && held.r#type == draft.r#type
+            && draft.base_version.is_none_or(|base| base == held.version)
+    });
+    let properties = if let Some(held) = current {
+        let mut properties = held.properties.clone();
+        properties.extend(catalog.projected_properties(&draft.r#type, &draft.properties, false));
+        properties
+    } else {
+        draft.properties.clone()
+    };
+    // A natural key may name a row outside this slice. Its required fields
+    // and a stale upsert's merged result can only be judged by the server.
+    catalog.validate_properties(
+        &draft.r#type,
+        &properties,
+        current.is_some() || draft.source_id.is_none(),
+    )?;
     // Sent with the slice's tier: left out, the server takes the key's
     // default, and a row shown at one tier would come back at another.
     let mut draft = draft.clone();
@@ -1384,6 +1413,12 @@ fn queue_update(
     }
     if let Some(tier) = edit.tier {
         next.tier = Some(tier);
+    }
+    // Required nulls remain invalid even where replace projection drops
+    // them. Stale edits cannot prove the server's eventual merged result.
+    catalog.validate_properties(&next.r#type, &edit.properties, false)?;
+    if base == held.version && !store::unanswered_keyed_create(tx, &held)? {
+        catalog.validate_properties(&next.r#type, &next.properties, true)?;
     }
     store::hold_beneath_item(tx, id)?;
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
@@ -1551,6 +1586,301 @@ fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
 
+    fn server_held_item(core: &Core, type_id: &str, properties: Value) -> String {
+        let id = uuid::Uuid::now_v7().to_string();
+        let mut row = store::testing::note(&id, "held", "body", "2026-01-01T00:00:00Z");
+        row.r#type = type_id.into();
+        row.properties = properties.as_object().unwrap().clone();
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &row,
+            None,
+            &catalog::Indexing::default(),
+        )
+        .unwrap();
+        id
+    }
+
+    fn validation_copy() -> Core {
+        let core = held_copy();
+        let mut parent = store::testing::wire_type("acme.parent", None, Some("title"));
+        parent.rest.insert(
+            "fields".into(),
+            serde_json::json!({
+                "title": {"type": "string", "required": true, "maxLength": 4},
+                "read": {"type": "boolean"},
+                "choice": {"type": "enum", "enum_values": ["yes", "no"]},
+                "count": {"type": "integer"},
+                "list": {"type": "array", "maxItems": 2, "items": {"type": "string"}},
+                "date": {"type": "date"}, "time": {"type": "datetime"},
+                "email": {"type": "email"}, "url": {"type": "url"},
+                "image": {"type": "thumbnail"}, "object": {"type": "object"},
+                "annotated": {"type": "string", "format": "email"}
+            }),
+        );
+        let mut child = store::testing::wire_type("acme.child", Some("acme.parent"), None);
+        child.rest.insert(
+            "fields".into(),
+            serde_json::json!({
+                "title": {"type": "string", "required": true, "maxLength": 5}
+            }),
+        );
+        store::replace_types(&core.conn().unwrap(), &[parent, child]).unwrap();
+        core
+    }
+
+    fn validation_draft(properties: Value) -> Draft {
+        Draft {
+            r#type: "acme.child".into(),
+            properties: properties.as_object().unwrap().clone(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn local_fields_distinguish_an_absent_type_from_a_known_empty_type() {
+        let core = held_copy();
+        assert!(
+            core.update_item(
+                "row",
+                &Edit {
+                    base_version: Some(3),
+                    properties: serde_json::json!({"custom": 1})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
+        store::replace_types(&core.conn().unwrap(), &[]).unwrap();
+        let before = core.queue().unwrap();
+        assert!(matches!(
+            core.update_item(
+                "row",
+                &Edit {
+                    base_version: Some(3),
+                    ..Default::default()
+                }
+            ),
+            Err(CoreError::UnknownType { .. })
+        ));
+        assert_eq!(core.queue().unwrap(), before);
+        assert!(core.add_tag("row", "after-type-deletion").is_ok());
+    }
+
+    #[test]
+    fn local_fields_refuse_before_the_copy_or_queue_changes() {
+        let core = validation_copy();
+        let witness = core
+            .create_item(&validation_draft(serde_json::json!({
+                "title": "😀abc", "read": null, "choice": "yes", "count": 2.0,
+                "list": [false, {}], "date": "2000-02-29", "time": "2026-01-01T23:59+23:59",
+                "email": "reader+tag@example.test", "url": "mailto:reader@example.test",
+                "image": "data:image/png;base64,iVBORw0KGgo=", "object": {},
+                "annotated": "not an email", "custom": {"anything": null}
+            })))
+            .unwrap();
+        let before = core.queue().unwrap();
+        let rows = core.list(&ListFilters::default(), Sort::default()).unwrap();
+        for (field, value) in [
+            ("title", Value::Null),
+            ("title", serde_json::json!("😀abcd")),
+            ("title", serde_json::json!("a\u{0000}b")),
+            ("read", serde_json::json!("yes")),
+            ("choice", serde_json::json!("maybe")),
+            ("count", serde_json::json!(2.5)),
+            ("list", serde_json::json!([1, 2, 3])),
+            ("date", serde_json::json!("1900-02-29")),
+            ("time", serde_json::json!("2026-01-01T00:00:00")),
+            ("email", serde_json::json!("a..b@example.test")),
+            ("url", serde_json::json!("relative")),
+            (
+                "image",
+                serde_json::json!("data:image/png;base64,iVBORw0KGgp="),
+            ),
+            ("object", serde_json::json!([])),
+        ] {
+            let mut draft = validation_draft(serde_json::json!({"title": "valid"}));
+            draft.properties.insert(field.into(), value);
+            let failure = core.create_item(&draft).unwrap_err();
+            assert!(
+                matches!(&failure, CoreError::Validation {code, message} if code == "invalid_properties" && message.contains(field)),
+                "{failure:?}"
+            );
+            assert_eq!(core.queue().unwrap(), before);
+            assert_eq!(
+                core.list(&ListFilters::default(), Sort::default()).unwrap(),
+                rows
+            );
+        }
+        assert!(
+            core.create_item(&validation_draft(serde_json::json!({})))
+                .is_err()
+        );
+        assert!(
+            core.get(witness.item_id.as_deref().unwrap())
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn local_fields_judge_current_whole_edits_but_only_stale_supplied_values() {
+        let core = validation_copy();
+        let mut row = store::testing::note("typed", "valid", "body", "2026-01-01T00:00:00Z");
+        row.r#type = "acme.child".into();
+        row.version = 3;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &row,
+            None,
+            &catalog::Indexing::default(),
+        )
+        .unwrap();
+        let edit = |base, properties: Value, replace| Edit {
+            base_version: Some(base),
+            properties: properties.as_object().unwrap().clone(),
+            replace_properties: replace,
+            ..Default::default()
+        };
+        let before = core.get("typed").unwrap();
+        for bad in [
+            edit(3, serde_json::json!({}), true),
+            edit(3, serde_json::json!({"title": null}), false),
+        ] {
+            assert!(matches!(
+                core.update_item("typed", &bad),
+                Err(CoreError::Validation { .. })
+            ));
+            assert_eq!(core.get("typed").unwrap(), before);
+            assert!(core.queue().unwrap().is_empty());
+        }
+        assert!(
+            core.update_item("typed", &edit(3, serde_json::json!({"read": null}), false))
+                .is_ok()
+        );
+        assert!(
+            core.update_item_as_read("typed", &edit(1, serde_json::json!({"read": false}), true))
+                .is_ok()
+        );
+        assert!(matches!(
+            core.update_item_as_read("typed", &edit(1, serde_json::json!({"read": "yes"}), true)),
+            Err(CoreError::Validation { .. })
+        ));
+        let created = core
+            .create_item(&validation_draft(serde_json::json!({"title": "draft"})))
+            .unwrap()
+            .item_id
+            .unwrap();
+        assert!(matches!(
+            core.update_item(&created, &edit(0, serde_json::json!({}), true)),
+            Err(CoreError::Validation { .. })
+        ));
+        let retype = Edit {
+            r#type: Some("acme.parent".into()),
+            ..edit(3, serde_json::json!({}), false)
+        };
+        assert!(matches!(
+            core.update_item("typed", &retype),
+            Err(CoreError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn local_fields_keep_unanswered_keyed_placeholders_unresolved() {
+        let core = validation_copy();
+        let keyed = |value: Value| Draft {
+            source: Some("fixture".into()),
+            source_id: Some("unseen".into()),
+            ..validation_draft(value)
+        };
+        let first = core
+            .create_item(&keyed(serde_json::json!({"read": true})))
+            .unwrap();
+        let id = first.item_id.unwrap();
+        assert!(
+            core.create_item(&keyed(serde_json::json!({"read": false})))
+                .is_ok()
+        );
+        let edit = |value: Value| Edit {
+            base_version: Some(0),
+            properties: value.as_object().unwrap().clone(),
+            replace_properties: true,
+            ..Default::default()
+        };
+        assert!(
+            core.update_item(&id, &edit(serde_json::json!({"read": false})))
+                .is_ok()
+        );
+        let before = core.queue().unwrap();
+        assert!(matches!(
+            core.create_item(&keyed(serde_json::json!({"read": "yes"}))),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(matches!(
+            core.update_item(&id, &edit(serde_json::json!({"read": "yes"}))),
+            Err(CoreError::Validation { .. })
+        ));
+        assert_eq!(core.queue().unwrap(), before);
+        let ordinary = core
+            .create_item(&validation_draft(serde_json::json!({"title": "valid"})))
+            .unwrap()
+            .item_id
+            .unwrap();
+        core.update_item(
+            &ordinary,
+            &Edit {
+                source_id: Some("later-key".into()),
+                ..edit(serde_json::json!({"title": "valid"}))
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            core.update_item(&ordinary, &edit(serde_json::json!({}))),
+            Err(CoreError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn local_fields_judge_a_known_upsert_and_defer_an_unknown_targets_missing_fields() {
+        let core = validation_copy();
+        let mut row = store::testing::note("keyed", "valid", "body", "2026-01-01T00:00:00Z");
+        row.r#type = "acme.child".into();
+        row.source = "fixture".into();
+        row.source_id = Some("known".into());
+        row.version = 3;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &row,
+            None,
+            &catalog::Indexing::default(),
+        )
+        .unwrap();
+        let keyed = |key: &str, properties: Value| Draft {
+            source: Some("fixture".into()),
+            source_id: Some(key.into()),
+            ..validation_draft(properties)
+        };
+        assert!(
+            core.create_item(&keyed("known", serde_json::json!({"read": true})))
+                .is_ok()
+        );
+        assert!(matches!(
+            core.create_item(&keyed("known", serde_json::json!({"title": null}))),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(
+            core.create_item(&keyed("unknown", serde_json::json!({"read": false})))
+                .is_ok()
+        );
+        assert!(matches!(
+            core.create_item(&keyed("unknown", serde_json::json!({"read": "yes"}))),
+            Err(CoreError::Validation { .. })
+        ));
+    }
+
     fn unreachable_server(url: &str) -> Option<Server> {
         Some(Server {
             url: url.into(),
@@ -1564,6 +1894,11 @@ mod tests {
         let mut row = store::testing::note("row", "title", "held", "2026-01-01T00:00:00Z");
         row.version = 5;
         store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+        store::replace_types(
+            &conn,
+            &[store::testing::wire_type("core.note", None, Some("title"))],
+        )
+        .unwrap();
         let catalog = catalog::Catalog::load(&conn).unwrap();
         let edit = |base| Edit {
             properties: serde_json::json!({ "body": "edited", "notes": "new" })
@@ -1589,6 +1924,11 @@ mod tests {
         let core = Core::open_in_memory(None).unwrap();
         {
             let conn = core.conn().unwrap();
+            store::replace_types(
+                &conn,
+                &[store::testing::wire_type("core.note", None, Some("title"))],
+            )
+            .unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
             store::meta_set(&conn, read_view::FENCE, crate::scripted::FENCE).unwrap();
             store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
@@ -2091,7 +2431,8 @@ mod tests {
         );
         let bare = create("acme.photo", serde_json::json!({ "title": "Bare" }));
         assert_eq!(core.thumbnail(&bare).unwrap(), None);
-        let broken = create(
+        let broken = server_held_item(
+            &core,
             "acme.photo",
             serde_json::json!({ "title": "Broken", "thumbnail": "data:image/png;base64,***" }),
         );
@@ -2214,18 +2555,11 @@ mod tests {
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_types(&conn, &[photo]).unwrap();
         }
-        let id = core
-            .create_item(&Draft {
-                r#type: "acme.photo".into(),
-                properties: serde_json::json!({ "title": "Old", "thumbnail": "hello" })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ..Default::default()
-            })
-            .unwrap()
-            .item_id
-            .unwrap();
+        let id = server_held_item(
+            &core,
+            "acme.photo",
+            serde_json::json!({"title": "Old", "thumbnail": "hello"}),
+        );
         match core.thumbnail(&id) {
             Err(CoreError::Decoding(reason)) => assert!(reason.starts_with(&id), "{reason}"),
             other => panic!("an unreadable thumbnail read as {other:?}"),
@@ -2251,17 +2585,11 @@ mod tests {
             store::replace_types(&conn, &[photo]).unwrap();
         }
         let holding = |value: Value| {
-            core.create_item(&Draft {
-                r#type: "acme.photo".into(),
-                properties: serde_json::json!({ "title": "Held", "thumbnail": value })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ..Default::default()
-            })
-            .unwrap()
-            .item_id
-            .unwrap()
+            server_held_item(
+                &core,
+                "acme.photo",
+                serde_json::json!({"title": "Held", "thumbnail": value}),
+            )
         };
         assert_eq!(core.thumbnail(&holding(Value::Null)).unwrap(), None);
         for value in [

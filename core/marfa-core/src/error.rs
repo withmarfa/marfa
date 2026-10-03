@@ -4,17 +4,17 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum CoreError {
-    #[error("not found ({code}): {message}")]
+    #[error("{}", classified("not found", Some(code), message))]
     NotFound { code: String, message: String },
-    #[error("unauthorized ({code}): {message}")]
+    #[error("{}", classified("unauthorized", Some(code), message))]
     Unauthorized { code: String, message: String },
-    #[error("forbidden ({code}): {message}")]
+    #[error("{}", classified("forbidden", Some(code), message))]
     Forbidden { code: String, message: String },
-    #[error("validation ({code}): {message}")]
+    #[error("{}", classified("validation", Some(code), message))]
     Validation { code: String, message: String },
-    #[error("unknown type: {message}")]
+    #[error("{}", classified("unknown type", None, message))]
     UnknownType { message: String },
-    #[error("rate limited ({code}): {message}")]
+    #[error("{}", classified("rate limited", Some(code), message))]
     RateLimited {
         code: String,
         message: String,
@@ -104,6 +104,21 @@ pub enum CoreError {
     },
     #[error("{0}")]
     Invalid(String),
+}
+
+fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
+    if message.to_lowercase().starts_with(&format!("{kind}:")) {
+        return message.into();
+    }
+    let classification = match code.filter(|code| code.replace('_', " ") != kind) {
+        Some(code) => format!("{kind} ({code})"),
+        None => kind.into(),
+    };
+    if message.is_empty() {
+        classification
+    } else {
+        format!("{classification}: {message}")
+    }
 }
 
 impl CoreError {
@@ -210,6 +225,31 @@ impl From<url::ParseError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_refusal_display_does_not_repeat_its_classification() {
+        let unknown = CoreError::UnknownType {
+            message: "Unknown type: acme.missing".into(),
+        };
+        assert_eq!(unknown.to_string(), "Unknown type: acme.missing");
+        let unauthorized = CoreError::Unauthorized {
+            code: "unauthorized".into(),
+            message: "Authentication required".into(),
+        };
+        assert_eq!(
+            unauthorized.to_string(),
+            "unauthorized: Authentication required"
+        );
+        assert!(!unauthorized.is_environmental());
+        let validation = CoreError::Validation {
+            code: "invalid_properties".into(),
+            message: "read: Expected boolean".into(),
+        };
+        assert_eq!(
+            validation.to_string(),
+            "validation (invalid_properties): read: Expected boolean"
+        );
+    }
 
     #[test]
     fn sqlite_full_is_environmental_without_reclassifying_store_faults() {
