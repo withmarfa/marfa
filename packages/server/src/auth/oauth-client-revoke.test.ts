@@ -27,15 +27,65 @@
 import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
+import { withConsentLock, consentLockDepth } from "./consent-lock.js";
 import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
 import { resolveRevokeClientId } from "./oauth-provider.js";
+
+import type { InStatement } from "@libsql/client";
+const acknowledgment = vi.hoisted(() => ({
+  mode: "none",
+  action: "",
+  armed: false,
+  fired: false,
+  inserts: 0,
+}));
+vi.mock("@libsql/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@libsql/client")>();
+  return {
+    ...actual,
+    createClient: (...args: Parameters<typeof actual.createClient>) => {
+      const client = actual.createClient(...args),
+        execute = client.execute.bind(client);
+      client.execute = async (
+        statement: InStatement | string,
+        ...rest: unknown[]
+      ) => {
+        const sql = typeof statement === "string" ? statement : statement.sql;
+        const values =
+          typeof statement === "string"
+            ? []
+            : Object.values(statement.args ?? {});
+        const audit =
+          acknowledgment.mode !== "none" &&
+          sql.startsWith('insert into "audit_log"') &&
+          values.includes(acknowledgment.action);
+        const target =
+          sql === "COMMIT" && acknowledgment.armed && !acknowledgment.fired;
+        if (target && acknowledgment.mode === "before") {
+          acknowledgment.fired = true;
+          throw new Error("credential commit acknowledgment");
+        }
+        const result = await execute(statement, ...(rest as []));
+        if (audit) {
+          acknowledgment.armed = true;
+          acknowledgment.inserts++;
+        }
+        if (target) {
+          acknowledgment.fired = true;
+          throw new Error("credential commit acknowledgment");
+        }
+        return result;
+      };
+      return client;
+    },
+  };
+});
 
 // Every case signs a user up and in and drives a full authorization-code
 // grant before asserting anything, which is more than the default budget
@@ -45,6 +95,14 @@ vi.setConfig({ testTimeout: 45_000 });
 let ctx: TestContext | undefined;
 
 afterEach(async () => {
+  Object.assign(acknowledgment, {
+    mode: "none",
+    action: "",
+    armed: false,
+    fired: false,
+    inserts: 0,
+  });
+  vi.restoreAllMocks();
   await ctx?.cleanup();
   ctx = undefined;
 });
@@ -150,12 +208,12 @@ function authorizeParams(clientId: string, scope: string, challenge: string) {
 }
 
 /** Authorize, accept at the consent screen, exchange the code. */
-async function codeGrant(
+async function prepareCode(
   c: TestContext,
   clientId: string,
   cookie: string,
   scope: string,
-): Promise<Record<string, unknown>> {
+) {
   const { verifier, challenge } = pkcePair();
   const authorizeRes = await request(
     c.app,
@@ -183,14 +241,23 @@ async function codeGrant(
     ORIGIN,
   ).searchParams.get("code");
   if (!code) throw new Error("no code on callback redirect");
+  return {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: CALLBACK,
+    client_id: clientId,
+    code_verifier: verifier,
+  };
+}
+async function codeGrant(
+  c: TestContext,
+  clientId: string,
+  cookie: string,
+  scope: string,
+): Promise<Record<string, unknown>> {
+  const form = await prepareCode(c, clientId, cookie, scope);
   const tokenRes = await request(c.app, "POST", "/auth/oauth2/token", {
-    form: {
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: CALLBACK,
-      client_id: clientId,
-      code_verifier: verifier,
-    },
+    form,
     headers: { origin: ORIGIN },
   });
   expect(tokenRes.status).toBe(200);
@@ -373,10 +440,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     const grant = await onlyGrant(ctx);
     expect(grant.properties.status).toBe("revoked");
 
-    const audits = await waitForAudit(
-      () => revokedAudits(ctx!),
-      (result) => result.data.length >= 1,
-    );
+    const audits = await revokedAudits(ctx);
     expect(audits.data.length).toBe(1);
     const row = audits.data[0]!;
     expect(row.resource_id).toBe(clientId);
@@ -459,10 +523,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     expect(after.accessTokens).toBe(0);
     expect(after.refreshTokens).toEqual([]);
     expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
-    const audits = await waitForAudit(
-      () => revokedAudits(ctx!),
-      (result) => result.data.length >= 1,
-    );
+    const audits = await revokedAudits(ctx);
     expect(audits.data[0]!.details.source).toBe("client");
     expect(
       await authorizeOutcome(ctx, clientId, cookie, "core.note:read"),
@@ -522,10 +583,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     const after = await grantRows(ctx, clientId, authUserId);
     expect(after.consents).toBe(0);
     expect(after.refreshTokens).toEqual([]);
-    const audits = await waitForAudit(
-      () => revokedAudits(ctx!),
-      (result) => result.data.length >= 1,
-    );
+    const audits = await revokedAudits(ctx);
     expect(audits.data[0]!.details.grant_item_id).toBeNull();
     expect(audits.data[0]!.details.source).toBe("client");
   });
@@ -765,4 +823,643 @@ describe("resolveRevokeClientId follows the plugin's precedence", () => {
     });
     expect(resolveRevokeClientId({ body: {}, headers })).toBe("my app id");
   });
+});
+
+function nativeAuditFixture(c: TestContext) {
+  return c.storage as typeof c.storage & {
+    __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    __sqliteAll(sql: string): Promise<Record<string, unknown>[]>;
+  };
+}
+it.each(["browser", "client"])(
+  "keeps every grant record and bearer on a native %s revoke audit fault",
+  async (door) => {
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx, "Audit Revoke");
+    const cookie = await signInUser(ctx, "audit-revoke@example.test");
+    const userId = await authUserIdFor(ctx, "audit-revoke@example.test");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+    const grant = await onlyGrant(ctx);
+    const before = await grantRows(ctx, clientId, userId);
+    const db = nativeAuditFixture(ctx);
+    await db.__sqliteRun(
+      "CREATE TRIGGER reject_grant_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.grant.revoked' BEGIN SELECT RAISE(ABORT, 'grant audit fault'); END",
+      [],
+    );
+    const remove = () =>
+      door === "client"
+        ? revoke(ctx!, tokens.refresh_token as string, clientId)
+        : request(ctx!.app, "DELETE", `/auth/grants/${grant.id}`, {
+            key: ctx!.workingKey,
+          });
+    const refused = await remove();
+    expect(refused.status).toBe(500);
+    expect(await grantRows(ctx, clientId, userId)).toEqual(before);
+    expect((await onlyGrant(ctx)).properties.status).toBe("active");
+    expect(
+      (
+        await request(ctx.app, "GET", "/items", {
+          key: tokens.access_token as string,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await revokedAudits(ctx)).data).toHaveLength(0);
+    await db.__sqliteRun("DROP TRIGGER reject_grant_audit", []);
+    expect((await remove()).status).toBe(door === "client" ? 200 : 204);
+    expect((await grantRows(ctx, clientId, userId)).accessTokens).toBe(0);
+    expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
+    expect((await revokedAudits(ctx)).data).toHaveLength(1);
+  },
+);
+it("rolls rotation back when the final issuance audit is refused, preserving the usable refresh token", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Audit Rotation");
+  const cookie = await signInUser(ctx, "audit-rotation@example.test");
+  const userId = await authUserIdFor(ctx, "audit-rotation@example.test");
+  const tokens = await codeGrant(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  const before = await grantRows(ctx, clientId, userId);
+  const db = nativeAuditFixture(ctx);
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_issue_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.token.issued' BEGIN SELECT RAISE(ABORT, 'issue audit fault'); END",
+    [],
+  );
+  const rotate = () =>
+    request(ctx!.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token as string,
+        client_id: clientId,
+      },
+      headers: { origin: ORIGIN },
+    });
+  const refused = await rotate();
+  expect(refused.status).toBe(500);
+  expect(refused.headers.get("set-cookie")).toBeNull();
+  expect(await grantRows(ctx, clientId, userId)).toEqual(before);
+  await db.__sqliteRun("DROP TRIGGER reject_issue_audit", []);
+  expect((await rotate()).status).toBe(200);
+  expect((await grantRows(ctx, clientId, userId)).refreshTokens).toHaveLength(
+    2,
+  );
+});
+it("keeps replay withdrawal and its observation together even though the token response is refused", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Audit Replay");
+  const cookie = await signInUser(ctx, "audit-replay@example.test");
+  const userId = await authUserIdFor(ctx, "audit-replay@example.test");
+  const tokens = await codeGrant(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  await refresh(ctx, clientId, tokens.refresh_token as string);
+  const before = await grantRows(ctx, clientId, userId);
+  expect(before.accessTokens).toBeGreaterThan(0);
+  const db = nativeAuditFixture(ctx);
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_replay_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.refresh.replayed' BEGIN SELECT RAISE(ABORT, 'replay audit fault'); END",
+    [],
+  );
+  const replay = () =>
+    request(ctx!.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token as string,
+        client_id: clientId,
+      },
+      headers: { origin: ORIGIN },
+    });
+  expect((await replay()).status).toBe(500);
+  expect(await grantRows(ctx, clientId, userId)).toEqual(before);
+  await db.__sqliteRun("DROP TRIGGER reject_replay_audit", []);
+  expect((await replay()).status).toBe(400);
+  expect((await grantRows(ctx, clientId, userId)).accessTokens).toBe(0);
+  expect(
+    (await ctx.storage.audit.list({ action: "auth.refresh.replayed" })).data,
+  ).toHaveLength(1);
+});
+it("rolls provider consent and code back together with a refused browser grant audit", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Audit Consent");
+  const cookie = await signInUser(ctx, "audit-consent@example.test");
+  const userId = await authUserIdFor(ctx, "audit-consent@example.test");
+  const pair = pkcePair();
+  const auth = await request(
+    ctx.app,
+    "GET",
+    `/auth/oauth2/authorize?${authorizeParams(clientId, "core.note:read", pair.challenge).toString()}`,
+    { headers: { cookie } },
+  );
+  const signed = new URL(auth.headers.get("location")!, ORIGIN).search.slice(1);
+  const decide = () =>
+    request(ctx!.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", oauth_query: signed, scopes: ["core.note:read"] },
+      headers: { cookie, origin: ORIGIN },
+    });
+  const db = nativeAuditFixture(ctx);
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_consent_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.grant.created' BEGIN SELECT RAISE(ABORT, 'consent audit fault'); END",
+    [],
+  );
+  const refused = await decide();
+  expect(refused.status).toBe(500);
+  expect(refused.headers.get("location")).toBeNull();
+  expect((await grantRows(ctx, clientId, userId)).consents).toBe(0);
+  expect(
+    (await ctx.storage.items.list({ type: "system.connection" })).data,
+  ).toHaveLength(0);
+  expect(
+    await db.__sqliteAll(
+      "SELECT id FROM auth_verification WHERE json_extract(value, '$.type')='authorization_code'",
+    ),
+  ).toHaveLength(0);
+  await db.__sqliteRun("DROP TRIGGER reject_consent_audit", []);
+  expect((await decide()).status).toBe(302);
+  expect((await grantRows(ctx, clientId, userId)).consents).toBe(1);
+  expect(
+    await db.__sqliteAll(
+      "SELECT id FROM auth_verification WHERE json_extract(value, '$.type')='authorization_code'",
+    ),
+  ).toHaveLength(1);
+});
+
+it("rolls a caught token persistence failure back with its one-use authorization code", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "One-use audit");
+  const cookie = await signInUser(ctx, "one-use@example.test");
+  const form = await prepareCode(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  const db = nativeAuditFixture(ctx);
+  const before = await db.__sqliteAll("SELECT id FROM auth_verification");
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_token_row_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.oauthAccessToken.create' BEGIN SELECT RAISE(ABORT, 'token row audit fault'); END",
+    [],
+  );
+  const exchange = () =>
+    request(ctx!.app, "POST", "/auth/oauth2/token", {
+      form,
+      headers: { origin: ORIGIN },
+    });
+  const refused = await exchange();
+  expect(refused.status).toBe(500);
+  expect(await refused.text()).not.toContain("marfa_at_");
+  expect(await db.__sqliteAll("SELECT id FROM auth_verification")).toEqual(
+    before,
+  );
+  expect(
+    await db.__sqliteAll("SELECT id FROM auth_oauth_access_token"),
+  ).toEqual([]);
+  expect(
+    await db.__sqliteAll("SELECT id FROM auth_oauth_refresh_token"),
+  ).toEqual([]);
+  await db.__sqliteRun("DROP TRIGGER reject_token_row_audit", []);
+  const accepted = await exchange();
+  expect(accepted.status).toBe(200);
+  const token = (await accepted.json()) as { access_token: string };
+  expect(
+    (await request(ctx.app, "GET", "/items", { key: token.access_token }))
+      .status,
+  ).toBe(200);
+  expect((await exchange()).status).toBe(400);
+  expect(
+    (await request(ctx.app, "GET", "/items", { key: token.access_token }))
+      .status,
+  ).toBe(401);
+});
+
+it("takes the consent lock before the RFC 7009 writer under concurrent consent", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Concurrent revoke");
+  const cookie = await signInUser(ctx, "concurrent-revoke@example.test");
+  const userId = await authUserIdFor(ctx, "concurrent-revoke@example.test");
+  const tokens = await codeGrant(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const consent = withConsentLock(clientId, userId, async () => {
+    entered();
+    await gate;
+    expect(
+      await authorizeOutcome(ctx!, clientId, cookie, "core.note:read"),
+    ).toBe("silent_code");
+  });
+  await held;
+  const revoked = revoke(ctx, tokens.refresh_token as string, clientId);
+  await vi.waitFor(() => {
+    expect(consentLockDepth(clientId, userId)).toBe(2);
+  });
+  release();
+  await consent;
+  expect((await revoked).status).toBe(200);
+  expect(
+    await nativeAuditFixture(ctx).__sqliteAll(
+      "SELECT id FROM auth_verification WHERE json_extract(value, '$.type')='authorization_code'",
+    ),
+  ).toEqual([]);
+  expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
+  expect((await grantRows(ctx, clientId, userId)).accessTokens).toBe(0);
+});
+
+it.each(["before", "after", "unknown"])(
+  "returns tokens only after confirmed %s commit acknowledgment",
+  async (mode) => {
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx, "Token outcome");
+    const cookie = await signInUser(ctx, "token-outcome@example.test");
+    const form = await prepareCode(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+    if (mode === "unknown")
+      vi.spyOn(ctx.storage.audit, "has").mockRejectedValue(
+        new Error("witness unavailable"),
+      );
+    acknowledgment.mode = mode;
+    acknowledgment.action = "auth.token.issued";
+    const exchange = () =>
+      request(ctx!.app, "POST", "/auth/oauth2/token", {
+        form,
+        headers: { origin: ORIGIN },
+      });
+    const response = await exchange();
+    expect(acknowledgment.fired).toBe(true);
+    expect(acknowledgment.inserts).toBe(1);
+    expect(response.status).toBe(mode === "after" ? 200 : 500);
+    if (mode === "after") {
+      const token = (await response.json()) as { access_token: string };
+      expect(
+        (await request(ctx.app, "GET", "/items", { key: token.access_token }))
+          .status,
+      ).toBe(200);
+    } else expect(await response.text()).not.toContain("marfa_at_");
+    const db = nativeAuditFixture(ctx);
+    expect(
+      await db.__sqliteAll("SELECT id FROM auth_oauth_access_token"),
+    ).toHaveLength(mode === "before" ? 0 : 1);
+    expect(
+      (await ctx.storage.audit.list({ action: "auth.token.issued" })).data,
+    ).toHaveLength(mode === "before" ? 0 : 1);
+    acknowledgment.mode = "none";
+    vi.restoreAllMocks();
+    if (mode === "before") expect((await exchange()).status).toBe(200);
+  },
+);
+
+it.each(["before", "after", "unknown"])(
+  "returns a browser authorization code only after confirmed %s commit acknowledgment",
+  async (mode) => {
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx, "Consent outcome");
+    const cookie = await signInUser(ctx, "consent-outcome@example.test");
+    const pair = pkcePair();
+    const authorization = await request(
+      ctx.app,
+      "GET",
+      `/auth/oauth2/authorize?${authorizeParams(clientId, "core.note:read", pair.challenge).toString()}`,
+      { headers: { cookie } },
+    );
+    const signed = new URL(
+      authorization.headers.get("location")!,
+      ORIGIN,
+    ).search.slice(1);
+    if (mode === "unknown")
+      vi.spyOn(ctx.storage.audit, "has").mockRejectedValue(
+        new Error("witness unavailable"),
+      );
+    acknowledgment.mode = mode;
+    acknowledgment.action = "auth.grant.created";
+    const decide = () =>
+      request(ctx!.app, "POST", "/auth/authorize/decision", {
+        form: {
+          accept: "true",
+          oauth_query: signed,
+          scopes: ["core.note:read"],
+        },
+        headers: { cookie, origin: ORIGIN },
+      });
+    const response = await decide();
+    expect(acknowledgment.fired).toBe(true);
+    expect(acknowledgment.inserts).toBe(1);
+    expect(response.status).toBe(mode === "after" ? 302 : 500);
+    if (mode !== "after") expect(response.headers.get("location")).toBeNull();
+    else
+      expect(
+        new URL(response.headers.get("location")!).searchParams.get("code"),
+      ).not.toBeNull();
+    expect(
+      (await ctx.storage.audit.list({ action: "auth.grant.created" })).data,
+    ).toHaveLength(mode === "before" ? 0 : 1);
+    expect(
+      await nativeAuditFixture(ctx).__sqliteAll(
+        "SELECT id FROM auth_verification WHERE json_extract(value, '$.type')='authorization_code'",
+      ),
+    ).toHaveLength(mode === "before" ? 0 : 1);
+    acknowledgment.mode = "none";
+    vi.restoreAllMocks();
+    if (mode === "before") expect((await decide()).status).toBe(302);
+  },
+);
+
+it("keeps the entire RFC 7009 provider tail in the grant transaction", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Revoke tail");
+  const cookie = await signInUser(ctx, "revoke-tail@example.test");
+  const userId = await authUserIdFor(ctx, "revoke-tail@example.test");
+  const tokens = await codeGrant(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  const before = await grantRows(ctx, clientId, userId);
+  const db = nativeAuditFixture(ctx);
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_revoke_tail BEFORE INSERT ON audit_log WHEN NEW.action='auth.credentials.revoked' BEGIN SELECT RAISE(ABORT, 'revoke tail audit fault'); END",
+    [],
+  );
+  expect(
+    (await revoke(ctx, tokens.refresh_token as string, clientId)).status,
+  ).toBe(500);
+  expect(await grantRows(ctx, clientId, userId)).toEqual(before);
+  expect((await onlyGrant(ctx)).properties.status).toBe("active");
+  expect(
+    (
+      await request(ctx.app, "GET", "/items", {
+        key: tokens.access_token as string,
+      })
+    ).status,
+  ).toBe(200);
+  await db.__sqliteRun("DROP TRIGGER reject_revoke_tail", []);
+  expect(
+    (await revoke(ctx, tokens.refresh_token as string, clientId)).status,
+  ).toBe(200);
+  expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
+  expect(
+    (
+      await request(ctx.app, "GET", "/items", {
+        key: tokens.access_token as string,
+      })
+    ).status,
+  ).toBe(401);
+});
+
+it("keeps remote client key retrieval outside the credential writer", async () => {
+  ctx = await createTestContext({
+    corsOrigins: ["https://client.example.test"],
+  });
+  const clientId = await seedClient(ctx, "Remote client key");
+  const remoteCookie = await signInUser(ctx, "remote-owner@example.test");
+  const remoteTokens = await codeGrant(
+    ctx,
+    clientId,
+    remoteCookie,
+    "core.note:read offline_access",
+  );
+  const db = nativeAuditFixture(ctx);
+  await db.__sqliteRun(
+    "UPDATE auth_oauth_client SET token_endpoint_auth_method='private_key_jwt', public=0, jwks_uri='https://client.example.test/keys' WHERE client_id=?",
+    [clientId],
+  );
+  const { transactionControl } =
+    await import("../storage/sqlite/transaction-control.js");
+  let fetches = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    expect(input instanceof Request ? input.url : input.toString()).toBe(
+      "https://client.example.test/keys",
+    );
+    expect(transactionControl.getStore()).toBeUndefined();
+    await ctx!.storage.settings.set("credential.remote-probe", "available");
+    fetches++;
+    return Response.json({ keys: [] });
+  });
+  const part = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const assertion = `${part({ alg: "RS256", kid: "fixture" })}.${part({ sub: clientId, iss: clientId, aud: `${ORIGIN}/auth/oauth2/token`, exp: Math.floor(Date.now() / 1000) + 60 })}.AA`;
+  const response = await request(ctx.app, "POST", "/auth/oauth2/token", {
+    form: {
+      grant_type: "refresh_token",
+      client_id: clientId,
+      refresh_token: remoteTokens.refresh_token as string,
+      client_assertion: assertion,
+      client_assertion_type:
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+    },
+  });
+  expect(response.status).toBe(400);
+  expect(fetches).toBeGreaterThan(0);
+  expect(await ctx.storage.settings.get("credential.remote-probe")).toBe(
+    "available",
+  );
+  expect(
+    await db.__sqliteAll("SELECT id FROM auth_oauth_refresh_token"),
+  ).toHaveLength(1);
+  vi.restoreAllMocks();
+  const publicClient = await seedClient(ctx, "Public control");
+  const cookie = await signInUser(ctx, "remote-control@example.test");
+  expect(
+    (await codeGrant(ctx, publicClient, cookie, "core.note:read")).access_token,
+  ).toBeTruthy();
+});
+
+it("rolls session logout and linked token revocation back before any remote notification", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Session logout");
+  const cookie = await signInUser(ctx, "session-logout@example.test");
+  const tokens = await codeGrant(
+    ctx,
+    clientId,
+    cookie,
+    "core.note:read offline_access",
+  );
+  const db = nativeAuditFixture(ctx);
+  const sessions = await db.__sqliteAll("SELECT id FROM auth_session");
+  await db.__sqliteRun(
+    "UPDATE auth_oauth_client SET backchannel_logout_uri='https://client.example.test/logout' WHERE client_id=?",
+    [clientId],
+  );
+  const { transactionControl } =
+    await import("../storage/sqlite/transaction-control.js");
+  let delivered = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    expect(input instanceof Request ? input.url : input.toString()).toBe(
+      "https://client.example.test/logout",
+    );
+    expect(transactionControl.getStore()).toBeUndefined();
+    await ctx!.storage.settings.set("logout.remote", "delivered");
+    delivered++;
+    return new Response(null, { status: 204 });
+  });
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_logout_token_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.oauthAccessToken.updateMany' BEGIN SELECT RAISE(ABORT, 'logout token audit fault'); END",
+    [],
+  );
+  const signout = () =>
+    request(ctx!.app, "POST", "/auth/sign-out", {
+      body: {},
+      headers: { origin: ORIGIN, cookie },
+    });
+  const refused = await signout();
+  expect(refused.status).toBe(500);
+  expect(refused.headers.getSetCookie()).toEqual([]);
+  expect(await db.__sqliteAll("SELECT id FROM auth_session")).toEqual(sessions);
+  expect(
+    (
+      await request(ctx.app, "GET", "/items", {
+        key: tokens.access_token as string,
+      })
+    ).status,
+  ).toBe(200);
+  expect(delivered).toBe(0);
+  await db.__sqliteRun("DROP TRIGGER reject_logout_token_audit", []);
+  expect((await signout()).status).toBe(200);
+  expect(
+    (
+      await request(ctx.app, "GET", "/items", {
+        key: tokens.access_token as string,
+      })
+    ).status,
+  ).toBe(401);
+  await vi.waitFor(() => {
+    expect(delivered).toBe(1);
+  });
+  expect(await ctx.storage.settings.get("logout.remote")).toBe("delivered");
+  expect(
+    (await refresh(ctx, clientId, tokens.refresh_token as string)).access_token,
+  ).toBeTruthy();
+});
+
+it.each(["before", "after", "unknown"])(
+  "publishes session logout only after a confirmed %s commit",
+  async (mode) => {
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx, "Session outcome");
+    const cookie = await signInUser(ctx, "session-outcome@example.test");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+    const db = nativeAuditFixture(ctx);
+    await db.__sqliteRun(
+      "UPDATE auth_oauth_client SET backchannel_logout_uri='https://client.example.test/logout' WHERE client_id=?",
+      [clientId],
+    );
+    let delivered = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      delivered++;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    if (mode === "unknown")
+      vi.spyOn(ctx.storage.audit, "has").mockRejectedValue(
+        new Error("witness unavailable"),
+      );
+    acknowledgment.mode = mode;
+    acknowledgment.action = "auth.session.ended";
+    const signout = () =>
+      request(ctx!.app, "POST", "/auth/sign-out", {
+        body: {},
+        headers: { cookie, origin: ORIGIN },
+      });
+    const response = await signout();
+    expect(acknowledgment.fired).toBe(true);
+    expect(acknowledgment.inserts).toBe(1);
+    expect(response.status).toBe(mode === "after" ? 200 : 500);
+    if (mode !== "after") expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await db.__sqliteAll("SELECT id FROM auth_session")).toHaveLength(
+      mode === "before" ? 1 : 0,
+    );
+    expect(
+      (
+        await request(ctx.app, "GET", "/items", {
+          key: tokens.access_token as string,
+        })
+      ).status,
+    ).toBe(mode === "before" ? 200 : 401);
+    if (mode === "after")
+      await vi.waitFor(() => {
+        expect(delivered).toBe(1);
+      });
+    else expect(delivered).toBe(0);
+    acknowledgment.mode = "none";
+    if (mode === "before") {
+      expect((await signout()).status).toBe(200);
+      await vi.waitFor(() => {
+        expect(delivered).toBe(1);
+      });
+    }
+  },
+);
+
+it("releases the writer while a committed logout notification waits for its receiver", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx, "Held logout receiver");
+  const cookie = await signInUser(ctx, "held-logout@example.test");
+  await codeGrant(ctx, clientId, cookie, "core.note:read offline_access");
+  await nativeAuditFixture(ctx).__sqliteRun(
+    "UPDATE auth_oauth_client SET backchannel_logout_uri='https://client.example.test/logout' WHERE client_id=?",
+    [clientId],
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrived!: () => void;
+  const arrival = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  let done!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  const { transactionControl } =
+    await import("../storage/sqlite/transaction-control.js");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    expect(transactionControl.getStore()).toBeUndefined();
+    arrived();
+    await gate;
+    done();
+    return new Response(null, { status: 204 });
+  });
+  try {
+    const response = request(ctx.app, "POST", "/auth/sign-out", {
+      body: {},
+      headers: { cookie, origin: ORIGIN },
+    });
+    await arrival;
+    await ctx.storage.settings.set("logout.unrelated", "accepted");
+    expect(await ctx.storage.settings.get("logout.unrelated")).toBe("accepted");
+    release();
+    expect((await response).status).toBe(200);
+  } finally {
+    release();
+    await finished;
+  }
 });

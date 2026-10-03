@@ -214,7 +214,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
         options?.retainCommitHooksOnUncertain,
       );
     },
-    betterAuthDb: baseDb,
+    betterAuthDb: db,
     /** Raw query escape hatch for the storage tests; nothing outside a
      *  test calls it. */
     async __sqliteAll(query: string): Promise<unknown[]> {
@@ -236,11 +236,9 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       return { changes: result.rowsAffected };
     },
     async close() {
-      // Drain in-flight fire-and-forget writes (audit rows and the OAuth
-      // last-used stamp) before closing the underlying connection, so a
-      // late write can't fail against a closed store. Neither drain
-      // rejects.
-      await Promise.all([auditStore.drain(), oauthProviderStore.drain()]);
+      // Operational last-used stamps remain asynchronous; audits are awaited
+      // by their owning operation and have no detached shutdown work.
+      await oauthProviderStore.drain();
       await close();
     },
   };

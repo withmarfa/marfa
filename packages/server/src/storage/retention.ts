@@ -232,7 +232,6 @@ export class GrantInactivityRetirer {
       try {
         await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
-          properties: grant.properties,
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
           audit: {

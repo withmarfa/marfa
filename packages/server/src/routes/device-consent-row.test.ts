@@ -404,3 +404,132 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     ).toBe("consent_screen");
   });
 });
+
+it("keeps the device pending and creates neither grant half on a native approval audit failure", async () => {
+  ctx = await createTestContext();
+  const clientId = await seedClient(ctx);
+  const cookie = await signInUser(ctx, "audit-device@example.test");
+  const userId = await authUserIdFor(ctx, "audit-device@example.test");
+  const initiated = await request(ctx.app, "POST", "/auth/device/code", {
+    body: { client_id: clientId, scope: "core.note:read" },
+    headers: { origin: ORIGIN },
+  });
+  expect(initiated.status).toBe(200);
+  const { user_code } = (await initiated.json()) as { user_code: string };
+  const db = ctx.storage as typeof ctx.storage & {
+    __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    __sqliteAll(sql: string): Promise<Record<string, unknown>[]>;
+  };
+  await db.__sqliteRun(
+    "CREATE TRIGGER reject_device_audit BEFORE INSERT ON audit_log WHEN NEW.action='auth.grant.created' BEGIN SELECT RAISE(ABORT, 'device audit fault'); END",
+    [],
+  );
+  const approve = () =>
+    request(ctx!.app, "POST", "/auth/device/consent", {
+      form: { user_code, decision: "approve", scopes: ["core.note:read"] },
+      headers: { cookie, origin: ORIGIN },
+    });
+  expect((await approve()).status).toBe(500);
+  expect(await consentRows(ctx, clientId, userId)).toHaveLength(0);
+  expect(
+    (await ctx.storage.items.list({ type: "system.connection" })).data,
+  ).toHaveLength(0);
+  expect(
+    await db.__sqliteAll("SELECT status FROM auth_oauth_device_code"),
+  ).toEqual([{ status: "pending" }]);
+  await db.__sqliteRun("DROP TRIGGER reject_device_audit", []);
+  expect((await approve()).status).toBe(200);
+  expect(await consentRows(ctx, clientId, userId)).toHaveLength(1);
+  expect(
+    await db.__sqliteAll("SELECT status FROM auth_oauth_device_code"),
+  ).toEqual([{ status: "approved" }]);
+});
+
+it.each(["create", "claim", "deny", "poll", "consume", "delete"] as const)(
+  "audits the configured device %s mutation before its outcome escapes",
+  async (door) => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "device-audit@example.test");
+    const db = c.storage as typeof c.storage & {
+      __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+      __sqliteAll(sql: string): Promise<unknown[]>;
+    };
+    const initiate = () =>
+      request(c.app, "POST", "/auth/device/code", {
+        body: { client_id: clientId, scope: "core.note:read" },
+        headers: { origin: ORIGIN },
+      });
+    let flow: { user_code: string; device_code: string };
+    if (door !== "create")
+      flow = (await (await initiate()).json()) as typeof flow;
+    const review = () =>
+      request(
+        c.app,
+        "GET",
+        `/auth/device/consent?user_code=${flow.user_code}`,
+        { headers: { cookie } },
+      );
+    const decide = (decision: string) =>
+      request(c.app, "POST", "/auth/device/consent", {
+        form: {
+          user_code: flow.user_code,
+          decision,
+          scopes: ["core.note:read"],
+        },
+        headers: { origin: ORIGIN, cookie },
+      });
+    if (["deny", "consume", "delete"].includes(door))
+      expect((await review()).status).toBe(200);
+    if (door === "consume") expect((await decide("approve")).status).toBe(200);
+    if (door === "delete") expect((await decide("deny")).status).toBe(200);
+    const poll = () =>
+      request(c.app, "POST", "/auth/oauth2/token", {
+        form: {
+          grant_type: DEVICE_GRANT,
+          client_id: clientId,
+          device_code: flow.device_code,
+        },
+        headers: { origin: ORIGIN },
+      });
+    const action = `auth.deviceCode.${({ create: "create", claim: "incrementOne", deny: "update", poll: "update", consume: "consumeOne", delete: "delete" } as const)[door]}`;
+    const before = await db.__sqliteAll("SELECT * FROM auth_oauth_device_code");
+    const audits = (await c.storage.audit.list({ action })).data.length;
+    await db.__sqliteRun(
+      `CREATE TRIGGER reject_device_door BEFORE INSERT ON audit_log WHEN NEW.action='${action}' BEGIN SELECT RAISE(ABORT, 'device door audit fault'); END`,
+      [],
+    );
+    const submit =
+      door === "create"
+        ? initiate
+        : door === "claim"
+          ? review
+          : door === "deny"
+            ? () => decide("deny")
+            : poll;
+    const refused = await submit();
+    expect(refused.status).toBe(500);
+    expect(refused.headers.getSetCookie()).toEqual([]);
+    expect(
+      await db.__sqliteAll("SELECT * FROM auth_oauth_device_code"),
+    ).toEqual(before);
+    expect((await c.storage.audit.list({ action })).data).toHaveLength(audits);
+    expect(
+      await db.__sqliteAll("SELECT id FROM auth_oauth_access_token"),
+    ).toEqual([]);
+    await db.__sqliteRun("DROP TRIGGER reject_device_door", []);
+    const accepted = await submit();
+    expect(accepted.status).toBe(["poll", "delete"].includes(door) ? 400 : 200);
+    expect((await c.storage.audit.list({ action })).data).toHaveLength(
+      audits + 1,
+    );
+    if (door === "consume") {
+      const token = (await accepted.json()) as { access_token: string };
+      expect(
+        (await request(c.app, "GET", "/items", { key: token.access_token }))
+          .status,
+      ).toBe(200);
+    }
+  },
+);

@@ -58,7 +58,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
   waitForConsentLockDepth,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -1169,13 +1168,13 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
     });
     expectCodeRedirect(res);
 
-    // Distinct audit action for the silent path. Fire-and-forget emit —
-    // poll briefly.
+    // The silent path completes its distinct audit action before returning.
     const storage = ctx.storage;
-    const reused = await waitForAudit(
-      () => storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
-      (result) => result.data.length >= 1,
-    );
+    const reused = await storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reused.data.length >= 1).toBe(true);
     expect(reused.data.length).toBe(1);
     const row = reused.data[0]!;
     expect(row.resource_id).toBe(clientId);
@@ -1440,13 +1439,21 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
     const silent = landOnConsentPage(c, silentQuery, { cookie });
     await reachedRead;
 
-    // Meanwhile the whole grant is revoked through the grants door.
+    // Authentication reads wait behind the active writer before the route
+    // can acquire the consent lock. Observe arrival at that read boundary.
+    let reachedRevoke!: () => void;
+    const revokeArrived = new Promise<void>((resolve) => {
+      reachedRevoke = resolve;
+    });
+    const validate = c.storage.keys.validate.bind(c.storage.keys);
+    c.storage.keys.validate = (hash) => {
+      reachedRevoke();
+      return validate(hash);
+    };
     const revoke = request(c.app, "DELETE", `/auth/grants/${grantItemId}`, {
       key: c.workingKey,
     });
-    // Same reason as the narrowing case: the revoke has to be waiting on
-    // the lock, not arriving after the holder has already restored.
-    await waitForConsentLockDepth(clientId, authUserId, 2);
+    await revokeArrived;
     resume();
 
     const [, revokeRes] = await Promise.all([silent, revoke]);
@@ -1528,21 +1535,13 @@ describe("a scope named twice is stored once on the skip path", () => {
     expect(items.data.length).toBe(1);
     expect(items.data[0]!.properties.scopes).toEqual(["openid", "core.*:read"]);
 
-    // What the skip does record is the audit row, and `details.scopes` is
-    // what the client asked for on this request — taken straight from the
-    // parsed literals. That is the one surface on this path where a repeated
-    // literal persists, and it is the operator's record of what was
-    // re-authorized without anybody being asked.
-    // **Polled, not read once.** `auditGrantReused` is dispatched with `void`
-    // and deliberately so — a best-effort audit write must never block the
-    // redirect. It usually lands before the response is even read, but a
-    // bare read races it. `waitForAudit` is
-    // the helper this file already uses for the same action a few cases up.
+    // A completed redirect has already recorded the reused grant.
     const storage = ctx.storage;
-    const reused = await waitForAudit(
-      () => storage.audit.list({ action: "auth.grant.reused", limit: 20 }),
-      (result) => result.data.length >= 1,
-    );
+    const reused = await storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 20,
+    });
+    expect(reused.data.length >= 1).toBe(true);
     expect(reused.data.length).toBe(1);
     const asked = (reused.data[0]!.details as { scopes: string[] }).scopes;
     expect(asked).toEqual([...new Set(asked)]);

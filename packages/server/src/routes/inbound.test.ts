@@ -9,7 +9,6 @@ import {
   mintWorkingKey,
   request,
   seedOauthBearer,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
@@ -264,10 +263,8 @@ describe("inbound webhook endpoints", () => {
         { key: connector.key },
       );
     }
-    const rows = await waitForAudit(
-      () => ctx.storage.audit.list({ resource_id: made.id }),
-      (r) => r.data.length >= 2,
-    );
+    const rows = await ctx.storage.audit.list({ resource_id: made.id });
+    expect(rows.data.length >= 2).toBe(true);
     expect(rows.data.map((row) => row.action).sort()).toEqual([
       "inbound_endpoint.create",
       "inbound_endpoint.retire",
@@ -931,17 +928,21 @@ describe("the door's order and bounds", () => {
       ).__sqliteAll("SELECT COUNT(*) AS n FROM audit_log")) as { n: number }[];
       return row?.n ?? 0;
     };
-    await waitForAudit(
-      () => ctx.storage.audit.list({ resource_id: made.id }),
-      (r) => r.data.length === 1,
-    );
+    {
+      const auditResult = await ctx.storage.audit.list({
+        resource_id: made.id,
+      });
+      expect(auditResult.data.length === 1).toBe(true);
+    }
     const before = await count();
     expect((await post(ctx, made.path, "unaudited")).status).toBe(202);
     const witness = await endpoint(ctx, connector);
-    await waitForAudit(
-      () => ctx.storage.audit.list({ resource_id: witness.id }),
-      (r) => r.data.length === 1,
-    );
+    {
+      const auditResult = await ctx.storage.audit.list({
+        resource_id: witness.id,
+      });
+      expect(auditResult.data.length === 1).toBe(true);
+    }
     expect(await count()).toBe(before + 1);
   });
 

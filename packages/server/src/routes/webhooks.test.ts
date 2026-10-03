@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -19,21 +19,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await ctx.cleanup();
 });
-
-// Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`), so use the shared `waitForAudit`
-// helper rather than reading once.
-async function waitForAuditEntry(filter: {
-  action: string;
-  resource_id: string;
-}): Promise<{
-  data: { action: string; resource_id: string | null; resource_type: string }[];
-}> {
-  return waitForAudit(
-    () => ctx.storage.audit.list(filter),
-    (r) => r.data.length > 0,
-  );
-}
 
 interface WebhookResponse {
   id: string;
@@ -119,9 +104,7 @@ describe("POST /webhooks", () => {
     const created = await createWebhook({
       url: "https://example.com/audited",
     });
-    // Audit is logged via `void storage.audit.log(...)` inside the handler.
-    // Query directly through the storage to verify the side effect landed.
-    const auditResult = await waitForAuditEntry({
+    const auditResult = await ctx.storage.audit.list({
       action: "webhook.create",
       resource_id: created.id,
     });
@@ -254,7 +237,7 @@ describe("DELETE /webhooks/:id", () => {
     expect(getRes.status).toBe(404);
 
     // Audit side effect.
-    const auditResult = await waitForAuditEntry({
+    const auditResult = await ctx.storage.audit.list({
       action: "webhook.delete",
       resource_id: created.id,
     });

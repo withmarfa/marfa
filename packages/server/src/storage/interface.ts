@@ -828,6 +828,7 @@ export interface ItemStore {
    * any write, and the window here means "how long we keep the record of a
    * withdrawn grant".
    */
+  /** One bounded batch of at most 200 matching revoked grants. */
   purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number>;
   /**
    * Every live app grant nobody has used since `cutoffIso`: kind `app`,
@@ -1201,7 +1202,7 @@ export interface KeyStore {
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**
-   * Hard-delete revoked keys whose `revoked_at` is older than `cutoffIso`.
+   * Hard-delete at most 200 revoked keys whose `revoked_at` is older than `cutoffIso`.
    * Returns the number deleted.
    */
   deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
@@ -1696,17 +1697,6 @@ export interface OauthProviderStore {
     expectedScopes: readonly string[],
     scopes: readonly string[],
   ): Promise<boolean>;
-  /**
-   * Record the scope a client asked for at registration as its ceiling.
-   * The provider plugin stores its whole registration allowlist on every
-   * dynamically registered client whatever the request named, so the
-   * registration door puts the requested set in its place before the
-   * answer leaves. Returns false when there is no such client.
-   */
-  setRegisteredScopes(
-    clientId: string,
-    scopes: readonly string[],
-  ): Promise<boolean>;
   /** Look up the user's most recent prior consent scopes for
    *  (clientId, authUserId). Returns the scope literals from the
    *  `auth_oauth_consent` row, or `undefined` if no prior grant. */
@@ -1907,6 +1897,7 @@ export interface OauthProviderStore {
    *
    * A row with zero grants is dead whoever registered it.
    */
+  /** One bounded batch of at most 200 matching grantless clients. */
   deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
   /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
@@ -2017,22 +2008,13 @@ export interface AuditLogEntry {
 }
 
 export interface AuditStore {
-  /** Remaining credential callers are converted with provider transaction enlistment. */
-  log(entry: AuditLogEntry): Promise<void>;
-  /** Strict insertion on the current storage transaction; id supports commit reconciliation. */
-  logOrThrow(entry: AuditLogEntry, id?: string): Promise<void>;
+  /** Strict awaited insertion. Failures propagate. Domain callers use
+   * runAuditedTransaction so the represented write and audit commit together;
+   * standalone observations await this directly. The optional internal ID
+   * supports positive durable commit reconciliation and is never public input. */
+  log(entry: AuditLogEntry, id?: string): Promise<void>;
+  /** Whether the exact internal audit witness exists in the current view. */
   has(id: string): Promise<boolean>;
-  /**
-   * Resolve once every in-flight `log` write has settled.
-   *
-   * `close()` uses it so fire-and-forget rows drain before the pool is torn
-   * down. It is on the interface rather than only on the concrete stores
-   * because a test asserting a row was **not** written otherwise has to
-   * outwait the writer, and a deadline standing in for a barrier is an
-   * assertion that encodes a duration: green on a quiet machine, red under
-   * load, and silent about which it was.
-   */
-  drain(): Promise<void>;
   list(filters: {
     action?: string;
     resource_type?: string;

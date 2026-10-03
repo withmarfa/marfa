@@ -35,7 +35,6 @@ const WRITERS: Record<string, string> = {
     "declares `ItemStore`, and `ItemReader` as it without its writes",
   "storage/retention.ts":
     "the trash and revoked-grant sweeps the store runs on itself, each typed to its one method",
-  "housekeeping/registrations.ts": "hands those sweeps their one method each",
 };
 
 /** A statement written against the `items` table itself. */

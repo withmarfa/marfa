@@ -233,11 +233,21 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       // Asked again under the claim: the account may have landed between
       // the check above and the claim.
       if (await owner.find()) throw ownerExists();
-      result = await auth.createEmailAccount({
-        email: body.email,
-        password: body.password,
-        name: body.name,
-      });
+      result = await auth.createEmailAccount(
+        {
+          email: body.email,
+          password: body.password,
+          name: body.name,
+        },
+        (created) => ({
+          key_id: operator.id,
+          action: "owner.created",
+          resource_type: "owner",
+          resource_id: created.authUserId,
+          client_ip: c.get("clientIp") ?? null,
+          details: { email: created.email },
+        }),
+      );
     } finally {
       await give(storage.settings);
     }
@@ -257,16 +267,6 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
           throw ownerExists();
       }
     }
-    // Awaited, because an owner nobody can see being created is worse
-    // than the request failing.
-    await storage.audit.logOrThrow({
-      key_id: operator.id,
-      action: "owner.created",
-      resource_type: "owner",
-      resource_id: result.authUserId,
-      client_ip: c.get("clientIp") ?? null,
-      details: { email: result.email },
-    });
     return c.json(
       wire({
         id: result.authUserId,

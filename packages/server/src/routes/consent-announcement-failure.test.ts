@@ -1,13 +1,4 @@
-/**
- * A grant's event that cannot be written does not end the process, and does
- * not take the person's consent with it.
- *
- * The grant record and its event are written in one transaction, so an
- * event-log append that fails leaves neither: no record the log never
- * heard of. The consent itself is the sign-in library's, already made, so
- * the person is still sent back with a code and the failed projection is
- * reported, as any other projection failure is.
- */
+/** A failed grant event refuses the consent unit, including its provider code. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -18,7 +9,6 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
-import * as logger from "../middleware/logger.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -49,7 +39,7 @@ async function signIn(c: TestContext, email: string): Promise<string> {
 }
 
 describe("a consent whose event cannot be written", () => {
-  it("still sends the person back with a code, and the failure is reported rather than left unhandled", async () => {
+  it("returns no code and leaves neither grant half when its event fails", async () => {
     const c = await createTestContext({});
     ctx = c;
     const unhandled: unknown[] = [];
@@ -57,7 +47,6 @@ describe("a consent whose event cannot be written", () => {
       unhandled.push(reason);
     };
     process.on("unhandledRejection", onUnhandled);
-    const logged = vi.spyOn(logger, "log");
     try {
       initEventLog({
         ...c.storage.eventLog,
@@ -119,19 +108,11 @@ describe("a consent whose event cannot be written", () => {
         );
 
       const decision = await consent(clientId);
-      expect(decision.status).toBe(302);
-      const back = new URL(decision.headers.get("location") ?? "", ORIGIN);
-      expect(back.searchParams.get("code")).toBeTruthy();
+      expect(decision.status).toBe(500);
+      expect(decision.headers.get("location")).toBeNull();
 
       await settle(100);
       expect(unhandled).toEqual([]);
-      expect(
-        logged.mock.calls.some(
-          ([level, message]) =>
-            level === "warn" &&
-            message === "consent decision: projection failed",
-        ),
-      ).toBe(true);
       // No record the log never heard of.
       expect(await records(clientId)).toEqual([]);
 

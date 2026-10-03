@@ -1,7 +1,7 @@
 import {
-  requireSuccessfulSignOut,
-  withSignOutFailureReporting,
-} from "./sign-out-failure.js";
+  withCredentialRequest,
+  withCredentialAudit,
+} from "./credential-adapter.js";
 import { afterEach, expect, it } from "vitest";
 import {
   createTestAccount,
@@ -148,20 +148,26 @@ it("refuses sign-out when native lookup cannot determine whether to delete the s
 it.each(["findOne", "findMany", "delete"] as const)(
   "retains the first %s failure if later provider operations continue",
   async (firstOperation) => {
+    ctx = await createTestContext();
+    const capture = (work: () => Promise<Response>) =>
+      withCredentialRequest({ path: "/sign-out", clientIp: null }, work);
     let failure: Error | undefined = new Error("first session failure");
     const original = (args: { model: string; where: unknown[] }) => {
       expect(args.model).toBe("session");
       return failure ? Promise.reject(failure) : Promise.resolve(null);
     };
-    const adapter = withSignOutFailureReporting(() => ({
-      findOne: original,
-      findMany: original,
-      delete: original,
-    }))();
+    const adapter = withCredentialAudit(
+      () => ({
+        findOne: original,
+        findMany: original,
+        delete: original,
+      }),
+      ctx.storage,
+    )();
     const firstFailure = failure;
     const args = { model: "session", where: [] };
     await expect(
-      requireSuccessfulSignOut(async () => {
+      capture(async () => {
         await adapter[firstOperation](args).catch(() => undefined);
         failure = new Error("later session failure");
         await adapter.delete(args).catch(() => undefined);
@@ -172,7 +178,7 @@ it.each(["findOne", "findMany", "delete"] as const)(
     ).rejects.toBe(firstFailure);
     failure = firstFailure;
     await expect(
-      requireSuccessfulSignOut(async () => {
+      capture(async () => {
         await adapter[firstOperation](args).catch(() => undefined);
         throw new Error("later provider exception");
       }),
@@ -180,7 +186,7 @@ it.each(["findOne", "findMany", "delete"] as const)(
     failure = undefined;
     expect(
       (
-        await requireSuccessfulSignOut(async () => {
+        await capture(async () => {
           await adapter.findMany(args);
           return new Response(null, { status: 200 });
         })

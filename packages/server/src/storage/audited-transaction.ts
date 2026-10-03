@@ -23,7 +23,7 @@ export async function runAuditedTransaction<T>(
         result = await work();
         const record = typeof entry === "function" ? entry(result) : entry;
         if (record !== null) {
-          await storage.audit.logOrThrow(record, id);
+          await storage.audit.log(record, id);
           witness.recorded = true;
         }
         return result;

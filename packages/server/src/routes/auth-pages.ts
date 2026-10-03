@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
@@ -23,10 +24,7 @@ import { renderSignedOutPage } from "./signed-out-page.js";
 import { KeyedThrottle } from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
-import {
-  auditGrantRevoked,
-  revokeProjectedGrant,
-} from "../auth/grant-lifecycle.js";
+import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -347,18 +345,23 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       typeof props.user_id === "string" ? props.user_id : undefined;
     await revokeProjectedGrant(storage, {
       itemId: id,
-      properties: props,
       clientId,
       authUserId,
       // Opt-in, and never inferred. A caller here has nobody to ask, so the
       // keys the app minted survive unless this door was told to take them.
       revokeKeys: asksToRevokeKeys(c.req.query("revoke_keys")),
-    });
-    auditGrantRevoked(storage, {
-      clientId,
-      authUserId,
-      grantItemId: id,
-      clientIp: c.var.clientIp ?? null,
+      audit: {
+        key_id: requireAuth(c).id,
+        action: "auth.grant.revoked",
+        resource_type: "oauth_grant",
+        resource_id: clientId ?? id,
+        client_ip: c.var.clientIp ?? null,
+        details: {
+          client_id: clientId,
+          user_id: authUserId,
+          grant_item_id: id,
+        },
+      },
     });
     return c.body(null, 204);
   });
@@ -476,13 +479,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         const single = response.headers.get("set-cookie");
         if (single) redirectHeaders.append("set-cookie", single);
       }
-      void storage.audit.log({
-        action: "auth.sign_in.success",
-        resource_type: "auth_user",
-        resource_id: emailStr,
-        client_ip: c.var.clientIp ?? null,
-        details: { email: emailStr, method: "password" },
-      });
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
@@ -490,17 +486,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // one in `auth/sign-in-throttle.ts`, and the password was never judged.
     const reason =
       response.status === 429 ? "too_many_attempts" : "invalid_credentials";
-    void storage.audit.log({
-      action: "auth.sign_in.failed",
-      resource_type: "auth_user",
-      resource_id: emailStr,
-      client_ip: c.var.clientIp ?? null,
-      details: {
-        email: emailStr,
-        method: "password",
-        reason,
-      },
-    });
     return errorRedirect(reason);
   });
 
@@ -829,47 +814,82 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // has to read the ticked set before the status flips. A narrowing that
     // finds the row no longer pending is a race with a deny in another tab,
     // and is told it did not take effect.
-    const { grant, ok } = await withConsentLock(
+    const { ok } = await withConsentLock(
       clientId,
       sessionResult.session.user.id,
-      async () => {
-        const provider = storage.oauthProvider;
-        const created = await createUserAppGrant(
+      () =>
+        runAuditedTransaction(
           storage,
-          sessionResult.session.user,
-          clientId,
-          approvedScopes,
-          "marfa/oauth/device",
-        );
-        const narrowed =
-          typeof provider?.narrowDeviceCodeScope === "function"
-            ? await provider.narrowDeviceCodeScope(userCode, approvedScopes)
-            : false;
-        if (!narrowed) return { grant: created, ok: false };
-        const approved = await deviceAuth.deviceApprove(
-          userCode,
-          c.req.raw.headers,
-        );
-        if (!approved.ok) return { grant: created, ok: false };
-        // The plugin's half of the grant. This surface never passes through
-        // the plugin's consent endpoint, so without this write a device
-        // grant had a projection and no consent row, and neither consent
-        // check (the plugin's exact-membership skip, Marfa's coverage check
-        // behind it) could see it: every later browser authorize for the
-        // same app rendered consent afresh. Written with the projection's
-        // merged set, because the projection is the grant and the row
-        // mirrors it. Inside the lock so a revoke cannot land between the
-        // two halves, and only once the code is approved.
-        if (provider && typeof provider.upsertConsent === "function") {
-          await provider.upsertConsent({
-            clientId,
-            authUserId: sessionResult.session.user.id,
-            scopes: created.scopes,
-          });
-        }
-        return { grant: created, ok: true };
-      },
-    );
+          async () => {
+            const provider = storage.oauthProvider;
+            const created = await createUserAppGrant(
+              storage,
+              sessionResult.session.user,
+              clientId,
+              approvedScopes,
+              "marfa/oauth/device",
+            );
+            const narrowed =
+              typeof provider?.narrowDeviceCodeScope === "function"
+                ? await provider.narrowDeviceCodeScope(userCode, approvedScopes)
+                : false;
+            if (!narrowed) throw new DeviceApprovalRefused();
+            const approved = await deviceAuth.deviceApprove(
+              userCode,
+              c.req.raw.headers,
+            );
+            if (!approved.ok) throw new DeviceApprovalRefused();
+            // The plugin's half of the grant. This surface never passes through
+            // the plugin's consent endpoint, so without this write a device
+            // grant had a projection and no consent row, and neither consent
+            // check (the plugin's exact-membership skip, Marfa's coverage check
+            // behind it) could see it: every later browser authorize for the
+            // same app rendered consent afresh. Written with the projection's
+            // merged set, because the projection is the grant and the row
+            // mirrors it. Inside the lock so a revoke cannot land between the
+            // two halves, and only once the code is approved.
+            if (provider && typeof provider.upsertConsent === "function") {
+              await provider.upsertConsent({
+                clientId,
+                authUserId: sessionResult.session.user.id,
+                scopes: created.scopes,
+              });
+            }
+            return { grant: created, ok: true };
+          },
+          ({ grant }) => ({
+            action: "auth.grant.created",
+            resource_type: "oauth_grant",
+            resource_id: clientId,
+            client_ip: c.var.clientIp ?? null,
+            details: {
+              client_id: clientId,
+              user_id: sessionResult.session.user.id,
+              // Three halves, because two of them can differ in each direction
+              // and none alone answers the question an operator brings to this
+              // row. `scopes` is what this device asked for. The screen offers
+              // those as toggles, so `approved_scopes` is what the person actually
+              // ticked, which can be narrower. And an approval merges into the
+              // standing grant rather than replacing it, so `resulting_scopes` is
+              // the record afterwards, which can be wider than either. On a
+              // first-time approval where nothing was unticked, all three are the
+              // same list.
+              scopes: requestedScopes,
+              approved_scopes: approvedScopes,
+              resulting_scopes: grant.scopes,
+              grant_item_id: grant.id,
+              source: "device",
+              // `created: false` means re-consent (item already existed) —
+              // useful for the operator trail to distinguish first-time
+              // approvals from re-approvals of an existing grant.
+              created: grant.created,
+            },
+          }),
+        ),
+    ).catch((error: unknown) => {
+      if (error instanceof DeviceApprovalRefused) return { ok: false };
+      throw error;
+    });
     if (!ok) {
       // Race: someone else flipped it in between. Surface as already-resolved.
       return c.redirect(
@@ -877,34 +897,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         302,
       );
     }
-    void storage.audit.log({
-      action: "auth.grant.created",
-      resource_type: "oauth_grant",
-      resource_id: clientId,
-      client_ip: c.var.clientIp ?? null,
-      details: {
-        client_id: clientId,
-        user_id: sessionResult.session.user.id,
-        // Three halves, because two of them can differ in each direction
-        // and none alone answers the question an operator brings to this
-        // row. `scopes` is what this device asked for. The screen offers
-        // those as toggles, so `approved_scopes` is what the person actually
-        // ticked, which can be narrower. And an approval merges into the
-        // standing grant rather than replacing it, so `resulting_scopes` is
-        // the record afterwards, which can be wider than either. On a
-        // first-time approval where nothing was unticked, all three are the
-        // same list.
-        scopes: requestedScopes,
-        approved_scopes: approvedScopes,
-        resulting_scopes: grant.scopes,
-        grant_item_id: grant.id,
-        source: "device",
-        // `created: false` means re-consent (item already existed) —
-        // useful for the operator trail to distinguish first-time
-        // approvals from re-approvals of an existing grant.
-        created: grant.created,
-      },
-    });
     setNoStore(c);
     return c.html(renderDeviceDecisionPage({ approved: true }));
   });
@@ -917,6 +909,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 // ---------------------------------------------------------------------------
 
 /** Device code submissions one address may make per window. */
+class DeviceApprovalRefused extends Error {}
+
 export const DEVICE_CODE_ADDRESS_LIMIT = 10;
 
 /** Device code submissions the whole instance takes per window. */

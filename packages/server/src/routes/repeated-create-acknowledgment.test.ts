@@ -29,7 +29,6 @@ import {
   collectItemEvents,
   collectEdgeEvents,
   settle,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -217,19 +216,12 @@ describe("the gates an acknowledgment still runs", () => {
     // An acknowledgment writes nothing, and audit rows record writes.
     // Matching the trashed natural-key branch it sits beside.
     //
-    // Scoped to this item's own id rather than counting the whole table.
-    // Audit writes are fire-and-forget, so a global count races every
-    // other test's pending inserts — which is exactly how this first failed.
+    // Scope the comparison to this item.
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
-    // Wait for the create's own row, so the comparison below is against a
-    // settled state rather than a half-written one. It also proves the
-    // read works at all: an assertion that nothing was added is vacuous
-    // if the query can never see anything.
-    const before = await waitForAudit(
-      () => ctx.storage.audit.list({ resource_id: id, limit: 50 }),
-      (rows) => rows.data.length === 1,
-    );
+    // The positive create control proves that the audit query sees this item.
+    const before = await ctx.storage.audit.list({ resource_id: id, limit: 50 });
+    expect(before.data.length === 1).toBe(true);
     expect(before.data[0]?.action).toBe("item.create");
 
     const repeat = await createNote(id);

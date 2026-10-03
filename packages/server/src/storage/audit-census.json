@@ -1,30 +1,43 @@
 {
   "auth/bootstrap-secret.ts": {
-    "boundary": "Operational bootstrap latch; owner/key creation audit boundaries are credential work tracked in #1699.",
+    "boundary": "Operational bootstrap secret initialization and rollback-safe latch; owner and key creation consume the secret within their audited transaction.",
     "calls": {
       "SettingsStore.claim": 2,
       "SettingsStore.release": 1
     }
   },
   "auth/ceiling-catchup.ts": {
-    "boundary": "UNFINISHED #1699: provider scope ceiling change still uses the old audit writer.",
+    "boundary": "Audited compare-and-set client scope ceiling widening; no-op creates no audit. Native rejection and concurrent single-winner controls in credential-retention-audit.test.ts.",
     "calls": {
-      "AuditStore.log": 1,
-      "OauthProviderStore.widenClientScopes": 1
+      "OauthProviderStore.widenClientScopes": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "auth/credential-adapter.ts": {
+    "boundary": "Provider persistence phase joins the shared SQLite transaction and retains responses until strict audit commit; generic adapter mutation methods are guarded here, with native model and lifecycle controls in credential-audit.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 3
     }
   },
   "auth/grant-lifecycle.ts": {
-    "boundary": "UNFINISHED #1699: grant/key/token retirement and its audit must share the credential transaction.",
+    "boundary": "Audited grant creation, reuse and retirement with provider tokens/consent/device codes and optional keys under the consent lock; native trigger rollback and live-authority controls in credential-audit.test.ts and grant-inactivity-retirer.test.ts.",
     "calls": {
-      "AuditStore.log": 2,
       "KeyStore.revoke": 1,
       "OauthProviderStore.deleteDeviceCodesForGrant": 1,
+      "OauthProviderStore.revokeAccessTokensForGrant": 1,
       "OauthProviderStore.revokeTokensForGrant": 1,
-      "writeItem": 1
+      "runAuditedTransaction": 2,
+      "writeItem": 3
+    }
+  },
+  "auth/instance.ts": {
+    "boundary": "Owner account and provider request persistence phases share the audited transaction after password preparation; credential-audit.test.ts covers native rejection and commit outcomes.",
+    "calls": {
+      "runAuditedTransaction": 2
     }
   },
   "auth/key-reach.ts": {
-    "boundary": "UNFINISHED #1699: credential reach/revocation helper, called from credential and folder paths.",
+    "boundary": "Contained key permission and revocation cascades inside caller audited folder/key transactions; key-audit-atomicity.test.ts verifies rollback and live authority.",
     "calls": {
       "KeyStore.revoke": 1,
       "KeyStore.update": 1
@@ -37,11 +50,11 @@
     }
   },
   "auth/oauth-provider.ts": {
-    "boundary": "UNFINISHED #1699: provider hook reconciliation and credential audit bridge.",
+    "boundary": "Awaited scope-refusal observation and audited inactive-grant token cleanup; provider mutations join the credential adapter transaction; credential-audit.test.ts and oauth-authorize-observability.test.ts.",
     "calls": {
       "AuditStore.log": 1,
       "OauthProviderStore.revokeAccessTokensForGrant": 1,
-      "OauthProviderStore.setRegisteredScopes": 1
+      "runAuditedTransaction": 1
     }
   },
   "bulk-actions/gc.ts": {
@@ -135,7 +148,7 @@
     }
   },
   "middleware/auth.ts": {
-    "boundary": "Existing operational exemption: credential last-used stamps; credential lifecycle is #1699.",
+    "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
       "KeyStore.updateLastUsed": 1,
       "OauthProviderStore.updateLastUsedAt": 2
@@ -197,20 +210,18 @@
     }
   },
   "routes/auth-consent.ts": {
-    "boundary": "UNFINISHED #1699: consent/provider/grant changes and old writer await credential bridge.",
+    "boundary": "Audited consent approval and silent reuse contain provider consent, token and grant projection changes under the consent lock; credential-audit.test.ts and auth-consent-skip.test.ts.",
     "calls": {
-      "AuditStore.log": 1,
-      "OauthProviderStore.revokeAccessTokensForGrant": 1,
       "OauthProviderStore.setConsentScopes": 1,
-      "writeItem": 2
+      "runAuditedTransaction": 2
     }
   },
   "routes/auth-pages.ts": {
-    "boundary": "UNFINISHED #1699: grant/consent/device approval and old audit writer await credential bridge.",
+    "boundary": "Audited device approval contains consent, narrowed code and grant projection; shared audited grant revocation handles security disconnect. credential-audit.test.ts and device-grant.test.ts.",
     "calls": {
-      "AuditStore.log": 3,
       "OauthProviderStore.narrowDeviceCodeScope": 1,
       "OauthProviderStore.upsertConsent": 1,
+      "runAuditedTransaction": 1,
       "writeItem": 2
     }
   },
@@ -291,7 +302,7 @@
   "routes/export.ts": {
     "boundary": "Standalone strict observation audit before opening stream, no writer held across stream; external-audit.test.ts.",
     "calls": {
-      "AuditStore.logOrThrow": 1
+      "AuditStore.log": 1
     }
   },
   "routes/extensions.ts": {
@@ -303,7 +314,7 @@
     }
   },
   "routes/folders.ts": {
-    "boundary": "Audited domain folder create/update/delete unit; credential consequences remain explicitly tracked by #1699; audit-atomicity.test.ts.",
+    "boundary": "Audited folder create/update/delete unit includes key permission cascades; audit-atomicity.test.ts and key-audit-atomicity.test.ts.",
     "calls": {
       "runAuditedTransaction": 3,
       "writeItem": 4
@@ -342,18 +353,16 @@
     }
   },
   "routes/keys.ts": {
-    "boundary": "UNFINISHED #1699: key creation/bootstrap and old audit writer await credential bridge.",
+    "boundary": "Audited create/update/revoke and atomic bootstrap claim/secret consumption; hashing outside writer and raw key released only after confirmed commit. key-audit-atomicity.test.ts and bootstrap-audit-outcome.test.ts.",
     "calls": {
-      "AuditStore.log": 3,
       "KeyStore.create": 1,
       "SettingsStore.claim": 1,
-      "SettingsStore.release": 1
+      "runAuditedTransaction": 3
     }
   },
   "routes/owner.ts": {
-    "boundary": "Existing strict owner setup audit, bootstrap latch operational; provider-owned owner/session transaction bridge is #1699.",
+    "boundary": "Owner creation delegates to the credential transaction after password hashing, including bootstrap claim and secret consumption; credential-audit.test.ts covers native audit failure and commit outcomes.",
     "calls": {
-      "AuditStore.logOrThrow": 1,
       "SettingsStore.claim": 2,
       "SettingsStore.release": 2
     }
@@ -381,7 +390,7 @@
   "storage/audited-transaction.ts": {
     "boundary": "Shared strict transactional audit insertion and positive durable commit witness; audited-transaction.test.ts.",
     "calls": {
-      "AuditStore.logOrThrow": 1
+      "AuditStore.log": 1
     }
   },
   "storage/blob-layer.ts": {
@@ -405,7 +414,7 @@
     }
   },
   "storage/item-write.ts": {
-    "boundary": "Contained item/cascade/metadata primitives, event/version/index work joins caller transaction. Credential callers explicitly remain #1699.",
+    "boundary": "Contained item/cascade/metadata primitives; event/version/index work joins the caller audited domain or credential transaction.",
     "calls": {
       "EdgeStore.deleteBySource": 1,
       "EdgeStore.deleteByTarget": 1,
@@ -420,16 +429,15 @@
     }
   },
   "storage/retention.ts": {
-    "boundary": "Audited bounded trash resource purge; expired auth sessions and rate records operational. UNFINISHED #1699: revoked grants/keys/provider cleanup audit.",
+    "boundary": "Audited bounded trash/grant/key/client purge and shared audited inactive grant retirement; expired session and rate-record cleanup remain operational. credential-retention-audit.test.ts and grant-inactivity-retirer.test.ts.",
     "calls": {
-      "AuditStore.log": 1,
       "AuthSessionStore.deleteExpired": 1,
       "ItemStore.purgeRevokedAppGrantsOlderThan": 1,
       "ItemStore.purgeTrashedOlderThan": 1,
       "KeyStore.deleteRevokedKeysOlderThan": 1,
       "OauthProviderStore.deleteGrantlessClientsOlderThan": 1,
       "RateLimitStore.cleanup": 1,
-      "runAuditedTransaction": 1
+      "runAuditedTransaction": 4
     }
   },
   "storage/version-thinner.ts": {

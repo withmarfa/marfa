@@ -1,33 +1,7 @@
 /**
- * In-flight tracking + error isolation for fire-and-forget writes.
- *
- * Two writers deliberately run off the critical path: audit rows, emitted
- * via `void storage.audit.log(...)` so an audit failure can never block or
- * break the user-facing flow, and the OAuth grant's `last_used_at` stamp,
- * fired by the bearer middleware after the response. The trade-off is the
- * same for both: the returned promise is never awaited and carries no
- * `.catch()` — so if the underlying write rejects (e.g. the connection pool
- * was torn down while it was still in flight), it surfaces as an unhandled
- * promise rejection, which the server reports as a fault and a test run
- * fails on.
- *
- * This tracker is the owning store's seam for two guarantees that hold the
- * fire-and-forget contract unchanged from the caller's side:
- *
- *   1. `track(write)` runs the insert, swallows any rejection (logging it at
- *      warn level), and never re-throws. A late or failed audit write can
- *      therefore never become an unhandled rejection, in tests or prod.
- *
- *   2. `drain()` resolves once every write started so far has settled. The
- *      storage's `close()` awaits it (bounded by the caller) so pending
- *      audit inserts land — or at least finish failing harmlessly — before
- *      the pool is closed and, in the test harness, before the per-file
- *      database clone is dropped. This removes the window where a write
- *      outruns teardown and hits a destroyed pool.
- *
- * Production semantics are unchanged: callers still don't await, the write
- * still happens off the critical path, and a graceful shutdown simply
- * drains anything in flight instead of force-killing it.
+ * Tracks asynchronous operational writes such as the OAuth last-used stamp.
+ * Rejections are logged and drained before storage closes. Domain mutations
+ * and their audit records never use this tracker: they are awaited together.
  */
 export class WriteTracker {
   private readonly pending = new Set<Promise<void>>();

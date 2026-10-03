@@ -1,3 +1,5 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import type { AuditLogEntry } from "../storage/interface.js";
 /**
  * `/auth/authorize` consent page (Hono route).
  *
@@ -92,7 +94,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { writeItem } from "../storage/item-write.js";
+import { projectGrantOnConsent } from "../auth/grant-lifecycle.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
@@ -102,7 +104,6 @@ import type { AuthorizeFailure } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
-import { auditGrantReused } from "../auth/grant-lifecycle.js";
 import {
   findRegisteredResponseRedirect,
   hasAddedResponseParam,
@@ -128,23 +129,6 @@ const CONSENT_ERROR_PARAM = "marfa_consent_error";
 const CONSENT_DISPLAY_PARAMS = [CONSENT_ERROR_PARAM] as const;
 
 /**
- * Raised when a consent narrowed the granted scopes but the access tokens
- * carrying the removed ones could not be revoked.
- *
- * Distinct from every other projection failure because the caller has to
- * treat it differently: a projection that fails to write leaves the user
- * with a stale record of a grant that is otherwise correct, while a
- * narrowing that fails to revoke leaves live credentials for permissions
- * the user believes they have taken away.
- */
-class NarrowingNotEnforced extends Error {
-  constructor(override readonly cause: unknown) {
-    super("consent narrowing could not revoke the wider-scope tokens");
-    this.name = "NarrowingNotEnforced";
-  }
-}
-
-/**
  * Outcome of the consent-skip critical section: either the request falls
  * through to the consent screen, or the accept was proxied and the
  * plugin's response is waiting to be classified.
@@ -155,6 +139,7 @@ type ConsentSkipAttempt =
       skipped: true;
       priorScopes: readonly string[] | undefined;
       proxyResp: Response;
+      grantItemId: string | null;
     };
 
 interface ConsentRouteDeps {
@@ -369,80 +354,106 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // The lookup is inside the lock rather than before it for the same
     // reason: a value read outside is already potentially stale by the
     // time the decision is acted on.
-    const attempt = await withConsentLock(
-      clientId,
-      session.user.id,
-      async (): Promise<ConsentSkipAttempt> => {
-        // Doubles as the renderer's re-consent diff input when the skip
-        // does not apply: prior consent for (client_id, user_id) in
-        // auth_oauth_consent, which the renderer shows as a diff
-        // (added/kept/removed), or flat when there is none.
-        const priorScopes = await resolvePriorScopes(
-          deps.storage,
-          clientId,
-          session.user.id,
-        );
-        // Coverage, not membership. A standing grant of `core.*:read`
-        // genuinely answers a later request for `core.note:read`, and the
-        // set test this replaced said otherwise — so a person who had
-        // granted everything was asked again the first time a client named
-        // a type under it.
-        //
-        // This is now the more permissive of the two skips on the platform,
-        // and deliberately. The vendored provider has its own
-        // already-consented check and it is exact membership, so a request
-        // this route waves through would be re-prompted had it reached
-        // `/oauth2/authorize` directly. Nothing depends on the two agreeing:
-        // the provider's runs on a path Marfa's `consentPage` config
-        // redirects away from, and the direction of the difference is a
-        // screen shown rather than a screen skipped. Worth knowing before
-        // reading a re-prompt on one surface as a bug on the other.
-        const alreadyGranted =
-          priorScopes !== undefined &&
-          scopeLiterals.length > 0 &&
-          scopeLiterals.every((literal) =>
-            grantCoversScope(priorScopes, literal),
+    const attempt = await withConsentLock(clientId, session.user.id, () =>
+      runAuditedTransaction(
+        deps.storage,
+        async (): Promise<ConsentSkipAttempt> => {
+          // Doubles as the renderer's re-consent diff input when the skip
+          // does not apply: prior consent for (client_id, user_id) in
+          // auth_oauth_consent, which the renderer shows as a diff
+          // (added/kept/removed), or flat when there is none.
+          const priorScopes = await resolvePriorScopes(
+            deps.storage,
+            clientId,
+            session.user.id,
           );
-        if (promptSet.has("consent") || !alreadyGranted) {
-          return { skipped: false, priorScopes };
-        }
+          // Coverage, not membership. A standing grant of `core.*:read`
+          // genuinely answers a later request for `core.note:read`, and the
+          // set test this replaced said otherwise — so a person who had
+          // granted everything was asked again the first time a client named
+          // a type under it.
+          //
+          // This is now the more permissive of the two skips on the platform,
+          // and deliberately. The vendored provider has its own
+          // already-consented check and it is exact membership, so a request
+          // this route waves through would be re-prompted had it reached
+          // `/oauth2/authorize` directly. Nothing depends on the two agreeing:
+          // the provider's runs on a path Marfa's `consentPage` config
+          // redirects away from, and the direction of the difference is a
+          // screen shown rather than a screen skipped. Worth knowing before
+          // reading a re-prompt on one surface as a bug on the other.
+          const alreadyGranted =
+            priorScopes !== undefined &&
+            scopeLiterals.length > 0 &&
+            scopeLiterals.every((literal) =>
+              grantCoversScope(priorScopes, literal),
+            );
+          if (promptSet.has("consent") || !alreadyGranted) {
+            return { skipped: false, priorScopes };
+          }
 
-        const proxyResp = await proxyConsentDecision(
-          auth,
-          c.req.url,
-          c.req.raw.headers,
-          c.var.clientIp ?? null,
-          {
-            accept: true,
-            scope: scopeLiterals.join(" ") || undefined,
-            oauthQuery,
-          },
-          // A top-level browser navigation carries no `Origin`, and Better
-          // Auth rejects a cookie-bearing POST it can't attribute to a
-          // trusted origin. Without the fallback the internal accept is
-          // refused and the skip silently degrades to a re-render — which
-          // is the whole behavior this branch exists to prevent. The
-          // request being wrapped is a GET the browser already made; the
-          // origin of the dispatch genuinely is the issuer's own.
-          auth.baseURL,
-        );
-        // The plugin rewrites the stored consent scopes to the requested
-        // set, and does so BEFORE the checks that can still refuse the
-        // request (disabled client, invalid scope, unregistered redirect).
-        // So the standing grant has to be put back on every outcome, not
-        // just the successful one — a refusal must not be able to shrink a
-        // grant as a side effect.
-        // No `?? []` here: reaching this line means `alreadyGranted` held,
-        // and that now tests `priorScopes` itself rather than a `Set` built
-        // from it, so the compiler carries the narrowing all the way down.
-        await preserveBroaderGrant(deps.storage, {
-          authUserId: session.user.id,
-          clientId,
-          priorScopes,
-          requestedScopes: scopeLiterals,
-        });
-        return { skipped: true, priorScopes, proxyResp };
-      },
+          const proxyResp = await proxyConsentDecision(
+            auth,
+            c.req.url,
+            c.req.raw.headers,
+            c.var.clientIp ?? null,
+            {
+              accept: true,
+              scope: scopeLiterals.join(" ") || undefined,
+              oauthQuery,
+            },
+            // A top-level browser navigation carries no `Origin`, and Better
+            // Auth rejects a cookie-bearing POST it can't attribute to a
+            // trusted origin. Without the fallback the internal accept is
+            // refused and the skip silently degrades to a re-render — which
+            // is the whole behavior this branch exists to prevent. The
+            // request being wrapped is a GET the browser already made; the
+            // origin of the dispatch genuinely is the issuer's own.
+            auth.baseURL,
+          );
+          // The plugin rewrites the stored consent scopes to the requested
+          // set, and does so BEFORE the checks that can still refuse the
+          // request (disabled client, invalid scope, unregistered redirect).
+          // So the standing grant has to be put back on every outcome, not
+          // just the successful one — a refusal must not be able to shrink a
+          // grant as a side effect.
+          // No `?? []` here: reaching this line means `alreadyGranted` held,
+          // and that now tests `priorScopes` itself rather than a `Set` built
+          // from it, so the compiler carries the narrowing all the way down.
+          await preserveBroaderGrant(deps.storage, {
+            authUserId: session.user.id,
+            clientId,
+            priorScopes,
+            requestedScopes: scopeLiterals,
+          });
+          const grantItemId = await deps.storage.oauthProvider?.findGrantItemId(
+            { clientId, authUserId: session.user.id },
+          );
+          return {
+            skipped: true,
+            priorScopes,
+            proxyResp,
+            grantItemId: grantItemId ?? null,
+          };
+        },
+        (result) =>
+          result.skipped &&
+          classifyProxyOutcome(result.proxyResp, requestedRedirectUri) ===
+            "code"
+            ? {
+                action: "auth.grant.reused",
+                resource_type: "oauth_grant",
+                resource_id: clientId,
+                client_ip: c.var.clientIp ?? null,
+                details: {
+                  client_id: clientId,
+                  user_id: session.user.id,
+                  scopes: scopeLiterals,
+                  grant_item_id: result.grantItemId,
+                },
+              }
+            : null,
+      ),
     );
     const priorScopes = attempt.priorScopes;
 
@@ -455,12 +466,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         // no re-projection, no granted_at bump. `last_used_at` is
         // stamped by the bearer middleware when the minted token is
         // actually used.
-        void auditGrantReused(deps.storage, {
-          authUserId: session.user.id,
-          clientId,
-          scopes: scopeLiterals,
-          clientIp: c.var.clientIp ?? null,
-        });
         // The Location carries a live authorization code. Every other
         // auth surface stamps no-store; a redirect holding a credential
         // has more reason to than most.
@@ -682,81 +687,38 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // (client, user) grant the silent path also writes, so they share its
     // lock. Without it a decision landing mid-skip is undone by the
     // skip's restoration, which was computed before the user made it.
-    return await withConsentLock(
-      clientId,
-      session.user.id,
-      async (): Promise<Response> => {
-        // Forward to the plugin's /oauth2/consent endpoint and hand the
-        // (normalized) result to the browser. Shared with the GET
-        // handler's consent-skip path.
-        const proxyResp = await proxyConsentDecision(
-          auth,
-          c.req.url,
-          c.req.raw.headers,
-          c.var.clientIp ?? null,
-          {
-            accept,
-            // Forward the user's narrowed scope set so the plugin issues a
-            // token matching what they actually approved (not the full
-            // originally-requested set).
-            scope: accept && scopeStr ? scopeStr : undefined,
-            oauthQuery,
-          },
-        );
-
-        // A valid signed query is necessary but not sufficient: the plugin
-        // can still refuse a disabled client, an invalid redirect, or a
-        // flow that requires fresh interaction. Projection, audit, and
-        // narrowing-token revocation are consent-success side effects, so
-        // none may happen until a code actually reaches the client's
-        // registered callback.
-        //
-        // Either way the response is stamped no-store on its way out. The
-        // accepted one carries a single-use code in its `Location`, which
-        // is reason enough on its own; the refused one is stamped for the
-        // same reason every other auth surface is, and stamping one exit
-        // and not the other is how the exception gets missed.
-        if (
-          !accept ||
-          classifyProxyOutcome(proxyResp, requestedRedirectUri) !== "code"
-        ) {
-          return withNoStore(proxyResp);
-        }
-
-        try {
-          await projectGrantOnConsent(deps.storage, {
-            authUserId: session.user.id,
-            clientId,
-            scopes: formScopes,
-            clientIp: c.var.clientIp ?? null,
-          });
-        } catch (err) {
-          if (err instanceof NarrowingNotEnforced) {
-            // Narrowing a grant is a promise that the access it removes
-            // stops working. Tokens already issued at the wider scope
-            // outlive the consent row, so if they cannot be revoked the
-            // promise is not kept — and handing back the code-bearing
-            // redirect would tell the user it was. Fail loudly instead:
-            // the record still describes the wider grant the tokens
-            // actually carry, which is at least true.
-            log("error", "consent decision: narrowing revocation failed", {
-              client_id: clientId,
-              error: err.cause instanceof Error ? err.cause.message : "unknown",
+    return withConsentLock(clientId, session.user.id, async () => {
+      let audit: AuditLogEntry | null = null;
+      return runAuditedTransaction(
+        deps.storage,
+        async () => {
+          const proxyResp = await proxyConsentDecision(
+            auth,
+            c.req.url,
+            c.req.raw.headers,
+            c.var.clientIp ?? null,
+            {
+              accept,
+              scope: accept && scopeStr ? scopeStr : undefined,
+              oauthQuery,
+            },
+          );
+          if (
+            accept &&
+            classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code"
+          ) {
+            audit = await projectGrantOnConsent(deps.storage, {
+              authUserId: session.user.id,
+              clientId,
+              scopes: formScopes,
+              clientIp: c.var.clientIp ?? null,
             });
-            return c.text(
-              "Could not withdraw the access you removed, so the change was not applied. Try again.",
-              500,
-            );
           }
-          log("warn", "consent decision: projection failed", {
-            client_id: clientId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-
-        return withNoStore(proxyResp);
-      },
-    );
+          return withNoStore(proxyResp);
+        },
+        () => audit,
+      );
+    });
   });
 
   return app;
@@ -1148,193 +1110,14 @@ async function preserveBroaderGrant(
   const narrowed = opts.priorScopes.some((s) => !requested.has(s));
   if (!narrowed) return;
   if (typeof storage.oauthProvider?.setConsentScopes !== "function") return;
-  try {
-    const restored = await storage.oauthProvider.setConsentScopes(
-      opts.clientId,
-      opts.authUserId,
-      opts.priorScopes,
-      opts.requestedScopes,
-    );
-    if (!restored) {
-      log("info", "consent skip: standing grant changed, restore declined", {
-        client_id: opts.clientId,
-      });
-    }
-  } catch (err) {
-    log("warn", "consent skip: restoring the prior consent scopes failed", {
-      client_id: opts.clientId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-/**
- * Write or refresh the `system.connection { kind: "app" }` projection for
- * an accepted code-flow consent. Mirrors what `createUserAppGrant` in
- * `routes/auth-pages.ts` does for the device-flow path. Emits
- * `auth.grant.created` audit row in both branches (creation + re-consent).
- *
- * Re-consent behavior: if a projection already exists for this
- * (client, user), we update its `scopes` + `granted_at` in place rather
- * than creating a second row. The `audit.grant.created` row still emits
- * (a re-consent IS a grant event), with the existing `grant_item_id`
- * in details — operators auditing grant history see one row per consent
- * action, projection stays single-row per (client, user).
- */
-async function projectGrantOnConsent(
-  storage: Storage,
-  opts: {
-    authUserId: string;
-    clientId: string;
-    scopes: string[];
-    clientIp: string | null;
-  },
-): Promise<void> {
-  // Detect re-consent: update scopes in place if a projection exists,
-  // insert on first consent. Either way the audit row is written, and the
-  // write announces itself.
-  let grantItemId: string | null = null;
-  if (typeof storage.oauthProvider?.findGrantItemId === "function") {
-    grantItemId = await storage.oauthProvider.findGrantItemId({
-      clientId: opts.clientId,
-      authUserId: opts.authUserId,
-    });
-  }
-
-  const now = new Date().toISOString();
-  let priorScopes: string[] = [];
-
-  if (grantItemId) {
-    // Route the update through `writeItem` (not a raw SQL patch) so it
-    // validates, writes a versions snapshot, bumps updated_at + version,
-    // and lets the row sort correctly under /items?sort=updated_at.
-    // Pre-fetch to compute prior scopes for the narrowing check below.
-    const existing = await storage.items.get(grantItemId);
-    if (existing) {
-      priorScopes = Array.isArray(existing.properties.scopes)
-        ? (existing.properties.scopes as string[])
-        : [];
-    }
-
-    // If the new scope set is narrower than the prior set, revoke
-    // existing access tokens — RPs must not continue calling narrowed-
-    // away APIs. Refresh tokens are left intact; they mint at the
-    // narrower scope on next refresh.
-    //
-    // Ahead of the record update, and fatal when it fails, because a
-    // narrowing that cannot revoke is a narrowing that did not happen:
-    // the tokens carrying the removed scopes stay valid for the rest of
-    // their lifetime. Rewriting the record first would leave /auth/security
-    // describing access the user no longer has while that access still
-    // works. The caller turns this into a failed request rather than a
-    // code-bearing redirect that claims otherwise.
-    // Coverage, and this is the site where getting it wrong is
-    // destructive rather than annoying: a widening misread as a narrowing
-    // revokes every live access token the client holds. `core.note:read`
-    // is not lost when the new grant says `core.*:read`.
-    //
-    // That a narrowing can happen here at all is what separates this
-    // surface from the device one, and the pair is worth stating in both
-    // places. This screen offers per-scope toggles: a set arriving smaller
-    // than the standing grant is the user having unticked something, so it
-    // is honored, and honoring it means the tokens carrying the removed
-    // scopes have to stop working.
-    //
-    // **The device screen offers toggles too, and still merges rather than
-    // narrowing.** It once had none, which is where this contrast came from,
-    // and the difference is deliberate rather than a leftover — a set
-    // arriving smaller there may be the client asking for less or the person
-    // unticking a row, and nothing at that call site can tell the two apart.
-    // What the untick reaches there is the token that device is issued: the
-    // code is narrowed to the ticked set before the plugin approves it.
-    // Neither surface narrows without the user having asked, and neither
-    // leaves a record claiming access the user withdrew.
-    if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
-      const provider = storage.oauthProvider;
-      if (typeof provider?.revokeAccessTokensForGrant !== "function") {
-        throw new NarrowingNotEnforced(
-          new Error("storage cannot revoke access tokens for a grant"),
-        );
-      }
-      try {
-        await provider.revokeAccessTokensForGrant(
-          opts.clientId,
-          opts.authUserId,
-        );
-      } catch (err) {
-        throw new NarrowingNotEnforced(err);
-      }
-    }
-
-    // Reset status + clear revoked_at on re-consent. Without this a
-    // re-consented row keeps status="revoked" — /security hides the grant
-    // while the plugin issues tokens against it. Setting revoked_at:
-    // undefined makes JSON.stringify drop the key from stored properties.
-    //
-    // This writes one of the two lifecycle axes and never the other, which
-    // is safe only because `findGrantItemId` refuses a row whose `state` is
-    // not active: the row reaching here is already listed by both read
-    // surfaces on that axis, so flipping `status` back makes it coherent
-    // rather than reactivating something nobody can see. A soft-deleted
-    // grant does not resolve at all and the branch below inserts a fresh
-    // row instead.
-    const written = await writeItem(
-      storage,
-      { kind: "platform" },
-      {
-        op: "update",
-        id: grantItemId,
-        properties: {
-          scopes: opts.scopes,
-          status: "active",
-          granted_at: now,
-          revoked_at: undefined,
-        },
-      },
-    );
-    if (written.outcome !== "updated") {
-      // Unreachable: no `version` is sent, so nothing can conflict.
-      throw new Error(
-        `projectGrantOnConsent: re-consent answered ${written.outcome}`,
-      );
-    }
-  } else {
-    // First-time consent: insert a fresh row. No tier named: `tier` is a
-    // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
-    // writer of one leaves it to the store the way `POST /items` does.
-    const { item } = await writeItem(
-      storage,
-      { kind: "platform" },
-      {
-        op: "create",
-        type: "system.connection",
-        state: "active",
-        properties: {
-          kind: "app",
-          client_id: opts.clientId,
-          user_id: opts.authUserId,
-          scopes: opts.scopes,
-          status: "active",
-          granted_at: now,
-        },
-        source: "marfa/oauth2/consent",
-      },
-    );
-    grantItemId = item.id;
-  }
-
-  void storage.audit.log({
-    action: "auth.grant.created",
-    resource_type: "oauth_grant",
-    resource_id: opts.clientId,
-    client_ip: opts.clientIp,
-    details: {
-      client_id: opts.clientId,
-      user_id: opts.authUserId,
-      scopes: opts.scopes,
-      grant_item_id: grantItemId,
-    },
-  });
+  const restored = await storage.oauthProvider.setConsentScopes(
+    opts.clientId,
+    opts.authUserId,
+    opts.priorScopes,
+    opts.requestedScopes,
+  );
+  if (!restored)
+    throw new Error("Standing consent changed during its locked operation");
 }
 
 // ---------------------------------------------------------------------------

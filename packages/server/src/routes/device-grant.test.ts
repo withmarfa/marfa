@@ -23,7 +23,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -247,10 +246,11 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(projected[0]!.properties.status).toBe("active");
     expect(projected[0]!.properties.scopes).toEqual(["core.note:read"]);
     expect(projected[0]!.source).toBe("marfa/oauth/device");
-    const audits = await waitForAudit(
-      () => c.storage.audit.list({ action: "auth.grant.created", limit: 10 }),
-      (r) => r.data.length >= 1,
-    );
+    const audits = await c.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length >= 1).toBe(true);
     expect(audits.data[0]!.resource_id).toBe(clientId);
     expect(audits.data[0]!.details.source).toBe("device");
     expect(audits.data[0]!.details.approved_scopes).toEqual(["core.note:read"]);

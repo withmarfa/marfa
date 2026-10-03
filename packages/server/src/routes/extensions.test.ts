@@ -52,28 +52,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`) — poll briefly so the test doesn't race
-// the pending insert.
-interface AuditRow {
-  action: string;
-  resource_id: string | null;
-  resource_type: string;
-  details: Record<string, unknown>;
-}
-
-async function waitForAuditEntry(filter: {
-  action: string;
-  resource_id: string;
-}): Promise<{ data: AuditRow[] }> {
-  let result = await ctx.storage.audit.list(filter);
-  while (result.data.length === 0) {
-    await new Promise((r) => setTimeout(r, 25));
-    result = await ctx.storage.audit.list(filter);
-  }
-  return result;
-}
-
 describe("GET /items/:id/extensions", () => {
   it("returns only namespaces the key can see", async () => {
     const itemId = await createItem();
@@ -252,7 +230,7 @@ describe("PUT /items/:id/extensions/:namespace", () => {
     };
     expect(body.extensions.noter).toEqual({ starred: true });
 
-    const auditResult = await waitForAuditEntry({
+    const auditResult = await ctx.storage.audit.list({
       action: "extension.set",
       resource_id: itemId,
     });
@@ -297,7 +275,7 @@ describe("DELETE /items/:id/extensions/:namespace", () => {
     };
     expect(body.extensions.noter).toBeUndefined();
 
-    const auditResult = await waitForAuditEntry({
+    const auditResult = await ctx.storage.audit.list({
       action: "extension.delete",
       resource_id: itemId,
     });

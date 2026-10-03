@@ -14,7 +14,6 @@ import {
   createTestContext,
   createTestAccount,
   request,
-  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { GrantInactivityRetirer } from "./retention.js";
@@ -228,11 +227,11 @@ describe("GrantInactivityRetirer.runOnce", () => {
     });
     expect(dead.status).toBe(401);
 
-    const audits = await waitForAudit(
-      () =>
-        ctx!.storage.audit.list({ action: "auth.grant.retired", limit: 10 }),
-      (r) => r.data.length >= 1,
-    );
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.retired",
+      limit: 10,
+    });
+    expect(audits.data.length >= 1).toBe(true);
     expect(audits.data.length).toBe(1);
     const row = audits.data[0]!;
     expect(row.resource_id).toBe(clientId);
@@ -305,7 +304,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
           },
         },
         metadata: { get: () => Promise.resolve(null) },
-        audit: { logOrThrow: () => Promise.resolve() },
+        audit: { log: () => Promise.resolve() },
       } as unknown as Storage;
       return { storage, updated };
     };
