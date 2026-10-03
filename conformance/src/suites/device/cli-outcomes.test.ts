@@ -155,6 +155,15 @@ describe("CLI outcomes preserve the result", () => {
           }),
         ),
       ],
+      read: [
+        answers.updated(
+          wireItem({
+            id,
+            version: 4,
+            properties: { title: "edit", body: "held" },
+          }),
+        ),
+      ],
       create: [{ kind: "drop" }],
     });
     const result = await h.cli.run([
