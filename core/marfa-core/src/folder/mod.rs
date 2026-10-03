@@ -2101,8 +2101,10 @@ impl Folder {
                         edge_types,
                         (&names, Some(&document), &bound.lines),
                     )?;
-                    bound.presentation.as_ref().is_some_and(|agreed| {
-                        agreed.agrees(&document::read(&rendered.text).presentation(), edge_types)
+                    rendered.text.as_ref().is_ok_and(|text| {
+                        bound.presentation.as_ref().is_some_and(|agreed| {
+                            agreed.agrees(&document::read(text).presentation(), edge_types)
+                        })
                     })
                 }
                 None => false,
@@ -2970,7 +2972,7 @@ impl Folder {
         }
         context.same_copy(&*self.core.conn()?)?;
         self.remove_departed(&members, &settings, &lists, &refused, &mut report)?;
-        report.flagged = {
+        report.flagged.extend({
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
                 .into_iter()
@@ -2987,8 +2989,8 @@ impl Folder {
                     });
                     held.into_iter().chain(refused)
                 })
-                .collect()
-        };
+                .collect::<Vec<_>>()
+        });
         report.uncarried = fields::uncarried(&catalog, &edge_types, |r#type| {
             settings.holds_type(&catalog, r#type)
         });
@@ -3115,7 +3117,20 @@ impl Folder {
                         bound.as_ref().map_or(&[][..], |bound| &bound.lines),
                     ),
                 )?;
-                (rendered.text.into_bytes(), rendered.links, rendered.lines)
+                rendering.context.borrow().check(&*self.core.conn()?)?;
+                let text = match rendered.text {
+                    Ok(text) => text,
+                    Err(error) => {
+                        report.unwritten += 1;
+                        report.flagged.push(Flagged {
+                            path: want,
+                            flag: "unwritten",
+                            reason: error.to_string(),
+                        });
+                        return Ok(PlacementWrite::Refused);
+                    }
+                };
+                (text.into_bytes(), rendered.links, rendered.lines)
             }
         };
         rendering.context.borrow().check(&*self.core.conn()?)?;
@@ -3671,10 +3686,13 @@ impl Folder {
             rendering.edge_types,
             (rendering.names, previous.as_ref(), &bound.lines),
         )?;
+        let Ok(text) = rendered.text else {
+            return Ok(false);
+        };
         let presented = if carries_frontmatter(Path::new(&bound.path)) {
-            document::read(&rendered.text)
+            document::read(&text)
         } else {
-            document::read_body(&rendered.text)
+            document::read_body(&text)
         };
         Ok(bound
             .presentation
@@ -3715,11 +3733,10 @@ impl Folder {
             rendering.edge_types,
             (rendering.names, Some(&document), &bound.lines),
         )?;
-        Ok(bound.presentation.as_ref().is_some_and(|agreed| {
-            agreed.agrees(
-                &document::read(&rendered.text).presentation(),
-                rendering.edge_types,
-            )
+        Ok(rendered.text.as_ref().is_ok_and(|text| {
+            bound.presentation.as_ref().is_some_and(|agreed| {
+                agreed.agrees(&document::read(text).presentation(), rendering.edge_types)
+            })
         }))
     }
 
@@ -3781,7 +3798,7 @@ impl Folder {
         let links = self.body_links(item, &body, catalog, lines.0)?;
         if !carries_frontmatter(Path::new(path)) {
             return Ok(Rendered {
-                text: body,
+                text: Ok(body),
                 links,
                 lines: Vec::new(),
             });
@@ -3816,7 +3833,13 @@ impl Folder {
             fields::keep_equivalent(&mut front, &typed.front, edge_types);
         }
         Ok(Rendered {
-            text: document::write(&front, &body, typed)?,
+            text: if fault::named("render-frontmatter").as_deref() == Some(path) {
+                Err(CoreError::Invalid(
+                    "cannot preserve this frontmatter: injected rendering failure".into(),
+                ))
+            } else {
+                document::write(&front, &body, typed)
+            },
             links,
             lines: written,
         })
@@ -3916,7 +3939,9 @@ impl Rendering<'_> {
 }
 
 struct Rendered {
-    text: String,
+    // Byte preservation can fail for one document. Read authority and store
+    // errors from constructing its fields still fail the whole operation.
+    text: Result<String>,
     links: Vec<String>,
     lines: Vec<state::Line>,
 }

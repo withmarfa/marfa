@@ -159,6 +159,15 @@ struct Editor<'a> {
 impl Editor<'_> {
     fn replace(&mut self, node: Node<'_>, value: &Value) {
         let mut text = json(value);
+        // YAML allows a mapping's sequence at the key's indentation, but a
+        // replacement scalar or flow collection must be indented under it.
+        if node.kind() == "block_sequence"
+            && let Some(pair) = node.parent().and_then(|parent| parent.parent())
+            && pair.kind() == "block_mapping_pair"
+            && node.start_position().column == pair.start_position().column
+        {
+            text.insert_str(0, "  ");
+        }
         if self.source[node.byte_range()].ends_with('\n') {
             text.push_str(self.newline);
         }
@@ -618,6 +627,9 @@ pub(super) fn write(source: &str, old: &Value, new: &Value, newline: &str) -> Re
     }
     editor.edit(tree.root_node(), old, new)?;
     let result = apply(source, editor.edits)?;
+    // A leading empty line after removing the first field would make the
+    // opening frontmatter fence a Markdown thematic break to our reader.
+    let result = result.trim_start_matches(['\r', '\n']).to_owned();
     parse(&result)?;
     Ok(result)
 }
