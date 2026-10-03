@@ -663,6 +663,7 @@ pub enum Outcome {
     Refused(Refusal),
     Blocked {
         reason: BlockedReason,
+        refusal: Option<Refusal>,
     },
     /// Held behind a write that has no answer yet. The queue stores it as
     /// `blocked` `awaiting_dependency`; nothing outside the queue has to
@@ -695,7 +696,10 @@ impl Outcome {
             ),
             Some(Verdict::Blocked) => match reason.unwrap_or_default().parse()? {
                 BlockedReason::AwaitingDependency => Outcome::Waiting,
-                reason => Outcome::Blocked { reason },
+                reason => Outcome::Blocked {
+                    reason,
+                    refusal: refusal.cloned(),
+                },
             },
             Some(Verdict::Dead) => Outcome::Dead,
         }))
@@ -1352,7 +1356,8 @@ mod tests {
                 .outcome()
                 .unwrap(),
             Some(Outcome::Blocked {
-                reason: BlockedReason::KeySpent
+                reason: BlockedReason::KeySpent,
+                refusal: None,
             })
         );
         assert_eq!(

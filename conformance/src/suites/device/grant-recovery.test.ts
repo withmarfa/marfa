@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
+import {
+  answers,
+  itemEvent,
+  replay,
+  refusal,
+  wireItem,
+} from "../../device/marfa-answers.js";
 import type { Outcome } from "../../device/protocol.js";
-import { hydratedHarness, scriptWrites, type Harness } from "./harness.js";
+import {
+  hydratedHarness,
+  startHarness,
+  scriptHydration,
+  scriptWrites,
+  type Harness,
+} from "./harness.js";
 
 let harness: Harness | undefined;
 afterEach(async () => {
@@ -152,6 +164,84 @@ describe("a grant refusal waits for the credential", () => {
       value(await device.drain()).verdicts.map((row) => row.verdict),
     ).toEqual(["accepted", "accepted"]);
     expect(value(await device.get(id)).properties.body).toBe("second");
+  });
+
+  it("holds a later edit on its read version while an earlier receipt lacks a grant", async () => {
+    harness = await startHarness("grant-replay-order");
+    const { device, server } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: originalOptions }] },
+    });
+    const landed = wireItem({
+      id: ID,
+      version: 4,
+      properties: { title: "held", body: "first" },
+    });
+    const { edges: _edges, ...eventRow } = landed;
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", eventRow)]),
+    );
+    let sends = 0;
+    let permitted = false;
+    server.answer("PATCH", /^\/items\/[^/]+$/, (request) => {
+      sends += 1;
+      if (sends === 1) return answers.dropped();
+      if (!permitted)
+        return refusal(403, "type_not_permitted", "No write access", {
+          grant: { kind: "type", name: "core.note", level: "write" },
+        });
+      const sent = JSON.parse(request.body);
+      if (sent.properties.body === "first") {
+        const answer = answers.updated(landed);
+        return answer.kind === "json"
+          ? { ...answer, headers: { "Idempotency-Replayed": "true" } }
+          : answer;
+      }
+      return answers.updated(
+        wireItem({ id: ID, version: 5, properties: sent.properties }),
+      );
+    });
+    value(await device.hydrate(["core.note"], "library"));
+    const first = value(
+      await device.update(ID, { properties: { body: "first" }, version: 3 }),
+    );
+    value(await device.drain());
+    value(await device.catchUp());
+    expect(value(await device.get(ID)).version).toBe(4);
+    const second = value(
+      await device.update(ID, { properties: { body: "second" }, version: 4 }),
+    );
+    const blocked = value(await device.drain());
+    expect(blocked.verdicts.map((row) => row.id)).toEqual([first.id]);
+    expect(blocked.held).toBe(1);
+    const queued = value(await device.queue()).find(
+      (row) => row.id === second.id,
+    );
+    expect(queued).toMatchObject({
+      base_version: 4,
+      reason: "awaiting_dependency",
+      body: { version: 4 },
+    });
+    permitted = true;
+    expect(
+      value(await device.drain()).verdicts.map((row) => row.verdict),
+    ).toEqual(["accepted", "accepted"]);
+    const sent = server.requests.filter(
+      (request) => request.method === "PATCH",
+    );
+    expect(sent.map((request) => JSON.parse(request.body).version)).toEqual([
+      3, 3, 3, 4,
+    ]);
+    expect(sent.map((request) => request.headers["idempotency-key"])).toEqual([
+      first.idempotency_key,
+      first.idempotency_key,
+      first.idempotency_key,
+      second.idempotency_key,
+    ]);
+    expect(value(await device.get(ID)).properties.body).toBe("second");
   });
 
   it.each([

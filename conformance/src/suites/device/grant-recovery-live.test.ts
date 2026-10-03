@@ -241,11 +241,18 @@ it("keeps a folder's edit and create and sends both when its grant returns", asy
     expect(readFileSync(join(dir, "second.md"), "utf8")).toContain(
       "created while offline",
     );
-    expect(
-      value(await folder.status())
-        .files.filter((file) => ["first.md", "second.md"].includes(file.path))
-        .every((file) => file.flag !== "lost"),
-    ).toBe(true);
+    const waitingFiles = value(await folder.status()).files.filter((file) =>
+      ["first.md", "second.md"].includes(file.path),
+    );
+    expect(waitingFiles).toHaveLength(2);
+    for (const file of waitingFiles) {
+      expect(file).toMatchObject({
+        status: "waiting",
+        flag: "credential_refused",
+      });
+      expect(file.reason).toContain("type_not_permitted");
+      expect(file.reason).toContain("core.note");
+    }
     const restored = await client.updateKey(minted.data.id, {
       type_permissions: { "*": "write" },
     });

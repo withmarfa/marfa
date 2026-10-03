@@ -214,7 +214,7 @@ impl Folder {
         unmatched: &HashSet<String>,
         waiting: &[QueuedWrite],
     ) -> Result<FileStatus> {
-        let entry = FileStatus::new(&bound.path, Some(&bound.item_id), "held");
+        let mut entry = FileStatus::new(&bound.path, Some(&bound.item_id), "held");
         let changed = hash.as_deref() != Some(bound.content_hash.as_str());
         // A refused create forgets its row, and the file keeps the reason.
         if self.core.get(&bound.item_id)?.is_none() {
@@ -251,6 +251,11 @@ impl Folder {
                 || row.target_id.as_deref() == Some(bound.item_id.as_str())
         }) {
             named.push(self.wait_of(row));
+            if let Some(refusal) = &row.refusal {
+                let code = refusal.code.as_deref().unwrap_or(&refusal.reason);
+                let message = refusal.message.as_deref().unwrap_or(code);
+                entry = entry.because("credential_refused", format!("{code}: {message}"));
+            }
             // An upload the write waits on names no item of its own.
             for upload in waiting
                 .iter()
