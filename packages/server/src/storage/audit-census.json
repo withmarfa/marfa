@@ -441,7 +441,7 @@
   "webhooks/delivery.ts": {
     "boundary": "Existing operational exemption: automatic scheduling, cursor, attempt lease and accepted delivery outcomes; user-requested redelivery audited in routes/webhooks.ts.",
     "calls": {
-      "WebhookDeliveryStore.claimById": 1,
+      "WebhookDeliveryStore.getPending": 1,
       "WebhookDeliveryStore.markCanceled": 1,
       "WebhookDeliveryStore.markFailed": 4,
       "WebhookDeliveryStore.markSuccess": 1,

@@ -24,7 +24,7 @@ const READS: Record<string, string> = {
   BlobRegistry:
     "get listAll readableThrough lendingHashesOf uploadedBy count listStores listLocations copyDeletionPending listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
   WebhookStore: "checkpoint listAfter list get count",
-  WebhookDeliveryStore: "list getPending get",
+  WebhookDeliveryStore: "list get",
   OauthProviderStore:
     "getClientName getClient getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey",
   AuditStore: "has list",
@@ -57,7 +57,7 @@ const WRITES: Record<string, string> = {
     "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
   WebhookStore: "acknowledge create update delete",
   WebhookDeliveryStore:
-    "schedule claimById reopen markSuccess markFailed markCanceled cancelPending cleanup",
+    "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cleanup",
   OauthProviderStore:
     "widenClientScopes setRegisteredScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteGrantlessClientsOlderThan updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
   AuditStore: "log logOrThrow drain cleanup",

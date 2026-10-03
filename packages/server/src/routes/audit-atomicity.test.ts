@@ -555,13 +555,17 @@ describe.each(doors)("%s transaction", (action, prepare) => {
   });
 });
 
-import { WebhookScheduler } from "../webhooks/delivery.js";
+import { WebhookPoller, WebhookScheduler } from "../webhooks/delivery.js";
 it("audits one accepted redelivery, refuses foreign and duplicate calls, and rolls failed audit back", async () => {
   initEventLog(ctx.storage.eventLog);
   try {
     const id = await hook();
     await item();
     await new WebhookScheduler({
+      storage: ctx.storage,
+      wakePoller: () => Promise.resolve(),
+    }).runOnce();
+    await new WebhookPoller({
       storage: ctx.storage,
       http: {
         post: () =>
