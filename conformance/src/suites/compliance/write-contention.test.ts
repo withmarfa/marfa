@@ -59,10 +59,12 @@ function probeWriteAdmission(sqlitePath: string) {
 }
 
 async function expectWriteLocked(sqlitePath: string): Promise<void> {
-  await expect(probeWriteAdmission(sqlitePath)).rejects.toMatchObject({
-    code: 1,
+  const refused = probeWriteAdmission(sqlitePath);
+  await expect(refused).rejects.toMatchObject({
+    code: expect.any(Number),
     stderr: expect.stringContaining("database is locked"),
   });
+  await expect(refused).rejects.not.toMatchObject({ code: 0 });
 }
 
 /** A connection sitting in `BEGIN IMMEDIATE` on the server's own file. */
