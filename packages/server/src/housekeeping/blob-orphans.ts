@@ -14,7 +14,7 @@ export type OrphanResult = {
   purged: number;
 };
 
-/** Page size for both corpus walks. Large enough that a big corpus is not a
+/** Page size for the corpus walks. Large enough that a big corpus is not a
  *  thousand round trips, small enough not to hold a whole page of
  *  properties per iteration. */
 const SCAN_PAGE = 200;
@@ -22,7 +22,8 @@ const SCAN_PAGE = 200;
 /**
  * A report before a deletion. Each run computes the blobs nothing
  * references (an item in any lifecycle state, a metadata extension, an
- * edge's properties and a version snapshot all count), records each with
+ * edge's properties, a version snapshot and a nonterminal property-update
+ * job's patch all count), records each with
  * the time it was first reported, forgets any that is referenced again, and
  * purges only what an earlier run reported longer ago than the grace. Two
  * runs, never one, stand between an unreferenced blob and its deletion, and
@@ -147,6 +148,16 @@ export class BlobOrphanReporter {
       }
       if (!page.cursor) break;
       versionCursor = page.cursor;
+    }
+    let jobCursor: string | undefined;
+    for (;;) {
+      const page = await this.storage.bulkActionJobs.scanPendingPropertyPatches(
+        SCAN_PAGE,
+        jobCursor,
+      );
+      for (const patch of page.patches) collectBlobHashes(patch, referenced);
+      if (!page.cursor) break;
+      jobCursor = page.cursor;
     }
     return candidates.filter((hash) => !referenced.has(hash));
   }

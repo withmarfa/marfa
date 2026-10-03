@@ -2704,6 +2704,12 @@ export interface BulkActionCheckpointDelta {
 export interface BulkActionJobStore {
   /** INSERT a fresh row in `queued` state. */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
+  /** Pending property patches that retain blobs until their jobs end,
+   *  paged by job id without loading match sets or checkpoint ledgers. */
+  scanPendingPropertyPatches(
+    limit: number,
+    cursor?: string,
+  ): Promise<{ patches: unknown[]; cursor: string | null }>;
   /** Fetch by id. The store returns the row regardless of caller; the route
    *  handler enforces auth: the credential that created the job, or the
    *  operator key, and nothing else. No permission says "read another

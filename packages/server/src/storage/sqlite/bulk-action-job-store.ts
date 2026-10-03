@@ -5,7 +5,7 @@ import {
   summarizeJob,
   type BulkActionSamples,
 } from "../../bulk-actions/checkpoint.js";
-import { and, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import type {
   BulkActionCheckpointDelta,
   BulkActionJobLease,
@@ -20,6 +20,8 @@ import {
   bulkActionJobPurgeHashes,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import type { SqliteTxContext } from "./request-context.js";
+import { liftOrphanReports } from "./blob-references.js";
 
 /** A job that has not reached a terminal state. Every write that ends a job
  *  is conditioned on it, so whichever of cancel, complete and fail lands
@@ -28,6 +30,37 @@ const openJob = inArray(bulkActionJobs.status, [
   "queued",
   "in_progress",
 ] as BulkActionJobStatus[]);
+
+/** Shared by the orphan walk and its final transactional purge decision,
+ *  so neither retains terminal jobs or fields a property update never writes. */
+export async function scanPendingPropertyPatches(
+  db: DrizzleDb | SqliteTxContext,
+  limit: number,
+  cursor?: string,
+): Promise<{ patches: unknown[]; cursor: string | null }> {
+  const rows = await db
+    .select({ id: bulkActionJobs.id, input: bulkActionJobs.input })
+    .from(bulkActionJobs)
+    .where(
+      and(
+        openJob,
+        eq(bulkActionJobs.action, "update_properties"),
+        ...(cursor === undefined ? [] : [gt(bulkActionJobs.id, cursor)]),
+      ),
+    )
+    .orderBy(asc(bulkActionJobs.id))
+    .limit(limit + 1)
+    .all();
+  const page = rows.slice(0, limit);
+  return {
+    patches: page.map((row) => propertyPatch(row.input)),
+    cursor: rows.length > limit ? (page.at(-1)?.id ?? null) : null,
+  };
+}
+
+function propertyPatch(input: string): unknown {
+  return (JSON.parse(input) as { patch?: unknown }).patch;
+}
 
 /**
  * The SQLite implementation of `BulkActionJobStore`, over
@@ -44,24 +77,35 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
   constructor(private db: DrizzleDb) {}
 
   async create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow> {
-    const rows = await this.db
-      .insert(bulkActionJobs)
-      .values({
-        id: input.id,
-        api_key_id: input.api_key_id,
-        credential: input.credential,
-        status: "queued",
-        action: input.action,
-        input: input.input,
-        matched_ids: input.matched_ids,
-        matched_count: input.matched_count,
-        created_at: input.created_at,
-      })
-      .returning()
-      .all();
-    const row = rows[0];
-    if (!row) throw new Error("bulk_action_jobs INSERT returned no row");
-    return rowToJob(row);
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(bulkActionJobs)
+        .values({
+          id: input.id,
+          api_key_id: input.api_key_id,
+          credential: input.credential,
+          status: "queued",
+          action: input.action,
+          input: input.input,
+          matched_ids: input.matched_ids,
+          matched_count: input.matched_count,
+          created_at: input.created_at,
+        })
+        .returning()
+        .all();
+      const row = rows[0];
+      if (!row) throw new Error("bulk_action_jobs INSERT returned no row");
+      if (input.action === "update_properties")
+        await liftOrphanReports(tx, [propertyPatch(row.input)]);
+      return rowToJob(row);
+    });
+  }
+
+  scanPendingPropertyPatches(
+    limit: number,
+    cursor?: string,
+  ): Promise<{ patches: unknown[]; cursor: string | null }> {
+    return scanPendingPropertyPatches(this.db, limit, cursor);
   }
 
   async getById(id: string): Promise<BulkActionJobRow | null> {
