@@ -1720,6 +1720,8 @@ export class SqliteItemStore implements ItemStore {
         .select({ id: items.id })
         .from(items)
         .where(where)
+        .orderBy(items.id)
+        .limit(200)
         .all();
       if (idRows.length === 0) return 0;
 

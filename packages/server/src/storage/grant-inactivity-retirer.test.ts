@@ -194,6 +194,26 @@ describe("GrantInactivityRetirer.runOnce", () => {
 
     // Used long ago, approved longer ago: retired, and only it.
     await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
+    const raw = ctx.storage as Storage & {
+      __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "CREATE TRIGGER reject_retired_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'auth.grant.retired' BEGIN SELECT RAISE(ABORT, 'retirement audit refused'); END",
+      [],
+    );
+    expect(await retirer.runOnce()).toBe(0);
+    expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
+    expect(await tokenRows(ctx, clientId)).toBe(2);
+    expect(await consentRows(ctx, clientId)).toBe(1);
+    expect(
+      (await request(ctx.app, "GET", "/items", { key: accessToken })).status,
+    ).toBe(200);
+    expect(
+      (await ctx.storage.audit.list({ action: "auth.grant.retired" })).data,
+    ).toHaveLength(0);
+    await raw.__sqliteRun("DROP TRIGGER reject_retired_audit", []);
+    // The live-token control above counts as use. Age it again for the retry.
+    await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
     expect(await retirer.runOnce()).toBe(1);
     const grant = await grantOf(ctx, clientId);
     expect(grant.properties.status).toBe("revoked");
@@ -285,7 +305,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
           },
         },
         metadata: { get: () => Promise.resolve(null) },
-        audit: { log: () => Promise.resolve() },
+        audit: { logOrThrow: () => Promise.resolve() },
       } as unknown as Storage;
       return { storage, updated };
     };

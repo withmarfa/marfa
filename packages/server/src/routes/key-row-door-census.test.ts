@@ -59,8 +59,6 @@ const NOT_ROW_ACCESS: Record<string, string> = {
 const NOT_A_DOOR: Record<string, string> = {
   "routes/keys.ts › refuseOwnSourceClaimedElsewhere › list":
     "asks whether any live key claims a source, and answers with a refusal naming only that source",
-  "routes/keys.ts › withBootstrapRelease › list":
-    "asks whether bootstrap minted anything before giving the claim back",
   "auth/grant-lifecycle.ts › keysMintedByApp › list":
     "the keys one app minted, swept with its grant; a key an app mints is held to that app's grant, so revoking them reaches no further than revoking the grant, which is what grants.manage is",
   "auth/grant-lifecycle.ts › revokeProjectedGrant › revoke":
