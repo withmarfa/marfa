@@ -595,6 +595,25 @@ fn webhooks_are_registered_with_their_events_and_paused_by_a_flag() {
 }
 
 #[test]
+fn redelivery_posts_without_a_body_or_minting() {
+    let request = webhooks::redeliver_request("webhook id", "delivery/id");
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(
+        request.segments,
+        [
+            "webhooks",
+            "webhook id",
+            "deliveries",
+            "delivery/id",
+            "redeliver"
+        ]
+    );
+    assert_eq!(request.body, Body::None);
+    assert!(request.credential);
+    assert!(!request.mints);
+}
+
+#[test]
 fn blobs_are_fetched_as_a_stream_and_a_link_carries_its_ttl() {
     let download = blobs::download_request("sha256:abc");
     assert_eq!(download.path(), "/blobs/sha256:abc");

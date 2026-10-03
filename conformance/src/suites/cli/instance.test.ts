@@ -15,7 +15,7 @@ import {
   trackKey,
   trackWebhook,
 } from "../../utils/setup.js";
-import { startReceiver } from "../../utils/webhook-receiver.js";
+import { expectSignedBy, startReceiver } from "../../utils/webhook-receiver.js";
 import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
@@ -662,5 +662,120 @@ describe("the instance from the terminal", () => {
     await c.cli.json(["webhooks", "delete", created.id]);
     const gone = await c.cli.refused(["webhooks", "get", created.id]);
     expect(gone.envelope.error.code).toBe("not_found");
+  });
+
+  it("redelivers a failed webhook delivery and reports permission and state refusals", async () => {
+    const failing = await startReceiver({ status: 400 });
+    try {
+      const hook = await c.cli.json<{ id: string; secret: string }>([
+        "webhooks",
+        "create",
+        "--to",
+        failing.hookUrl("failed"),
+        "--event",
+        "item.created",
+      ]);
+      trackWebhook(c.ctx, hook.id);
+      const item = await c.cli.json<ItemEnvelope>([
+        "items",
+        "create",
+        "--type",
+        "core.note",
+        "--properties",
+        JSON.stringify({ title: unique("cli-redeliver"), body: "b" }),
+      ]);
+      trackItem(c.ctx, item.item.id);
+      const first = await failing.waitFor((hit) =>
+        hit.body.includes(item.item.id),
+      );
+      expectSignedBy(first, hook.secret);
+      const deliveryId = (JSON.parse(first.body) as { delivery_id: string })
+        .delivery_id;
+      const failed = await vi.waitFor(
+        async () => {
+          const rows = await c.cli.json<{
+            data: Array<{
+              id: string;
+              status: string;
+              attempt: number;
+              status_code: number | null;
+            }>;
+          }>(["webhooks", "deliveries", hook.id]);
+          const row = rows.data.find((delivery) => delivery.id === deliveryId);
+          expect(row?.status).toBe("dead_letter");
+          return row!;
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      expect(failed).toMatchObject({ attempt: 1, status_code: 400 });
+
+      const inert = await c.cli.json<{ id: string; key: string }>([
+        "keys",
+        "create",
+        "--label",
+        "redelivery-inert",
+        "--source",
+        unique("cli-redelivery-inert"),
+        "--no-permissions",
+      ]);
+      trackKey(c.ctx, inert.id);
+      const args = ["webhooks", "redeliver", hook.id, deliveryId];
+      const forbidden = await c.cli.as(inert.key).refused(args);
+      expect(forbidden.envelope.error.server?.status).toBe(403);
+      expect(forbidden.envelope.error.server?.code).toBe("forbidden");
+
+      const missing = await c.cli.refused([
+        "webhooks",
+        "redeliver",
+        hook.id,
+        "missing-delivery",
+      ]);
+      expect(missing.envelope.error.server?.status).toBe(404);
+      expect(missing.envelope.error.server?.code).toBe("webhook_not_found");
+
+      await c.cli.json([
+        "webhooks",
+        "update",
+        hook.id,
+        "--to",
+        receiver.hookUrl("redelivered"),
+      ]);
+      const queued = await c.cli.json<{
+        id: string;
+        status: string;
+        attempt: number;
+        status_code: number | null;
+      }>(args);
+      expect(queued).toMatchObject({
+        id: deliveryId,
+        status: "pending",
+        attempt: 1,
+        status_code: 400,
+      });
+      const second = await receiver.waitFor(
+        (hit) =>
+          hit.path === "/hook/redelivered" && hit.body.includes(item.item.id),
+      );
+      expectSignedBy(second, hook.secret);
+      expect(
+        (JSON.parse(second.body) as { delivery_id: string }).delivery_id,
+      ).toBe(deliveryId);
+      await vi.waitFor(
+        async () => {
+          const rows = await c.cli.json<{
+            data: Array<{ id: string; status: string }>;
+          }>(["webhooks", "deliveries", hook.id]);
+          expect(rows.data.find((row) => row.id === deliveryId)?.status).toBe(
+            "success",
+          );
+        },
+        { timeout: 20_000, interval: 250 },
+      );
+      const conflict = await c.cli.refused(args);
+      expect(conflict.envelope.error.server?.status).toBe(409);
+      expect(conflict.envelope.error.server?.code).toBe("conflict");
+    } finally {
+      await failing.close();
+    }
   });
 });
