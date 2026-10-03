@@ -124,7 +124,7 @@ const CEILINGS = {
   parameterUndescribed: 3,
   parameterLength: 10,
   schemaUndescribed: 97,
-  fieldUndescribed: 434,
+  fieldUndescribed: 362,
   fieldLength: 8,
   responseLength: 5,
 };
@@ -175,41 +175,56 @@ describe("the API description follows API-STYLE.md", () => {
   });
 
   it("gives each shared refusal one text everywhere", () => {
-    const shared = [
-      "unauthorized",
-      "request_too_large",
-      "rate_limited",
-      "write_contention",
-    ];
+    // Keyed by the status and the refusal component a response points at, so
+    // a door declaring the shared refusal in its own words is caught too.
+    const shared = new Map([
+      ["401", "UnauthorizedRefusal"],
+      ["413", "RequestTooLargeRefusal"],
+      ["429", "RateLimitedRefusal"],
+      ["503", "WriteContentionRefusal"],
+    ]);
     const texts = new Map<string, Set<string>>();
     for (const { operation } of operations()) {
-      for (const response of Object.values(
+      for (const [status, response] of Object.entries(
         (operation.responses ?? {}) as Record<string, Json>,
       )) {
-        const description = text(response.description) ?? "";
-        const code = shared.find((c) => description.startsWith(`\`${c}\`:`));
-        if (code === undefined) continue;
-        const set = texts.get(code) ?? new Set<string>();
-        set.add(description);
-        texts.set(code, set);
+        const component = shared.get(status);
+        const content = (response.content ?? {}) as Record<string, Json>;
+        const schema = (content["application/json"]?.schema ?? {}) as Json;
+        if (schema.$ref !== `#/components/schemas/${String(component)}`) {
+          continue;
+        }
+        const set = texts.get(status) ?? new Set<string>();
+        set.add(String(response.description));
+        texts.set(status, set);
       }
     }
-    for (const code of shared) {
+    for (const status of shared.keys()) {
       expect(
-        texts.get(code)?.size,
-        `${code} has more than one description`,
-      ).toBe(1);
+        [...(texts.get(status) ?? [])],
+        `${status} has more than one description`,
+      ).toHaveLength(1);
     }
   });
 
   it("uses none of the glossary's banned words", () => {
     const banned =
       /\b(integrations?|substrates?|hosted mode|cancell(ed|ing))\b/i;
-    const hits = JSON.stringify(document)
-      .split(/"(?:description|summary)":/)
-      .slice(1)
-      .map((rest) => rest.slice(0, rest.indexOf('",') + 1))
-      .filter((value) => banned.test(value));
-    expect(hits).toEqual([]);
+    const prose: string[] = [];
+    const visit = (value: unknown, key?: string) => {
+      if (Array.isArray(value)) {
+        for (const entry of value) visit(entry);
+      } else if (value !== null && typeof value === "object") {
+        for (const [k, v] of Object.entries(value)) visit(v, k);
+      } else if (
+        typeof value === "string" &&
+        (key === "description" || key === "summary")
+      ) {
+        prose.push(value);
+      }
+    };
+    visit(document);
+    expect(prose.length).toBeGreaterThan(0);
+    expect(prose.filter((value) => banned.test(value))).toEqual([]);
   });
 });

@@ -17,6 +17,7 @@ import { createApp } from "./app.js";
 import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
+  SERVERS,
 } from "./openapi-finalize.js";
 import type { AppConfig } from "./config.js";
 
@@ -85,12 +86,17 @@ export async function buildPublishedOpenAPISpec(): Promise<
       // freshness job reads as drift.
       SPEC_GENERATION_INSTANCE_ID,
     );
-    return finalizeOpenAPISpec(
-      app.getOpenAPI31Document({
-        openapi: "3.1.0",
-        info: OPENAPI_DOCUMENT_INFO,
-      }),
-    ) as unknown as Record<string, unknown>;
+    // The committed document names a server; the one an instance serves at
+    // `/openapi.json` does not, so tools resolve it against that instance.
+    return {
+      ...finalizeOpenAPISpec(
+        app.getOpenAPI31Document({
+          openapi: "3.1.0",
+          info: OPENAPI_DOCUMENT_INFO,
+        }),
+      ),
+      servers: SERVERS,
+    };
   } finally {
     await storage.close();
     await rm(blobPath, { recursive: true, force: true });

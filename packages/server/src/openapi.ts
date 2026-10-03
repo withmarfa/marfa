@@ -155,6 +155,7 @@ export function refusalComponentName(codes: readonly string[]): string {
  */
 export const REFUSAL_TEXT = {
   refusal: "An error response.",
+  error: "What went wrong.",
   code: "A machine-readable code for the error. Use it in your logic.",
   message:
     "A description of the error for a person to read. It can change, so don't match on it.",
@@ -167,18 +168,20 @@ function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
 ) {
   return z
     .object({
-      error: z.object({
-        // Sorted with the name, so the enum a door publishes is the set it
-        // answers rather than the order it happened to write.
-        code: z
-          .enum([...codes].sort() as unknown as C)
-          .describe(REFUSAL_TEXT.code),
-        message: z.string().describe(REFUSAL_TEXT.message),
-        details: z
-          .record(z.string(), z.unknown())
-          .optional()
-          .describe(REFUSAL_TEXT.details),
-      }),
+      error: z
+        .object({
+          // Sorted with the name, so the enum a door publishes is the set it
+          // answers rather than the order it happened to write.
+          code: z
+            .enum([...codes].sort() as unknown as C)
+            .describe(REFUSAL_TEXT.code),
+          message: z.string().describe(REFUSAL_TEXT.message),
+          details: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe(REFUSAL_TEXT.details),
+        })
+        .describe(REFUSAL_TEXT.error),
     })
     .describe(REFUSAL_TEXT.refusal)
     .openapi(refusalComponentName(codes));

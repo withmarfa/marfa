@@ -102,7 +102,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 
 ## General sections
 
-The document's `info.description` holds the rules that apply everywhere, each under its own heading: Authentication, Permissions, Pagination, Errors, Idempotency, Query parameters and Time. An area whose behavior spans its operations, such as the event stream, gets a section of its own. An operation relies on these sections and doesn't repeat them.
+The document's `info.description` holds the rules that apply everywhere, each under its own heading: Authentication, Permissions, Pagination, Query parameters, Errors, Idempotency, Time, and the headers on every response. An area whose behavior spans its operations, such as the event stream, gets a section of its own. An operation relies on these sections and doesn't repeat them.
 
 ## Where the text lives
 

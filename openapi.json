@@ -3,7 +3,7 @@
   "info": {
     "title": "Marfa API",
     "version": "0",
-    "description": "Marfa stores typed records, called items, and the edges between them. This document describes every operation an instance answers.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask for an item whose type you can't read, Marfa answers as if the item doesn't exist, so a refusal never tells you that a hidden item exists. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nA list refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item as it stands now, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A range filter pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that items changed at the same moment are never skipped.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem."
+    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nMany operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem."
   },
   "components": {
     "securitySchemes": {
@@ -250,7 +250,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -284,7 +285,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -320,7 +322,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -355,7 +358,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -552,7 +556,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -587,7 +592,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -622,7 +628,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -707,7 +714,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -851,7 +859,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -885,7 +894,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -919,7 +929,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -970,7 +981,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1029,7 +1041,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1065,7 +1078,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1103,7 +1117,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1138,7 +1153,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1185,7 +1201,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1220,7 +1237,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1290,7 +1308,7 @@
               "duplicate_source",
               "trashed"
             ],
-            "description": "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, the edge exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there."
+            "description": "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there."
           },
           "error": {
             "$ref": "#/components/schemas/BulkEntryError"
@@ -1357,7 +1375,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1393,7 +1412,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1427,7 +1447,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1586,7 +1607,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1661,7 +1683,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1695,7 +1718,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1754,7 +1778,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1803,7 +1828,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1852,7 +1878,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1886,7 +1913,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1920,7 +1948,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -1956,7 +1985,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2008,7 +2038,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2149,7 +2180,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2184,7 +2216,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2218,7 +2251,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2342,7 +2376,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2376,7 +2411,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2587,7 +2623,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2621,7 +2658,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2670,7 +2708,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2705,7 +2744,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2739,7 +2779,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2850,7 +2891,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2886,7 +2928,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -2920,7 +2963,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3025,7 +3069,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3241,7 +3286,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3421,7 +3467,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3455,7 +3502,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3550,7 +3598,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3584,7 +3633,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3776,7 +3826,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3810,7 +3861,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -3979,7 +4031,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4104,7 +4157,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4260,7 +4314,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4294,7 +4349,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4497,7 +4553,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4532,7 +4589,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4867,7 +4925,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -4989,7 +5048,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5024,7 +5084,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5107,7 +5168,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5165,7 +5227,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5199,7 +5262,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5299,7 +5363,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5482,7 +5547,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5516,7 +5582,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5550,7 +5617,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5584,7 +5652,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5618,7 +5687,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5653,7 +5723,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5687,7 +5758,8 @@
             "required": [
               "code",
               "message"
-            ]
+            ],
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -5936,7 +6008,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6401,7 +6473,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -6466,7 +6538,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6837,7 +6909,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7006,7 +7078,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -7071,7 +7143,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7458,7 +7530,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7834,7 +7906,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8192,7 +8264,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8565,7 +8637,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8923,7 +8995,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9162,7 +9234,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9417,7 +9489,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9692,7 +9764,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9973,7 +10045,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10260,7 +10332,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10612,7 +10684,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10955,7 +11027,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11489,7 +11561,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11773,7 +11845,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11980,7 +12052,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12280,7 +12352,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12575,7 +12647,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12850,7 +12922,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13080,7 +13152,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13345,7 +13417,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13602,7 +13674,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13870,7 +13942,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14112,7 +14184,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -14177,7 +14249,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14484,7 +14556,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14717,7 +14789,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -14782,7 +14854,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15091,7 +15163,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15395,7 +15467,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -16491,7 +16563,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17139,7 +17211,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ]
       }
@@ -17493,7 +17565,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17627,7 +17699,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ]
       },
@@ -17711,7 +17783,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17971,7 +18043,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18217,7 +18289,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18519,7 +18591,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18920,7 +18992,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19149,7 +19221,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19316,7 +19388,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19540,7 +19612,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19707,7 +19779,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19874,7 +19946,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20166,7 +20238,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20465,7 +20537,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20704,7 +20776,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20953,7 +21025,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21180,7 +21252,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21390,7 +21462,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21718,7 +21790,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21904,7 +21976,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22053,7 +22125,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22230,7 +22302,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22468,7 +22540,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22765,7 +22837,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23046,7 +23118,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23276,7 +23348,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23534,7 +23606,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23753,7 +23825,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24062,7 +24134,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24282,7 +24354,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24563,7 +24635,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -24862,7 +24934,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25162,7 +25234,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25392,7 +25464,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25669,7 +25741,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25927,7 +25999,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26264,7 +26336,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26589,7 +26661,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26863,7 +26935,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27175,7 +27247,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27568,7 +27640,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27929,7 +28001,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28332,7 +28404,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28548,7 +28620,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28718,7 +28790,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28885,7 +28957,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa answers from the snapshot it certifies, or returns `409 read_view_changed` if the view has changed. A list read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
           }
         ]
       }
@@ -28974,7 +29046,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29312,7 +29384,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29530,7 +29602,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29781,7 +29853,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30057,7 +30129,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30254,7 +30326,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30446,7 +30518,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30694,7 +30766,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30948,7 +31020,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31268,7 +31340,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31514,7 +31586,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31700,7 +31772,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31879,7 +31951,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32159,7 +32231,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32387,7 +32459,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32640,7 +32712,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33208,7 +33280,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
             "content": {
               "application/json": {
                 "schema": {

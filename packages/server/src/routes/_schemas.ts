@@ -327,7 +327,7 @@ export const BulkResultEntrySchema = z
       .enum(BULK_SKIP_REASONS)
       .optional()
       .describe(
-        "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, the edge exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.",
+        "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.",
       ),
     error: BulkEntryErrorSchema.optional(),
   })
