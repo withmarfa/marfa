@@ -8,6 +8,7 @@ import type { Housekeeping } from "./scheduler.js";
 import { log } from "../middleware/logger.js";
 import {
   WebhookPoller,
+  WebhookScheduler,
   WEBHOOK_POLL_INTERVAL_MS,
 } from "../webhooks/delivery.js";
 import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
@@ -116,6 +117,19 @@ export function registerHousekeepingJobs(
       }
       return { deleted, deliveries };
     },
+  });
+
+  const webhookScheduler = new WebhookScheduler({
+    storage,
+    http: createWebhookHttpClient({
+      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
+    }),
+  });
+  housekeeping.register({
+    name: "webhook-schedule",
+    intervalMs: 1_000,
+    firstRunDelayMs: 0,
+    run: () => webhookScheduler.runOnce(),
   });
 
   // No first-run delay: on a fresh table a delivery left pending is picked

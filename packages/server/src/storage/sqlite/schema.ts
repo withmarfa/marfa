@@ -513,6 +513,7 @@ export const outboundWebhooks = sqliteTable(
     id: text("id").primaryKey(),
     url: text("url").notNull(),
     secret: text("secret").notNull(),
+    event_start_id: text("event_start_id").notNull(),
     events: text("events").notNull().default("[]"),
     type_filter: text("type_filter"),
     active: integer("active").notNull().default(1),
@@ -529,6 +530,19 @@ export const outboundWebhooks = sqliteTable(
       "outbound_webhooks_one_owner",
       sql`(${table.key_id} IS NOT NULL AND ${table.grant_client_id} IS NULL AND ${table.grant_user_id} IS NULL) OR (${table.key_id} IS NULL AND ${table.grant_client_id} IS NOT NULL AND ${table.grant_user_id} IS NOT NULL)`,
     ),
+  ],
+);
+
+export const outboundWebhookCheckpoint = sqliteTable(
+  "outbound_webhook_checkpoint",
+  {
+    id: integer("id").primaryKey(),
+    last_event_id: text("last_event_id").notNull(),
+    event_id: text("event_id"),
+    after_subscription_id: text("after_subscription_id"),
+  },
+  (table) => [
+    check("outbound_webhook_checkpoint_singleton", sql`${table.id} = 1`),
   ],
 );
 

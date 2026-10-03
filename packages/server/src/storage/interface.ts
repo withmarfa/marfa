@@ -1403,10 +1403,21 @@ export type WebhookOwner =
 
 /** A subscription as stored: the wire shape and the credential it belongs to. */
 export interface StoredWebhook extends Webhook {
+  event_start_id: bigint;
   owner: WebhookOwner;
 }
 
+/** Exact durable position in one event's ordered subscription fan-out. */
+export interface WebhookCheckpoint {
+  lastEventId: bigint;
+  eventId: bigint | null;
+  afterSubscriptionId: string | null;
+}
+
 export interface WebhookStore {
+  checkpoint(): Promise<WebhookCheckpoint>;
+  acknowledge(position: WebhookCheckpoint): Promise<void>;
+  listAfter(afterId: string | null, limit: number): Promise<StoredWebhook[]>;
   create(
     input: CreateWebhookInput & { owner: WebhookOwner },
   ): Promise<StoredWebhook>;
@@ -1414,7 +1425,6 @@ export interface WebhookStore {
   get(id: string): Promise<StoredWebhook | null>;
   update(id: string, input: UpdateWebhookInput): Promise<StoredWebhook>;
   delete(id: string): Promise<void>;
-  listActive(): Promise<StoredWebhook[]>;
   count(): Promise<number>;
 }
 

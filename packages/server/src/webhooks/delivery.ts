@@ -3,20 +3,10 @@ import { hasPermission, matchesTypePattern } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   Storage,
-  StoredWebhook,
   WebhookDeliveryStore,
   WebhookOwner,
 } from "../storage/interface.js";
-import {
-  fansOut,
-  storedFrame,
-  subscribe,
-  subscribeEdges,
-  wireEventName,
-  type EdgeEvent,
-  type ItemEvent,
-  type PubsubEvent,
-} from "../pubsub.js";
+import { wireEventName, type EdgeEvent, type ItemEvent } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 import {
   resolveLiveCredential,
@@ -380,129 +370,158 @@ async function scheduleDeliveryRetry(
   });
 }
 
-export class WebhookConsumer {
-  private running = false;
-  private abortController: AbortController | null = null;
-
+export class WebhookScheduler {
   constructor(private context: WebhookDeliveryContext) {}
 
-  start(): void {
-    if (this.running) return;
-    this.running = true;
-    this.abortController = new AbortController();
-    void this.consume(this.abortController.signal);
-  }
-
-  stop(): void {
-    this.running = false;
-    this.abortController?.abort();
-    this.abortController = null;
-  }
-
-  private async consume(signal: AbortSignal): Promise<void> {
-    const itemLoop = (async () => {
-      try {
-        for await (const event of subscribe({ signal })) {
-          // A restart sets `running` again, so an event this loop had
-          // already taken is judged by its own signal.
-          if (signal.aborted) break;
-          // A write whose caller declined fan-out is logged and streamed
-          // like any other; what it does not do is call out.
-          if (!fansOut(event)) continue;
-          void this.dispatch(event);
-        }
-      } catch (err) {
-        if (!signal.aborted) {
-          log("error", "Webhook item consumer error", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    })();
-
-    const edgeLoop = (async () => {
-      try {
-        for await (const event of subscribeEdges({ signal })) {
-          if (signal.aborted) break;
-          if (!fansOut(event)) continue;
-          void this.dispatch(event);
-        }
-      } catch (err) {
-        if (!signal.aborted) {
-          log("error", "Webhook edge consumer error", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    })();
-
-    await Promise.allSettled([itemLoop, edgeLoop]);
-  }
-
-  /**
-   * Queue a delivery of `event` to every subscription it matches whose
-   * credential may read it now. The event is stored as the log stores it and
-   * narrowed again at each attempt (`deliveryInReach`); asking here as well
-   * keeps a subscription's log from recording events its credential could
-   * never be sent.
-   */
-  private async dispatch(event: PubsubEvent): Promise<void> {
+  /** One event and one bounded subscription page, never the whole backlog. */
+  async runOnce(): Promise<{
+    examined: number;
+    scheduled: number;
+    cursor: string;
+    event: string | null;
+  }> {
     const { storage } = this.context;
-    let webhooks: StoredWebhook[];
-    try {
-      webhooks = await storage.outboundWebhooks.listActive();
-    } catch (err) {
-      log("error", "Failed to load active webhooks", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-
-    const eventType = toWebhookEventType(event.type);
-    const matching = webhooks.filter((w) => {
-      if (!w.events.includes(eventType)) return false;
-      if (!w.type_filter) return true;
-      // Edge events don't carry an item type; any type_filter skips them.
-      if ("edge" in event) return false;
-      return matchesTypePattern(event.item.type, [w.type_filter]);
-    });
-    if (matching.length === 0) return;
-
-    const stored = storedFrame(event);
-    const payload = JSON.stringify(stored);
-    const credentials = new Map<string, Promise<LiveCredential | null>>();
-    const scheduled = await Promise.allSettled(
-      matching.map(async (w) => {
-        const name = ownerName(w.owner);
-        let credential = credentials.get(name);
-        if (!credential) {
-          credential = ownerCredential(storage, w.owner);
-          credentials.set(name, credential);
-        }
-        const standing = await credential;
-        if (!standing) return undefined;
-        if (!(await frameInReach(storage, standing.key, stored))) {
-          return undefined;
-        }
-        return storage.outboundWebhookDeliveries.schedule({
-          webhookId: w.id,
-          eventType,
-          payload,
-          webhookUrl: w.url,
-          nextAttemptAt: new Date().toISOString(),
-        });
-      }),
-    );
-    scheduled.forEach((r, i) => {
-      if (r.status === "fulfilled") {
-        if (typeof r.value === "string") void this.tryDirectDispatch(r.value);
-        return;
+    const result = await storage.runInTransaction(async () => {
+      const position = await storage.outboundWebhooks.checkpoint();
+      const head = (await storage.eventLog.getMaxId()) ?? 0n;
+      const minimum = await storage.eventLog.getMinRetainedId();
+      if (
+        position.lastEventId > head ||
+        (position.eventId !== null && position.eventId > head)
+      ) {
+        throw new Error(
+          "Outbound webhook checkpoint is ahead of the event log",
+        );
       }
-      log("error", "Failed to schedule webhook delivery", {
-        webhook_id: matching[i]?.id,
-        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-      });
+      if (minimum !== null && minimum > position.lastEventId + 1n) {
+        throw new Error(
+          "Outbound webhook scheduling fell behind event retention",
+        );
+      }
+      const [event] = await storage.eventLog.getAfter(position.lastEventId, 1);
+      const ids: string[] = [];
+      let examined = 0;
+      if (event) {
+        if (
+          event.id !== position.lastEventId + 1n ||
+          event.id > head ||
+          (position.eventId !== null && position.eventId !== event.id)
+        ) {
+          throw new Error("Outbound webhook event log is inconsistent");
+        }
+        position.eventId = event.id;
+        let complete = !event.enable_fanout;
+        if (event.enable_fanout) {
+          let stored: unknown;
+          try {
+            stored = JSON.parse(event.payload);
+          } catch {
+            throw new Error("Outbound webhook event payload cannot be read");
+          }
+          if (typeof stored !== "object" || stored === null) {
+            throw new Error("Outbound webhook event payload is not a frame");
+          }
+          const frame = stored as Record<string, unknown>;
+          const eventType = toWebhookEventType(
+            event.event_type as ItemEvent["type"] | EdgeEvent["type"],
+          );
+          if (
+            frame.type !== eventType ||
+            !("item" in frame || "edge" in frame)
+          ) {
+            throw new Error("Outbound webhook event payload is inconsistent");
+          }
+          const subscriptions = await storage.outboundWebhooks.listAfter(
+            position.afterSubscriptionId,
+            50,
+          );
+          const credentials = new Map<string, Promise<LiveCredential | null>>();
+          const payloadBytes = Buffer.byteLength(event.payload, "utf8");
+          let queuedBytes = 0;
+          for (const subscription of subscriptions) {
+            if (subscription.event_start_id > head) {
+              throw new Error(
+                "Outbound webhook subscription starts ahead of the event log",
+              );
+            }
+            let eligible =
+              subscription.active &&
+              event.id > subscription.event_start_id &&
+              subscription.events.includes(eventType);
+            if (eligible && subscription.type_filter) {
+              const item = frame.item;
+              eligible =
+                typeof item === "object" &&
+                item !== null &&
+                "type" in item &&
+                typeof item.type === "string" &&
+                matchesTypePattern(item.type, [subscription.type_filter]);
+            }
+            if (eligible) {
+              const name = ownerName(subscription.owner);
+              let credential = credentials.get(name);
+              if (!credential) {
+                credential = ownerCredential(storage, subscription.owner);
+                credentials.set(name, credential);
+              }
+              const standing = await credential;
+              eligible =
+                standing !== null &&
+                (await frameInReach(storage, standing.key, frame)) !== null;
+            }
+            if (eligible) {
+              // Allow one valid oversized payload; never reject accepted work.
+              // A row stopped here is not examined/acknowledged until next pass.
+              if (
+                ids.length > 0 &&
+                queuedBytes + payloadBytes > 8 * 1024 * 1024
+              )
+                break;
+              ids.push(
+                await storage.outboundWebhookDeliveries.schedule({
+                  webhookId: subscription.id,
+                  eventType,
+                  payload: event.payload,
+                  webhookUrl: subscription.url,
+                  nextAttemptAt: new Date().toISOString(),
+                }),
+              );
+              queuedBytes += payloadBytes;
+            }
+            examined++;
+            position.afterSubscriptionId = subscription.id;
+            if (queuedBytes >= 8 * 1024 * 1024) break;
+          }
+          // Exactly full pages retain partial state until a bounded next read
+          // proves exhaustion. An early byte stop also retains the position.
+          complete =
+            subscriptions.length < 50 && examined === subscriptions.length;
+        }
+        if (complete) {
+          position.lastEventId = event.id;
+          position.eventId = null;
+          position.afterSubscriptionId = null;
+        }
+        await storage.outboundWebhooks.acknowledge(position);
+      } else if (position.eventId !== null) {
+        throw new Error("Outbound webhook in-progress event is missing");
+      }
+      return {
+        ids,
+        examined,
+        cursor: position.lastEventId.toString(),
+        event: position.eventId?.toString() ?? null,
+      };
     });
+    await Promise.allSettled(
+      result.ids.map((id) => this.tryDirectDispatch(id)),
+    );
+    return {
+      examined: result.examined,
+      scheduled: result.ids.length,
+      cursor: result.cursor,
+      event: result.event,
+    };
   }
 
   /**

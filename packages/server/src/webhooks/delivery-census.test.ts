@@ -50,7 +50,7 @@ const read = (file: string): string => readFileSync(join(SRC, file), "utf8");
 /** The text of the function `name` declares in `source`. */
 function functionBody(source: string, name: string): string {
   const start = source.search(
-    new RegExp(`(async )?function ${name}\\b|private async ${name}\\(`),
+    new RegExp(`(async )?function ${name}\\b|(?:private )?async ${name}\\(`),
   );
   expect(start, `function ${name}`).toBeGreaterThanOrEqual(0);
   const next = source
@@ -94,7 +94,7 @@ describe("the outbound census", () => {
       ),
     );
     expect(queued).toEqual(["webhooks/delivery.ts"]);
-    const dispatch = functionBody(read("webhooks/delivery.ts"), "dispatch");
+    const dispatch = functionBody(read("webhooks/delivery.ts"), "runOnce");
     expect(dispatch.indexOf("frameInReach(")).toBeGreaterThan(0);
     expect(dispatch.indexOf("frameInReach(")).toBeLessThan(
       dispatch.indexOf("outboundWebhookDeliveries.schedule("),
@@ -109,7 +109,7 @@ describe("the outbound census", () => {
     );
     expect(built.map(([file]) => file).sort()).toEqual([
       "housekeeping/registrations.ts",
-      "index.ts",
+      "housekeeping/registrations.ts",
     ]);
     for (const [, options] of built) {
       expect(options).toBe(

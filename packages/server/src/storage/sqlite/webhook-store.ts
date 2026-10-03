@@ -1,14 +1,25 @@
 import { randomBytes } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
-import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
+import { eq, gt, sql } from "drizzle-orm";
+import {
+  generateId,
+  isValidId,
+  MarfaError,
+  ErrorCode,
+} from "@withmarfa/shared";
 import type { CreateWebhookInput, UpdateWebhookInput } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
+  EventLogStore,
   StoredWebhook,
   WebhookOwner,
+  WebhookCheckpoint,
   WebhookStore,
 } from "../interface.js";
-import { outboundWebhooks } from "./schema.js";
+import {
+  outboundWebhooks,
+  outboundWebhookCheckpoint,
+  outboundWebhookDeliveries,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 function ownerOf(row: typeof outboundWebhooks.$inferSelect): WebhookOwner {
@@ -21,11 +32,22 @@ function ownerOf(row: typeof outboundWebhooks.$inferSelect): WebhookOwner {
   };
 }
 
+function eventId(value: string): bigint {
+  if (
+    !/^(0|[1-9][0-9]*)$/.test(value) ||
+    BigInt(value) > 9_223_372_036_854_775_807n
+  ) {
+    throw new Error("Invalid outbound webhook event checkpoint");
+  }
+  return BigInt(value);
+}
+
 function rowToWebhook(
   row: typeof outboundWebhooks.$inferSelect,
 ): StoredWebhook {
   return {
     id: row.id,
+    event_start_id: eventId(row.event_start_id),
     url: row.url,
     secret: row.secret,
     events: safeJsonParse<string[]>(row.events, [], "webhook events"),
@@ -38,29 +60,104 @@ function rowToWebhook(
 }
 
 export class SqliteWebhookStore implements WebhookStore {
-  constructor(private db: DrizzleDb) {}
+  constructor(
+    private db: DrizzleDb,
+    private events: EventLogStore,
+  ) {}
+
+  /** Called in the storage factory's writer transaction, before writes are accepted. */
+  async initialize(): Promise<void> {
+    if (await this.db.select().from(outboundWebhookCheckpoint).get()) return;
+    if (
+      (await this.events.getMaxId()) !== null ||
+      (await this.count()) !== 0 ||
+      (await this.db
+        .select({ id: outboundWebhookDeliveries.id })
+        .from(outboundWebhookDeliveries)
+        .limit(1)
+        .get())
+    )
+      return;
+    await this.db
+      .insert(outboundWebhookCheckpoint)
+      .values({ id: 1, last_event_id: "0" })
+      .run();
+  }
+
+  async checkpoint(): Promise<WebhookCheckpoint> {
+    const row = await this.db.select().from(outboundWebhookCheckpoint).get();
+    if (!row)
+      throw new Error(
+        "Outbound webhook checkpoint is missing on a populated instance",
+      );
+    const lastEventId = eventId(row.last_event_id);
+    const inProgress = row.event_id === null ? null : eventId(row.event_id);
+    if (
+      (inProgress === null && row.after_subscription_id !== null) ||
+      (inProgress !== null && inProgress !== lastEventId + 1n) ||
+      (row.after_subscription_id !== null &&
+        !isValidId(row.after_subscription_id))
+    ) {
+      throw new Error("Outbound webhook checkpoint is inconsistent");
+    }
+    return {
+      lastEventId,
+      eventId: inProgress,
+      afterSubscriptionId: row.after_subscription_id,
+    };
+  }
+
+  async acknowledge(position: WebhookCheckpoint): Promise<void> {
+    await this.db
+      .update(outboundWebhookCheckpoint)
+      .set({
+        last_event_id: position.lastEventId.toString(),
+        event_id: position.eventId?.toString() ?? null,
+        after_subscription_id: position.afterSubscriptionId,
+      })
+      .where(eq(outboundWebhookCheckpoint.id, 1))
+      .run();
+  }
+
+  async listAfter(
+    afterId: string | null,
+    limit: number,
+  ): Promise<StoredWebhook[]> {
+    const rows = await this.db
+      .select()
+      .from(outboundWebhooks)
+      .where(afterId === null ? undefined : gt(outboundWebhooks.id, afterId))
+      .orderBy(outboundWebhooks.id)
+      .limit(limit)
+      .all();
+    return rows.map(rowToWebhook);
+  }
 
   async create(
     input: CreateWebhookInput & { owner: WebhookOwner },
   ): Promise<StoredWebhook> {
-    const now = new Date().toISOString();
-    const row = {
-      id: generateId(),
-      url: input.url,
-      secret: input.secret ?? randomBytes(32).toString("hex"),
-      events: JSON.stringify(input.events),
-      type_filter: input.type_filter ?? null,
-      active: 1,
-      key_id: input.owner.kind === "key" ? input.owner.keyId : null,
-      grant_client_id:
-        input.owner.kind === "grant" ? input.owner.clientId : null,
-      grant_user_id:
-        input.owner.kind === "grant" ? input.owner.authUserId : null,
-      created_at: now,
-      updated_at: now,
-    };
-    await this.db.insert(outboundWebhooks).values(row).run();
-    return rowToWebhook(row);
+    return this.db.transaction(async () => {
+      await this.checkpoint();
+      const now = new Date().toISOString();
+      const row = {
+        event_start_id: ((await this.events.getMaxId()) ?? 0n).toString(),
+        id: generateId(),
+        url: input.url,
+        secret: input.secret ?? randomBytes(32).toString("hex"),
+        events: JSON.stringify(input.events),
+        type_filter: input.type_filter ?? null,
+        active: 1,
+        key_id: input.owner.kind === "key" ? input.owner.keyId : null,
+        grant_client_id:
+          input.owner.kind === "grant" ? input.owner.clientId : null,
+        grant_user_id:
+          input.owner.kind === "grant" ? input.owner.authUserId : null,
+        created_at: now,
+        updated_at: now,
+      };
+      await this.db.insert(outboundWebhooks).values(row).run();
+      return rowToWebhook(row);
+    });
   }
 
   async list(): Promise<StoredWebhook[]> {
@@ -109,15 +206,6 @@ export class SqliteWebhookStore implements WebhookStore {
       .delete(outboundWebhooks)
       .where(eq(outboundWebhooks.id, id))
       .run();
-  }
-
-  async listActive(): Promise<StoredWebhook[]> {
-    const rows = await this.db
-      .select()
-      .from(outboundWebhooks)
-      .where(eq(outboundWebhooks.active, 1))
-      .all();
-    return rows.map(rowToWebhook);
   }
 
   async count(): Promise<number> {

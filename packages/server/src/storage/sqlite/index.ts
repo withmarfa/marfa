@@ -66,10 +66,10 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);
   const blobRegistry = new SqliteBlobRegistry(db);
-  const webhookStore = new SqliteWebhookStore(db);
+  const eventLogStore = new SqliteEventLogStore(db);
+  const webhookStore = new SqliteWebhookStore(db, eventLogStore);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const auditStore = new SqliteAuditStore(db);
-  const eventLogStore = new SqliteEventLogStore(db);
   const authSessionStore = new SqliteAuthSessionStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
@@ -205,5 +205,8 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     },
   };
 
+  // Initialize only a genuinely empty local instance. Invalid persisted state
+  // is diagnosed by the scheduling job rather than silently skipped at open.
+  await storage.runInTransaction(() => webhookStore.initialize());
   return storage;
 }

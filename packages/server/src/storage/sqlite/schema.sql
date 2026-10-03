@@ -580,6 +580,14 @@ CREATE TABLE IF NOT EXISTS `natural_key_tombstones` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_natural_key_tombstones_key` ON `natural_key_tombstones` (`source`,`source_id`);
+CREATE TABLE IF NOT EXISTS `outbound_webhook_checkpoint` (
+	`id` integer PRIMARY KEY NOT NULL,
+	`last_event_id` text NOT NULL,
+	`event_id` text,
+	`after_subscription_id` text,
+	CONSTRAINT "outbound_webhook_checkpoint_singleton" CHECK("outbound_webhook_checkpoint"."id" = 1)
+);
+
 CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`webhook_id` text NOT NULL,
@@ -602,6 +610,7 @@ CREATE TABLE IF NOT EXISTS `outbound_webhooks` (
 	`id` text PRIMARY KEY NOT NULL,
 	`url` text NOT NULL,
 	`secret` text NOT NULL,
+	`event_start_id` text NOT NULL,
 	`events` text DEFAULT '[]' NOT NULL,
 	`type_filter` text,
 	`active` integer DEFAULT 1 NOT NULL,

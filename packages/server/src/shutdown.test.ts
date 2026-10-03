@@ -18,11 +18,6 @@ function parts(
 ) {
   const events: string[] = [];
   const fakes: ShutdownParts = {
-    webhookConsumer: {
-      stop: () => {
-        events.push("webhooks.stop");
-      },
-    },
     bulkActionWorker: {
       stop: () => {
         events.push("bulk-actions.stop");
@@ -71,7 +66,6 @@ describe("shutdownInOrder", () => {
     const { events, fakes } = parts();
     expect(await shutdownInOrder(fakes, BOUNDS)).toBe(0);
     expect(events).toEqual([
-      "webhooks.stop",
       "bulk-actions.stop",
       "housekeeping.stop",
       "server.close",
