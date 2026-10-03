@@ -327,14 +327,22 @@ function propertyFieldSql(
   // json_extract reads the JSONB blob directly.
   const extract = sql`json_extract(${propertiesCol}, ${jsonPath})`;
 
+  // Only JSON numbers take the API's double interpretation; casting text or
+  // containers would invent numeric equality matches such as an object = 0.
+  const numericEqualityExtract = sql`CASE WHEN json_type(${propertiesCol}, ${jsonPath}) IN ('integer', 'real') THEN CAST(${extract} AS REAL) ELSE ${extract} END`;
+
   // Numeric extraction for comparison operators
   const numericExtract = sql`CAST(json_extract(${propertiesCol}, ${jsonPath}) AS REAL)`;
 
   switch (op) {
     case "eq":
-      return sql`${extract} = ${value}`;
+      return isNumeric
+        ? sql`${numericEqualityExtract} = ${value}`
+        : sql`${extract} = ${value}`;
     case "neq":
-      return sql`${extract} != ${value}`;
+      return isNumeric
+        ? sql`${numericEqualityExtract} != ${value}`
+        : sql`${extract} != ${value}`;
     case "gt":
       return isNumeric
         ? sql`${numericExtract} > ${value}`
@@ -530,6 +538,12 @@ function propertyFieldRawSql(
   params.push(`$.${path}`);
   const extract = `json_extract(${alias}.properties, ?)`;
   const numExtract = `CAST(${extract} AS REAL)`;
+
+  if (isNumeric && (op === "eq" || op === "neq")) {
+    params.push(`$.${path}`, `$.${path}`, value);
+    const numericExtract = `CASE WHEN json_type(${alias}.properties, ?) IN ('integer', 'real') THEN CAST(${extract} AS REAL) ELSE ${extract} END`;
+    return `${numericExtract} ${op === "eq" ? "=" : "!="} ?`;
+  }
 
   switch (op) {
     case "eq":

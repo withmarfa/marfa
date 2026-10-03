@@ -211,6 +211,19 @@ impl Condition {
                 values.push(Value::String(format!("$.{name}")));
                 let extract = "json_extract(items.properties, ?)";
                 match op {
+                    Op::Compare(compare @ (Compare::Eq | Compare::Neq))
+                        if matches!(self.value, Literal::Number(_)) =>
+                    {
+                        values.extend(std::iter::repeat_n(Value::String(format!("$.{name}")), 2));
+                        compared(
+                            &format!(
+                                "CASE WHEN json_type(items.properties, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
+                            ),
+                            *compare,
+                            &self.value,
+                            values,
+                        )
+                    }
                     Op::Compare(
                         compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte),
                     ) if matches!(self.value, Literal::Number(_)) => compared(
@@ -867,7 +880,7 @@ mod tests {
         let filtered = |filter: &str| ids(&conn, Some(filter), None);
         assert_eq!(filtered("properties.rating lte 5"), ["child", "root"]);
         // A number against text: the server casts the property to a number
-        // for a numeric bound and compares it raw for equality.
+        // for a numeric bound but preserves text for numeric equality.
         assert_eq!(filtered("properties.rating gt 4"), ["root", "stranger"]);
         assert_eq!(filtered("properties.rating eq 9"), Vec::<String>::new());
         assert_eq!(filtered("properties.flag eq true"), ["root"]);
@@ -881,6 +894,97 @@ mod tests {
         assert_eq!(filtered("tags contains 5"), Vec::<String>::new());
         assert_eq!(filtered("edge[references] eq \"stranger\""), ["child"]);
         assert_eq!(filtered("edge[parent-of] not_exists"), ["stranger"]);
+    }
+
+    #[test]
+    fn numeric_equality_uses_the_same_double_as_numeric_bounds() {
+        let conn = conn();
+        let spellings = [
+            "1000000000000000100",
+            "-1000000000000000100",
+            "9007199254740991",
+            "9007199254740992",
+            "9007199254740993",
+            "-9007199254740993",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "1e18",
+            "-1.25e-7",
+            "0.125",
+            "-0",
+            "0",
+        ];
+        for (index, spelling) in spellings.iter().enumerate() {
+            let properties = serde_json::from_str(&format!(r#"{{"n":{spelling}}}"#)).unwrap();
+            let item = wire_item(
+                &format!("n{index:02}"),
+                "core.note",
+                "active",
+                "2026-01-01T00:00:00Z",
+                properties,
+            );
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        for spelling in spellings {
+            let number = spelling.parse::<f64>().unwrap();
+            let literal = if spelling == "-1.25e-7" {
+                "-0.000000125"
+            } else if spelling == "1e18" {
+                "1000000000000000000"
+            } else {
+                spelling
+            };
+            for op in ["eq", "neq", "gte", "lte"] {
+                let expected: Vec<String> = spellings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        let candidate = candidate.parse::<f64>().unwrap();
+                        match op {
+                            "eq" => candidate == number,
+                            "neq" => candidate != number,
+                            "gte" => candidate >= number,
+                            _ => candidate <= number,
+                        }
+                    })
+                    .map(|(index, _)| format!("n{index:02}"))
+                    .collect();
+                assert_eq!(
+                    ids(&conn, Some(&format!("properties.n {op} {literal}")), None),
+                    expected,
+                    "{op} {literal}"
+                );
+            }
+        }
+        for (id, properties) in [
+            ("text", json!({"other":"0"})),
+            ("array", json!({"other":[]})),
+            ("object", json!({"other":{}})),
+            ("null", json!({"other":null})),
+            ("missing", json!({})),
+            ("false", json!({"other":false})),
+            ("true", json!({"other":true})),
+        ] {
+            store::upsert_item(
+                &conn,
+                &wire_item(
+                    id,
+                    "core.note",
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    properties,
+                ),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+        }
+        assert_eq!(ids(&conn, Some("properties.other eq 0"), None), ["false"]);
+        assert_eq!(ids(&conn, Some("properties.other eq true"), None), ["true"]);
+        assert_eq!(
+            ids(&conn, Some("properties.other eq \"0\""), None),
+            ["text"]
+        );
     }
 
     #[test]
