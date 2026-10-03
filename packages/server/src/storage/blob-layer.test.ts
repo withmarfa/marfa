@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { S3BlobStore } from "./blob-s3.js";
 import { createBlobLayer } from "./blob-layer.js";
 import type { BlobLayerConfig } from "./blob-layer.js";
 
@@ -11,6 +12,7 @@ let ctx: TestContext | undefined;
 const dirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await ctx?.cleanup();
   ctx = undefined;
   for (const dir of dirs.splice(0)) {
@@ -67,6 +69,77 @@ describe("createBlobLayer", () => {
       [first.id, false],
       [second.disk.id, true],
     ]);
+  });
+
+  it("audits configuration changes atomically and skips an unchanged boot", async () => {
+    ctx = await createTestContext();
+    const storage = ctx.storage;
+    const before = await storage.blobs.listStores();
+    expect(
+      (await storage.audit.list({ action: "blob.stores_configured" })).data,
+    ).toHaveLength(1);
+    const raw = storage as unknown as {
+      __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "CREATE TRIGGER refuse_store_configuration BEFORE INSERT ON audit_log WHEN NEW.action = 'blob.stores_configured' BEGIN SELECT RAISE(ABORT, 'store configuration audit refused'); END",
+      [],
+    );
+    const currentConfig = {
+      ...(await diskAt()),
+      blobPath: ctx.blobs.disk.locator,
+    };
+    // An unchanged boot makes no domain write and therefore needs no audit.
+    await expect(
+      createBlobLayer(storage, currentConfig),
+    ).resolves.toBeDefined();
+    expect(await storage.blobs.listStores()).toEqual(before);
+    const changedConfig = await diskAt();
+    await expect(createBlobLayer(storage, changedConfig)).rejects.toThrow();
+    expect(await storage.blobs.listStores()).toEqual(before);
+    expect(
+      (await storage.audit.list({ action: "blob.stores_configured" })).data,
+    ).toHaveLength(1);
+    await raw.__sqliteRun("DROP TRIGGER refuse_store_configuration", []);
+    const changed = await createBlobLayer(storage, changedConfig);
+    const entries = (
+      await storage.audit.list({ action: "blob.stores_configured" })
+    ).data;
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      key_id: null,
+      details: {
+        attached: [changed.disk.id],
+        updated: [],
+        detached: [ctx.blobs.disk.id],
+      },
+    });
+    expect(
+      (await storage.blobs.listStores())
+        .filter((row) => row.detached_at === null)
+        .map((row) => row.id),
+    ).toEqual([changed.disk.id]);
+  });
+
+  it("leaves registry and audits unchanged if external attachment fails", async () => {
+    ctx = await createTestContext();
+    const before = await ctx.storage.blobs.listStores();
+    const audits = await ctx.storage.audit.list({
+      action: "blob.stores_configured",
+    });
+    vi.spyOn(S3BlobStore.prototype, "attach").mockRejectedValueOnce(
+      new Error("object store unavailable"),
+    );
+    await expect(
+      createBlobLayer(ctx.storage, {
+        ...(await diskAt()),
+        s3Bucket: "fixture-bucket",
+      }),
+    ).rejects.toThrow("object store unavailable");
+    expect(await ctx.storage.blobs.listStores()).toEqual(before);
+    expect(
+      await ctx.storage.audit.list({ action: "blob.stores_configured" }),
+    ).toEqual(audits);
   });
 
   it("marks a copy in a detached store as such in the location log", async () => {
