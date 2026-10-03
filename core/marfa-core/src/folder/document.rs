@@ -233,6 +233,7 @@ fn to_yaml(value: &Value) -> Yaml {
 
 /// An embed, `![[target]]`, is not a link.
 pub fn links(body: &str) -> Vec<String> {
+    let body = without_code(body);
     let mut found = Vec::new();
     let bytes = body.as_bytes();
     let mut at = 0usize;
@@ -243,9 +244,13 @@ pub fn links(body: &str) -> Vec<String> {
         };
         let embedded = at + start > 0 && bytes[at + start - 1] == b'!';
         let target = body[open..open + end].trim();
-        // An alias, `[[id|shown]]`, links to what is before the bar.
-        let target = target.split('|').next().unwrap_or(target).trim();
-        if !embedded && !target.is_empty() && !found.iter().any(|held| held == target) {
+        // A heading without a note stays within this document, so it is no edge.
+        if !embedded
+            && !target.is_empty()
+            && !target.starts_with('#')
+            && !target.contains('\n')
+            && !found.iter().any(|held| held == target)
+        {
             found.push(target.to_string());
         }
         at = open + end + 2;
@@ -677,8 +682,8 @@ mod tests {
     fn links_are_read_in_order_and_once_each() {
         assert_eq!(
             links("see [[one]] and [[two|as shown]] and [[one]] again"),
-            vec!["one", "two"],
-            "a link was missed, repeated or read past its alias, so the edges \
+            vec!["one", "two|as shown"],
+            "a link was missed, repeated or lost its alias, so the edges \
              this body becomes are not the links it carries"
         );
         assert!(links("a [[ ]] and an [[unclosed").is_empty());
@@ -688,6 +693,16 @@ mod tests {
             "an embed was read as a link, so a picture shown in a note became a reference"
         );
         assert_eq!(render_link("abc"), "[[abc]]");
+    }
+
+    #[test]
+    fn body_links_keep_names_and_ignore_code_comments_and_self_headings() {
+        assert_eq!(
+            links(
+                "[[Note#Heading|shown]] [[#local]] `[[inline]]` <!-- [[html]] --> %% [[comment]] %% ![[embed]]\n```md\n[[fenced]]\n```\n~~~\n[[tilde]]\n~~~\n[[real]]"
+            ),
+            ["Note#Heading|shown", "real"]
+        );
     }
 
     #[test]

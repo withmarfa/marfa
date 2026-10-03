@@ -2339,26 +2339,6 @@ impl Folder {
             },
         )
     }
-
-    /// An id the copy holds, or a file in this folder, its path compared as
-    /// names are.
-    fn resolve_link(&self, target: &str) -> Result<Option<String>> {
-        if self.core.get(target)?.is_some() {
-            return Ok(Some(target.to_string()));
-        }
-        let conn = self.core.conn()?;
-        let candidates = [target.to_string(), format!("{target}.md")];
-        for candidate in &candidates {
-            if let Some(bound) = state::bound_at(&conn, candidate)? {
-                return Ok(Some(bound.item_id));
-            }
-        }
-        let wanted: Vec<String> = candidates.iter().map(|name| names::folded(name)).collect();
-        Ok(state::bound_paths(&conn)?
-            .into_iter()
-            .find(|(path, _)| wanted.contains(&names::folded(path)))
-            .map(|(_, item_id)| item_id))
-    }
 }
 
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
@@ -3683,14 +3663,7 @@ impl Folder {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let mut links = Vec::new();
-        for text in document::links(&body) {
-            if let Some(id) = self.resolve_link(&text)?
-                && !links.contains(&id)
-            {
-                links.push(id);
-            }
-        }
+        let links = self.body_links(item, &body, catalog, lines.0)?;
         if !carries_frontmatter(Path::new(path)) {
             return Ok(Rendered {
                 text: body,
