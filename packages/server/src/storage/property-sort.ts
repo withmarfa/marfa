@@ -1,106 +1,54 @@
-/**
- * ORDER BY expression builder for `?sort=properties.<field>`.
- *
- * The item-list query can sort on an arbitrary property field by extracting the
- * value out of the `properties` JSON text column. Datetimes and strings order
- * lexically (ISO-8601 sorts correctly as text); numeric fields are cast so 2
- * sorts before 10. Enum-semantic ordering is out of scope — those fields carry
- * a meaning-bearing order that isn't lexical, so the client owns that sort.
- *
- * The JSON-extraction expressions mirror `filter-sql.ts`'s `propertyFieldSql`
- * exactly so a sort and a filter on the same field read the same value. The
- * field name is validated against `^[a-z0-9_]+$` upstream (`parseSortField` in
- * `interface.ts`) before it reaches here, and every value comparison is
- * parameterized, so the path is safe against injection.
- */
-
 import { sql, type SQL } from "drizzle-orm";
-import { getResolvedFields } from "@withmarfa/shared";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { parseSortField } from "./interface.js";
 
-/**
- * Extract the cursor sort value for a property sort from an already-parsed item.
- *
- * The value must match what the SQL `json_extract` / `->>` expression returned
- * for the same row, so the next page's keyset comparison lines up. JSON text
- * extraction yields scalars as their string form (a number becomes `"42"`), so
- * numbers and booleans are stringified to mirror that; an absent or null field
- * yields `null`, which the cursor encodes to mark the trailing NULLS-LAST
- * block. Non-scalar values (object / array) can't participate in a keyset
- * comparison — they sort as NULL, matching `->>` returning NULL for a non-text
- * JSON node.
- */
+/** JSON preserves scalar kinds inside the cursor's string payload. SQLite
+ * compares numbers before text, and maps false/true to 0/1; a text-bound
+ * number or a stringified boolean would not resume the same ordering. */
 export function propertySortValue(
   properties: Record<string, unknown>,
   sort: ReturnType<typeof parseSortField>,
 ): string | null {
   if (sort.kind !== "property") return null;
   const value = properties[sort.field];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
+  return isScalar(value) ? JSON.stringify(value) : null;
+}
+
+function isScalar(value: unknown): value is string | number | boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+export function propertySortBound(encoded: string): string | number {
+  let value: unknown;
+  try {
+    value = JSON.parse(encoded);
+  } catch {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
   }
-  // null / undefined / object / array — no scalar to compare; sorts as the
-  // NULLS-LAST tail, mirroring `->>` returning NULL for a non-text JSON node.
-  return null;
+  if (!isScalar(value)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
+  }
+  return typeof value === "boolean" ? Number(value) : value;
 }
 
-/**
- * Decide whether a property field should order numerically. Numeric ordering
- * applies only when a single `type` filter narrows the list AND that type
- * declares the field as `integer` / `number`. Without a confident numeric
- * signal — no type filter, a multi-type list, or an ambiguous field — the sort
- * falls back to text ordering, which is correct for datetimes and strings and
- * safe (never throws) for everything else.
- */
-function isNumericSortField(
-  field: string,
-  typeFilter: string | undefined,
-): boolean {
-  if (!typeFilter) return false;
-  // A `core.entity.*` style subtree filter doesn't resolve to one concrete
-  // type, so we can't trust a single field-type reading. Text-order it.
-  const concreteType = typeFilter.endsWith(".*")
-    ? undefined
-    : typeFilter.replace(/\.\*$/, "");
-  if (!concreteType) return false;
-  const fields = getResolvedFields(concreteType);
-  const def = fields?.[field];
-  return def?.type === "integer" || def?.type === "number";
-}
-
-/** The SQL expression that extracts a property value as text. */
-function textExtract(propertiesCol: unknown, field: string): SQL {
-  return sql`json_extract(${propertiesCol}, ${"$." + field})`;
-}
-
-/** The SQL expression that extracts a property value as a number.
- *  `CAST(... AS REAL)` yields 0 for non-numeric text, so callers must only
- *  reach this when the field is known numeric. */
-function numericExtract(propertiesCol: unknown, field: string): SQL {
-  return sql`CAST(json_extract(${propertiesCol}, ${"$." + field}) AS REAL)`;
-}
-
-export interface PropertySortExpr {
-  /** The expression to ORDER BY / compare in the keyset cursor clause. */
-  expr: SQL;
-  /** True when ordering numerically (drives cursor value coercion). */
-  numeric: boolean;
-}
-
-/**
- * Build the ORDER BY expression for a property-field sort. `numeric` reports
- * whether the expression casts to a number, so the cursor keyset comparison can
- * coerce its bound value to match.
- */
+/** SQLite preserves exact int64 JSON integers, while the API and cursor read
+ * JavaScript doubles. Normalize numbers to REAL so ordering and cursor bounds
+ * agree even outside the safe integer range. Objects and arrays share the
+ * null tail with missing and null fields, matching propertySortValue. */
 export function buildPropertySortExpr(
   propertiesCol: unknown,
   field: string,
-  typeFilter: string | undefined,
-): PropertySortExpr {
-  const numeric = isNumericSortField(field, typeFilter);
-  const expr = numeric
-    ? numericExtract(propertiesCol, field)
-    : textExtract(propertiesCol, field);
-  return { expr, numeric };
+): SQL {
+  const path = "$." + field;
+  return sql`CASE WHEN json_type(${propertiesCol}, ${path}) IN ('integer', 'real') THEN CAST(json_extract(${propertiesCol}, ${path}) AS REAL) WHEN json_type(${propertiesCol}, ${path}) IN ('text', 'true', 'false') THEN json_extract(${propertiesCol}, ${path}) ELSE NULL END`;
 }

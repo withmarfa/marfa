@@ -76,7 +76,11 @@ import {
   normalizeTimeBound,
   parseSortField,
 } from "../interface.js";
-import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
+import {
+  buildPropertySortExpr,
+  propertySortBound,
+  propertySortValue,
+} from "../property-sort.js";
 import { closedToNewEdge } from "../edge-constraints.js";
 import {
   ancestorUnavailable,
@@ -968,7 +972,7 @@ export class SqliteItemStore implements ItemStore {
     // both directions, with `id` as a stable ascending tiebreak.
     const propertySort =
       sort.kind === "property"
-        ? buildPropertySortExpr(items.properties, sort.field, filters.type)
+        ? buildPropertySortExpr(items.properties, sort.field)
         : null;
 
     const conditions: (SQL | undefined)[] = itemFilterConditions(filters);
@@ -987,14 +991,12 @@ export class SqliteItemStore implements ItemStore {
       if (propertySort) {
         // Keyset over a nullable, NULLS-LAST expression. `id` is an ascending
         // tiebreak in both directions, so the page boundary is a total order.
-        const e = propertySort.expr;
+        const e = propertySort;
         if (v === null) {
           // Already in the trailing NULL block — only later NULL rows remain.
           conditions.push(and(sql`${e} IS NULL`, gt(items.id, id)));
         } else {
-          // Coerce the bound for the numeric path so the value comparison stays
-          // numeric; the equality + id tiebreak advances past the boundary row.
-          const bound = propertySort.numeric ? Number(v) : v;
+          const bound = propertySortBound(v);
           const valueCmp =
             dir === "desc" ? sql`${e} < ${bound}` : sql`${e} > ${bound}`;
           const clause = or(
@@ -1024,7 +1026,7 @@ export class SqliteItemStore implements ItemStore {
 
     let orderBy;
     if (propertySort) {
-      const e = propertySort.expr;
+      const e = propertySort;
       // `(e IS NULL)` is 0 for present values, 1 for NULL — ordering it ascending
       // first pushes NULLs to the end regardless of the value direction.
       const valueOrder = dir === "desc" ? desc(e) : asc(e);

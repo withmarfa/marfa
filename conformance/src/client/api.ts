@@ -186,7 +186,8 @@ export class MarfaClient {
       occurred_before?: string;
       updated_after?: string;
       updated_before?: string;
-      sort?: "created_at" | "updated_at" | "occurred_at";
+      sort?:
+        "created_at" | "updated_at" | "occurred_at" | `properties.${string}`;
       direction?: "asc" | "desc";
       limit?: number;
       cursor?: string;
