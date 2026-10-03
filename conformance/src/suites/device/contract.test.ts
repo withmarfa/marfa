@@ -60,7 +60,7 @@ afterEach(async () => {
 const builtFor = Number(BUILT_FOR);
 
 /** The binary against the scripted server, with nothing inherited. */
-async function marfa(args: string[], stdin = "") {
+async function marfa(args: string[], stdin?: string) {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !name.startsWith("MARFA_")) env[name] = value;
@@ -71,7 +71,8 @@ async function marfa(args: string[], stdin = "") {
       env,
       timeout: 30_000,
     });
-    pending.child.stdin?.end(stdin);
+    // An empty write can outlive a short-lived --help process and raise EPIPE.
+    pending.child.stdin?.end(stdin || undefined);
     const { stdout, stderr } = await pending;
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -409,6 +410,10 @@ describe("the contract the binary was built for", () => {
     const empty = await bootstrap("");
     expect(empty.outcome.code).not.toBe(0);
     expect(empty.mints).toEqual([]);
+    const invalid = await bootstrap("  \n");
+    expect(invalid.outcome.code).toBe(1);
+    expect(refusal(invalid.outcome.stderr).error.code).toBe("invalid");
+    expect(invalid.mints).toEqual([]);
   });
 });
 
@@ -560,6 +565,10 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {
   "keys bootstrap": () => ["--secret", "s"],
+};
+
+const stdinFor: Record<string, string> = {
+  "owner create": "a password\n",
 };
 
 /**
@@ -783,7 +792,7 @@ describe("every command holds the server to the contract", () => {
           ...row.command.split(" "),
           ...argv,
         ],
-        "a password\n",
+        stdinFor[row.command],
       );
       const label = `marfa ${row.command} ${argv.join(" ")}: ${outcome.stderr.slice(0, 300)}`;
       expect.soft(outcome.code, label).toBe(1);
@@ -822,7 +831,7 @@ describe("every command holds the server to the contract", () => {
           ...row.command.split(" "),
           ...argv,
         ],
-        "a password\n",
+        stdinFor[row.command],
       );
       const label = `marfa ${row.command} ${argv.join(" ")}: ${outcome.stderr.slice(0, 300)}`;
       if (outcome.code !== 0) {
