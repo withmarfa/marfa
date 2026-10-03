@@ -18,8 +18,7 @@ import type { Connector } from "../storage/interface.js";
 let ctx: TestContext;
 
 beforeAll(async () => {
-  // Short enough that a test can wait out a hold.
-  ctx = await createTestContext({ connectorHoldMs: 300 });
+  ctx = await createTestContext();
   // The test context installs no event log, and a replay reads one.
   initEventLog(ctx.storage.eventLog);
 });
@@ -38,16 +37,17 @@ let minted = 0;
 /** A key of its own source, registered: one registration per key. */
 async function connector(
   body: Record<string, unknown> = {},
+  context: TestContext = ctx,
 ): Promise<{ key: string; keyId: string; connector: Connector }> {
   minted += 1;
   const source = `state-process-${String(minted)}`;
-  const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.workingKey,
+  const res = await request(context.app, "POST", "/keys", {
+    key: context.workingKey,
     body: { label: `${source} key`, source, ...body },
   });
   expect(res.status).toBe(201);
   const { key, id: keyId } = await json<{ key: string; id: string }>(res);
-  const registered = await request(ctx.app, "POST", "/connectors", {
+  const registered = await request(context.app, "POST", "/connectors", {
     key,
     body: { name: source },
   });
@@ -109,25 +109,32 @@ describe("the hold", () => {
   });
 
   it("lapses at the end of the window, after which another process takes it", async () => {
-    const { key, connector: mine } = await connector();
-    const hold = (process: string) =>
-      request(ctx.app, "POST", `/connectors/${mine.id}/hold`, {
-        key,
-        body: { process },
+    const expiry = await createTestContext({ connectorHoldMs: 300 });
+    try {
+      const { key, connector: mine } = await connector({}, expiry);
+      const hold = (process: string) =>
+        request(expiry.app, "POST", `/connectors/${mine.id}/hold`, {
+          key,
+          body: { process },
+        });
+      const taken = await hold("first");
+      expect(taken.status).toBe(200);
+      const { expires_at } = await json<{ expires_at: string }>(taken);
+      const refused = await hold("second");
+      expect(refused.status).toBe(409);
+      expect(
+        await json<{ error: { details: unknown } }>(refused),
+      ).toMatchObject({
+        error: { code: "connector_held", details: { expires_at } },
       });
-    const taken = await hold("first");
-    expect(taken.status).toBe(200);
-    const { expires_at } = await json<{ expires_at: string }>(taken);
-    const refused = await hold("second");
-    expect(refused.status).toBe(409);
-    expect(await json<{ error: { details: unknown } }>(refused)).toMatchObject({
-      error: { code: "connector_held", details: { expires_at } },
-    });
-    await sleep(Date.parse(expires_at) - Date.now() + 50);
-    expect(
-      (await ctx.storage.connectors.get(mine.id))?.hold_expires_at,
-    ).toBeNull();
-    expect((await hold("second")).status).toBe(200);
+      await sleep(Date.parse(expires_at) - Date.now() + 50);
+      expect(
+        (await expiry.storage.connectors.get(mine.id))?.hold_expires_at,
+      ).toBeNull();
+      expect((await hold("second")).status).toBe(200);
+    } finally {
+      await expiry.cleanup();
+    }
   });
 
   it("goes with its registration", async () => {
