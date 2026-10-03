@@ -50,8 +50,9 @@ pub(crate) fn write(
 ///
 /// `still` is asked, just before the rename, whether the target's bytes, or
 /// `None` where there is none, are still what the caller decided to write
-/// over; where they are not, nothing lands. A save made after that question
-/// is still lost: no filesystem renames on a condition.
+/// over; where they are not, nothing lands. An absent target must stay absent
+/// through the atomic rename. Replacing an existing file still cannot be
+/// conditional on its bytes after that last check.
 pub(crate) fn land(
     target: &Path,
     fill: impl FnOnce(&mut File, &Path) -> io::Result<()>,
@@ -90,7 +91,18 @@ pub(crate) fn land(
             return Err(Unlanded::Changed);
         }
         crash_if_asked(target);
-        std::fs::rename(&beside, target)?;
+        appear_if_asked(target, "create-before-rename")?;
+        if found.is_none() {
+            rename_new(&beside, target).map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    Unlanded::Changed
+                } else {
+                    Unlanded::Failed(error)
+                }
+            })?;
+        } else {
+            std::fs::rename(&beside, target)?;
+        }
         Ok(())
     })();
     if landed.is_err() {
@@ -101,6 +113,39 @@ pub(crate) fn land(
     // leaves the new file in place all the same.
     let _ = File::open(dir).and_then(|dir| dir.sync_all());
     Ok(())
+}
+
+/// Move only into an absent directory entry, including refusing a dangling
+/// symlink. Unsupported kernels or filesystems must not fall back to replacing
+/// a destination after a separate existence check.
+#[cfg(any(
+    target_vendor = "apple",
+    target_os = "linux",
+    target_os = "android",
+    target_os = "redox"
+))]
+pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(Into::into)
+}
+
+#[cfg(not(any(
+    target_vendor = "apple",
+    target_os = "linux",
+    target_os = "android",
+    target_os = "redox"
+)))]
+pub(crate) fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
+    ))
 }
 
 /// Removes `target` where `still` says its bytes are what the caller decided
@@ -135,6 +180,22 @@ pub(crate) fn crash_if_asked(target: &Path) {
         );
         std::process::abort();
     }
+}
+
+/// A competing file arriving after the last check, where a debug fixture asks.
+pub(crate) fn appear_if_asked(target: &Path, fault: &str) -> io::Result<()> {
+    if super::fault::named(fault).is_some_and(|name| {
+        target
+            .file_name()
+            .is_some_and(|file| file.to_string_lossy() == name)
+    }) {
+        File::options()
+            .write(true)
+            .create_new(true)
+            .open(target)?
+            .write_all(b"appeared meanwhile\n")?;
+    }
+    Ok(())
 }
 
 /// A Finder tag, say, which a file written anew would otherwise lose.
@@ -230,6 +291,51 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|name| name.ends_with(".tmp"))
             .collect()
+    }
+
+    #[test]
+    fn an_absent_target_cannot_be_replaced_after_its_last_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("note.md");
+        let failed = write(&target, b"from the server", |found| {
+            assert!(found.is_none());
+            std::fs::write(&target, b"appeared meanwhile").unwrap();
+            true
+        });
+        assert!(matches!(failed, Err(Unlanded::Changed)));
+        assert_eq!(std::fs::read(&target).unwrap(), b"appeared meanwhile");
+        assert!(leftovers(dir.path()).is_empty());
+        std::fs::remove_file(&target).unwrap();
+        write(&target, b"from the server", |found| found.is_none()).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"from the server");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_move_refuses_existing_files_and_dangling_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("source");
+        let to = dir.path().join("destination");
+        std::fs::write(&from, b"source").unwrap();
+        std::fs::write(&to, b"destination").unwrap();
+        assert_eq!(
+            rename_new(&from, &to).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&from).unwrap(), b"source");
+        assert_eq!(std::fs::read(&to).unwrap(), b"destination");
+        std::fs::remove_file(&to).unwrap();
+        std::os::unix::fs::symlink("missing", &to).unwrap();
+        assert_eq!(
+            rename_new(&from, &to).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read_link(&to).unwrap(), Path::new("missing"));
+        assert_eq!(std::fs::read(&from).unwrap(), b"source");
+        std::fs::remove_file(&to).unwrap();
+        rename_new(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"source");
+        assert!(!from.exists());
     }
 
     #[test]

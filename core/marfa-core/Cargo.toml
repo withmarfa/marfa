@@ -34,4 +34,4 @@ core-foundation = "0.10"
 xattr = "1"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "fs"] }
