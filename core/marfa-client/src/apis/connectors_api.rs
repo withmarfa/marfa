@@ -811,6 +811,7 @@ pub fn find_connector_agreements(
     }
 }
 
+/// The connector's own key or the operator key. Another credential is answered as if the connector did not exist.
 pub fn get_connector(
     configuration: &configuration::Configuration,
     params: GetConnectorParams,
@@ -1077,7 +1078,7 @@ pub fn list_connector_agreements(
     }
 }
 
-/// Newest first. Any key.
+/// Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.
 pub fn list_connector_runs(
     configuration: &configuration::Configuration,
     params: ListConnectorRunsParams,
@@ -1126,7 +1127,7 @@ pub fn list_connector_runs(
     }
 }
 
-/// Every registration, newest first, each with when it last heartbeated, its last run, and until when a process holds it. Any key.
+/// The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.
 pub fn list_connectors(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListConnectorsSuccess>, Error<ListConnectorsError>> {

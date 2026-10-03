@@ -40,6 +40,62 @@ async function register(c: MarfaClient, name: string, description?: string) {
 }
 
 describe("registration", () => {
+  it("keeps registrations and runs to the own key or operator", async () => {
+    const mine = await register(client, `${ctx.runId} private reader`);
+    const theirs = await register(other, `${ctx.runId} another reader`);
+    const unrelated = await createSecondClient(ctx, "unregistered-reader");
+    const at = new Date().toISOString();
+    const run = await client.reportConnectorRun(mine.data.id, {
+      outcome: "failed",
+      started_at: at,
+      finished_at: at,
+      summary: "vendor details",
+      error: "vendor failure",
+    });
+    expect(run.status).toBe(201);
+
+    for (const allowed of [client, getOperatorClient()]) {
+      const one = await allowed.getConnector(mine.data.id);
+      expect(one.status).toBe(200);
+      expect(one.data.last_run?.summary).toBe("vendor details");
+      const runs = await allowed.listConnectorRuns(mine.data.id);
+      expect(runs.status).toBe(200);
+      expect(runs.data.data.map((row) => row.summary)).toEqual([
+        "vendor details",
+      ]);
+      expect(
+        (await allowed.listConnectors()).data.data.map((row) => row.id),
+      ).toContain(mine.data.id);
+    }
+    expect(
+      (await client.listConnectors()).data.data.map((row) => row.id),
+    ).toEqual([mine.data.id]);
+    expect(
+      (await other.listConnectors()).data.data.map((row) => row.id),
+    ).toEqual([theirs.data.id]);
+    expect((await unrelated.listConnectors()).data.data).toEqual([]);
+
+    for (const denied of [other, unrelated]) {
+      for (const suffix of ["", "/runs"]) {
+        const hidden = await denied.rawRequest<unknown>(
+          `/connectors/${mine.data.id}${suffix}`,
+        );
+        const absent = await denied.rawRequest<unknown>(
+          `/connectors/01a0c000-0000-7000-8000-000000000000${suffix}`,
+        );
+        expect(hidden.status).toBe(404);
+        expect(absent.status).toBe(404);
+        expect(hidden.error?.error).toEqual(absent.error?.error);
+        await expectMatchesSchema(
+          "GET",
+          `/connectors/{id}${suffix}`,
+          404,
+          hidden.error,
+        );
+      }
+    }
+  });
+
   it("registers the key as a connector and lists it", async () => {
     const created = await client.registerConnector({
       name: `${ctx.runId} mail reader`,
@@ -61,7 +117,7 @@ describe("registration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const theirs = await register(other, `${ctx.runId} calendar reader`);
-    const listed = await other.listConnectors();
+    const listed = await getOperatorClient().listConnectors();
     expect(listed.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
     const ids = listed.data.data.map((row) => row.id);
@@ -70,7 +126,7 @@ describe("registration", () => {
     expect(ids.indexOf(theirs.data.id)).toBeLessThan(
       ids.indexOf(created.data.id),
     );
-    const one = await other.getConnector(created.data.id);
+    const one = await getOperatorClient().getConnector(created.data.id);
     expect(one.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, one.data);
     expect(one.data).toEqual(created.data);
@@ -260,17 +316,17 @@ describe("registration", () => {
     expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
     const refused = await shortLived.heartbeatConnector(mine.data.id);
     expect(refused.status).toBe(401);
-    const standing = await client.getConnector(mine.data.id);
+    const standing = await operator.getConnector(mine.data.id);
     expect(standing.status).toBe(200);
     expect(standing.data.key_id).toBe(mine.data.key_id);
     expect(standing.data.source).toBe(mine.data.source);
     expect(standing.data.last_heartbeat_at).toMatch(ISO);
     expect(
-      (await client.listConnectors()).data.data.map((row) => row.id),
+      (await operator.listConnectors()).data.data.map((row) => row.id),
     ).toContain(mine.data.id);
 
     expect((await operator.deleteConnector(mine.data.id)).status).toBe(200);
-    expect((await client.getConnector(mine.data.id)).status).toBe(404);
+    expect((await operator.getConnector(mine.data.id)).status).toBe(404);
   });
 });
 
@@ -303,7 +359,8 @@ describe("heartbeats and runs", () => {
       Date.now() + 1_000,
     );
     expect(
-      (await other.getConnector(mine.data.id)).data.last_heartbeat_at,
+      (await getOperatorClient().getConnector(mine.data.id)).data
+        .last_heartbeat_at,
     ).toBe(beat.data.last_heartbeat_at);
     await new Promise((resolve) => setTimeout(resolve, 5));
     const again = await client.heartbeatConnector(mine.data.id);
@@ -422,7 +479,7 @@ describe("heartbeats and runs", () => {
     });
     expect(late.status).toBe(201);
     expect(late.data.reported_at).not.toBe(late.data.started_at);
-    const runs = await other.listConnectorRuns(mine.data.id);
+    const runs = await getOperatorClient().listConnectorRuns(mine.data.id);
     expect(runs.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}/runs", 200, runs.data);
     expect(runs.data.data.map((run) => run.summary)).toEqual([
@@ -434,14 +491,16 @@ describe("heartbeats and runs", () => {
     expect(Date.parse(runs.data.data[0]?.reported_at ?? "")).toBeGreaterThan(
       Date.parse(runs.data.data[1]?.reported_at ?? ""),
     );
-    const two = await other.listConnectorRuns(mine.data.id, { limit: 2 });
+    const two = await getOperatorClient().listConnectorRuns(mine.data.id, {
+      limit: 2,
+    });
     expect(two.data.data.map((run) => run.summary)).toEqual([
       "reported late",
       "run 1",
     ]);
     // A page the limit cut says so, and its cursor reaches the rest.
     expect(two.data.next_cursor).not.toBeNull();
-    const rest = await other.listConnectorRuns(mine.data.id, {
+    const rest = await getOperatorClient().listConnectorRuns(mine.data.id, {
       limit: 2,
       cursor: two.data.next_cursor!,
     });
@@ -450,10 +509,10 @@ describe("heartbeats and runs", () => {
       "run 3",
     ]);
     expect(rest.data.next_cursor).toBeNull();
-    const listed = await other.getConnector(mine.data.id);
+    const listed = await getOperatorClient().getConnector(mine.data.id);
     expect(listed.data.last_run?.summary).toBe("reported late");
     expect(
-      (await other.listConnectors()).data.data.find(
+      (await getOperatorClient().listConnectors()).data.data.find(
         (row) => row.id === mine.data.id,
       )?.last_run?.summary,
     ).toBe("reported late");
@@ -469,16 +528,16 @@ describe("heartbeats and runs", () => {
     });
     expect(theirRun.status).toBe(201);
     expect(
-      (await client.listConnectorRuns(theirs.data.id)).data.data.map(
-        (run) => run.summary,
-      ),
+      (
+        await getOperatorClient().listConnectorRuns(theirs.data.id)
+      ).data.data.map((run) => run.summary),
     ).toEqual(["their run"]);
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data.map(
         (run) => run.summary,
       ),
     ).toEqual(["reported late", "run 1", "run 2", "run 3"]);
-    const rows = (await client.listConnectors()).data.data;
+    const rows = (await getOperatorClient().listConnectors()).data.data;
     expect(
       rows.find((row) => row.id === theirs.data.id)?.last_run?.summary,
     ).toBe("their run");
@@ -491,7 +550,7 @@ describe("heartbeats and runs", () => {
 
   it("refuses a query key the runs listing does not declare", async () => {
     const mine = await register(client, `${ctx.runId} unknown key`);
-    const refused = await other.rawRequest<unknown>(
+    const refused = await client.rawRequest<unknown>(
       `/connectors/${mine.data.id}/runs?outcome=failed`,
     );
     expect(refused.status).toBe(400);
@@ -501,7 +560,8 @@ describe("heartbeats and runs", () => {
     ]);
     // Witness: the declared key is answered.
     expect(
-      (await other.listConnectorRuns(mine.data.id, { limit: 1 })).status,
+      (await getOperatorClient().listConnectorRuns(mine.data.id, { limit: 1 }))
+        .status,
     ).toBe(200);
   });
 

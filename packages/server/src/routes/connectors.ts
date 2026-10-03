@@ -23,6 +23,7 @@ import {
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { nullableRef, pageOf } from "./_schemas.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
+import { connectorsForReader } from "./_connector-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -259,7 +260,7 @@ const listConnectorsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List the registered connectors",
   description:
-    "Every registration, newest first, each with when it last heartbeated, its last run, and until when a process holds it. Any key.",
+    "The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -280,6 +281,8 @@ const getConnectorRoute = createRoute({
   path: "/{id}",
   tags: ["Connectors"],
   summary: "Get one registered connector",
+  description:
+    "The connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -376,7 +379,8 @@ const listRunsRoute = createRoute({
   path: "/{id}/runs",
   tags: ["Connectors"],
   summary: "List a connector's runs",
-  description: "Newest first. Any key.",
+  description:
+    "Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -682,19 +686,13 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listConnectorsRoute, async (c) => {
-    requireAuth(c);
-    return c.json(
-      { data: await storage.connectors.list(), next_cursor: null },
-      200,
-    );
+    const reader = connectorsForReader(requireAuth(c), storage);
+    return c.json({ data: await reader.list(), next_cursor: null }, 200);
   });
 
   router.openapi(getConnectorRoute, async (c) => {
-    requireAuth(c);
-    return c.json(
-      await connectorOrRefuse(storage, c.req.valid("param").id),
-      200,
-    );
+    const reader = connectorsForReader(requireAuth(c), storage);
+    return c.json(await reader.get(c.req.valid("param").id), 200);
   });
 
   router.openapi(deleteConnectorRoute, async (c) => {
@@ -755,8 +753,8 @@ export function connectorRoutes(storage: Storage) {
   });
 
   router.openapi(listRunsRoute, async (c) => {
-    requireAuth(c);
-    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
+    const reader = connectorsForReader(requireAuth(c), storage);
+    const connector = await reader.get(c.req.valid("param").id);
     refuseUnknownQueryParams(c.req.raw.url, listRunsRoute.request.query);
     const { limit, cursor } = c.req.valid("query");
     return c.json(

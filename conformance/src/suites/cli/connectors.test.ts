@@ -75,12 +75,26 @@ describe("connectors from the terminal", () => {
       "list",
     ]);
     expect(listed.data.map((row) => row.id)).toContain(registered.id);
-    const read = await c.cli.json<Connector>([
+    const read = await connector.json<Connector>([
       "connectors",
       "get",
       registered.id,
     ]);
     expect(read.name).toBe(`${name}-renamed`);
+
+    const unrelatedList = await c.cli.json<{ data: Connector[] }>([
+      "connectors",
+      "list",
+    ]);
+    expect(unrelatedList.data.map((row) => row.id)).not.toContain(
+      registered.id,
+    );
+    for (const door of ["get", "runs"]) {
+      const hidden = await c.cli.refused(["connectors", door, registered.id]);
+      expect(hidden.envelope.error.code).toBe("not_found");
+      expect(hidden.envelope.error.server?.status).toBe(404);
+      expect(hidden.envelope.error.server?.code).toBe("connector_not_found");
+    }
 
     const beat = await connector.json<{ last_heartbeat_at: string }>([
       "connectors",
@@ -123,12 +137,12 @@ describe("connectors from the terminal", () => {
       "--summary",
       "read the mailbox",
     ]);
-    const runs = await c.cli.json<{
+    const runs = await c.operator.json<{
       data: Array<{ id: string; outcome: string; error: string | null }>;
     }>(["connectors", "runs", registered.id, "--limit", "5"]);
     expect(runs.data.map((row) => row.id)).toEqual([second.id, run.id]);
     expect(runs.data[1]?.error).toBe("the mailbox refused");
-    const one = await c.cli.json<{ data: Array<{ id: string }> }>([
+    const one = await connector.json<{ data: Array<{ id: string }> }>([
       "connectors",
       "runs",
       registered.id,
@@ -136,7 +150,7 @@ describe("connectors from the terminal", () => {
       "1",
     ]);
     expect(one.data.map((row) => row.id)).toEqual([second.id]);
-    const after = await c.cli.json<Connector>([
+    const after = await c.operator.json<Connector>([
       "connectors",
       "get",
       registered.id,

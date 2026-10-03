@@ -145,13 +145,13 @@ describe("the hold", () => {
     expect(window).toBeGreaterThanOrEqual(179_000);
     expect(window).toBeLessThanOrEqual(185_000);
 
-    const read = await other.getConnector(mine.id);
+    const read = await getOperatorClient().getConnector(mine.id);
     expect(read.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, read.data);
     expect(read.data.hold_expires_at).toBe(taken.data.expires_at);
     // A hold stamps no heartbeat.
     expect(read.data.last_heartbeat_at).toBe(beat.data.last_heartbeat_at);
-    const listed = await other.listConnectors();
+    const listed = await getOperatorClient().listConnectors();
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
     expect(
       listed.data.data.find((row) => row.id === mine.id)?.hold_expires_at,
@@ -165,9 +165,9 @@ describe("the hold", () => {
     expect(Date.parse(renewed.data.expires_at)).toBeGreaterThan(
       Date.parse(taken.data.expires_at),
     );
-    expect((await other.getConnector(mine.id)).data.hold_expires_at).toBe(
-      renewed.data.expires_at,
-    );
+    expect(
+      (await getOperatorClient().getConnector(mine.id)).data.hold_expires_at,
+    ).toBe(renewed.data.expires_at);
   });
 
   it("refuses a process outside its bounds", async () => {
