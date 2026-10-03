@@ -15,12 +15,17 @@
 import { createGzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
-import { describe, expect, it, afterAll } from "vitest";
+import { describe, expect, it, afterAll, afterEach } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 const contexts: TestContext[] = [];
+
+afterEach(() => {
+  __resetEventLogForTests();
+});
 
 afterAll(async () => {
   await Promise.all(contexts.map((c) => c.cleanup()));
@@ -255,7 +260,7 @@ describe("restore validates the edges it writes", () => {
   });
 });
 
-describe("a refused restore leaves no blobs behind", () => {
+describe("archive preparation and restored rows commit separately", () => {
   it("still restores blobs when the archive is accepted", async () => {
     const ctx = await newContext();
     const blob = blobOf(`accepted blob`);
@@ -273,7 +278,7 @@ describe("a refused restore leaves no blobs behind", () => {
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
   });
 
-  it("keeps nothing of an archive it refuses, the blobs included", async () => {
+  it("keeps no blobs when validation refuses the archive before preparation", async () => {
     const ctx = await newContext();
     const blob = blobOf(`refused blob`);
     // A state the row's lifecycle cannot produce refuses the whole archive
@@ -302,19 +307,16 @@ describe("a refused restore leaves no blobs behind", () => {
     expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
   });
 
-  it("takes back the blobs it placed when the transaction rolls back", async () => {
-    // The blobs are placed before the rows are written, so a failure the
-    // door cannot classify, after they are placed, rolls the rows back and
-    // has to undo the bytes by hand: nothing sweeps a blob whose restore
-    // was refused. A blob the instance held before the restore stays.
+  it("keeps audited blob preparation when the restored rows roll back", async () => {
     const ctx = await newContext();
+    initEventLog(ctx.storage.eventLog);
     const kept = blobOf(`kept blob`);
     await ctx.blobs.disk.put(kept.hash, {
       stream: Readable.from([kept.data]),
       size_bytes: kept.data.length,
     });
     await ctx.storage.blobs.register(kept.hash, "text/plain", kept.data.length);
-    const placed = blobOf(`placed then taken back`);
+    const placed = blobOf(`prepared and retained`);
     const archive = await buildArchive({
       itemLines: [noteLine(A, "a"), noteLine(B, "b")],
       edgeLines: [
@@ -343,11 +345,39 @@ describe("a refused restore leaves no blobs behind", () => {
     expect(creates).toBe(2);
     expect(res.status).toBe(500);
     expect(await ctx.storage.items.getIncludingTrashed(A)).toBeNull();
-    expect(await ctx.storage.blobs.get(placed.hash)).toBeNull();
-    expect(await ctx.blobs.disk.has(placed.hash)).toBeNull();
+    expect(await ctx.storage.items.getIncludingTrashed(B)).toBeNull();
+    expect((await ctx.storage.edges.list()).data).toEqual([]);
+    expect(await ctx.storage.eventLog.getAfter(0n, 100)).toEqual([]);
+    expect(
+      (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
+    ).toEqual([]);
+    const preparation = (
+      await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" })
+    ).data;
+    expect(preparation).toHaveLength(1);
+    expect(preparation[0]?.details).toEqual({ hashes: [placed.hash] });
+    expect(await ctx.storage.blobs.get(placed.hash)).toEqual({
+      mime_type: "text/plain",
+      size_bytes: placed.data.length,
+    });
+    expect(await ctx.blobs.disk.has(placed.hash)).toEqual({
+      size_bytes: placed.data.length,
+    });
     expect(await ctx.storage.blobs.get(kept.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
       size_bytes: kept.data.length,
     });
+
+    // The accepted retry witnesses the rows, events and final audit whose
+    // absence above proves rollback rather than an unwired event log.
+    const accepted = await restoreInto(ctx, archive);
+    expect(accepted.status).toBe(200);
+    expect(await ctx.storage.items.getIncludingTrashed(A)).not.toBeNull();
+    expect(await ctx.storage.items.getIncludingTrashed(B)).not.toBeNull();
+    expect((await ctx.storage.edges.list()).data).toHaveLength(2);
+    expect(await ctx.storage.eventLog.getAfter(0n, 100)).toHaveLength(4);
+    expect(
+      (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
+    ).toHaveLength(1);
   });
 });
