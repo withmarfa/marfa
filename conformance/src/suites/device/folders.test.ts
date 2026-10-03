@@ -4238,6 +4238,38 @@ describe("edges in frontmatter", () => {
     expect(frontOf(harness, "Source.md")).not.toContain("references:");
   });
 
+  it.each([
+    ["inline triple backticks", "```literal```\n[[Alpha]] `[[Beta]]`\n"],
+    ["multiline code spans", "`first\n[[Beta]]\nlast`\n[[Alpha]]\n"],
+    ["quoted fences", "> ```\n> [[Beta]]\n> ```\n\n[[Alpha]]\n"],
+  ])(
+    "keeps visible references and removes code-only references with %s",
+    async (_name, body) => {
+      const made = await edgeHarness(
+        "folder-body-code-boundary",
+        [titled(alpha, "Alpha"), titled(beta, "Beta")],
+        [],
+      );
+      harness = made.harness;
+      put(
+        harness,
+        "Source.md",
+        "---\ntitle: Source\n---\n[[Alpha]] [[Beta]]\n",
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(heldEdges(made.door)).toHaveLength(2);
+      edit(harness, "Source.md", "[[Alpha]] [[Beta]]\n", body);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.scan.flagged).toEqual([]);
+      expect(heldEdges(made.door)).toEqual([
+        `${String(sentCreates(harness)[0]?.id)} references ${alpha}`,
+      ]);
+      expect(bodyOf(harness, "Source.md")).toBe(body);
+    },
+  );
+
   it("reports ambiguous body links including whole names with heading or alias marks", async () => {
     const made = await edgeHarness(
       "folder-body-ambiguous",
