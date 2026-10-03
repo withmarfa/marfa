@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureTitles } from "./fixture-titles.js";
 
 /**
  * Every citation in `spec/` must name a fixture that exists: a file under
@@ -122,11 +123,7 @@ function citations(): Citation[] {
 
 function titlesIn(file: string): string[] {
   const text = readFileSync(resolve(suitesDir, file), "utf8");
-  return [
-    ...text.matchAll(
-      /(?:^|\s)(?:it|describe|it\.each\([^)]*\))\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g,
-    ),
-  ].map((m) => (m[1] ?? m[2]).replace(/\\`/g, "`"));
+  return fixtureTitles(text, true);
 }
 
 describe("specification citations", () => {

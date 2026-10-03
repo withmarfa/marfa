@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureTitles } from "../../utils/fixture-titles.js";
 
 /**
  * The corpus against the chapters, with no server and no device.
@@ -22,7 +23,6 @@ const CHAPTERS = ["device.md", "queue-and-verdicts.md", "folders.md"];
 const SPAN = /`([^`]+)`/g;
 const CITED = /^(device\/[a-z0-9.-]+\.test\.ts)(?: › (.+))?$/;
 const CONTINUED = /^› (.+)$/;
-const TITLE = /(?:^|\s)it\(\s*"((?:[^"\\]|\\.)*)"/g;
 
 interface Statement {
   chapter: string;
@@ -116,9 +116,7 @@ function titlesIn(file: string): string[] {
   const path = resolve(here, file.replace(/^device\//, ""));
   if (!existsSync(path)) return [];
   const text = readFileSync(path, "utf8");
-  return [...text.matchAll(TITLE)].map((match) =>
-    match[1].replace(/\\`/g, "`"),
-  );
+  return fixtureTitles(text);
 }
 
 const allStatements = CHAPTERS.flatMap(statements);
