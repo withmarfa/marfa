@@ -34,6 +34,7 @@ import {
   setBulkJobEnqueueListener,
 } from "./bulk-actions/index.js";
 import { shutdownInOrder } from "./shutdown.js";
+import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
 
 async function main() {
@@ -157,6 +158,7 @@ async function main() {
     void shutdownInOrder({
       bulkActionWorker,
       housekeeping,
+      streams: { endAll: endOpenStreams },
       server,
       storage,
       // No-op when OTel is disabled. Accessed via an inline cast rather than

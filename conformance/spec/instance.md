@@ -100,3 +100,19 @@ Until the first public release nothing upgrades a database in place (`search-and
     Reason: what supervises the process tells a stop that starting again will not mend from one that it may.
 
     Tests: `packages/server/src/refused-database-exit.test.ts`; `ci/entrypoint.test.ts` holds the container's entrypoint to the same number.
+
+## Stopping
+
+An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows `SIGTERM` with `SIGKILL` after ten seconds by default.
+
+17. When the server is stopped, it SHALL end every event stream it has open with a terminal `stream_incomplete` frame whose `reason` is `server_stopping` and whose `cursor` is the last event the stream sent, with no `id:`, and then close the stream.
+
+    Reason: a stream never ends of its own accord, so the server's close would wait on it until the bound ran out and the stop would end as a failure, and a client cut off with no closing frame cannot tell a stop from a fault. Every event after the cursor is still in the log, so the client's recovery is the same as for any other `stream_incomplete`: connect again from it.
+
+    Tests: `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`. The server's own suite holds the cursor, the copy stream and a stream that opens after the stop has begun: `packages/server/src/routes/events-shutdown.test.ts`, and with a real process and a keep-alive client, `packages/server/src/shutdown-stream.test.ts`.
+
+18. When the server is stopped, it SHALL wait for the bulk action and the housekeeping runs in flight, the webhook deliveries among them, before it closes its storage, and SHALL exit with status 0 when the server and the storage have closed, within eight seconds of the signal at the most.
+
+    Reason: a run cut off mid-write leaves its record unwritten, and a stop that the runtime kills is read as a crash. A run that outlives its wait is resumed at the next start and does not make the stop a failure.
+
+    Tests: `packages/server/src/shutdown.test.ts`; `packages/server/src/shutdown-stream.test.ts › sends the stream its closing frame and ends it, and exits 0 within the grace`.
