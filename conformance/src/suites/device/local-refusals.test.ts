@@ -366,6 +366,7 @@ describe("a store opened to read writes nothing from the server either", () => {
     // Named a server that is not one: a reading handle is refused before
     // any server is resolved, so resolving one cannot fail it, or refresh
     // a kept token for a command that will never send.
+    const readsBefore = harness.server.requests.length;
     const reader = harness.device.reopen({
       reader: true,
       url: "not a server url",
@@ -395,11 +396,9 @@ describe("a store opened to read writes nothing from the server either", () => {
       }
     }
     expect(
-      harness.server.requests.filter(
-        (request) => request.pathname === "/events",
-      ),
-      "a reading handle reached the event stream",
-    ).toHaveLength(1);
+      harness.server.requests.length,
+      "a reading handle reached the server",
+    ).toBe(readsBefore);
   });
 });
 
@@ -479,6 +478,15 @@ describe("a device refuses to decide what the server decides", () => {
     expect(edit.ok).toBe(true);
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "held", body: "the server's line" },
+          }),
+        ),
+      ],
       update: [
         answers.updated(
           wireItem({
@@ -553,6 +561,12 @@ describe("a device refuses to decide what the server decides", () => {
     // And the server's number is taken when it arrives, which is the
     // control: the version moves, it just does not move here.
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(
+          wireItem({ id: created.value.item_id ?? "a", version: 1 }),
+        ),
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       create: [
         answers.created(
           wireItem({ id: created.value.item_id ?? "a", version: 1 }),
@@ -709,6 +723,9 @@ describe("a device refuses to send less than it was given", () => {
     ).toBe(true);
 
     scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
       update: [
         answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
       ],
