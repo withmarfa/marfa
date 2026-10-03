@@ -18,6 +18,7 @@ import { types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
+import { reindexTypeRows } from "./search-store.js";
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -62,6 +63,7 @@ export class SqliteTypeStore implements TypeStore {
         for (const row of projectPlatformRows([{ schema, origin: "platform" }]))
           stagePlatformRegistryType(schema, row.family);
       } else registerTypeSchema(schema);
+      await reindexTypeRows(tx, schema.id);
     });
     return schema;
   }
@@ -108,6 +110,7 @@ export class SqliteTypeStore implements TypeStore {
         ]))
           stagePlatformRegistryType(schema, row.family);
       } else registerTypeSchema(schema);
+      await reindexTypeRows(tx, id);
     });
     return schema;
   }
@@ -120,6 +123,7 @@ export class SqliteTypeStore implements TypeStore {
         unregisterTypeSchema(id);
       }
       await forgetType(tx, id);
+      await reindexTypeRows(tx, id);
     });
   }
 

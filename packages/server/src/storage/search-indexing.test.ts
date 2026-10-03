@@ -219,3 +219,166 @@ describe("what reaches the full-text index", () => {
     );
   });
 });
+
+describe("what a change to a type does to rows already stored", () => {
+  async function registerType(
+    id: string,
+    fields: Record<string, unknown>,
+    parent?: string,
+  ): Promise<void> {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id, version: 1, fields, ...(parent ? { parent } : {}) },
+    });
+    expect(res.status).toBe(201);
+  }
+
+  async function replaceType(
+    id: string,
+    fields: Record<string, unknown>,
+    parent?: string,
+  ): Promise<void> {
+    const res = await request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: { id, version: 2, fields, ...(parent ? { parent } : {}) },
+    });
+    expect(res.status).toBe(200);
+  }
+
+  async function create(
+    type: string,
+    properties: Record<string, unknown>,
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type, properties },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { item: { id: string } }).item.id;
+  }
+
+  async function found(query: string): Promise<string[]> {
+    return (await search(query)).map((hit) => hit.item.id);
+  }
+
+  it("stops matching a field a type now marks searchable: false, and matches it again once it is not", async () => {
+    await registerType("demo.flip", { blurb: { type: "string" } });
+    const id = await create("demo.flip", { blurb: "Quokka sanctuary" });
+    // The witness: the row was matchable by the field before the change.
+    expect(await found("quokka")).toContain(id);
+
+    await replaceType("demo.flip", {
+      blurb: { type: "string", searchable: false },
+    });
+    expect(await found("quokka")).not.toContain(id);
+
+    await replaceType("demo.flip", { blurb: { type: "string" } });
+    expect(await found("quokka")).toContain(id);
+  });
+
+  it("matches a core field a type opts out of no longer, and again when it opts back in", async () => {
+    await registerType("demo.flip_core", { title: { type: "string" } });
+    const id = await create("demo.flip_core", { title: "Wombat burrow" });
+    expect(await found("wombat")).toContain(id);
+
+    await replaceType("demo.flip_core", {
+      title: { type: "string", searchable: false },
+    });
+    expect(await found("wombat")).not.toContain(id);
+
+    await replaceType("demo.flip_core", { title: { type: "string" } });
+    expect(await found("wombat")).toContain(id);
+  });
+
+  it("matches a field the type gains, for rows that already held a value in it", async () => {
+    await registerType("demo.gain", { note: { type: "string" } });
+    const id = await create("demo.gain", {
+      note: "present",
+      tagline: "Numbat termites",
+    });
+    expect(await found("numbat")).not.toContain(id);
+
+    await replaceType("demo.gain", {
+      note: { type: "string" },
+      tagline: { type: "string" },
+    });
+    expect(await found("numbat")).toContain(id);
+  });
+
+  it("stops matching a field the type drops", async () => {
+    await registerType("demo.drop", {
+      note: { type: "string" },
+      tagline: { type: "string" },
+    });
+    const id = await create("demo.drop", {
+      note: "present",
+      tagline: "Bilby burrow",
+    });
+    expect(await found("bilby")).toContain(id);
+
+    await replaceType("demo.drop", { note: { type: "string" } });
+    expect(await found("bilby")).not.toContain(id);
+  });
+
+  it("re-indexes the rows of a subtype when its parent changes a field it inherits", async () => {
+    await registerType("demo.parent", { blurb: { type: "string" } });
+    await registerType(
+      "demo.child",
+      { other: { type: "string" } },
+      "demo.parent",
+    );
+    const id = await create("demo.child", { blurb: "Dingo pack" });
+    expect(await found("dingo")).toContain(id);
+
+    await replaceType("demo.parent", {
+      blurb: { type: "string", searchable: false },
+    });
+    expect(await found("dingo")).not.toContain(id);
+  });
+
+  it("re-indexes a row left by a forced delete under the fields nobody declares, and again on re-registration", async () => {
+    await registerType("demo.orphaned", {
+      blurb: { type: "string" },
+      title: { type: "string" },
+    });
+    const id = await create("demo.orphaned", {
+      title: "Kakapo",
+      blurb: "Takahe wetland",
+    });
+    expect(await found("takahe")).toContain(id);
+
+    const removed = await request(
+      ctx.app,
+      "DELETE",
+      "/types/demo.orphaned?force=true",
+      { key: ctx.workingKey },
+    );
+    expect(removed.status).toBe(200);
+    expect(await found("takahe")).not.toContain(id);
+    // The row is still held and still matched by what a type-less row
+    // contributes: a core field.
+    expect(await found("kakapo")).toContain(id);
+
+    await registerType("demo.orphaned", { blurb: { type: "string" } });
+    expect(await found("takahe")).toContain(id);
+  });
+
+  it("leaves a trashed row out of the index when its type changes", async () => {
+    await registerType("demo.binned", { blurb: { type: "string" } });
+    const id = await create("demo.binned", { blurb: "Echidna spines" });
+    const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: ctx.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+
+    await replaceType("demo.binned", {
+      blurb: { type: "string" },
+      extra: { type: "string" },
+    });
+    const all = await request(ctx.app, "GET", "/search?q=echidna&state=any", {
+      key: ctx.workingKey,
+    });
+    expect(all.status).toBe(200);
+    expect(((await all.json()) as { data: unknown[] }).data).toEqual([]);
+  });
+});

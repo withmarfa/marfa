@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
+  isSubtypeOf,
+  listTypes,
   parseFilter,
   typePatternToSql,
   typeFilterTerms,
@@ -10,6 +12,7 @@ import type { SearchStore, SearchFilters } from "../interface.js";
 import { normalizeTimeBound } from "../interface.js";
 import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
+import type { SqliteTxContext } from "./request-context.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 // What text reaches the index is decided in `search-text.ts`, not here, so
 // a change to what is indexed is one edit rather than one per writer.
@@ -35,6 +38,72 @@ function buildFtsQuery(query: string): string {
     .join(" ");
 }
 
+type Executor = DrizzleDb | SqliteTxContext;
+
+/**
+ * Replaces an item's row in the full-text index. SQL carries the key
+ * throughout because SQLite integers can exceed JavaScript's exact-number
+ * range.
+ */
+async function replaceIndexRow(
+  db: Executor,
+  itemId: string,
+  text: ReturnType<typeof extractSearchableText>,
+): Promise<void> {
+  await db.run(sql`
+    INSERT INTO item_search_keys(item_id) VALUES (${itemId})
+    ON CONFLICT(item_id) DO NOTHING
+  `);
+  await db.run(sql`
+    INSERT OR REPLACE INTO items_fts(rowid, title, body, description, name, extra, tags)
+    VALUES (
+      (SELECT seq FROM item_search_keys WHERE item_id = ${itemId}),
+      ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
+      COALESCE(
+        (SELECT group_concat(je.value, ' ')
+           FROM metadata m, json_each(m.tags) je
+          WHERE m.item_id = ${itemId}),
+        ''
+      )
+    )
+  `);
+}
+
+/**
+ * Indexes again, under the registry as it now stands, every row of `typeId`
+ * and of each type that inherits from it. A row's indexed text is decided
+ * when it is written, so a change to a type's fields leaves the rows already
+ * stored answering by the old ones until this runs. Call it after the change
+ * is in the registry and inside the transaction that made it.
+ *
+ * A trashed row is not in the index and stays out of it.
+ */
+export async function reindexTypeRows(
+  db: Executor,
+  typeId: string,
+): Promise<void> {
+  const affected = [
+    typeId,
+    ...listTypes()
+      .map((schema) => schema.id)
+      .filter((id) => id !== typeId && isSubtypeOf(id, typeId)),
+  ];
+  for (const type of affected) {
+    const rows = await db.all<{ id: string; properties: string }>(sql`
+      SELECT id, json(properties) AS properties FROM items
+      WHERE type = ${type} AND state <> 'trashed'
+    `);
+    for (const row of rows) {
+      const properties = JSON.parse(row.properties) as Record<string, unknown>;
+      await replaceIndexRow(
+        db,
+        row.id,
+        extractSearchableText(properties, type),
+      );
+    }
+  }
+}
+
 export class SqliteSearchStore implements SearchStore {
   constructor(private db: DrizzleDb) {}
 
@@ -45,27 +114,8 @@ export class SqliteSearchStore implements SearchStore {
   ): Promise<void> {
     const text = extractSearchableText(properties, typeId);
     // Keep the key and FTS replacement atomic even when called without an
-    // enclosing item transaction. SQL carries the key throughout because
-    // SQLite integers can exceed JavaScript's exact-number range.
-    await this.db.transaction(async (tx) => {
-      await tx.run(sql`
-        INSERT INTO item_search_keys(item_id) VALUES (${itemId})
-        ON CONFLICT(item_id) DO NOTHING
-      `);
-      await tx.run(sql`
-        INSERT OR REPLACE INTO items_fts(rowid, title, body, description, name, extra, tags)
-        VALUES (
-          (SELECT seq FROM item_search_keys WHERE item_id = ${itemId}),
-          ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
-          COALESCE(
-            (SELECT group_concat(je.value, ' ')
-               FROM metadata m, json_each(m.tags) je
-              WHERE m.item_id = ${itemId}),
-            ''
-          )
-        )
-      `);
-    });
+    // enclosing item transaction.
+    await this.db.transaction((tx) => replaceIndexRow(tx, itemId, text));
   }
 
   async setTags(itemId: string, tags: readonly string[]): Promise<void> {
@@ -217,7 +267,7 @@ export class SqliteSearchStore implements SearchStore {
 
     const rawSql = `
       SELECT
-        snippet(items_fts, 0, '<mark>', '</mark>', '...', 32) AS snippet,
+        snippet(items_fts, -1, '<mark>', '</mark>', '...', 32) AS snippet,
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
@@ -231,7 +281,7 @@ export class SqliteSearchStore implements SearchStore {
       LEFT JOIN metadata m ON m.item_id = i.id
       WHERE items_fts MATCH ?
         ${conditions.join("\n        ")}
-      ORDER BY rank
+      ORDER BY rank, i.id
       LIMIT ? OFFSET ?
     `;
 
