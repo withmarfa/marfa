@@ -10824,6 +10824,75 @@ describe("where a file sits", () => {
     ).toEqual([gone]);
   });
 
+  it("restores another item's binding and journal when a landing fails", async () => {
+    const gone = "01a00000-0000-7000-8000-0000000016d8";
+    const other = "01a00000-0000-7000-8000-0000000016d9";
+    const placed = await placedHarness(
+      "failed-placement-over-delete",
+      [
+        { id: gone, title: "Gone", path: "Gone.md" },
+        { id: other, title: "Other", path: "Other.md" },
+      ],
+      { search: { types: ["core.note"], state: ["active"] } },
+    );
+    harness = placed.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const source = read(harness, "Other.md");
+    rmSync(join(harness.dir, "Gone.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(1);
+    placed.edges.events.push(
+      itemEvent(
+        String(placed.edges.events.length + 2),
+        "item.state_changed",
+        wireItem({
+          id: gone,
+          properties: { title: "Gone", body: "Gone\n" },
+          state: "archived",
+        }),
+      ),
+    );
+    placed.edges.relocate(other, harness.settings.id, "Gone.md");
+    const dir = harness.dir;
+    const away = `${dir}-away`;
+    try {
+      const failed = await withFault("move-folder-before-write", () =>
+        harness!.folder.push(),
+      );
+      expect(
+        failed.ok && failed.value.pull?.unwritten,
+        JSON.stringify(failed),
+      ).toBe(1);
+      expect(existsSync(away)).toBe(true);
+    } finally {
+      if (existsSync(away)) renameSync(away, dir);
+    }
+    expect(read(harness, "Other.md")).toBe(source);
+    expect(existsSync(join(dir, "Gone.md"))).toBe(false);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files.find((file) => file.path === "Gone.md")?.item_id,
+    ).toBe(gone);
+    expect(
+      status.ok &&
+        status.value.files.find((file) => file.path === "Other.md")?.item_id,
+    ).toBe(other);
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.created).toBe(0);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok &&
+        queued.value
+          .filter((row) => row.kind === "delete_item")
+          .map((row) => row.item_id),
+    ).toEqual([gone]);
+    const retried = await harness.folder.pull();
+    expect(retried.ok, JSON.stringify(retried)).toBe(true);
+    expect(idIn(harness, "Gone.md")).toBe(other);
+  });
+
   it("follows another Mac's move of an item whose move it was refused", async () => {
     let refusing = false;
     const edges = new EdgeDoor();
@@ -15764,6 +15833,226 @@ describe("folders on one Mac", () => {
     ).toBe(1);
   });
 
+  it.each(["same-volume", "cross-volume"])(
+    "keeps both files when a destination appears just before a move-in (%s)",
+    async (mode) => {
+      const plan = {
+        id: "01a00000-0000-7000-8000-0000000023d1",
+        properties: { title: "Plan", body: "the plan\n" },
+      };
+      const control = {
+        id: "01a00000-0000-7000-8000-0000000023d2",
+        properties: { title: "Control", body: "the control\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        "take-in-no-replace",
+        { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+        {
+          "core.note": [
+            { item: plan, tags: ["a"] },
+            { item: control, tags: ["a"] },
+          ],
+        },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      for (const item of [plan, control]) {
+        edges.events.push(
+          itemEvent(
+            String(edges.events.length + 2),
+            "metadata.changed",
+            wireItem(item),
+            { tags: ["b"] },
+          ),
+        );
+      }
+      expect((await a.folder.push()).ok).toBe(true);
+      const before = read(a, "Plan.md");
+      const controlBytes = read(a, "Control.md");
+      const fault =
+        mode === "same-volume"
+          ? "create-before-move=Plan.md"
+          : "cross-volume-move,create-before-rename=Plan.md";
+      const moved = await withFault(fault, () => b.folder.push());
+      expect(moved.ok, JSON.stringify(moved)).toBe(true);
+      if (!moved.ok) return;
+      expect(read(b, "Control.md")).toBe(controlBytes);
+      expect(existsSync(join(a.dir, "Control.md"))).toBe(false);
+      expect(read(b, "Plan.md")).toBe("appeared meanwhile\n");
+      expect(read(a, "Plan.md")).toBe(before);
+      expect(moved.value.pull?.taken).toBe(1);
+      expect(moved.value.pull?.unwritten).toBe(1);
+      const source = await a.folder.status();
+      const destination = await b.folder.status();
+      expect(
+        source.ok &&
+          source.value.files.find((file) => file.path === "Plan.md")?.item_id,
+      ).toBe(plan.id);
+      expect(
+        destination.ok &&
+          destination.value.files.find((file) => file.path === "Plan.md")
+            ?.item_id,
+      ).toBeUndefined();
+      rmSync(join(b.dir, "Plan.md"));
+      const retry = await b.folder.pull();
+      expect(retry.ok && retry.value.taken, JSON.stringify(retry)).toBe(1);
+      expect(read(b, "Plan.md")).toBe(before);
+      expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
+      const scan = await b.folder.scan();
+      expect(scan.ok && [scan.value.created, scan.value.updated]).toEqual([
+        0, 0,
+      ]);
+    },
+  );
+
+  it.each([
+    { mode: "same-volume", previous: false },
+    { mode: "cross-volume", previous: false },
+    { mode: "same-volume", previous: true },
+    { mode: "cross-volume", previous: true },
+    { mode: "already-present", previous: false },
+    { mode: "unopposed-move", previous: true },
+    { mode: "unopposed-copy", previous: true },
+  ])(
+    "preserves ownership for an identical move destination ($mode, previous binding $previous)",
+    async ({ mode, previous }) => {
+      const bytes = Buffer.from("appeared meanwhile\n");
+      const photo = {
+        id: "01a00000-0000-7000-8000-0000000023e1",
+        type: "core.file.image",
+        properties: {
+          title: "photo.png",
+          blob_ref: hashOf(bytes),
+          mime_type: "image/png",
+        },
+      };
+      const gone = { ...photo, id: "01a00000-0000-7000-8000-0000000023e2" };
+      const { a, b, edges } = await onOneMac(
+        "identical-move-destination",
+        { search: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+        {
+          search: {
+            types: ["core.file.image"],
+            filter: 'tags contains "b"',
+            state: ["active"],
+          },
+        },
+        {
+          "core.file.image": [
+            { item: photo, tags: ["a"] },
+            ...(previous ? [{ item: gone, tags: ["b"] }] : []),
+          ],
+        },
+        (server) => {
+          scriptBlob(server, bytes);
+          acceptUploads(server);
+        },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      if (previous) {
+        expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
+        rmSync(join(b.dir, "photo.png"));
+        const journaled = await b.folder.scan();
+        expect(journaled.ok && journaled.value.missing).toBe(1);
+        edges.events.push(
+          itemEvent(
+            String(edges.events.length + 2),
+            "item.state_changed",
+            wireItem({ ...gone, state: "archived" }),
+            { tags: ["b"] },
+          ),
+        );
+      }
+      edges.events.push(
+        itemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(photo),
+          { tags: ["b"] },
+        ),
+      );
+      expect((await a.folder.push()).ok).toBe(true);
+      expect((await b.folder.device().catchUp()).ok).toBe(true);
+      if (mode === "already-present")
+        writeFileSync(join(b.dir, "photo.png"), bytes);
+      const fault =
+        mode === "same-volume"
+          ? "create-before-move=photo.png"
+          : mode === "cross-volume"
+            ? "cross-volume-move,create-before-rename=photo.png"
+            : mode === "unopposed-copy"
+              ? "cross-volume-move"
+              : "";
+      const pulled = await withFault(fault, () => b.folder.pull());
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      const unopposed = mode.startsWith("unopposed-");
+      if (unopposed) expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+      else expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+      expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
+      const status = await b.folder.status();
+      if (unopposed) {
+        expect(
+          pulled.ok && [pulled.value.unwritten, pulled.value.taken],
+        ).toEqual([0, 1]);
+        expect(
+          status.ok &&
+            status.value.files.find((file) => file.path === "photo.png")
+              ?.item_id,
+        ).toBe(photo.id);
+      } else if (mode === "already-present") {
+        expect(
+          pulled.ok && [pulled.value.unwritten, pulled.value.unchanged],
+        ).toEqual([0, 1]);
+        expect(
+          status.ok &&
+            status.value.files.find((file) => file.path === "photo.png")
+              ?.item_id,
+        ).toBe(photo.id);
+      } else {
+        expect(
+          pulled.ok && [
+            pulled.value.unwritten,
+            pulled.value.unchanged,
+            pulled.value.taken,
+          ],
+        ).toEqual([1, 0, 0]);
+        expect(
+          status.ok &&
+            status.value.files.find((file) => file.path === "photo.png")
+              ?.item_id,
+        ).toBe(previous ? gone.id : undefined);
+        const reconsidered = await b.folder.pull();
+        expect(
+          reconsidered.ok && [
+            reconsidered.value.unwritten,
+            reconsidered.value.unchanged,
+          ],
+        ).toEqual([0, 1]);
+        expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+        expect(readFileSync(join(b.dir, "photo.png"))).toEqual(bytes);
+        const rebound = await b.folder.status();
+        expect(
+          rebound.ok &&
+            rebound.value.files.find((file) => file.path === "photo.png")
+              ?.item_id,
+        ).toBe(photo.id);
+      }
+      if (previous) {
+        await pastTheGrace();
+        expect((await b.folder.scan()).ok).toBe(true);
+        const queued = await b.folder.device().queue();
+        expect(
+          queued.ok &&
+            queued.value
+              .filter((row) => row.kind === "delete_item")
+              .map((row) => row.item_id),
+        ).toEqual([gone.id]);
+      }
+    },
+  );
+
   it("takes no file back by its bytes for an item another folder on the Mac took in", async () => {
     const bytes = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xc1,
@@ -18207,6 +18496,50 @@ describe("what a folder never does to a person's text", () => {
     expect(readFileSync(settingsFile(harness), "utf8")).toContain(
       "- from elsewhere",
     );
+  });
+
+  it("keeps a file that appears after an absent landing target was checked", async () => {
+    const id = "01a00000-0000-7000-8000-00000000fa91";
+    harness = await folderHarness("landing-no-replace", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              properties: { title: "Late", body: "from the server\n" },
+            },
+          },
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000fa92",
+              properties: { title: "Control", body: "control\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const pulled = await withFault("create-before-rename=Late.md", () =>
+      harness!.folder.pull(),
+    );
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(read(harness, "Control.md")).toContain("control\n");
+    expect(read(harness, "Late.md")).toBe("appeared meanwhile\n");
+    expect([pulled.value.written, pulled.value.unwritten]).toEqual([1, 1]);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files.find((file) => file.path === "Late.md")?.item_id,
+    ).toBeUndefined();
+    expect(
+      readdirSync(harness.dir).filter((name) => name.endsWith(".tmp")),
+    ).toEqual([]);
+    rmSync(join(harness.dir, "Late.md"));
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(idIn(harness, "Late.md")).toBe(id);
+    const scan = await harness.folder.scan();
+    expect(scan.ok && [scan.value.created, scan.value.updated]).toEqual([0, 0]);
   });
 
   it("does not make its directory anew when it goes away during a pull", async () => {
