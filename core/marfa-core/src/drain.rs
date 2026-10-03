@@ -2404,6 +2404,54 @@ mod tests {
     }
 
     #[test]
+    fn adoption_remaps_unsent_held_edges_without_rewriting_sent_attempts() {
+        let conn = store::testing::conn();
+        for verdict in [None, Some(Verdict::Blocked), Some(Verdict::Dead)] {
+            for sent in [false, true] {
+                let id = format!("edge-{:?}-{sent}", verdict);
+                let mut queued = write(WriteKind::CreateEdge, "local", Some(&id), Some(3), &[]);
+                queued.target_id = Some("local");
+                queued.payload = r#"{"source_id":"local","target_id":"local","edge_type":"references","properties":{"note":"unsent content"}}"#;
+                let row = store::enqueue(&conn, &queued).unwrap();
+                if let Some(verdict) = verdict {
+                    store::record_verdict(
+                        &conn,
+                        &row.id,
+                        &store::Answered {
+                            verdict,
+                            reason: (verdict == Verdict::Blocked).then_some("awaiting_dependency"),
+                            answer: None,
+                            conflicted_copy_id: None,
+                        },
+                    )
+                    .unwrap();
+                }
+                if sent {
+                    store::mark_sent(&conn, &row.id).unwrap();
+                }
+            }
+        }
+        let before = store::queued_writes(&conn).unwrap();
+        store::adopt_answered_id(&conn, "local", "server").unwrap();
+        for original in before {
+            let row = store::queued_write(&conn, &original.id).unwrap().unwrap();
+            let sent = original.edge_id.as_ref().unwrap().ends_with("true");
+            let expected = if sent { "local" } else { "server" };
+            assert_eq!(row.item_id.as_deref(), Some(expected));
+            assert_eq!(row.target_id.as_deref(), Some(expected));
+            assert_eq!(row.body["source_id"], expected);
+            assert_eq!(row.body["target_id"], expected);
+            assert_eq!(row.body["properties"], original.body["properties"]);
+            assert_eq!(row.idempotency_key, original.idempotency_key);
+            assert_eq!(row.base_version, original.base_version);
+            assert_eq!(row.verdict, original.verdict);
+            if sent {
+                assert_eq!(row, original);
+            }
+        }
+    }
+
+    #[test]
     fn an_edge_read_back_uses_direct_certified_absence() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = deleting(&server, &[]);
