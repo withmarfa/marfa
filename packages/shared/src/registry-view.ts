@@ -482,7 +482,8 @@ export function registryMapView<K, V>(
           thisArg?: unknown,
         ) => {
           guard();
-          for (const [key, value] of map) fn.call(thisArg, value, key, facade);
+          for (const [key, value] of map)
+            fn.call(thisArg, value, key, scope?.mode === "read" ? map : facade);
         };
       const value: unknown = Reflect.get(map, prop, map);
       return typeof value === "function"
@@ -503,15 +504,26 @@ export const registrySystemIds: ReadonlySet<string> = new Proxy(
   new Set<string>(),
   {
     get(_target, prop) {
-      const map = registryMapFacet("system");
-      if (prop === "has") return map.has.bind(map);
-      if (prop === "size") return map.size;
-      const keys = map.keys.bind(map);
-      if (prop === "values" || prop === "keys" || prop === Symbol.iterator)
-        return keys;
-      if (prop === "entries")
-        return () => {
-          const source = keys();
+      const scope = selected();
+      const guard =
+        scope?.mode === "read"
+          ? () => {
+              scope.assertActive();
+            }
+          : () => {
+              registryView();
+            };
+      const map = guardedMap(registryView().system, guard);
+      const set: ReadonlySet<string> = {
+        get size() {
+          return map.size;
+        },
+        has: (id) => map.has(id),
+        keys: () => map.keys(),
+        values: () => map.keys(),
+        [Symbol.iterator]: () => map.keys(),
+        entries() {
+          const source = map.keys();
           return {
             next() {
               const result = source.next();
@@ -520,18 +532,26 @@ export const registrySystemIds: ReadonlySet<string> = new Proxy(
                 : { done: false, value: [result.value, result.value] };
             },
             [Symbol.iterator]() {
+              guard();
               return this;
             },
-          };
-        };
-      if (prop === "forEach")
-        return (
-          fn: (value: string, key: string, set: ReadonlySet<string>) => void,
-          thisArg?: unknown,
-        ) => {
-          for (const id of keys()) fn.call(thisArg, id, id, registrySystemIds);
-        };
-      return undefined;
+          } as SetIterator<[string, string]>;
+        },
+        forEach(fn, thisArg) {
+          for (const id of map.keys())
+            fn.call(
+              thisArg,
+              id,
+              id,
+              scope?.mode === "read" ? set : registrySystemIds,
+            );
+        },
+      };
+      Object.freeze(set);
+      const member: unknown = Reflect.get(set, prop, set);
+      return typeof member === "function"
+        ? (member as (...args: unknown[]) => unknown).bind(set)
+        : member;
     },
   },
 );

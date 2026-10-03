@@ -195,12 +195,23 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
       if (typeof value === "function") {
         return (...args: unknown[]) => {
           if (ctx?.mode === "read") ctx.assertActive();
-          return (value as (...args: unknown[]) => unknown).apply(source, args);
+          const invoke = () =>
+            (value as (...args: unknown[]) => unknown).apply(source, args);
+          return ctx?.mode === "read"
+            ? runWithReadContext(ctx, invoke)
+            : invoke();
         };
       }
       return value;
     },
   });
+}
+
+function runWithReadContext<T>(scope: SqliteReadScope, fn: () => T): T {
+  scope.assertActive();
+  // Retained methods may be dispatched by another async context while this
+  // scope is open. Both SQL and registry selection must follow the capability.
+  return registryContext.run(scope, () => sqliteRequestContext.run(scope, fn));
 }
 
 export function guardStoreWithReadContext<T extends object>(store: T): T {
@@ -226,7 +237,11 @@ export function guardStoreWithReadContext<T extends object>(store: T): T {
               ? captured
               : sqliteRequestContext.getStore();
           if (scope?.mode === "read") scope.assertActive();
-          const result: unknown = Reflect.apply(fn, target, args);
+          const invoke = () => Reflect.apply(fn, target, args);
+          const result: unknown =
+            scope?.mode === "read"
+              ? runWithReadContext(scope, invoke)
+              : invoke();
           if (scope?.mode === "read" && result instanceof Promise)
             return result.then((value: unknown) => {
               scope.assertActive();

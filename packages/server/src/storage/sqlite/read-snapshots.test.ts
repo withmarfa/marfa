@@ -16,6 +16,7 @@ import {
   seedPlatformTypes,
   createRegistryFrame,
   TYPE_REGISTRY,
+  registryMapFacet,
 } from "@withmarfa/shared";
 import { createSqliteStorage } from "./index.js";
 import { sqliteRequestContext } from "./request-context.js";
@@ -237,6 +238,112 @@ it("a captured reader stays old across a writer commit and a subsequent capture 
   });
 });
 
+it("retained store methods bind their original SQL and registry scopes in another async context", async () => {
+  const entered = gate(),
+    release = gate();
+  let read!: typeof storage.settings.get;
+  let write!: typeof storage.settings.set;
+  let readType!: typeof storage.types.get;
+  await storage.settings.set("capability.probe", "old");
+  const reading = storage.runInReadSnapshot(async () => {
+    read = storage.settings.get.bind(storage.settings);
+    write = storage.settings.set.bind(storage.settings);
+    readType = storage.types.get.bind(storage.types);
+    entered.resolve();
+    await release.promise;
+    expect(await storage.settings.get("capability.probe")).toBe("old");
+  });
+  try {
+    await entered.promise;
+    await storage.settings.set("capability.probe", "new");
+    await storage.types.update(schema.id, { ...schema, version: 2 });
+    const detachedRead = await read("capability.probe");
+    const detachedType = await readType(schema.id);
+    const escapedWrite = await write("capability.escape", "wrote").then(
+      () => "succeeded",
+      () => "refused",
+    );
+    expect({ detachedRead, detachedType, escapedWrite }).toEqual({
+      detachedRead: "old",
+      detachedType: schema,
+      escapedWrite: "refused",
+    });
+    expect(await storage.settings.get("capability.escape")).toBeNull();
+    await storage.runInReadSnapshot(async () => {
+      expect(await read("capability.probe")).toBe("old");
+      expect(await readType(schema.id)).toEqual(schema);
+      expect(await storage.settings.get("capability.probe")).toBe("new");
+      expect(await storage.types.get(schema.id)).toMatchObject({ version: 2 });
+    });
+  } finally {
+    release.resolve();
+    await reading;
+  }
+  expect(() => read("capability.probe")).toThrow("unavailable");
+  expect(() => write("capability.escape", "closed")).toThrow("unavailable");
+  expect(() => readType(schema.id)).toThrow("unavailable");
+});
+
+it("retained registry forEach passes a captured map to callbacks in another async context", async () => {
+  const entered = gate(),
+    release = gate();
+  const map = registryMapFacet("custom");
+  let forEach!: typeof map.forEach;
+  let retainedMap!: typeof map;
+  const reading = storage.runInReadSnapshot(async () => {
+    forEach = map.forEach.bind(map);
+    entered.resolve();
+    await release.promise;
+  });
+  try {
+    await entered.promise;
+    await storage.types.update(schema.id, { ...schema, version: 2 });
+    forEach((value, key, selectedMap) => {
+      if (key !== schema.id) return;
+      retainedMap = selectedMap;
+      expect(selectedMap.get(key)).toEqual(value);
+      expect(value).toEqual(schema);
+    });
+    expect(retainedMap.get(schema.id)).toEqual(schema);
+    expect(map.get(schema.id)).toMatchObject({ version: 2 });
+  } finally {
+    release.resolve();
+    await reading;
+  }
+  expect(() => retainedMap.get(schema.id)).toThrow("unavailable");
+});
+
+it("retained system forEach passes a captured set to callbacks in another async context", async () => {
+  const entered = gate(),
+    release = gate();
+  const platform = { ...schema, id: "system.snapshot-probe" };
+  await storage.types.seedPlatformTypes([
+    { schema: platform, family: "system" },
+  ]);
+  let forEach!: typeof SYSTEM_TYPE_IDS.forEach;
+  let retainedSet!: typeof SYSTEM_TYPE_IDS;
+  const reading = storage.runInReadSnapshot(async () => {
+    forEach = SYSTEM_TYPE_IDS.forEach.bind(SYSTEM_TYPE_IDS);
+    entered.resolve();
+    await release.promise;
+  });
+  try {
+    await entered.promise;
+    expect(await storage.types.deletePlatformType(platform.id)).toBe(true);
+    forEach((value, key, selectedSet) => {
+      if (key !== platform.id) return;
+      retainedSet = selectedSet;
+      expect(selectedSet.has(value)).toBe(true);
+    });
+    expect(retainedSet.has(platform.id)).toBe(true);
+    expect(SYSTEM_TYPE_IDS.has(platform.id)).toBe(false);
+  } finally {
+    release.resolve();
+    await reading;
+  }
+  expect(() => retainedSet.has(platform.id)).toThrow("unavailable");
+});
+
 it("capture waits for an earlier writer and later writers cannot overtake its settings pin", async () => {
   const entered = gate(),
     release = gate(),
@@ -350,6 +457,7 @@ it("one root bumps once for retype, topology, registration and silent removal, w
   await itemWrites(storage).update(created.id, {
     properties: { title: "ordinary" },
     tier: "feed",
+    source_id: "ordinary-source-id",
   });
   await itemWrites(storage).transition(created.id, "trashed");
   expect(await generation()).toBe(old);
