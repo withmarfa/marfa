@@ -167,6 +167,7 @@ export function scriptHydration(
   server: ScriptedServer,
   options: {
     head: string;
+    instance?: () => string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /edges` lists, by edge type; scripted only where named. */
     edges?: Record<string, WireEdgeOptions[]>;
@@ -181,6 +182,23 @@ export function scriptHydration(
     key?: Responder[];
   },
 ): void {
+  const copyInstance = (answer: Answer): Answer => {
+    if (options.instance === undefined || answer.kind !== "sse") return answer;
+    return {
+      ...answer,
+      frames: answer.frames.map((frame) =>
+        frame.event === "stream_cursor" || frame.event === "stream_live"
+          ? {
+              ...frame,
+              data: {
+                ...(frame.data as Record<string, unknown>),
+                instance_id: options.instance!(),
+              },
+            }
+          : frame,
+      ),
+    };
+  };
   const rows = options.rows ?? {};
   const edges = options.edges;
   if (edges !== undefined) {
@@ -213,7 +231,7 @@ export function scriptHydration(
           "validation_error",
           "invalid copy bootstrap request",
         );
-      return copyHeadRead(options.head);
+      return copyInstance(copyHeadRead(options.head));
     },
     (request) => {
       const cursor = request.headers["last-event-id"];
@@ -221,7 +239,7 @@ export function scriptHydration(
       if (request.query.toString() !== "edges=all&copy=1")
         return refusal(400, "validation_error", "invalid copy stream query");
       if (cursor === undefined && fence === undefined)
-        return copyHeadRead(options.head);
+        return copyInstance(copyHeadRead(options.head));
       if (
         cursor === undefined ||
         !/^(0|[1-9][0-9]*)$/.test(cursor) ||
@@ -229,7 +247,7 @@ export function scriptHydration(
         fence !== SCRIPTED_READ_VIEW
       )
         return refusal(400, "validation_error", "invalid copy replay request");
-      return copyReplay(options.head, []);
+      return copyInstance(copyReplay(options.head, []));
     },
   );
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
