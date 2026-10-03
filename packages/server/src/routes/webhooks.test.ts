@@ -3,6 +3,14 @@ import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
+async function claimToken(id: string): Promise<string> {
+  const claimed = await ctx.storage.outboundWebhookDeliveries.claimById(
+    id,
+    "9999-01-01T00:00:00.000Z",
+    "9998-01-01T00:00:00.000Z",
+  );
+  return claimed?.claim_token ?? "stale-fixture-token";
+}
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -294,7 +302,12 @@ describe("GET /webhooks/:id/deliveries", () => {
         webhookUrl: created.url,
         nextAttemptAt: new Date(Date.now() + 86_400_000).toISOString(),
       });
-      await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(
+        id,
+        await claimToken(id),
+        200,
+        1,
+      );
     }
 
     const res = await request(

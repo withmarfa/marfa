@@ -30,7 +30,9 @@ export interface Receiver {
  */
 const WAIT_MS = 60_000;
 
-export async function startReceiver(): Promise<Receiver> {
+export async function startReceiver(
+  options: { status?: number } = {},
+): Promise<Receiver> {
   const received: Received[] = [];
   const server: Server = createServer((req, res) => {
     let body = "";
@@ -39,7 +41,7 @@ export async function startReceiver(): Promise<Receiver> {
     });
     req.on("end", () => {
       received.push({ path: req.url ?? "", headers: req.headers, body });
-      res.writeHead(200);
+      res.writeHead(options.status ?? 200);
       res.end("ok");
     });
   });

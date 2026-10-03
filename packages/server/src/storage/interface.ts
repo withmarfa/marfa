@@ -1444,7 +1444,8 @@ export interface PendingWebhookDelivery {
   payload: string;
   webhook_url: string;
   attempt: number;
-  max_attempts: number;
+  retry_start_attempt: number;
+  claim_token: string;
 }
 
 export interface WebhookDeliveryStore {
@@ -1474,16 +1475,30 @@ export interface WebhookDeliveryStore {
     claimExpiry: string,
     now: string,
   ): Promise<PendingWebhookDelivery | null>;
-  markSuccess(id: string, statusCode: number, attempt: number): Promise<void>;
+  get(webhookId: string, id: string): Promise<WebhookDelivery | null>;
+  reopen(
+    webhookId: string,
+    id: string,
+    url: string,
+    now: string,
+    cutoff: string | null,
+  ): Promise<WebhookDelivery | null>;
+  markSuccess(
+    id: string,
+    token: string,
+    statusCode: number,
+    attempt: number,
+  ): Promise<boolean>;
   markFailed(
     id: string,
+    token: string,
     statusCode: number | undefined,
     error: string,
     attempt: number,
     nextAttemptAt: string | null,
-  ): Promise<void>;
+  ): Promise<boolean>;
   /** Settles a pending delivery unsent, saying why. */
-  markCanceled(id: string, reason: string): Promise<void>;
+  markCanceled(id: string, token: string, reason: string): Promise<boolean>;
   /** Settles every pending delivery of a subscription unsent, saying why. */
   cancelPending(webhookId: string, reason: string): Promise<void>;
   /** Removes settled deliveries older than the retention; one still

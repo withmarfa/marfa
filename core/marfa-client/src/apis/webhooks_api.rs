@@ -38,10 +38,17 @@ pub struct GetWebhookParams {
 pub struct ListWebhookDeliveriesParams {
     /// Id of the webhook whose deliveries to list.
     pub id: String,
-    /// Maximum number of delivery attempts to return.
+    /// Maximum number of delivery rows to return.
     pub limit: Option<i32>,
     /// Opaque cursor from a previous page's `next_cursor`.
     pub cursor: Option<String>,
+}
+
+/// struct for passing parameters to the method [`redeliver_webhook_delivery`]
+#[derive(Clone, Debug)]
+pub struct RedeliverWebhookDeliveryParams {
+    pub id: String,
+    pub delivery_id: String,
 }
 
 /// struct for passing parameters to the method [`update_webhook`]
@@ -89,6 +96,14 @@ pub enum ListWebhookDeliveriesSuccess {
 #[serde(untagged)]
 pub enum ListWebhooksSuccess {
     Status200(models::WebhookPage),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`redeliver_webhook_delivery`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RedeliverWebhookDeliverySuccess {
+    Status202(models::WebhookDelivery),
     UnknownValue(serde_json::Value),
 }
 
@@ -156,6 +171,19 @@ pub enum ListWebhookDeliveriesError {
 pub enum ListWebhooksError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`redeliver_webhook_delivery`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RedeliverWebhookDeliveryError {
+    Status401(models::UnauthorizedRefusal),
+    Status404(models::WebhookNotFoundRefusal),
+    Status409(models::ConflictRefusal),
+    Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -305,7 +333,7 @@ pub fn get_webhook(
     }
 }
 
-/// Returns recent delivery attempts for one subscription, newest first, with each attempt's response status, attempt count, and next retry time. Use to debug delivery failures.
+/// Returns recent delivery rows for one subscription, newest first, with the last accepted outcome and cumulative accepted-outcome ordinal. This is not a census of concurrent or lost HTTP sends.
 pub fn list_webhook_deliveries(
     configuration: &configuration::Configuration,
     params: ListWebhookDeliveriesParams,
@@ -384,6 +412,53 @@ pub fn list_webhooks(
     } else {
         let content = resp.text()?;
         let entity: Option<ListWebhooksError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.
+pub fn redeliver_webhook_delivery(
+    configuration: &configuration::Configuration,
+    params: RedeliverWebhookDeliveryParams,
+) -> Result<ResponseContent<RedeliverWebhookDeliverySuccess>, Error<RedeliverWebhookDeliveryError>>
+{
+    let uri_str = format!(
+        "{}/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id),
+        delivery_id = crate::apis::urlencode(params.delivery_id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<RedeliverWebhookDeliverySuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<RedeliverWebhookDeliveryError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,

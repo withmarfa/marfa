@@ -606,7 +606,8 @@ CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`next_attempt_at` text,
 	`payload` text,
 	`webhook_url` text,
-	`max_attempts` integer DEFAULT 4 NOT NULL,
+	`retry_start_attempt` integer DEFAULT 0 NOT NULL,
+	`claim_token` text,
 	`status` text DEFAULT 'pending' NOT NULL
 );
 

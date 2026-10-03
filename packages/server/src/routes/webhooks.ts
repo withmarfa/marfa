@@ -17,7 +17,8 @@ import type {
   WebhookOwner,
 } from "../storage/interface.js";
 import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
-import { DELIVERY_CANCELED } from "../webhooks/delivery.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
+import { DELIVERY_CANCELED, ownerCredential } from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -126,7 +127,11 @@ const DeliverySchema = z
     webhook_id: z.string(),
     event_type: z.string(),
     status_code: z.number().nullable(),
-    attempt: z.number(),
+    attempt: z
+      .number()
+      .describe(
+        "Cumulative accepted-outcome ordinal, not a census of concurrent or lost HTTP sends.",
+      ),
     succeeded: z.boolean(),
     error: z.string().nullable(),
     created_at: z.string(),
@@ -437,6 +442,39 @@ const deleteWebhookRoute = createRoute({
   },
 });
 
+const redeliverRoute = createRoute({
+  operationId: "redeliverWebhookDelivery",
+  method: "post",
+  path: "/{id}/deliveries/{delivery_id}/redeliver",
+  tags: ["Webhooks"],
+  summary: "Redeliver a failed delivery",
+  description:
+    "Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.",
+  security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
+  request: { params: z.object({ id: z.string(), delivery_id: z.string() }) },
+  responses: {
+    202: {
+      description: "Delivery queued",
+      content: { "application/json": { schema: DeliverySchema } },
+    },
+    404: {
+      description: "Webhook not found",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["webhook_not_found"]),
+        },
+      },
+    },
+    409: {
+      description: "Delivery cannot be redelivered",
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
+      },
+    },
+  },
+});
+
 const listDeliveriesRoute = createRoute({
   operationId: "listWebhookDeliveries",
   method: "get",
@@ -444,7 +482,7 @@ const listDeliveriesRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
   description:
-    "Returns recent delivery attempts for one subscription, newest first, with each attempt's response status, attempt count, and next retry time. Use to debug delivery failures.",
+    "Returns recent delivery rows for one subscription, newest first, with the last accepted outcome and cumulative accepted-outcome ordinal. This is not a census of concurrent or lost HTTP sends.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -459,7 +497,7 @@ const listDeliveriesRoute = createRoute({
         .max(MAX_PAGE_LIMIT)
         .optional()
         .default(DEFAULT_PAGE_LIMIT)
-        .describe("Maximum number of delivery attempts to return."),
+        .describe("Maximum number of delivery rows to return."),
       cursor: z
         .string()
         .optional()
@@ -473,7 +511,7 @@ const listDeliveriesRoute = createRoute({
           schema: pageOf(DeliverySchema, "WebhookDeliveryPage"),
         },
       },
-      description: "List of delivery attempts",
+      description: "List of delivery rows",
     },
     401: {
       content: {
@@ -721,5 +759,46 @@ export function webhookRoutes(
     );
   });
 
+  router.openapi(redeliverRoute, async (c) => {
+    requireAuth(c);
+    const { id, delivery_id } = c.req.valid("param");
+    const delivery = await storage.runInTransaction(async () => {
+      const subscription = await ownedWebhook(storage, c, id);
+      const existing = await storage.outboundWebhookDeliveries.get(
+        id,
+        delivery_id,
+      );
+      if (!existing)
+        throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      if (
+        !subscription.active ||
+        !(await ownerCredential(storage, subscription.owner))
+      )
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          "Delivery cannot be redelivered",
+        );
+      const config = await readInstanceConfig(storage.settings);
+      const retention =
+        config?.audit_retention_days ?? c.get("config").auditRetentionDays;
+      const now = new Date();
+      const reopened = await storage.outboundWebhookDeliveries.reopen(
+        id,
+        delivery_id,
+        subscription.url,
+        now.toISOString(),
+        retention > 0
+          ? new Date(now.getTime() - retention * 86400000).toISOString()
+          : null,
+      );
+      if (!reopened)
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          "Delivery cannot be redelivered",
+        );
+      return reopened;
+    });
+    return c.json(delivery, 202);
+  });
   return router;
 }

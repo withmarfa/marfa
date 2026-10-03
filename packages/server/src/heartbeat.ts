@@ -21,17 +21,27 @@ export class HeartbeatPinger {
 
   /** One ping. Reports whether the receiver answered 2xx and with what. */
   async runOnce(): Promise<{ ok: boolean; status: number | null }> {
+    const abort = new AbortController();
     try {
       const res = await this.fetchImpl(this.url, {
         method: "GET",
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.any([AbortSignal.timeout(10_000), abort.signal]),
       });
-      if (!res.ok) {
-        log("warn", "Heartbeat receiver answered non-2xx", {
-          status: res.status,
+      const outcome = { ok: res.ok, status: res.status };
+      try {
+        await res.body?.cancel();
+      } catch {
+        abort.abort();
+        log("warn", "Outbound response cleanup required abort", {
+          kind: "heartbeat",
         });
       }
-      return { ok: res.ok, status: res.status };
+      if (!outcome.ok) {
+        log("warn", "Heartbeat receiver answered non-2xx", {
+          status: outcome.status,
+        });
+      }
+      return outcome;
     } catch (err) {
       log("warn", "Heartbeat ping failed", {
         error: err instanceof Error ? err.message : String(err),

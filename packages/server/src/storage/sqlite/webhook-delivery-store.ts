@@ -10,20 +10,24 @@ import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
 } from "../interface.js";
-import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
+import {
+  CLAIM_LOCK_TTL_MS,
+  validWebhookFrame,
+} from "../../webhooks/delivery.js";
 import { outboundWebhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-// Only a retry reads these, and kept on a settled row the event and the
-// address would outlive their subscription.
+// Success and cancellation no longer need a replay frame. Failed frames
+// retain the original retention deadline for explicit owner redelivery.
 const SETTLED = { payload: null, webhook_url: null };
 
-// The first outcome stands: an attempt whose claim lapsed and was taken
-// again must not reopen, or unsettle, what the other attempt settled.
-function stillPending(id: string) {
+// A lapsed claim may still have HTTP in flight. Its outcome must not write
+// into a newer claim or an explicitly reopened retry cycle.
+function stillPending(id: string, token: string) {
   return and(
     eq(outboundWebhookDeliveries.id, id),
     eq(outboundWebhookDeliveries.status, "pending"),
+    eq(outboundWebhookDeliveries.claim_token, token),
   );
 }
 
@@ -87,6 +91,68 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     };
   }
 
+  async get(webhookId: string, id: string) {
+    const row = await this.db
+      .select()
+      .from(outboundWebhookDeliveries)
+      .where(
+        and(
+          eq(outboundWebhookDeliveries.id, id),
+          eq(outboundWebhookDeliveries.webhook_id, webhookId),
+        ),
+      )
+      .get();
+    return row ? rowToDelivery(row) : null;
+  }
+  async reopen(
+    webhookId: string,
+    id: string,
+    url: string,
+    now: string,
+    cutoff: string | null,
+  ) {
+    const t = outboundWebhookDeliveries;
+    const retained = await this.db
+      .select()
+      .from(t)
+      .where(and(eq(t.id, id), eq(t.webhook_id, webhookId)))
+      .get();
+    if (!retained?.payload) return null;
+    let frame: unknown;
+    try {
+      frame = JSON.parse(retained.payload);
+    } catch {
+      return null;
+    }
+    if (
+      typeof frame !== "object" ||
+      frame === null ||
+      !validWebhookFrame(frame as Record<string, unknown>, retained.event_type)
+    )
+      return null;
+    const rows = await this.db
+      .update(t)
+      .set({
+        status: "pending",
+        claim_token: null,
+        retry_start_attempt: sql`${t.attempt}`,
+        webhook_url: url,
+        next_attempt_at: now,
+      })
+      .where(
+        and(
+          eq(t.id, id),
+          eq(t.webhook_id, webhookId),
+          eq(t.status, "dead_letter"),
+          sql`${t.payload} IS NOT NULL`,
+          cutoff === null ? undefined : sql`${t.created_at} >= ${cutoff}`,
+        ),
+      )
+      .returning()
+      .all();
+    return rows[0] ? rowToDelivery(rows[0]) : null;
+  }
+
   async schedule(entry: {
     webhookId: string;
     eventId: bigint;
@@ -110,7 +176,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         next_attempt_at: entry.nextAttemptAt,
         payload: entry.payload,
         webhook_url: entry.webhookUrl,
-        max_attempts: 4,
+        retry_start_attempt: 0,
         status: "pending",
       })
       .run();
@@ -127,18 +193,19 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       payload: string | null;
       webhook_url: string | null;
       attempt: number;
-      max_attempts: number;
+      retry_start_attempt: number;
+      claim_token: string;
     }>(
       sql`
           UPDATE outbound_webhook_deliveries
-          SET next_attempt_at = ${claimExpiry}
+          SET next_attempt_at = ${claimExpiry}, claim_token = lower(hex(randomblob(16)))
           WHERE id IN (
             SELECT id FROM outbound_webhook_deliveries
             WHERE status = 'pending' AND next_attempt_at <= ${now}
             ORDER BY next_attempt_at
             LIMIT ${limit}
           )
-          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, max_attempts
+          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, retry_start_attempt, claim_token
         `,
     );
     return rows.map((r) => ({
@@ -149,7 +216,8 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       payload: r.payload ?? "",
       webhook_url: r.webhook_url ?? "",
       attempt: r.attempt,
-      max_attempts: r.max_attempts,
+      retry_start_attempt: r.retry_start_attempt,
+      claim_token: r.claim_token,
     }));
   }
 
@@ -168,15 +236,16 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       payload: string | null;
       webhook_url: string | null;
       attempt: number;
-      max_attempts: number;
+      retry_start_attempt: number;
+      claim_token: string;
     }>(
       sql`
           UPDATE outbound_webhook_deliveries
-          SET next_attempt_at = ${claimExpiry}
+          SET next_attempt_at = ${claimExpiry}, claim_token = lower(hex(randomblob(16)))
           WHERE id = ${id}
             AND status = 'pending'
             AND next_attempt_at <= ${now}
-          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, max_attempts
+          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, retry_start_attempt, claim_token
         `,
     );
     const row = rows[0];
@@ -189,60 +258,72 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       payload: row.payload ?? "",
       webhook_url: row.webhook_url ?? "",
       attempt: row.attempt,
-      max_attempts: row.max_attempts,
+      retry_start_attempt: row.retry_start_attempt,
+      claim_token: row.claim_token,
     };
   }
 
   async markSuccess(
     id: string,
+    token: string,
     statusCode: number,
     attempt: number,
-  ): Promise<void> {
-    await this.db
+  ): Promise<boolean> {
+    const result = await this.db
       .update(outboundWebhookDeliveries)
       .set({
         status: "success",
+        claim_token: null,
         error: null,
         status_code: statusCode,
         attempt,
         ...SETTLED,
       })
-      .where(stillPending(id))
+      .where(stillPending(id, token))
       .run();
+    return result.rowsAffected > 0;
   }
 
   async markFailed(
     id: string,
+    token: string,
     statusCode: number | undefined,
     error: string,
     attempt: number,
     nextAttemptAt: string | null,
-  ): Promise<void> {
-    await this.db
+  ): Promise<boolean> {
+    const result = await this.db
       .update(outboundWebhookDeliveries)
       .set({
+        claim_token: null,
         status_code: statusCode ?? null,
         error,
         attempt,
         next_attempt_at: nextAttemptAt,
         status: nextAttemptAt === null ? "dead_letter" : "pending",
-        ...(nextAttemptAt === null ? SETTLED : {}),
       })
-      .where(stillPending(id))
+      .where(stillPending(id, token))
       .run();
+    return result.rowsAffected > 0;
   }
 
-  async markCanceled(id: string, reason: string): Promise<void> {
-    await this.db
+  async markCanceled(
+    id: string,
+    token: string,
+    reason: string,
+  ): Promise<boolean> {
+    const result = await this.db
       .update(outboundWebhookDeliveries)
       .set({
         status: "canceled",
+        claim_token: null,
         error: reason,
         next_attempt_at: null,
         ...SETTLED,
       })
-      .where(stillPending(id))
+      .where(stillPending(id, token))
       .run();
+    return result.rowsAffected > 0;
   }
 
   async cancelPending(webhookId: string, reason: string): Promise<void> {
@@ -250,6 +331,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .update(outboundWebhookDeliveries)
       .set({
         status: "canceled",
+        claim_token: null,
         error: reason,
         next_attempt_at: null,
         ...SETTLED,

@@ -568,7 +568,8 @@ export const outboundWebhookDeliveries = sqliteTable(
     next_attempt_at: text("next_attempt_at"),
     payload: text("payload"),
     webhook_url: text("webhook_url"),
-    max_attempts: integer("max_attempts").notNull().default(4),
+    retry_start_attempt: integer("retry_start_attempt").notNull().default(0),
+    claim_token: text("claim_token"),
     status: text("status")
       .$type<WebhookDeliveryStatus>()
       .notNull()
