@@ -1045,6 +1045,19 @@ export async function createConnection(sqlitePath: string): Promise<{
     captureRead,
     close: async () => {
       await closeReads();
+      // The driver keeps a connection open while a statement refers to it,
+      // and the process then ends without the checkpoint SQLite makes when
+      // the last connection closes, so without this the log of a stopped
+      // instance still holds its newest writes and the database file alone
+      // does not. A reader that holds the log, such as the replicator's,
+      // refuses it, and the next boot checkpoints as it always has.
+      if (sqlitePath !== ":memory:") {
+        try {
+          await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+        } catch {
+          // Best effort: a stop that cannot checkpoint is still a stop.
+        }
+      }
       client.close();
     },
   };

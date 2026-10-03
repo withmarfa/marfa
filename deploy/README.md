@@ -39,6 +39,39 @@ docker run --rm -p 8600:8600 -v marfa-data:/data --env-file <your env> marfa-ser
 
 Without `S3_BUCKET` the container runs the server alone and says so in its log: nothing is streamed and no object store is attached. That is a local trial, not a deployment.
 
+## Backing up the machine
+
+Litestream and the bucket are the recovery path that needs no care. If you also back up the machine the instance runs on, with Time Machine, a host's disk snapshots or a file-copying tool, back up two things:
+
+- **The data directory**, which is the volume mounted at `/data` in the image. It holds the database (`SQLITE_PATH`), the log beside it named `marfa.db-wal` that holds writes not yet moved into the database, and the blob folder (`BLOB_PATH`). Nothing else on the machine belongs to the instance. The OCR model cache under the directory is downloaded again when it is missing and can be left out.
+- **The two secrets**, `API_KEY_SALT` and `MARFA_AUTH_SECRET`, in the deployment's secret store. They are not in the data directory. The database holds a hash of each key made with `API_KEY_SALT`, so a restore without it holds every key and accepts none, and without `MARFA_AUTH_SECRET` every signed-in session ends.
+
+How the copy is taken decides whether it restores. These restore to a working instance with every write the instance had acknowledged before the copy began:
+
+| How the copy is taken                                                                                                        | Why it is safe                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A snapshot of the volume or filesystem, including a Time Machine backup of an APFS volume and a host's disk snapshot         | It is an image of the directory at one instant. SQLite recovers from the log as it does after a crash, and every acknowledged write was synced to the disk before the instance answered. |
+| Stopping the instance, copying the directory, then starting it                                                               | A stop moves every write into the database file. Copy `marfa.db-wal` as well when it is there, because a replicator that holds the log can leave writes in it.                           |
+| Copying the files one after another while the instance runs, with a read transaction held on the database for the whole copy | The log is not restarted while a reader is on it. Hold the transaction, copy the database file, then the log, then the blob folder, then release it.                                     |
+
+Copying the files one after another while the instance runs, with no reader held, does not restore. A checkpoint between reading the database file and reading the log leaves a database that either will not open or has lost the writes between the two. Nothing the server does can prevent this, because the copying tool runs outside it. Copy the database file and the log before the blob folder: an upload's file is written before the row that names it, so every blob a copied row names is then in the copy. A file in the copy that no row names is removed by the `blob-orphans` job.
+
+To hold the transaction on a machine that has the `sqlite3` command and reaches the same file system the instance writes to:
+
+```bash
+sqlite3 /data/marfa.db "BEGIN; SELECT count(*) FROM sqlite_master;" ".shell cp /data/marfa.db /data/marfa.db-wal /backup/" ".shell cp -R /data/blobs /backup/" "COMMIT;"
+```
+
+Restore from any of these like this:
+
+1. Stop the instance.
+2. Put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file, which is rebuilt at start.
+3. Start the instance with the same `API_KEY_SALT` and `MARFA_AUTH_SECRET` as before, and read `GET /health`.
+
+The instance applies the log at start. A copy's integrity can be checked first with `sqlite3 marfa.db "PRAGMA integrity_check"`, which answers `ok`.
+
+`GET /export` and `POST /admin/restore-archive` move data between machines and between builds that share a schema. They are not a machine backup. `conformance/spec/instance.md` states what a restore promises.
+
 ## Restoring by hand
 
 A restore is a Litestream command against the same configuration and environment. To the latest replicated state:

@@ -12,7 +12,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { generateId } from "@withmarfa/shared";
@@ -318,6 +318,10 @@ export class DiskBlobStore implements BlobStore {
  * Rename a spooled file to its final name. Content addressing means a file
  * already there holds these same bytes, so losing the race is a discard,
  * not a failure.
+ *
+ * The bytes are synced before the name exists and the name after, so that
+ * a row naming the blob, committed once this returns, never outlives the
+ * file in an image of the disk taken at any instant.
  */
 async function moveIntoPlace(from: string, to: string): Promise<void> {
   try {
@@ -327,7 +331,37 @@ async function moveIntoPlace(from: string, to: string): Promise<void> {
   } catch (err) {
     if (!isEnoent(err)) throw err;
   }
+  await syncPath(from);
   await rename(from, to);
+  await syncPath(dirname(to), true);
+}
+
+/**
+ * Flush a file, or a directory's entries, to the disk. A directory cannot
+ * be opened on every platform, and where it cannot, there is nothing to
+ * flush and the rename stands as the platform makes it durable.
+ */
+async function syncPath(path: string, directory = false): Promise<void> {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, "r");
+  } catch (err) {
+    if (directory && isUnopenableDirectory(err)) return;
+    throw err;
+  }
+  try {
+    await handle.sync();
+  } catch (err) {
+    if (directory && isUnopenableDirectory(err)) return;
+    throw err;
+  } finally {
+    await handle.close();
+  }
+}
+
+function isUnopenableDirectory(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EISDIR" || code === "EPERM" || code === "EINVAL";
 }
 
 export function isEnoent(err: unknown): boolean {
