@@ -20,6 +20,11 @@ import type { CidrRange } from "./middleware/client-ip.js";
  */
 export const DEFAULT_KEYS_RATE_LIMIT = 200;
 
+// A century-scale retention horizon keeps cutoff dates in ordinary ISO years.
+export const MAX_INBOUND_RETENTION_DAYS = 36_500;
+// Native JavaScript timers support at most a signed 32-bit millisecond delay.
+export const MAX_INBOUND_CLEANUP_INTERVAL_MS = 2_147_483_647;
+
 /** What bounds the inbound webhook doors. */
 export interface InboundLimits {
   /** The largest delivery the door stores, in bytes. */
@@ -30,6 +35,11 @@ export interface InboundLimits {
   backlogDeliveries: number;
   /** Their bytes. */
   backlogBytes: number;
+  /** All retained deliveries across live and retired endpoints. */
+  retainedDeliveries: number;
+  /** Logical body and metadata charge across all retained deliveries. */
+  retainedBytes: number;
+  cleanupIntervalMs: number;
   /** Bytes the door holds in memory across every receipt at once. */
   inFlightBytes: number;
   /** How long a body has to arrive whole, so a stalled sender cannot hold in-flight bytes. */
@@ -48,6 +58,9 @@ export const DEFAULT_INBOUND_LIMITS: InboundLimits = {
   requestsPerWindow: 600,
   backlogDeliveries: 10_000,
   backlogBytes: 1024 * 1024 * 1024,
+  retainedDeliveries: 10_000,
+  retainedBytes: 1024 * 1024 * 1024,
+  cleanupIntervalMs: 60_000,
   inFlightBytes: 100 * 1024 * 1024,
   readTimeoutMs: 30_000,
   handledRetentionDays: 7,
@@ -755,15 +768,26 @@ const settingsShape = {
     DEFAULT_INBOUND_LIMITS.backlogDeliveries,
   ),
   MARFA_INBOUND_BACKLOG_BYTES: count(DEFAULT_INBOUND_LIMITS.backlogBytes),
+  MARFA_INBOUND_RETAINED_DELIVERIES: count(
+    DEFAULT_INBOUND_LIMITS.retainedDeliveries,
+  ),
+  MARFA_INBOUND_RETAINED_BYTES: count(DEFAULT_INBOUND_LIMITS.retainedBytes),
+  MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
+    DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
+    1,
+    MAX_INBOUND_CLEANUP_INTERVAL_MS,
+  ),
   MARFA_INBOUND_IN_FLIGHT_BYTES: count(DEFAULT_INBOUND_LIMITS.inFlightBytes),
   MARFA_INBOUND_READ_TIMEOUT_MS: count(DEFAULT_INBOUND_LIMITS.readTimeoutMs),
   MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.handledRetentionDays,
     0,
+    MAX_INBOUND_RETENTION_DAYS,
   ),
   MARFA_INBOUND_PENDING_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
     0,
+    MAX_INBOUND_RETENTION_DAYS,
   ),
 
   MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(1_000),
@@ -1161,6 +1185,9 @@ export function loadConfig(
       requestsPerWindow: s.RATE_LIMIT_INBOUND_REQUESTS,
       backlogDeliveries: s.MARFA_INBOUND_BACKLOG_DELIVERIES,
       backlogBytes: s.MARFA_INBOUND_BACKLOG_BYTES,
+      retainedDeliveries: s.MARFA_INBOUND_RETAINED_DELIVERIES,
+      retainedBytes: s.MARFA_INBOUND_RETAINED_BYTES,
+      cleanupIntervalMs: s.MARFA_INBOUND_CLEANUP_INTERVAL_MS,
       inFlightBytes: s.MARFA_INBOUND_IN_FLIGHT_BYTES,
       readTimeoutMs: s.MARFA_INBOUND_READ_TIMEOUT_MS,
       handledRetentionDays: s.MARFA_INBOUND_HANDLED_RETENTION_DAYS,

@@ -443,3 +443,59 @@ describe("version.json", () => {
     }
   });
 });
+
+describe("inbound retained capacity settings", () => {
+  it("uses bounded retained defaults and a minute cleanup cadence", () => {
+    expect(loadConfig({}).inbound).toMatchObject({
+      retainedDeliveries: 10000,
+      retainedBytes: 1073741824,
+      cleanupIntervalMs: 60000,
+    });
+  });
+  it("loads explicit safe capacities, while zero retention leaves them enforced", () => {
+    expect(
+      loadConfig({
+        MARFA_INBOUND_RETAINED_DELIVERIES: "2",
+        MARFA_INBOUND_RETAINED_BYTES: "4096",
+        MARFA_INBOUND_CLEANUP_INTERVAL_MS: "1000",
+        MARFA_INBOUND_HANDLED_RETENTION_DAYS: "0",
+        MARFA_INBOUND_PENDING_RETENTION_DAYS: "0",
+      }).inbound,
+    ).toMatchObject({
+      retainedDeliveries: 2,
+      retainedBytes: 4096,
+      cleanupIntervalMs: 1000,
+      handledRetentionDays: 0,
+      pendingRetentionDays: 0,
+    });
+    for (const name of [
+      "MARFA_INBOUND_RETAINED_DELIVERIES",
+      "MARFA_INBOUND_RETAINED_BYTES",
+      "MARFA_INBOUND_CLEANUP_INTERVAL_MS",
+    ]) {
+      for (const value of ["0", "-1", "1.5", "9007199254740992"])
+        expect(refusal({ [name]: value })).toContain(name);
+    }
+  });
+});
+
+it("bounds inbound date horizons and the native timer interval", () => {
+  const maximum = loadConfig({
+    MARFA_INBOUND_HANDLED_RETENTION_DAYS: "36500",
+    MARFA_INBOUND_PENDING_RETENTION_DAYS: "36500",
+    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483647",
+  });
+  expect(maximum.inbound).toMatchObject({
+    handledRetentionDays: 36500,
+    pendingRetentionDays: 36500,
+    cleanupIntervalMs: 2147483647,
+  });
+  for (const name of [
+    "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
+    "MARFA_INBOUND_PENDING_RETENTION_DAYS",
+  ])
+    expect(refusal({ [name]: "36501" })).toContain(name);
+  expect(
+    refusal({ MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483648" }),
+  ).toContain("MARFA_INBOUND_CLEANUP_INTERVAL_MS");
+});

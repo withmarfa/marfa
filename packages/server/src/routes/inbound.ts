@@ -16,6 +16,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS } from "../config.js";
+import { shapedError } from "../middleware/error-handler.js";
 import { hashInboundToken } from "../inbound/address.js";
 
 /** Long enough for a backlog to drain or a burst to pass. */
@@ -88,10 +89,7 @@ export function inboundRoutes(storage: Storage, config: AppConfig) {
     }
 
     const backlog = await storage.inbound.backlog(target.connector_id);
-    if (
-      backlog.count >= limits.backlogDeliveries ||
-      backlog.bytes >= limits.backlogBytes
-    ) {
+    if (backlog.count >= limits.backlogDeliveries) {
       throw unavailable(c, "The connector's backlog is full");
     }
 
@@ -161,23 +159,30 @@ export function inboundRoutes(storage: Storage, config: AppConfig) {
         }
       }
       const headers = receivedHeaders(c);
-      const duplicateHeader = target.duplicate_header;
-      const dedupeKey =
-        duplicateHeader === null
-          ? null
-          : (headers.find(
-              ([name]) => name.toLowerCase() === duplicateHeader,
-            )?.[1] ?? null);
-      const id = await storage.inbound.receive({
-        endpointId: target.endpoint_id,
-        connectorId: target.connector_id,
-        method: c.req.method,
-        query: rawQuery(c.req.url),
-        headers,
-        body: Buffer.concat(chunks, held),
-        dedupeKey,
-      });
-      return c.json({ id }, 202);
+      let received: Awaited<ReturnType<Storage["inbound"]["receive"]>>;
+      try {
+        received = await storage.inbound.receive(
+          {
+            tokenHash: hashInboundToken(c.req.param("token")),
+            method: c.req.method,
+            query: rawQuery(c.req.url),
+            headers,
+            body: Buffer.concat(chunks, held),
+          },
+          limits,
+        );
+      } catch (error) {
+        if (shapedError(error) !== undefined) throw error;
+        // eslint-disable-next-line preserve-caught-error -- Receipt SQL parameters must not reach error sinks.
+        throw new Error("Inbound receipt storage failed");
+      }
+      if (received.kind === "not_found") {
+        throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
+      }
+      if (received.kind === "capacity") {
+        throw unavailable(c, "The registration's inbound capacity is full");
+      }
+      return c.json({ id: received.id }, 202);
     } finally {
       inFlight -= held;
     }

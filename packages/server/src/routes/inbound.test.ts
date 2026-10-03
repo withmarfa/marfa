@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { trace } from "@opentelemetry/api";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import * as errorNotifier from "../middleware/error-notifier.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS } from "../config.js";
 import {
@@ -1112,13 +1115,821 @@ describe("the inbound delivery sweep", () => {
     );
     expect(
       await ctx.storage.inbound.cleanup({ handledDays: 0, pendingDays: 0 }),
-    ).toBe(0);
+    ).toEqual({ deleted: 0, remaining: false });
     expect(
       await ctx.storage.inbound.cleanup({ handledDays: 0, pendingDays: 30 }),
-    ).toBe(1);
+    ).toEqual({ deleted: 1, remaining: false });
     const left = (await deliveries(ctx, connector, "?state=any")).data.map(
       (d) => d.id,
     );
     expect(left).toEqual([handled]);
+  });
+});
+
+describe("authoritative inbound capacity", () => {
+  it("checks concurrent completed bodies in the insertion transaction", async () => {
+    const ctx = await context({
+      inbound: { ...DEFAULT_INBOUND_LIMITS, backlogDeliveries: 2 },
+    });
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    let reads = 0;
+    let ready!: () => void;
+    const allRead = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const original = ctx.storage.inbound.backlog.bind(ctx.storage.inbound);
+    const spy = vi
+      .spyOn(ctx.storage.inbound, "backlog")
+      .mockImplementation(async (id) => {
+        const value = await original(id);
+        expect(value.count).toBe(0);
+        if (++reads === 3) ready();
+        return value;
+      });
+    const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const responses = Array.from({ length: 3 }, () =>
+      Promise.resolve(
+        ctx.app.request(made.path, {
+          method: "POST",
+          duplex: "half",
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controllers.push(controller);
+              controller.enqueue(new TextEncoder().encode("x"));
+            },
+          }),
+        }),
+      ),
+    );
+    await allRead;
+    spy.mockRestore();
+    controllers.forEach((controller) => {
+      controller.close();
+    });
+    expect((await Promise.all(responses)).map((r) => r.status).sort()).toEqual([
+      202, 202, 503,
+    ]);
+    expect(await ctx.storage.inbound.backlog(connector.id)).toEqual({
+      count: 2,
+      bytes: 2,
+    });
+    expect((await deliveries(ctx, connector)).data).toHaveLength(2);
+  });
+
+  it("compares incoming bytes and permits a zero body at an exactly full byte limit", async () => {
+    const ctx = await context({
+      inbound: { ...DEFAULT_INBOUND_LIMITS, backlogBytes: 2 },
+    });
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    expect((await post(ctx, made.path, "xxx")).status).toBe(503);
+    expect((await post(ctx, made.path, "xx")).status).toBe(202);
+    expect((await post(ctx, made.path, "")).status).toBe(202);
+    expect((await post(ctx, made.path, "x")).status).toBe(503);
+    expect(await ctx.storage.inbound.backlog(connector.id)).toEqual({
+      count: 2,
+      bytes: 2,
+    });
+  });
+
+  it("charges handled zero-body receipts across retired and live endpoints", async () => {
+    const ctx = await context({
+      inbound: {
+        ...DEFAULT_INBOUND_LIMITS,
+        retainedDeliveries: 2,
+        handledRetentionDays: 0,
+        pendingRetentionDays: 0,
+      },
+    });
+    const connector = await register(ctx);
+    const first = await endpoint(ctx, connector);
+    const second = await endpoint(ctx, connector);
+    for (const path of [first.path, second.path]) {
+      const response = await post(ctx, path + "?metadata=%C3%A9", "", {
+        "X-Metadata": "stored",
+      });
+      expect(response.status).toBe(202);
+      const { id } = (await response.json()) as { id: string };
+      expect(
+        (
+          await request(
+            ctx.app,
+            "POST",
+            `/connectors/${connector.id}/deliveries/handled`,
+            {
+              key: connector.key,
+              body: { ids: [id], outcome: "processed" },
+            },
+          )
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await request(
+          ctx.app,
+          "DELETE",
+          `/connectors/${connector.id}/endpoints/${first.id}`,
+          { key: connector.key },
+        )
+      ).status,
+    ).toBe(200);
+    expect((await post(ctx, second.path, "")).status).toBe(503);
+    expect((await deliveries(ctx, connector, "?state=any")).data).toHaveLength(
+      2,
+    );
+    const other = await register(ctx);
+    expect(
+      (await post(ctx, (await endpoint(ctx, other)).path, "")).status,
+    ).toBe(202);
+  });
+
+  it("refuses an endpoint retired while its body is arriving", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    let ready!: () => void;
+    const read = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const original = ctx.storage.inbound.backlog.bind(ctx.storage.inbound);
+    const spy = vi
+      .spyOn(ctx.storage.inbound, "backlog")
+      .mockImplementation(async (id) => {
+        const value = await original(id);
+        ready();
+        return value;
+      });
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const receiving = Promise.resolve(
+      ctx.app.request(made.path, {
+        method: "POST",
+        duplex: "half",
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+            c.enqueue(new TextEncoder().encode("x"));
+          },
+        }),
+      }),
+    );
+    await read;
+    spy.mockRestore();
+    expect(
+      (
+        await request(
+          ctx.app,
+          "DELETE",
+          `/connectors/${connector.id}/endpoints/${made.id}`,
+          { key: connector.key },
+        )
+      ).status,
+    ).toBe(200);
+    controller.close();
+    expect((await receiving).status).toBe(404);
+    expect((await deliveries(ctx, connector, "?state=any")).data).toEqual([]);
+  });
+
+  it("bounds one cleanup pass and reports resumable remaining work", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+      __sqliteAll(query: string): Promise<unknown[]>;
+    };
+    const original = await post(ctx, made.path, "x");
+    const { id } = (await original.json()) as { id: string };
+    await raw.__sqliteRun(
+      `INSERT INTO inbound_deliveries SELECT 'copy-' || printf('%04d', value), endpoint_id, connector_id, received_at, method, query, headers, size, stored_bytes, sha256, dedupe_key, handled_at, outcome FROM inbound_deliveries, (WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value < 500) SELECT value FROM n) WHERE id = ?`,
+      [id],
+    );
+    await raw.__sqliteRun("UPDATE inbound_deliveries SET received_at = ?", [
+      new Date(Date.now() - 40 * 86400000).toISOString(),
+    ]);
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 500, remaining: true });
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: false });
+  });
+
+  it("round trips live retention overrides without making capacity optional", async () => {
+    const ctx = await context();
+    const got = await request(ctx.app, "GET", "/config", {
+      key: ctx.workingKey,
+    });
+    const config = (await got.json()) as Record<string, unknown>;
+    const changed = await request(ctx.app, "PUT", "/config", {
+      key: ctx.workingKey,
+      body: {
+        ...config,
+        inbound_handled_retention_days: 0,
+        inbound_pending_retention_days: 2,
+      },
+    });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({
+      inbound_handled_retention_days: 0,
+      inbound_pending_retention_days: 2,
+    });
+  });
+});
+
+describe("inbound charged storage and cleanup", () => {
+  function raw(ctx: TestContext) {
+    return ctx.storage as unknown as {
+      __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+      __sqliteAll(query: string): Promise<Record<string, unknown>[]>;
+    };
+  }
+
+  it("charges canonical UTF-8 metadata and body once, with exact and one-byte-over boundaries", async () => {
+    const ctx = await context({ inbound: { ...DEFAULT_INBOUND_LIMITS } });
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector, {
+      duplicate_header: "X-Delivery",
+    });
+    const path = made.path + "?q=%C3%A9";
+    const headers = { "X-Delivery": "same", "X-Metadata": "café" };
+    const first = await post(ctx, path, "é", headers, [
+      "X-Delivery",
+      "same",
+      "X-Metadata",
+      "café",
+      "X-Metadata",
+      "repeat",
+    ]);
+    expect(first.status).toBe(202);
+    const { id } = (await first.json()) as { id: string };
+    const [row] = await raw(ctx).__sqliteAll(
+      `SELECT * FROM inbound_deliveries WHERE id = '${id}'`,
+    );
+    const metadata = {
+      id: row!.id,
+      endpoint_id: row!.endpoint_id,
+      connector_id: row!.connector_id,
+      received_at: row!.received_at,
+      method: row!.method,
+      query: row!.query,
+      headers: JSON.parse(row!.headers as string) as [string, string][],
+      size: row!.size,
+      sha256: row!.sha256,
+      dedupe_key: row!.dedupe_key,
+      handled_at: null,
+      outcome: null,
+    };
+    const charge = 2 + Buffer.byteLength(JSON.stringify(metadata), "utf8") + 32;
+    expect(row!.stored_bytes).toBe(charge);
+    expect(Buffer.byteLength(JSON.stringify(metadata), "utf8")).toBeGreaterThan(
+      JSON.stringify(metadata).length,
+    );
+    ctx.config.inbound!.retainedBytes = charge * 2 - 1;
+    expect(
+      (
+        await post(ctx, path, "é", headers, [
+          "X-Delivery",
+          "same",
+          "X-Metadata",
+          "café",
+          "X-Metadata",
+          "repeat",
+        ])
+      ).status,
+    ).toBe(503);
+    ctx.config.inbound!.retainedBytes = charge * 2;
+    const equal = await post(ctx, path, "é", headers, [
+      "X-Delivery",
+      "same",
+      "X-Metadata",
+      "café",
+      "X-Metadata",
+      "repeat",
+    ]);
+    expect(equal.status).toBe(202);
+    const second = (await equal.json()) as { id: string };
+    const marked = await ctx.storage.inbound.markHandled(
+      connector.id,
+      [second.id, id],
+      "processed",
+    );
+    expect(marked?.map((d) => d.id)).toEqual([second.id, id]);
+    expect(
+      (
+        await ctx.storage.inbound.markHandled(connector.id, [id], "rejected")
+      )?.[0]?.outcome,
+    ).toBe("processed");
+    const [total] = await raw(ctx).__sqliteAll(
+      "SELECT SUM(stored_bytes) AS bytes FROM inbound_deliveries",
+    );
+    expect(total!.bytes).toBe(charge * 2);
+    const publicRows = (await deliveries(ctx, connector, "?state=any")).data;
+    expect(publicRows.find((d) => d.id === second.id)?.duplicate_of).toEqual({
+      id,
+      outcome: "processed",
+    });
+    expect(publicRows.every((d) => !("stored_bytes" in d))).toBe(true);
+    expect((await post(ctx, path, "", headers)).status).toBe(503);
+  });
+
+  it("rolls metadata and body insertion back together before accepting a later receipt", async () => {
+    const ctx = await context({
+      inbound: { ...DEFAULT_INBOUND_LIMITS, retainedDeliveries: 1 },
+    });
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    await raw(ctx).__sqliteRun(
+      "CREATE TRIGGER fixture_body_insert BEFORE INSERT ON inbound_delivery_bodies BEGIN SELECT RAISE(ABORT, 'fixture body insert failure'); END",
+      [],
+    );
+    expect((await post(ctx, made.path, "x")).status).toBe(500);
+    expect(
+      await raw(ctx).__sqliteAll("SELECT id FROM inbound_deliveries"),
+    ).toEqual([]);
+    expect(
+      await raw(ctx).__sqliteAll(
+        "SELECT delivery_id FROM inbound_delivery_bodies",
+      ),
+    ).toEqual([]);
+    await raw(ctx).__sqliteRun("DROP TRIGGER fixture_body_insert", []);
+    expect((await post(ctx, made.path, "x")).status).toBe(202);
+    expect((await post(ctx, made.path, "x")).status).toBe(503);
+  });
+
+  it("rolls cleanup cascades back and resumes in mixed age order within the byte target", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++)
+      ids.push(
+        ((await (await post(ctx, made.path, "body")).json()) as { id: string })
+          .id,
+      );
+    await ctx.storage.inbound.markHandled(
+      connector.id,
+      [ids[1]!, ids[3]!],
+      "processed",
+    );
+    const ago = (days: number) =>
+      new Date(Date.now() - days * 86400000).toISOString();
+    await raw(ctx).__sqliteRun(
+      "UPDATE inbound_deliveries SET received_at = ?, handled_at = CASE WHEN handled_at IS NULL THEN NULL ELSE ? END, stored_bytes = ? WHERE id = ?",
+      [ago(60), ago(60), 33 * 1024 * 1024, ids[0]],
+    );
+    await raw(ctx).__sqliteRun(
+      "UPDATE inbound_deliveries SET handled_at = ?, stored_bytes = ? WHERE id = ?",
+      [ago(50), 20 * 1024 * 1024, ids[1]],
+    );
+    await raw(ctx).__sqliteRun(
+      "UPDATE inbound_deliveries SET received_at = ?, stored_bytes = ? WHERE id = ?",
+      [ago(40), 13 * 1024 * 1024, ids[2]],
+    );
+    await raw(ctx).__sqliteRun(
+      "CREATE TRIGGER fixture_body_delete BEFORE DELETE ON inbound_delivery_bodies BEGIN SELECT RAISE(ABORT, 'fixture body delete failure'); END",
+      [],
+    );
+    await expect(
+      ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).rejects.toThrow();
+    expect(
+      await raw(ctx).__sqliteAll("SELECT id FROM inbound_deliveries"),
+    ).toHaveLength(4);
+    expect(
+      await raw(ctx).__sqliteAll(
+        "SELECT delivery_id FROM inbound_delivery_bodies",
+      ),
+    ).toHaveLength(4);
+    await raw(ctx).__sqliteRun("DROP TRIGGER fixture_body_delete", []);
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: true });
+    expect(await ctx.storage.inbound.body(connector.id, ids[0]!)).toBeNull();
+    expect(await ctx.storage.inbound.body(connector.id, ids[1]!)).toEqual(
+      Buffer.from("body"),
+    );
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: true });
+    expect(await ctx.storage.inbound.body(connector.id, ids[1]!)).toBeNull();
+    expect(await ctx.storage.inbound.body(connector.id, ids[2]!)).toEqual(
+      Buffer.from("body"),
+    );
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: false });
+    expect(
+      (await deliveries(ctx, connector, "?state=any")).data.map((d) => d.id),
+    ).toEqual([ids[3]]);
+  });
+
+  it("uses current retention overrides on each ordinary housekeeping pass", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const id = (
+      (await (await post(ctx, made.path, "body")).json()) as { id: string }
+    ).id;
+    await ctx.storage.inbound.markHandled(connector.id, [id], "processed");
+    await raw(ctx).__sqliteRun(
+      "UPDATE inbound_deliveries SET handled_at = ? WHERE id = ?",
+      [new Date(Date.now() - 10 * 86400000).toISOString(), id],
+    );
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+      pollIntervalMs: 3600000,
+    });
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
+    try {
+      expect(
+        (
+          await request(ctx.app, "PUT", "/config", {
+            key: ctx.workingKey,
+            body: {
+              inbound_handled_retention_days: 0,
+              inbound_pending_retention_days: 0,
+            },
+          })
+        ).status,
+      ).toBe(200);
+      await housekeeping.runNow("inbound-delivery-cleanup");
+      expect(await ctx.storage.inbound.body(connector.id, id)).toEqual(
+        Buffer.from("body"),
+      );
+      expect(
+        (
+          await request(ctx.app, "PUT", "/config", {
+            key: ctx.workingKey,
+            body: { inbound_handled_retention_days: 1 },
+          })
+        ).status,
+      ).toBe(200);
+      await housekeeping.runNow("inbound-delivery-cleanup");
+      expect(await ctx.storage.inbound.body(connector.id, id)).toBeNull();
+      for (const value of [-1, 1.5])
+        expect(
+          (
+            await request(ctx.app, "PUT", "/config", {
+              key: ctx.workingKey,
+              body: { inbound_handled_retention_days: value },
+            })
+          ).status,
+        ).toBe(400);
+    } finally {
+      await housekeeping.stop();
+    }
+  });
+
+  it.each(["revoked", "expired"])(
+    "rechecks a %s registration key after a held body",
+    async (standing) => {
+      const ctx = await context();
+      const connector = await register(ctx);
+      const made = await endpoint(ctx, connector);
+      expect((await post(ctx, made.path, "positive standing")).status).toBe(
+        202,
+      );
+      const current = await request(ctx.app, "GET", "/keys/current", {
+        key: connector.key,
+      });
+      const { id } = (await current.json()) as { id: string };
+      let signal!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        signal = resolve;
+      });
+      const original = ctx.storage.inbound.backlog.bind(ctx.storage.inbound);
+      const spy = vi
+        .spyOn(ctx.storage.inbound, "backlog")
+        .mockImplementation(async (connectorId) => {
+          const value = await original(connectorId);
+          signal();
+          return value;
+        });
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const response = Promise.resolve(
+        ctx.app.request(made.path, {
+          method: "POST",
+          duplex: "half",
+          body: new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              c.enqueue(new TextEncoder().encode("late"));
+            },
+          }),
+        }),
+      );
+      await entered;
+      spy.mockRestore();
+      if (standing === "revoked") await ctx.storage.keys.revoke(id);
+      else
+        await raw(ctx).__sqliteRun(
+          "UPDATE api_keys SET expires_at = ? WHERE id = ?",
+          [new Date(Date.now() - 1000).toISOString(), id],
+        );
+      controller.close();
+      expect((await response).status).toBe(404);
+      expect(await ctx.storage.inbound.backlog(connector.id)).toEqual({
+        count: 1,
+        bytes: Buffer.byteLength("positive standing"),
+      });
+    },
+  );
+});
+
+describe("inbound storage-failure privacy", () => {
+  it.each(["inbound_deliveries", "inbound_delivery_bodies"])(
+    "sanitizes a real %s SQLite failure before every error sink",
+    async (table) => {
+      const ctx = await context({
+        errorWebhookUrl: "http://127.0.0.1:9/fixture-error",
+      });
+      const connector = await register(ctx);
+      const made = await endpoint(ctx, connector);
+      const raw = ctx.storage as unknown as {
+        __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+        __sqliteAll(query: string): Promise<unknown[]>;
+      };
+      await raw.__sqliteRun(
+        `CREATE TRIGGER fixture_receipt_failure BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END`,
+        [],
+      );
+      const sentinels = [
+        "HEADER_SENTINEL_" + table,
+        "QUERY_SENTINEL_" + table,
+        "BODY_SENTINEL_" + table,
+      ];
+      const written: string[] = [];
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation((chunk: string | Uint8Array) => {
+          written.push(String(chunk));
+          return true;
+        });
+      const reported: unknown[] = [];
+      const previousReporter = globalThis.__marfaReportException;
+      globalThis.__marfaReportException = (error, attributes) => {
+        reported.push({ error, attributes });
+      };
+      const span = trace.wrapSpanContext({
+        traceId: "1".repeat(32),
+        spanId: "1".repeat(16),
+        traceFlags: 0,
+      });
+      const recorded = vi.spyOn(span, "recordException");
+      const active = vi.spyOn(trace, "getActiveSpan").mockReturnValue(span);
+      const notified = vi
+        .spyOn(errorNotifier, "notifyError")
+        .mockImplementation(() => undefined);
+      try {
+        const response = await post(
+          ctx,
+          made.path + "?q=" + sentinels[1]!,
+          sentinels[2]!,
+          { "X-Fixture": sentinels[0]! },
+        );
+        expect(response.status).toBe(500);
+        expect(
+          ((await response.json()) as { error: { code: string } }).error.code,
+        ).toBe("internal_error");
+        expect(
+          await raw.__sqliteAll("SELECT id FROM inbound_deliveries"),
+        ).toEqual([]);
+        expect(
+          await raw.__sqliteAll(
+            "SELECT delivery_id FROM inbound_delivery_bodies",
+          ),
+        ).toEqual([]);
+        expect(reported).toHaveLength(1);
+        expect(recorded).toHaveBeenCalledOnce();
+        expect(notified).toHaveBeenCalledOnce();
+        const errors = [
+          (reported[0] as { error: Error }).error,
+          recorded.mock.calls[0]![0] as Error,
+        ];
+        const outputs = [
+          written.join(""),
+          ...errors.map((error) =>
+            JSON.stringify({
+              message: error.message,
+              stack: error.stack,
+              cause: error.cause,
+            }),
+          ),
+          JSON.stringify(notified.mock.calls),
+        ];
+        for (const output of outputs)
+          for (const sentinel of sentinels)
+            expect(output).not.toContain(sentinel);
+        for (const error of errors) {
+          expect(error.message).toBe("Inbound receipt storage failed");
+          expect(error.cause).toBeUndefined();
+          expect(error.stack).not.toContain("Failed query");
+        }
+        expect(written.join("")).toContain("Unhandled error");
+        expect(written.join("")).toContain("Inbound receipt storage failed");
+        expect(notified.mock.calls[0]![1].error).toBe(
+          "Inbound receipt storage failed",
+        );
+      } finally {
+        stdout.mockRestore();
+        active.mockRestore();
+        recorded.mockRestore();
+        notified.mockRestore();
+        globalThis.__marfaReportException = previousReporter;
+        await raw.__sqliteRun("DROP TRIGGER fixture_receipt_failure", []);
+      }
+      expect((await post(ctx, made.path, "positive recovery")).status).toBe(
+        202,
+      );
+    },
+  );
+
+  it("preserves a wrapped typed write-contention refusal", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const refusal = new MarfaError(
+      ErrorCode.WRITE_CONTENTION,
+      "The writer is occupied",
+    );
+    const spy = vi
+      .spyOn(ctx.storage.inbound, "receive")
+      .mockRejectedValue(new Error("query wrapper", { cause: refusal }));
+    try {
+      const response = await post(ctx, made.path, "typed control");
+      expect(response.status).toBe(503);
+      expect(
+        ((await response.json()) as { error: { code: string } }).error.code,
+      ).toBe("write_contention");
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await post(ctx, made.path, "positive recovery")).status).toBe(202);
+  });
+});
+
+it("derives duplicate-header policy from the insertion transaction", async () => {
+  const ctx = await context();
+  const connector = await register(ctx);
+  const made = await endpoint(ctx, connector, {
+    duplicate_header: "X-Earlier",
+  });
+  let signal!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    signal = resolve;
+  });
+  const original = ctx.storage.inbound.backlog.bind(ctx.storage.inbound);
+  const spy = vi
+    .spyOn(ctx.storage.inbound, "backlog")
+    .mockImplementation(async (id) => {
+      const result = await original(id);
+      signal();
+      return result;
+    });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const response = Promise.resolve(
+    ctx.app.request(made.path, {
+      method: "POST",
+      duplex: "half",
+      headers: { "X-Earlier": "old", "X-Current": "new" },
+      body: new ReadableStream<Uint8Array>({
+        start(c) {
+          controller = c;
+          c.enqueue(new TextEncoder().encode("x"));
+        },
+      }),
+    }),
+  );
+  await ready;
+  spy.mockRestore();
+  const raw = ctx.storage as unknown as {
+    __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+    __sqliteAll(query: string): Promise<{ dedupe_key: string }[]>;
+  };
+  await raw.__sqliteRun(
+    "UPDATE inbound_endpoints SET duplicate_header = ? WHERE id = ?",
+    ["x-current", made.id],
+  );
+  controller.close();
+  expect((await response).status).toBe(202);
+  expect(
+    await raw.__sqliteAll("SELECT dedupe_key FROM inbound_deliveries"),
+  ).toEqual([{ dedupe_key: "new" }]);
+});
+
+describe("inbound retention ordering", () => {
+  it("merges equal handled and pending ages by id and keeps future receipts", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++)
+      ids.push(
+        ((await (await post(ctx, made.path, "body")).json()) as { id: string })
+          .id,
+      );
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+      __sqliteAll(query: string): Promise<unknown[]>;
+    };
+    await ctx.storage.inbound.markHandled(connector.id, [ids[1]!], "processed");
+    const old = new Date(Date.now() - 50 * 86400000).toISOString();
+    for (const id of ids.slice(0, 3))
+      await raw.__sqliteRun(
+        "UPDATE inbound_deliveries SET received_at = ?, handled_at = CASE WHEN handled_at IS NULL THEN NULL ELSE ? END, stored_bytes = ? WHERE id = ?",
+        [old, old, 20 * 1024 * 1024, id],
+      );
+    await raw.__sqliteRun(
+      "UPDATE inbound_deliveries SET received_at = ? WHERE id = ?",
+      [new Date(Date.now() + 86400000).toISOString(), ids[3]],
+    );
+    const ordered = ids.slice(0, 3).sort();
+    for (let i = 0; i < ordered.length; i++) {
+      expect(
+        await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+      ).toEqual({ deleted: 1, remaining: i < 2 });
+      for (const id of ordered.slice(0, i + 1))
+        expect(await ctx.storage.inbound.body(connector.id, id)).toBeNull();
+      for (const id of [...ordered.slice(i + 1), ids[3]!])
+        expect(await ctx.storage.inbound.body(connector.id, id)).toEqual(
+          Buffer.from("body"),
+        );
+    }
+    const plans = await raw.__sqliteAll(
+      `EXPLAIN QUERY PLAN SELECT id, stored_bytes FROM (SELECT * FROM (SELECT id, stored_bytes, handled_at AS stamp FROM inbound_deliveries WHERE handled_at IS NOT NULL AND handled_at < '${old}' ORDER BY handled_at, id LIMIT 500) UNION ALL SELECT * FROM (SELECT id, stored_bytes, received_at AS stamp FROM inbound_deliveries WHERE handled_at IS NULL AND received_at < '${old}' ORDER BY received_at, id LIMIT 500)) ORDER BY stamp, id LIMIT 500`,
+    );
+    expect(JSON.stringify(plans)).toContain(
+      "idx_inbound_deliveries_handled_age",
+    );
+    expect(JSON.stringify(plans)).toContain(
+      "idx_inbound_deliveries_pending_age",
+    );
+  });
+
+  it("uses the earliest remaining duplicate after expiry without changing first handled outcomes", async () => {
+    const ctx = await context();
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector, {
+      duplicate_header: "X-Delivery",
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++)
+      ids.push(
+        (
+          (await (
+            await post(ctx, made.path, "body", { "X-Delivery": "same" })
+          ).json()) as { id: string }
+        ).id,
+      );
+    await ctx.storage.inbound.markHandled(connector.id, [ids[0]!], "processed");
+    expect(
+      (await deliveries(ctx, connector, "?state=any")).data[2]?.duplicate_of,
+    ).toEqual({ id: ids[0], outcome: "processed" });
+    const raw = ctx.storage as unknown as {
+      __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "UPDATE inbound_deliveries SET handled_at = ? WHERE id = ?",
+      [new Date(Date.now() - 10 * 86400000).toISOString(), ids[0]],
+    );
+    expect(
+      await ctx.storage.inbound.cleanup({ handledDays: 7, pendingDays: 30 }),
+    ).toEqual({ deleted: 1, remaining: false });
+    const page = await ctx.storage.inbound.listDeliveries(
+      connector.id,
+      { state: "any" },
+      { limit: 1 },
+    );
+    expect(page.data[0]?.id).toBe(ids[1]);
+    expect(page.data[0]?.duplicate_of).toBeNull();
+    const remaining = await ctx.storage.inbound.listDeliveries(
+      connector.id,
+      { state: "any" },
+      { limit: 1, cursor: page.next_cursor! },
+    );
+    expect(remaining.data[0]?.duplicate_of).toEqual({
+      id: ids[1],
+      outcome: null,
+    });
+    expect(
+      (
+        await ctx.storage.inbound.markHandled(
+          connector.id,
+          [ids[2]!, ids[1]!],
+          "rejected",
+        )
+      )?.map((d) => d.id),
+    ).toEqual([ids[2], ids[1]]);
+    expect(
+      (
+        await ctx.storage.inbound.markHandled(
+          connector.id,
+          [ids[1]!],
+          "processed",
+        )
+      )?.[0]?.outcome,
+    ).toBe("rejected");
   });
 });
