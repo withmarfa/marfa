@@ -116,6 +116,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/suites\/cli\//,
     ["workspace", "conformance", "cli-scenarios"],
   ],
+  [
+    /^conformance\/src\/suites\/device\/harness\.ts$/,
+    ["workspace", "conformance", "cli-scenarios"],
+  ],
   [/^conformance\/src\/suites\//, ["workspace", "conformance"]],
   [
     /^conformance\/src\/utils\//,
@@ -173,6 +177,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "workspace",
       "core-checks",
       "conformance",
+      "cli-scenarios",
       "openapi-freshness",
       "clients-freshness",
       "core",
