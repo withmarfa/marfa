@@ -1548,9 +1548,15 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
          (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted', 'refused')))",
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
-        "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
+    }
+    if conn.execute(
+        "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
+        params![local, answered],
+    )? > 0
+    {
+        crate::read_view::pins_changed(conn)?;
     }
     // Left where the server's row was pinned already.
     unpin(conn, local)?;
@@ -3001,7 +3007,6 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The hash names this schema's statements as they are.
     #[test]
     fn a_copy_without_read_view_proof_is_unreadable() {
         let conn = testing::conn();

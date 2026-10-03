@@ -173,7 +173,7 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 /// save is not told of this. Says whether the catalog version moved.
 fn adopt(core: &Core, context: &Context, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
     let conn = core.conn()?;
-    context.check(&conn)?;
+    context.same_copy(&conn)?;
     let moved = store::replace_catalog(&conn, catalog)?;
     Ok((Catalog::load(&conn)?, moved))
 }
@@ -223,10 +223,17 @@ fn take(
     kind: &str,
     payload: &EventPayload,
 ) -> Result<Option<Change>> {
-    let brought = edges_of_entering_row(core, context, catalog, slice, kind, payload)?;
+    // A held stream spans ordinary pin changes. Snapshot pins for this event's
+    // awaited reads, while retaining the stream's copy and authority guard.
+    let operation = {
+        let conn = core.conn()?;
+        context.same_copy(&conn)?;
+        Context::capture_build(&conn)?
+    };
+    let brought = edges_of_entering_row(core, &operation, catalog, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    context.check(&tx)?;
+    operation.check(&tx)?;
     read_view::cursor(id).ok_or_else(read_view::invalid)?;
     if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
         let listed = payload.listed.ok_or_else(read_view::invalid)?;
@@ -269,14 +276,9 @@ fn pass_withheld(
         return Ok(None);
     }
     let conn = core.conn()?;
-    context.check(&conn)?;
+    context.same_copy(&conn)?;
     store::meta_set(&conn, store::META_EVENT_CURSOR, live)?;
     Ok(Some(live.to_string()))
-}
-
-fn payload_of(data: &str) -> Result<EventPayload> {
-    serde_json::from_str(data)
-        .map_err(|error| CoreError::Decoding(format!("event {data:?}: {error}")))
 }
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
@@ -307,6 +309,7 @@ pub(crate) fn replay_build(
         reached_head: false,
     };
     let mut head: Option<u64> = None;
+    let mut greatest = read_view::cursor(&cursor).ok_or_else(read_view::invalid)?;
     let mut connected = false;
     let mut prologue_seen = false;
     loop {
@@ -336,7 +339,7 @@ pub(crate) fn replay_build(
             Frame::Event { id, name, data } => {
                 connected = true;
                 prologue_seen = true;
-                let payload = payload_of(&data).map_err(|_| read_view::invalid())?;
+                let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
                 let kind = name.as_deref().unwrap_or(&payload.r#type);
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
                     return Err(CoreError::CopyExpired { reason });
@@ -359,6 +362,7 @@ pub(crate) fn replay_build(
                         }
                         let live = context.marker(&payload, kind)?;
                         if head.is_none_or(|head| live < head)
+                            || live < greatest
                             || live
                                 < read_view::cursor(&report.cursor)
                                     .ok_or_else(read_view::invalid)?
@@ -385,6 +389,8 @@ pub(crate) fn replay_build(
                         if head.is_none() || read_view::cursor(&id).is_none() {
                             return Err(read_view::invalid());
                         }
+                        greatest =
+                            greatest.max(read_view::cursor(&id).ok_or_else(read_view::invalid)?);
                         let pinned = pinned_row(core, &payload)?;
                         while let Some(named) =
                             unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
@@ -409,16 +415,6 @@ pub(crate) fn replay_build(
         });
     }
     Ok(report)
-}
-
-/// Forgetting the cursor is what sends the next caller to hydrate, and the
-/// queue is no part of what it forgets.
-fn expire(core: &Core, reason: String) -> Result<CoreError> {
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    read_view::expire(&tx)?;
-    tx.commit()?;
-    Ok(CoreError::CopyExpired { reason })
 }
 
 /// Why a frame says the server's log does not continue from `held`: the log
@@ -457,17 +453,23 @@ fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option<String> {
 /// which a catch-up sends it to. A server that cannot be asked is an error
 /// like any other, so nothing is sent while the instance is unconfirmed.
 pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
-    if store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?.is_none() {
-        return Ok(());
-    }
-    same_instance(core, &http.instance_id()?)
+    let generation = {
+        let conn = core.conn()?;
+        if store::meta_get(&conn, store::META_INSTANCE_ID)?.is_none() {
+            return Ok(());
+        }
+        read_view::generation(&conn)?
+    };
+    same_instance(core, &http.instance_id()?, generation)
 }
 
-/// A copy names the instance it was hydrated from. Another instance at the
-/// same origin holds another log, which may have run past the cursor, so
-/// nothing in the stream would say so.
-fn same_instance(core: &Core, served: &str) -> Result<()> {
-    let held = store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?;
+fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    if read_view::generation(&tx)? != generation {
+        return Err(Context::changed());
+    }
+    let held = store::meta_get(&tx, store::META_INSTANCE_ID)?;
     if held.as_deref() == Some(served) {
         return Ok(());
     }
@@ -479,7 +481,9 @@ fn same_instance(core: &Core, served: &str) -> Result<()> {
             "this copy does not name the instance it was hydrated from, and the server at this address is instance {served}"
         ),
     };
-    Err(expire(core, reason)?)
+    read_view::expire(&tx)?;
+    tx.commit()?;
+    Err(CoreError::CopyExpired { reason })
 }
 
 /// `stop` is looked at at least every `PACE.stop_poll`, including while a
@@ -554,7 +558,7 @@ fn follow_paced(
                 }
                 Err(error) => return Err(error),
             };
-            same_instance(core, &instance)?;
+            same_instance(core, &instance, context.generation)?;
             if reachable == Some(false) {
                 on_change(&Change {
                     event: SERVER_REACHABLE.into(),
@@ -632,6 +636,7 @@ fn read_stream(
 ) -> Result<Ended> {
     let mut heard = now();
     let mut head = None;
+    let mut greatest = read_view::cursor(&report.cursor).unwrap_or(0);
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -653,7 +658,7 @@ fn read_stream(
         let Frame::Event { id, name, data } = frame else {
             continue;
         };
-        let payload = payload_of(&data).map_err(|_| read_view::invalid())?;
+        let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
         let kind = name.as_deref().unwrap_or(&payload.r#type);
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
             return Err(CoreError::CopyExpired { reason });
@@ -674,6 +679,7 @@ fn read_stream(
                 let live = context.marker(&payload, kind)?;
                 if id.is_some()
                     || head.is_none_or(|head| live < head)
+                    || live < greatest
                     || live < read_view::cursor(&report.cursor).ok_or_else(read_view::invalid)?
                 {
                     return Err(read_view::invalid());
@@ -692,6 +698,7 @@ fn read_stream(
                 if head.is_none() || read_view::cursor(&id).is_none() {
                     return Err(read_view::invalid());
                 }
+                greatest = greatest.max(read_view::cursor(&id).ok_or_else(read_view::invalid)?);
                 // Left untaken with the cursor before it, so the reopened
                 // stream replays it after reading the catalog.
                 let pinned = pinned_row(core, &payload)?;
@@ -703,6 +710,14 @@ fn read_stream(
                 // A failed read of a row entering the slice reopens the
                 // stream from before this event rather than ending.
                 let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
+                    Err(CoreError::StreamIncomplete { ref reason })
+                        if reason == "local_copy_changed" =>
+                    {
+                        context.same_copy(&*core.conn()?)?;
+                        // Pins changed during an awaited read. Replay this event
+                        // against the new set without advancing its cursor.
+                        return Ok(Ended::Behind);
+                    }
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
                         report.last_failure = Some(error.to_string());
@@ -1575,7 +1590,7 @@ mod tests {
         };
         let event = |r#type: &str| {
             let image = "data:image/png;base64,iVBORw0KGgo=";
-            payload_of(
+            serde_json::from_str::<EventPayload>(
                 &serde_json::json!({
                     "type": "item.created",
                     "item": {

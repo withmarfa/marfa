@@ -29,6 +29,34 @@ pub(crate) fn invalid() -> CoreError {
     }
 }
 
+pub(crate) fn event_payload(
+    name: Option<&str>,
+    id: Option<&str>,
+    data: &str,
+) -> Result<crate::wire::EventPayload> {
+    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|_| invalid())?;
+    if matches!(name, Some("stream_cursor" | "stream_live"))
+        || matches!(payload.r#type.as_str(), "stream_cursor" | "stream_live")
+    {
+        let fields: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(data).map_err(|_| invalid())?;
+        if id.is_some()
+            || name != Some(payload.r#type.as_str())
+            || fields.len() != 4
+            || !["type", "cursor", "instance_id", "read_view"]
+                .iter()
+                .all(|key| fields.contains_key(*key))
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(payload)
+}
+
+pub(crate) fn generation(conn: &Connection) -> Result<u64> {
+    revision(conn, GENERATION)
+}
+
 fn revision(conn: &Connection, key: &str) -> Result<u64> {
     store::meta_get(conn, key)?.map_or(Ok(0), |v| {
         v.parse()
@@ -52,7 +80,7 @@ pub(crate) fn pins_changed(conn: &Connection) -> Result<()> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Context {
-    generation: u64,
+    pub(crate) generation: u64,
     pins: u64,
     pub(crate) fence: String,
     pub(crate) instance: String,
@@ -124,7 +152,7 @@ impl Context {
         Ok(value)
     }
 
-    fn changed() -> CoreError {
+    pub(crate) fn changed() -> CoreError {
         CoreError::StreamIncomplete {
             reason: "local_copy_changed".into(),
         }
@@ -229,6 +257,148 @@ mod tests {
         use crate::scripted::*;
         server.on("/types", vec![certified(types(&[("core.note", None)]))]);
         server.on("/edge-types", vec![certified(edge_types(&[]))]);
+    }
+
+    #[test]
+    fn read_view_malformed_copy_markers_must_expire() {
+        use crate::scripted::*;
+        let mut accepted = Vec::new();
+        for (label, frames) in [
+            (
+                "missing SSE names",
+                vec![
+                    copy_marker("stream_cursor", "10").replace("event: stream_cursor\n", ""),
+                    copy_marker("stream_live", "10").replace("event: stream_live\n", ""),
+                ],
+            ),
+            (
+                "live below greatest ID",
+                vec![
+                    copy_marker("stream_cursor", "10"),
+                    event("20", "unknown", r#"{"type":"unknown"}"#),
+                    event("15", "unknown", r#"{"type":"unknown"}"#),
+                    copy_marker("stream_live", "15"),
+                ],
+            ),
+            (
+                "extra marker fields",
+                vec![
+                    copy_marker("stream_cursor", "10")
+                        .replace("\"type\":", "\"extra\":true,\"type\":"),
+                    copy_marker("stream_live", "10"),
+                ],
+            ),
+        ] {
+            let server = Scripted::start();
+            let (_dir, core) = core(&server);
+            ready(&core);
+            catalog(&server);
+            server.on("/events", vec![stream(frames, Then::End)]);
+            let result = core.catch_up();
+            println!("{label}: {result:?}");
+            if !matches!(result, Err(CoreError::CopyExpired { .. })) {
+                accepted.push(label);
+            }
+        }
+        assert!(accepted.is_empty(), "accepted invalid proofs: {accepted:?}");
+    }
+
+    #[test]
+    fn read_view_late_instance_reply_must_not_expire_rebuilt_copy() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        server.on(
+            "/",
+            vec![Answer::Slow {
+                after: std::time::Duration::from_millis(300),
+                answer: Box::new(root(INSTANCE)),
+            }],
+        );
+        std::thread::scope(|scope| {
+            let late = scope
+                .spawn(|| crate::catch_up::refuse_another_instance(&core, core.http().unwrap()));
+            server.wait_for("/", 1, std::time::Duration::from_secs(2));
+            {
+                let conn = core.conn().unwrap();
+                advance_generation(&conn).unwrap();
+                store::meta_set(&conn, store::META_INSTANCE_ID, "new-instance").unwrap();
+            }
+            println!("late root result: {:?}", late.join().unwrap());
+        });
+        assert!(
+            store::hydrated(&core.conn().unwrap()).unwrap(),
+            "late root reply expired the replacement generation"
+        );
+    }
+
+    #[test]
+    fn read_view_identity_adoption_must_change_pin_revision() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        let conn = core.conn().unwrap();
+        store::pin(&conn, "local").unwrap();
+        let before = Context::capture(&conn).unwrap();
+        store::adopt_answered_id(&conn, "local", "answered").unwrap();
+        assert!(!store::pinned(&conn, "local").unwrap());
+        assert!(store::pinned(&conn, "answered").unwrap());
+        assert!(
+            before.check(&conn).is_err(),
+            "pre-adoption context passed after pin identity changed"
+        );
+    }
+
+    #[test]
+    fn read_view_unpin_does_not_stop_held_stream() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        catalog(&server);
+        {
+            let conn = core.conn().unwrap();
+            store::pin(&conn, "p").unwrap();
+            let row = store::testing::note("x", "x", "", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &row, Some(&[]), &Default::default()).unwrap();
+            set_listed(&conn, "x", true).unwrap();
+        }
+        let data = |v| {
+            let mut p: serde_json::Value =
+                serde_json::from_str(&item_payload("item.updated", "x", "core.note", v)).unwrap();
+            p["listed"] = true.into();
+            p.to_string()
+        };
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    copy_marker("stream_cursor", "10"),
+                    copy_marker("stream_live", "10"),
+                    event("11", "item.updated", &data(2)),
+                    event("12", "item.updated", &data(3)),
+                ],
+                Then::End,
+            )],
+        );
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut changed = 0;
+        let result = core.follow(&stop, |change| {
+            if change.event != "item.updated" {
+                return;
+            }
+            changed += 1;
+            if changed == 1 {
+                assert!(core.unpin("p").unwrap());
+            } else {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        println!("follow after normal unpin: {result:?}, delivered {changed}");
+        assert!(result.is_ok(), "normal unpin ended follow: {result:?}");
+        assert_eq!(changed, 2);
+        assert_eq!(result.unwrap().applied, 2);
     }
 
     #[test]

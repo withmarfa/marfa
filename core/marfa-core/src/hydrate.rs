@@ -7,7 +7,7 @@ use crate::http::{Http, ItemsQuery};
 use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
+use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
 use crate::{Core, Result};
 
 const HEAD_ATTEMPTS: usize = 3;
@@ -499,8 +499,8 @@ fn read_head(http: &Http) -> Result<(String, String, String)> {
             match frames.next_frame() {
                 Ok(Some(Frame::Comment(_))) => continue,
                 Ok(Some(Frame::Event { id, name, data })) => {
-                    let payload: EventPayload =
-                        serde_json::from_str(&data).map_err(|_| crate::read_view::invalid())?;
+                    let payload =
+                        crate::read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
                     if id.is_some() || name.as_deref() != Some(payload.r#type.as_str()) {
                         return Err(crate::read_view::invalid());
                     }
