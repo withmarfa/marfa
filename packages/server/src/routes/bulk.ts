@@ -66,6 +66,8 @@ import {
   bulkAtomicRollback,
   countOutcomes,
   failedEntry,
+  isWriteOutcomeUnknown,
+  mayHaveCommitted,
   isEntryVerdict,
 } from "./_bulk-rollback.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
@@ -465,7 +467,8 @@ function erroredEntry(
 /**
  * One bulk entry, through the item write that resolves, gates and writes it
  * in one transaction: nested in the page's in atomic mode, its own in
- * best-effort mode, so an entry reported `errored` has written nothing.
+ * best-effort mode. A refused entry rolls back; the outer audited unit
+ * separately reports a commit it cannot confirm.
  */
 async function processBulkItem(
   storage: Storage,
@@ -709,16 +712,14 @@ export function bulkRoutes(storage: Storage) {
                   : null,
               );
         let processed: ProcessedBulkItem;
-        const committed = out.some(
-          (p) =>
-            p.result.outcome === "created" || p.result.outcome === "updated",
-        );
-        if (atomic || !committed) {
+        const committed = out.some((p) => mayHaveCommitted(p.result));
+        if (atomic) {
           processed = await entry();
         } else {
           try {
             processed = await entry();
           } catch (err) {
+            if (!committed && !isWriteOutcomeUnknown(err)) throw err;
             processed = {
               result: { index: i, outcome: "errored", error: failedEntry(err) },
             };

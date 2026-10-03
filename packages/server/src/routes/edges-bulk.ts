@@ -50,6 +50,8 @@ import {
   bulkAtomicRollback,
   countOutcomes,
   failedEntry,
+  isWriteOutcomeUnknown,
+  mayHaveCommitted,
   isEntryVerdict,
 } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
@@ -634,17 +636,14 @@ export function edgesBulkRoutes(storage: Storage) {
               : null,
           );
         let result: BulkEdgeResult;
-        const committed = results.some(
-          (r) => r.outcome === "created" || r.outcome === "updated",
-        );
+        const committed = results.some(mayHaveCommitted);
         if (atomic) {
           ({ result } = await entry());
-        } else if (!committed) {
-          ({ result } = await auditedEntry());
         } else {
           try {
             ({ result } = await auditedEntry());
           } catch (err) {
+            if (!committed && !isWriteOutcomeUnknown(err)) throw err;
             result = { index: i, outcome: "errored", error: failedEntry(err) };
           }
         }

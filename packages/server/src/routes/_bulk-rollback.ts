@@ -1,4 +1,5 @@
 import { ErrorCode, MarfaError, httpStatus } from "@withmarfa/shared";
+import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
 
 /**
  * The status the inner refusal carries on its own. Only a refusal of the
@@ -66,20 +67,42 @@ export function bulkAtomicRollback(
   );
 }
 
-/**
- * A best-effort page's answer for an entry whose write failed for a reason
- * of the server's own (the event log refusing its row, the lock's budget, a
- * full disk) after earlier entries committed. Before any has, the failure
- * answers the page, nothing having been written. Answered as that entry's own
- * `errored` outcome, and the page as `200`, rather than failing the page:
- * a `5xx` tells the caller nothing was written, so it sends the page again
- * and the committed entries are written twice. No idempotency key stands in
- * the way: the bulk doors take none. The entry itself wrote nothing, its
- * transaction having rolled back.
- */
-export function failedEntry(err: unknown): { code: string; message: string } {
+/** An unavailable commit witness is not evidence that the entry rolled back. */
+export function isWriteOutcomeUnknown(err: unknown): boolean {
+  return err instanceof TransactionFailure && err.control.outcome === "unknown";
+}
+
+/** A page must not invite replay after either a confirmed or possible commit. */
+export function mayHaveCommitted(result: {
+  outcome: "created" | "updated" | "skipped" | "errored";
+  error?: { details?: Record<string, unknown> };
+}): boolean {
+  return (
+    result.outcome === "created" ||
+    result.outcome === "updated" ||
+    result.error?.details?.write_outcome === "unknown"
+  );
+}
+
+/** Keep possible commits visible in a partial answer without retrying the page. */
+export function failedEntry(err: unknown): {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+} {
+  if (isWriteOutcomeUnknown(err))
+    return {
+      code: "internal_error",
+      message:
+        "The entry may have been written, but its commit could not be confirmed. Read its current state before retrying this entry; do not resend the whole page.",
+      details: { write_outcome: "unknown" },
+    };
   if (err instanceof MarfaError)
-    return { code: err.code, message: err.message };
+    return {
+      code: err.code,
+      message: err.message,
+      ...(err.details && { details: err.details }),
+    };
   return {
     code: "internal_error",
     message: "The entry could not be written, and nothing of it was",

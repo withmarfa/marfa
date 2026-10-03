@@ -277,7 +277,7 @@ export const BulkResultOutcomeEnum = z
   .openapi("BulkResultOutcome");
 
 /**
- * A per-entry refusal inside a bulk page.
+ * A per-entry refusal or unconfirmed commit inside a bulk page.
  *
  * The same refusal a single write gives, carried per entry: `details` is
  * here because flattening it to a code and a message dropped the half a
