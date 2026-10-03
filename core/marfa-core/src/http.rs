@@ -165,6 +165,7 @@ impl Http {
         let agent: Agent = Agent::config_builder()
             .tls_config(tls)
             .http_status_as_error(false)
+            .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .timeout_recv_body(Some(Duration::from_secs(60)))
@@ -449,11 +450,9 @@ impl Http {
         }
     }
 
-    /// The only `Err`s are a request that will not build (`Invalid`), a
-    /// transport failure (`Network`) and an answer on another contract
-    /// (`ContractMismatch`). Every status is an `Answer`, because the
-    /// classification turns on the status and the code together; `refusal()`
-    /// drops the status, so the drain must not go through it.
+    /// Redirects, contract mismatches and transport or renewal failures are
+    /// errors. Other responses retain their status and code together for the
+    /// drain to classify; `refusal()` drops the status.
     pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing
@@ -638,6 +637,13 @@ impl Http {
         status: u16,
         write_sent: bool,
     ) -> Result<(), CoreError> {
+        if (300..400).contains(&status) {
+            return Err(CoreError::Redirected {
+                origin: self.origin(),
+                status,
+                location: header(response, "Location"),
+            });
+        }
         let served = header(response, CONTRACT_HEADER);
         if speaks_contract(CONTRACT_VERSION, served.as_deref(), status) {
             return Ok(());
@@ -820,6 +826,67 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirects_are_not_followed_and_keep_the_original_response() {
+        for status in [301, 302, 303, 307, 308] {
+            for location in [Some("/next"), None] {
+                let server = crate::scripted::Scripted::start();
+                let headers = location
+                    .into_iter()
+                    .map(|value| ("Location".into(), value.into()))
+                    .chain([(CONTRACT_HEADER.into(), (CONTRACT_VERSION + 1).to_string())])
+                    .collect();
+                let answer = crate::scripted::Answer::Json {
+                    status,
+                    body: "{}".into(),
+                    headers,
+                };
+                for path in ["/items/x", "/events", "/blobs"] {
+                    server.on(path, vec![answer.clone()]);
+                }
+                let http = Http::new(&server.url(), "k").unwrap();
+                let read = http.item("x").unwrap_err();
+                let write = http
+                    .send(&Outgoing {
+                        method: Method::Patch,
+                        segments: vec!["items".into(), "x".into()],
+                        params: vec![],
+                        body: "{}",
+                        idempotency_key: "fixture",
+                    })
+                    .unwrap_err();
+                let stream = match http.open_events(None, Duration::from_secs(1)) {
+                    Err(error) => error,
+                    Ok(_) => panic!("a redirect opened an event stream"),
+                };
+                let upload = match http.call(Call {
+                    method: Method::Post,
+                    segments: &["blobs"],
+                    params: &[],
+                    headers: &[],
+                    body: CallBody::Reader(Box::new(std::io::Cursor::new(b"fixture"))),
+                    credential: true,
+                    stream: false,
+                }) {
+                    Err(error) => error,
+                    Ok(_) => panic!("a redirect accepted an upload"),
+                };
+                for error in [read, write, stream, upload] {
+                    assert_eq!(
+                        error,
+                        CoreError::Redirected {
+                            origin: server.url(),
+                            status,
+                            location: location.map(str::to_owned),
+                        }
+                    );
+                }
+                assert_eq!(server.asked(), 4);
+                assert!(server.seen("/next").is_empty());
+            }
+        }
+    }
 
     #[test]
     fn an_unnamed_or_other_contract_401_cannot_invoke_local_renewal() {
