@@ -530,6 +530,143 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
 }
 
 #[test]
+fn a_key_update_can_empty_each_map_without_naming_other_reach() {
+    let cases = [
+        (
+            "type_permissions",
+            keys::KeyUpdateArgs {
+                no_type_permissions: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "extension_permissions",
+            keys::KeyUpdateArgs {
+                no_extension_permissions: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "edge_permissions",
+            keys::KeyUpdateArgs {
+                no_edge_permissions: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "metadata_permissions",
+            keys::KeyUpdateArgs {
+                no_metadata_permissions: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "profile_permissions",
+            keys::KeyUpdateArgs {
+                no_profile_permissions: true,
+                ..Default::default()
+            },
+        ),
+    ];
+    for (field, mut args) in cases {
+        args.id = "key-id".into();
+        let request = keys::update_request(&args).unwrap();
+        assert_eq!(request.method, Method::Patch);
+        assert_eq!(request.path(), "/keys/key-id");
+        assert_eq!(body(&request), &json!({ (field): {} }));
+    }
+    let mixed = keys::update_request(&keys::KeyUpdateArgs {
+        id: "key-id".into(),
+        maps: keys::PermissionMapArgs {
+            permissions: vec![keys::Permission::AuditRead],
+            edge_permissions: vec!["references=write".into()],
+            ..Default::default()
+        },
+        no_type_permissions: true,
+        no_metadata_permissions: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&mixed),
+        &json!({
+            "permissions": ["audit.read"],
+            "edge_permissions": { "references": "write" },
+            "type_permissions": {},
+            "metadata_permissions": {},
+        })
+    );
+}
+
+#[test]
+fn a_map_clear_conflicts_with_replacement_and_global_clear() {
+    use clap::Parser;
+
+    for (clear, replacement, value) in [
+        (
+            "--no-type-permissions",
+            "--type-permission",
+            "core.note=read",
+        ),
+        (
+            "--no-extension-permissions",
+            "--extension-permission",
+            "app.cursor=read",
+        ),
+        (
+            "--no-edge-permissions",
+            "--edge-permission",
+            "references=read",
+        ),
+        (
+            "--no-metadata-permissions",
+            "--metadata-permission",
+            "types=read",
+        ),
+        (
+            "--no-profile-permissions",
+            "--profile-permission",
+            "email=read",
+        ),
+    ] {
+        let parsed = crate::Cli::try_parse_from(["marfa", "keys", "update", "key-id", clear]);
+        assert!(parsed.is_ok(), "{clear}: {parsed:?}");
+        let conflict = crate::Cli::try_parse_from([
+            "marfa",
+            "keys",
+            "update",
+            "key-id",
+            clear,
+            replacement,
+            value,
+        ]);
+        assert!(conflict.is_err(), "{clear} accepted {replacement}");
+        let global = crate::Cli::try_parse_from([
+            "marfa",
+            "keys",
+            "update",
+            "key-id",
+            clear,
+            "--no-permissions",
+        ]);
+        assert!(global.is_err(), "{clear} accepted --no-permissions");
+    }
+    let mixed = crate::Cli::try_parse_from([
+        "marfa",
+        "keys",
+        "update",
+        "key-id",
+        "--no-type-permissions",
+        "--metadata-permission",
+        "types=read",
+    ]);
+    assert!(
+        mixed.is_ok(),
+        "distinct maps should be independent: {mixed:?}"
+    );
+}
+
+#[test]
 fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(config::get_request().path(), "/config");
     assert_eq!(config::replace_request(json!({})).method, Method::Put);

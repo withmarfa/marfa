@@ -240,6 +240,66 @@ describe("the instance from the terminal", () => {
     expect(revoked.envelope.error.server?.status).toBe(401);
   });
 
+  it("empties one key permission map at a time and retains every other family", async () => {
+    const minted = await c.operator.json<{ id: string }>([
+      "keys",
+      "create",
+      "--label",
+      "selective-clear",
+      "--source",
+      unique("cli-selective-clear"),
+      "--permission",
+      "audit.read",
+      "--type-permission",
+      "core.note=write",
+      "--extension-permission",
+      "app.cursor=read",
+      "--edge-permission",
+      "references=read",
+      "--metadata-permission",
+      "types=read",
+      "--profile-permission",
+      "email=read",
+    ]);
+    trackKey(c.ctx, minted.id);
+
+    const families = [
+      ["type_permissions", "--no-type-permissions", { "core.note": "write" }],
+      [
+        "extension_permissions",
+        "--no-extension-permissions",
+        { "app.cursor": "read" },
+      ],
+      ["edge_permissions", "--no-edge-permissions", { references: "read" }],
+      ["metadata_permissions", "--no-metadata-permissions", { types: "read" }],
+      ["profile_permissions", "--no-profile-permissions", { email: "read" }],
+    ] as const;
+    const read = async () => {
+      const listed = await c.operator.json<{
+        data: Array<Record<string, unknown>>;
+      }>(["keys", "list"]);
+      const key = listed.data.find((entry) => entry.id === minted.id);
+      expect(key).toBeDefined();
+      return key!;
+    };
+
+    let previous = await read();
+    expect(previous.permissions).toEqual(["audit.read"]);
+    for (const [field, , initial] of families) {
+      expect(previous[field]).toEqual(initial);
+    }
+    for (const [field, flag] of families) {
+      await c.operator.json(["keys", "update", minted.id, flag]);
+      const current = await read();
+      expect(current[field], `${flag} did not clear ${field}`).toEqual({});
+      expect(current.permissions).toEqual(previous.permissions);
+      for (const [other] of families) {
+        if (other !== field) expect(current[other]).toEqual(previous[other]);
+      }
+      previous = current;
+    }
+  });
+
   it("mints a key claiming a source, and a create under it names that source until the claim is taken away", async () => {
     const claimed = unique("cli-claimed");
     // The operator mints it: a working key may grant only what it claims.
