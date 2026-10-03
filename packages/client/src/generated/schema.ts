@@ -899,7 +899,7 @@ export interface paths {
         };
         /**
          * List the registered connectors
-         * @description Every registration, newest first, each with when it last heartbeated, its last run, and until when a process holds it. Any key.
+         * @description The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.
          */
         get: operations["listConnectors"];
         put?: never;
@@ -921,7 +921,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one registered connector */
+        /**
+         * Get one registered connector
+         * @description The connector's own key or the operator key. Another credential is answered as if the connector did not exist.
+         */
         get: operations["getConnector"];
         put?: never;
         post?: never;
@@ -964,7 +967,7 @@ export interface paths {
         };
         /**
          * List a connector's runs
-         * @description Newest first. Any key.
+         * @description Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.
          */
         get: operations["listConnectorRuns"];
         put?: never;

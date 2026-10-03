@@ -481,13 +481,13 @@ describe("who reaches these doors", () => {
       ["DELETE", `/connectors/${id}/hold?process=p`, undefined],
     ] as const;
 
-  it("refuses an app's session token on every one, where the same token reads the registration", async () => {
+  it("refuses an app's session token on every state door and hides the registration", async () => {
     const { key, connector: mine } = await connector();
     const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
     expect(
       (await request(ctx.app, "GET", `/connectors/${mine.id}`, { key: token }))
         .status,
-    ).toBe(200);
+    ).toBe(404);
     for (const [method, path, body] of doors(mine.id)) {
       const res = await request(ctx.app, method, path, { key: token, body });
       expect(res.status, `${method} ${path}`).toBe(403);

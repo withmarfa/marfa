@@ -101,7 +101,7 @@ describe("POST /connectors", () => {
     expect([a.status, b.status].sort()).toEqual([200, 201]);
     expect(b.connector.id).toBe(a.connector.id);
     const listed = await json<{ data: Connector[] }>(
-      await request(ctx.app, "GET", "/connectors", { key: otherKey }),
+      await request(ctx.app, "GET", "/connectors", { key: ctx.operatorKey }),
     );
     expect(listed.data.filter((row) => row.id === a.connector.id)).toHaveLength(
       1,
@@ -109,18 +109,19 @@ describe("POST /connectors", () => {
     expect(await remove(ctx.workingKey, a.connector.id)).toBe(200);
   });
 
-  it("refuses an app's session token, which reads but is not a key", async () => {
-    const mine = await register(ctx.workingKey, "mine, read by an app");
+  it("refuses an app's session token, which is not a connector's key", async () => {
+    const mine = await register(ctx.workingKey, "mine, hidden from apps");
     const { token } = await seedOauthBearer(ctx.storage, ["openid"]);
     const listed = await request(ctx.app, "GET", "/connectors", { key: token });
     expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ data: [], next_cursor: null });
     const one = await request(
       ctx.app,
       "GET",
       `/connectors/${mine.connector.id}`,
       { key: token },
     );
-    expect(one.status).toBe(200);
+    expect(one.status).toBe(404);
     const refused = await request(ctx.app, "POST", "/connectors", {
       key: token,
       body: { name: "an app" },
@@ -209,14 +210,14 @@ describe("POST /connectors", () => {
 });
 
 describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
-  it("answers one to any key, 404 for an unknown id, and removes for the own key or the operator", async () => {
+  it("answers one to the operator, 404 for an unknown id, and removes for the own key or the operator", async () => {
     const mine = await register(ctx.workingKey, "mine");
     const read = await request(
       ctx.app,
       "GET",
       `/connectors/${mine.connector.id}`,
       {
-        key: otherKey,
+        key: ctx.operatorKey,
       },
     );
     expect(read.status).toBe(200);
@@ -236,7 +237,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(
       (
         await request(ctx.app, "GET", `/connectors/${mine.connector.id}`, {
-          key: otherKey,
+          key: ctx.operatorKey,
         })
       ).status,
     ).toBe(200);
@@ -244,7 +245,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     expect(
       (
         await request(ctx.app, "GET", `/connectors/${mine.connector.id}`, {
-          key: otherKey,
+          key: ctx.operatorKey,
         })
       ).status,
     ).toBe(404);
@@ -308,7 +309,7 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
       ctx.app,
       "GET",
       `/connectors/${mine.connector.id}`,
-      { key: otherKey },
+      { key: ctx.operatorKey },
     );
     expect(read.status).toBe(200);
     expect(await json<Connector>(read)).toMatchObject({
@@ -320,6 +321,24 @@ describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
     // A source is unique among live keys only: a successor minted under
     // the revoked key's source is another key, not this registration's.
     const successor = await mintKey("short-lived");
+    expect(
+      (
+        await request(ctx.app, "GET", `/connectors/${mine.connector.id}`, {
+          key: successor.key,
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request(ctx.app, "GET", `/connectors/${mine.connector.id}/runs`, {
+          key: successor.key,
+        })
+      ).status,
+    ).toBe(404);
+    const hidden = await json<{ data: Connector[] }>(
+      await request(ctx.app, "GET", "/connectors", { key: successor.key }),
+    );
+    expect(hidden.data.map((row) => row.id)).not.toContain(mine.connector.id);
     const path = `/connectors/${mine.connector.id}`;
     const beat = await request(ctx.app, "POST", `${path}/heartbeat`, {
       key: successor.key,
@@ -477,7 +496,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     }
     expect(
       await json<{ data: ConnectorRun[] }>(
-        await request(ctx.app, "GET", path, { key: otherKey }),
+        await request(ctx.app, "GET", path, { key: ctx.operatorKey }),
       ),
     ).toEqual({ data: [run], next_cursor: null });
 
@@ -521,7 +540,9 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(lateRun.reported_at >= cappedRun.reported_at).toBe(true);
     expect(lateRun.reported_at).not.toBe(lateRun.started_at);
 
-    const listed = await request(ctx.app, "GET", path, { key: otherKey });
+    const listed = await request(ctx.app, "GET", path, {
+      key: ctx.operatorKey,
+    });
     expect(listed.status).toBe(200);
     const runs = await json<{ data: ConnectorRun[] }>(listed);
     expect(runs.data.map((r) => r.summary)).toEqual([
@@ -531,14 +552,16 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       "12 messages",
     ]);
     const one = await json<{ data: ConnectorRun[] }>(
-      await request(ctx.app, "GET", `${path}?limit=1`, { key: otherKey }),
+      await request(ctx.app, "GET", `${path}?limit=1`, {
+        key: ctx.operatorKey,
+      }),
     );
     expect(one.data.map((r) => r.summary)).toEqual(["reported late"]);
     for (const limit of ["0", "201", "x"]) {
       expect(
         (
           await request(ctx.app, "GET", `${path}?limit=${limit}`, {
-            key: otherKey,
+            key: ctx.operatorKey,
           })
         ).status,
       ).toBe(400);
@@ -573,7 +596,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
       (
         await json<{ data: ConnectorRun[] }>(
           await request(ctx.app, "GET", `/connectors/${id}/runs`, {
-            key: third.key,
+            key: ctx.operatorKey,
           }),
         )
       ).data.map((r) => r.summary);
@@ -581,7 +604,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(await runsOf(b.connector.id)).toEqual(["b's run"]);
     expect(await runsOf(c.connector.id)).toEqual([]);
     const listed = await json<{ data: Connector[] }>(
-      await request(ctx.app, "GET", "/connectors", { key: third.key }),
+      await request(ctx.app, "GET", "/connectors", { key: ctx.operatorKey }),
     );
     const lastRunOf = (id: string) =>
       listed.data.find((row) => row.id === id)?.last_run?.summary ?? null;
@@ -637,7 +660,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(kept).toHaveLength(RUNS_KEPT_PER_CONNECTOR);
     const byDefault = await json<{ data: ConnectorRun[] }>(
       await request(ctx.app, "GET", `/connectors/${mine.connector.id}/runs`, {
-        key: otherKey,
+        key: ctx.operatorKey,
       }),
     );
     expect(byDefault.data).toHaveLength(50);
@@ -646,7 +669,7 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
         ctx.app,
         "GET",
         `/connectors/${mine.connector.id}/runs?limit=200`,
-        { key: otherKey },
+        { key: ctx.operatorKey },
       ),
     );
     expect(two.data).toHaveLength(RUNS_KEPT_PER_CONNECTOR);

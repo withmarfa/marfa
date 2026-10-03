@@ -165,11 +165,12 @@ const ASKED_IN_PLACE: Record<string, string> = {
 const EVERYONE = "every credential";
 const OWNER = "the row's own key";
 const OWNER_OR_OPERATOR = "the row's own key, or the operator key";
+const PRIVATE_READ = "the row's own key or operator, hidden from others";
 
 const OPEN_BY_ROW: Record<string, string> = {
   "GET /connectors": EVERYONE,
-  "GET /connectors/:id": EVERYONE,
-  "GET /connectors/:id/runs": EVERYONE,
+  "GET /connectors/:id": PRIVATE_READ,
+  "GET /connectors/:id/runs": PRIVATE_READ,
   "GET /types": EVERYONE,
   "GET /types/:id": EVERYONE,
   "GET /edge-types": EVERYONE,
@@ -565,7 +566,8 @@ describe("every door asks what it asks of every caller before anything else", ()
     const admitted = (rule: string, who: keyof typeof credentials) =>
       rule === EVERYONE ||
       (who === "owner" && rule !== EVERYONE) ||
-      (who === "operator" && rule === OWNER_OR_OPERATOR);
+      (who === "operator" &&
+        (rule === OWNER_OR_OPERATOR || rule === PRIVATE_READ));
     const wrong: string[] = [];
     const doors = Object.keys(OPEN_BY_ROW).sort((a, b) => rank(a) - rank(b));
     for (const door of doors) {
@@ -584,7 +586,10 @@ describe("every door asks what it asks of every caller before anything else", ()
         string,
       ][]) {
         const got = await answer(await wellFormed(door, doc, bearer));
-        const refused = got.startsWith("403");
+        const refused =
+          OPEN_BY_ROW[door] === PRIVATE_READ
+            ? got === "404 connector_not_found"
+            : got.startsWith("403");
         if (
           got.startsWith("404") &&
           admitted(OPEN_BY_ROW[door]!, who) &&
