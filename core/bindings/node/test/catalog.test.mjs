@@ -117,5 +117,8 @@ test("refuses a catalog read before a catalog is held, then reads it offline", a
     core.edgeTypes().map((type) => type.id),
     ["mentor-of"],
   );
+  assert.throws(() => core.createItem({ type: "acme.absent", properties: {} }), /^Error: unknown_type: acme\.absent is not a type this copy holds$/);
+  assert.throws(() => core.createItem({ type: "acme.recipe", properties: {} }), /^Error: validation: \(invalid_properties\) servings: Required field is missing$/);
+  assert.equal(core.queue().length, 0);
   assert.throws(() => core.itemType("acme.absent"), /^Error: not_found: .*acme\.absent/);
 });
