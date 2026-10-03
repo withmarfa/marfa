@@ -14,6 +14,10 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
+import {
+  TransactionControl,
+  transactionControl,
+} from "./transaction-control.js";
 
 /**
  * The database's DDL, generated from `schema.ts` by
@@ -475,52 +479,100 @@ function transactionConnections(url: string): {
       leave();
       throw err;
     }
+    const control = transactionControl.getStore() ?? new TransactionControl();
+    control.begun = true;
     let open = true;
     const closedError = () =>
+      control.error() ??
       new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
     const finish = (sound: boolean) => {
       open = false;
       handBack(conn, sound);
       leave();
     };
-    const end = async (sql: "COMMIT" | "ROLLBACK") => {
+    const discard = async () => {
+      // The native connection can outlive close while prepared statements refer
+      // to it. This public cleanup path also rolls back an open transaction in
+      // its finally block, before the connection is discarded.
+      try {
+        await conn.executeMultiple("ROLLBACK");
+        control.outcome = "rolled_back";
+      } catch (error) {
+        control.diagnose(error);
+      }
+      finish(false);
+    };
+    const end = async (statement: "COMMIT" | "ROLLBACK") => {
       open = false;
       try {
-        await conn.execute(sql);
-      } catch (err) {
-        finish(false);
-        throw err;
+        await conn.execute(statement);
+      } catch (error) {
+        control.invalidate(
+          control.callbackCause ?? error,
+          "poisoned",
+          "unknown",
+        );
+        control.diagnose(error);
+        await discard();
+        control.assertUsable();
+        throw error;
       }
-      finish(true);
+      control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
+      finish(control.state === "usable");
     };
-    // A failed statement may have ended the transaction on SQLite's side
-    // (a full disk, an I/O error), and the next statement would then run
-    // outside it and commit on its own. A `BEGIN` succeeds only outside a
-    // transaction, so it answers whether this one is still open.
-    const stillOpen = async (): Promise<boolean> => {
+    const probeState = async (): Promise<"active" | "ended" | "unknown"> => {
       try {
         await conn.execute("BEGIN DEFERRED");
-      } catch {
-        return true;
+      } catch (error) {
+        // This exact refusal is verified against the pinned native driver.
+        // Other failed probes do not establish that the old transaction exists.
+        if (
+          error instanceof LibsqlError &&
+          error.code === "SQLITE_ERROR" &&
+          error.rawCode === 1 &&
+          error.message ===
+            "SQLITE_ERROR: cannot start a transaction within a transaction"
+        ) {
+          return "active";
+        }
+        control.diagnose(error);
+        return "unknown";
       }
-      await conn.execute("ROLLBACK").catch(() => {
-        conn.close();
-      });
-      return false;
+      try {
+        await conn.execute("ROLLBACK");
+        return "ended";
+      } catch (error) {
+        control.diagnose(error);
+        return "unknown";
+      }
     };
     const execute = async (
       stmtOrSql: InStatement | string,
       args?: InArgs,
     ): Promise<ResultSet> => {
       if (!open) throw closedError();
+      control.assertUsable();
       try {
         return typeof stmtOrSql === "string"
           ? await conn.execute(stmtOrSql, args)
           : await conn.execute(stmtOrSql);
-      } catch (err) {
-        if (isBusy(err)) finish(false);
-        else if (!(await stillOpen())) finish(true);
-        throw err;
+      } catch (error) {
+        if (isBusy(error)) {
+          control.invalidate(error, "poisoned", "unknown");
+          await discard();
+        } else {
+          const state = await probeState();
+          if (state !== "active") {
+            control.invalidate(
+              error,
+              state === "ended" ? "ended" : "poisoned",
+              state === "ended" ? "rolled_back" : "unknown",
+            );
+            if (state === "ended") finish(true);
+            else await discard();
+          }
+        }
+        throw error;
       }
     };
 
@@ -545,6 +597,7 @@ function transactionConnections(url: string): {
         ),
       commit: async () => {
         if (!open) throw closedError();
+        control.assertUsable();
         await end("COMMIT");
       },
       rollback: async () => {

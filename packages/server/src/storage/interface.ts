@@ -3179,6 +3179,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   connectors: ConnectorStore;
   connectorState: ConnectorStateStore;
   inbound: InboundStore;
+  /** Refuse further work when the current root transaction ended or became uncertain. */
+  assertTransactionUsable(): void;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

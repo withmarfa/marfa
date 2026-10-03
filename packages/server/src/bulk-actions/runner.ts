@@ -126,9 +126,11 @@ async function runTransitionChunk({
         }
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   for (const id of carriedInChunk) alreadyCarried.add(id);
   return { succeeded, errors };
@@ -160,9 +162,11 @@ async function runPurgeChunk({
         collectBlobHashes(result.item.properties, blob_hashes);
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors, blob_hashes };
 }
@@ -217,9 +221,11 @@ async function runUpdateTagsChunk({
         });
         succeeded.push(id);
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors };
 }
@@ -294,9 +300,11 @@ async function runUpdateChunk(
           });
         }
       } catch (err) {
+        storage.assertTransactionUsable();
         errors.push(toErrorEntry(id, err));
       }
     }
+    storage.assertTransactionUsable();
   });
   return { succeeded, errors };
 }
