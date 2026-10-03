@@ -192,6 +192,21 @@ pub struct KeyUpdateArgs {
     pub label: Option<String>,
     #[command(flatten)]
     pub maps: PermissionMapArgs,
+    /// Empty the type permission map on this update.
+    #[arg(long, conflicts_with_all = ["type_permissions", "no_permissions"])]
+    pub no_type_permissions: bool,
+    /// Empty the extension permission map on this update.
+    #[arg(long, conflicts_with_all = ["extension_permissions", "no_permissions"])]
+    pub no_extension_permissions: bool,
+    /// Empty the edge permission map on this update.
+    #[arg(long, conflicts_with_all = ["edge_permissions", "no_permissions"])]
+    pub no_edge_permissions: bool,
+    /// Empty the metadata permission map on this update.
+    #[arg(long, conflicts_with_all = ["metadata_permissions", "no_permissions"])]
+    pub no_metadata_permissions: bool,
+    /// Empty the profile permission map on this update.
+    #[arg(long, conflicts_with_all = ["profile_permissions", "no_permissions"])]
+    pub no_profile_permissions: bool,
     #[command(flatten)]
     pub claims: ClaimArgs,
     /// The tier a write under the key lands at when it names none.
@@ -199,7 +214,7 @@ pub struct KeyUpdateArgs {
     pub default_tier: Option<Tier>,
     /// Take every permission and every map from the key, so a key minted
     /// too wide is narrowed in place.
-    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions"])]
+    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions", "no_type_permissions", "no_extension_permissions", "no_edge_permissions", "no_metadata_permissions", "no_profile_permissions"])]
     pub no_permissions: bool,
 }
 
@@ -281,6 +296,17 @@ pub fn update_request(args: &KeyUpdateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     insert_opt(&mut body, "label", args.label.clone());
     args.maps.apply(&mut body)?;
+    for (clear, name) in [
+        (args.no_type_permissions, "type_permissions"),
+        (args.no_extension_permissions, "extension_permissions"),
+        (args.no_edge_permissions, "edge_permissions"),
+        (args.no_metadata_permissions, "metadata_permissions"),
+        (args.no_profile_permissions, "profile_permissions"),
+    ] {
+        if clear {
+            body.insert(name.into(), json!({}));
+        }
+    }
     args.claims.apply(&mut body);
     if args.no_permissions {
         hold_nothing(&mut body);
