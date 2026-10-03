@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
-import { MAX_INBOUND_RETENTION_DAYS } from "../config.js";
+import { MAX_RETENTION_DAYS, MAX_RETENTION_HOURS } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -28,20 +28,35 @@ const instanceConfigShape = (strict: boolean) => ({
   // instance env default when unset. `0` disables the job (matches
   // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are
   // rejected.
-  audit_retention_days: z.number().int().min(0).optional(),
-  event_log_retention_hours: z.number().int().min(0).optional(),
-  trash_retention_days: z.number().int().min(0).optional(),
+  audit_retention_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional(),
+  event_log_retention_hours: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_HOURS)
+    .optional(),
+  trash_retention_days: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .optional(),
   inbound_handled_retention_days: z
     .number()
     .int()
     .min(0)
-    .max(MAX_INBOUND_RETENTION_DAYS)
+    .max(MAX_RETENTION_DAYS)
     .optional(),
   inbound_pending_retention_days: z
     .number()
     .int()
     .min(0)
-    .max(MAX_INBOUND_RETENTION_DAYS)
+    .max(MAX_RETENTION_DAYS)
     .optional(),
 });
 
