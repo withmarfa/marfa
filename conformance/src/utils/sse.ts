@@ -16,6 +16,10 @@ export interface EventStream {
 export interface OpenEventStreamOptions {
   /** Sent as the `Last-Event-ID` request header when set. */
   lastEventId?: string;
+  /** The copy stream's expected read view. */
+  readView?: string;
+  /** Additional raw headers, retaining duplicates for grammar assertions. */
+  headers?: Array<[string, string]>;
   /**
    * Give up if the server has not sent response headers within this many
    * milliseconds, rejecting instead of waiting indefinitely.
@@ -68,12 +72,16 @@ export async function openEventStream(
 ): Promise<EventStream> {
   const agent = new Agent({ allowH2: false, connect: { timeout: 30_000 } });
   const controller = new AbortController();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-  };
+  const headers: Array<[string, string]> = [
+    ["Authorization", `Bearer ${apiKey}`],
+  ];
   if (options.lastEventId !== undefined) {
-    headers["Last-Event-ID"] = options.lastEventId;
+    headers.push(["Last-Event-ID", options.lastEventId]);
   }
+  if (options.readView !== undefined) {
+    headers.push(["X-Marfa-Read-View", options.readView]);
+  }
+  headers.push(...(options.headers ?? []));
   const connectGuard =
     options.connectTimeoutMs === undefined
       ? undefined

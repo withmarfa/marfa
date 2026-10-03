@@ -1,4 +1,9 @@
-import { openEventStream, parseSse, type EventStream } from "./sse.js";
+import {
+  openEventStream,
+  parseSse,
+  type EventStream,
+  type OpenEventStreamOptions,
+} from "./sse.js";
 import type { SseEvent } from "./sse.js";
 
 /**
@@ -141,15 +146,12 @@ function describe(events: SseEvent[]): string {
 export async function withStream<T>(
   apiUrl: string,
   apiKey: string,
-  options: { lastEventId?: string; query?: Array<[string, string]> },
+  options: OpenEventStreamOptions,
   body: (stream: EventStream) => Promise<T>,
 ): Promise<T> {
   const stream = await openEventStream(apiUrl, apiKey, {
     connectTimeoutMs: 30_000,
-    ...(options.lastEventId === undefined
-      ? {}
-      : { lastEventId: options.lastEventId }),
-    ...(options.query ? { query: options.query } : {}),
+    ...options,
   });
   try {
     return await body(stream);
