@@ -3,8 +3,8 @@ import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
   edgeType,
   edgeTypeCatalog,
-  heldLog,
-  liveReplay,
+  copyHeldLog,
+  copyLiveReplay,
   typeCatalog,
 } from "../../device/marfa-answers.js";
 import type {
@@ -269,10 +269,10 @@ describe("The type catalog a working copy holds", () => {
       catalog: typeCatalog(),
       edgeTypes: () => edgeTypeCatalog(registered ? [MENTOR] : []),
     });
-    server.answer("GET", "/types", () =>
+    server.copyAnswer("GET", "/types", () =>
       typeCatalog(registered ? [RECIPE] : []),
     );
-    server.answer("GET", "/events", liveReplay("1", []));
+    server.copyAnswer("GET", "/events", copyLiveReplay("1", []));
     value(await device.hydrate(["core.note"], "library"), "the hydration");
     const hydrated = value(await device.status(), "the state report");
     expect(
@@ -310,10 +310,10 @@ describe("The type catalog a working copy holds", () => {
       catalog: typeCatalog(),
       edgeTypes: () => edgeTypeCatalog(registered ? [MENTOR] : []),
     });
-    server.answer("GET", "/types", () =>
+    server.copyAnswer("GET", "/types", () =>
       typeCatalog(registered ? [RECIPE] : []),
     );
-    server.answer("GET", "/events", heldLog([]));
+    server.copyAnswer("GET", "/events", copyHeldLog([]));
     value(await device.hydrate(["core.note"], "library"), "the hydration");
 
     // The witness: a stream that reads the catalog the copy holds says nothing.

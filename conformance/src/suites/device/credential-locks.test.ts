@@ -65,7 +65,7 @@ it("refuses an unsafe credential lock across environment overrides before contac
     }
   };
   const answer = () =>
-    server.answer("GET", `${prefix}/`, {
+    server.copyAnswer("GET", `${prefix}/`, {
       kind: "json",
       status: 200,
       body: {

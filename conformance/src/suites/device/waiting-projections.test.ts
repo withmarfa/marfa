@@ -2,8 +2,8 @@ import { afterEach, expect, it } from "vitest";
 import {
   answers,
   edgeEvent,
-  itemEvent,
-  replay,
+  copyItemEvent,
+  copyReplay,
   wireEdge,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -42,11 +42,11 @@ it.each(["dead", "released"] as const)(
       },
     });
     const { device, server } = harness;
-    server.answer(
+    server.copyAnswer(
       "GET",
       "/events",
-      replay("2", [
-        itemEvent(
+      copyReplay("2", [
+        copyItemEvent(
           "2",
           "item.updated",
           wireItem({
@@ -187,10 +187,10 @@ it("keeps a dead edge edit over a newer edge event", async () => {
       ],
     },
   });
-  server.answer(
+  server.copyAnswer(
     "GET",
     "/events",
-    replay("2", [
+    copyReplay("2", [
       edgeEvent("2", "edge.updated", {
         ...edge,
         version: 2,
@@ -231,8 +231,8 @@ it("keeps a dead edge create over an existing server edge", async () => {
     head: "1",
     rows: { "core.note": [{ item: { id } }, { item: { id: "target" } }] },
   });
-  server.answer("GET", "/events", () =>
-    replay("2", [
+  server.copyAnswer("GET", "/events", () =>
+    copyReplay("2", [
       edgeEvent(
         "2",
         "edge.updated",

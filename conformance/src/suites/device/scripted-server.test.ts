@@ -4,7 +4,7 @@ import {
   answers,
   catchupTooOld,
   connected,
-  streamCursor,
+  copyStreamCursor,
 } from "../../device/marfa-answers.js";
 
 /**
@@ -204,7 +204,7 @@ describe("the answers a device has to classify", () => {
 
   it("goes to rest and comes back on the same address", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/health", {
+    server.copyAnswer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
@@ -226,9 +226,9 @@ describe("the answers a device has to classify", () => {
 
   it("serves an event stream, and a terminal aged-out frame", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/events", {
+    server.copyAnswer("GET", "/events", {
       kind: "sse",
-      frames: [connected, streamCursor("42"), catchupTooOld("500", "10")],
+      frames: [connected, copyStreamCursor("42"), catchupTooOld("500", "10")],
     });
 
     const stream = await read(`${server.url}/events`);
@@ -249,7 +249,7 @@ describe("the answers a device has to classify", () => {
 describe("the script is the whole of what the server does", () => {
   it("refuses a door the fixture never scripted rather than inventing an answer", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/health", {
+    server.copyAnswer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
@@ -265,12 +265,12 @@ describe("the script is the whole of what the server does", () => {
 
   it("records every request in the order it arrived", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/types", {
+    server.copyAnswer("GET", "/types", {
       kind: "json",
       status: 200,
       body: { data: [], next_cursor: null },
     });
-    server.answer("GET", "/items", {
+    server.copyAnswer("GET", "/items", {
       kind: "json",
       status: 200,
       body: { data: [], next_cursor: null },
