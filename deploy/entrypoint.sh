@@ -40,14 +40,18 @@ REFUSED_DATABASE=78
 # Runs the command as a child of this shell, so its status can be read, and
 # hands it the signals that stop the container.
 supervise() {
+  signalled=0
   "$@" &
   child=$!
-  trap 'kill -TERM "$child" 2>/dev/null || true' TERM INT
+  trap 'signalled=1; kill -TERM "$child" 2>/dev/null || true' TERM INT
   status=0
   wait "$child" || status=$?
-  # A signal ends the first wait at once, with 128 and the signal's number,
-  # while the child is still stopping: its own status is the second wait's.
-  if kill -0 "$child" 2>/dev/null; then
+  # A signal ends the wait at once, reporting 128 and the signal's number for
+  # itself and not the child's status, whether the child has ended or not.
+  # The child stays in the shell's table until it is waited for, so the
+  # second wait answers its own status either way.
+  if [ "$signalled" = 1 ]; then
+    status=0
     wait "$child" || status=$?
   fi
   trap - TERM INT

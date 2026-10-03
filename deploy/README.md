@@ -37,6 +37,8 @@ docker build -f deploy/Dockerfile --build-arg VERSION_SHA=$(git rev-parse HEAD) 
 docker run --rm -p 8600:8600 -v marfa-data:/data --env-file <your env> marfa-server
 ```
 
+`ci.yml` builds this image and boots it through its entrypoint on every pull request that can affect it, and on every push to `main` (`scripts/check-image.sh`): it becomes healthy, reports the commit it was built from, stops with status `0` inside ten seconds, and on a database another build wrote stays up and unhealthy. That run uses no bucket, so the Litestream half is the restore drill's.
+
 Without `S3_BUCKET` the container runs the server alone and says so in its log: nothing is streamed and no object store is attached. That is a local trial, not a deployment.
 
 ## Watching the instance

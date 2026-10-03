@@ -35,7 +35,8 @@ ENV PORT=8600
 ENV SQLITE_PATH=/data/marfa.db
 ENV BLOB_PATH=/data/blobs
 # The commit this image was built from, which the server reads from
-# `version.json` at boot and reports on `GET /`.
+# `version.json` at boot and reports on `GET /`, in `/health` and as the
+# version of every span it exports.
 ARG VERSION_SHA=dev
 WORKDIR /app
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream

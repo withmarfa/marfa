@@ -34,6 +34,8 @@ export const JOBS = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  // The shipped image, built and booted through its entrypoint.
+  "image",
   "types-freshness",
   "openapi-freshness",
   "version-fields",
@@ -54,6 +56,7 @@ const SERVER: readonly Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "openapi-freshness",
 ];
 
@@ -71,6 +74,7 @@ const WORKSPACE: readonly Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "types-freshness",
   "openapi-freshness",
   "version-fields",
@@ -106,8 +110,14 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   // The drill installs the image's Litestream and runs its configuration,
   // which the offline lane's own test reads too.
-  [/^deploy\/Dockerfile$/, ["restore-drill"]],
-  [/^deploy\/litestream\.yml$/, ["restore-drill", "conformance"]],
+  [/^deploy\/Dockerfile$/, ["restore-drill", "image"]],
+  [/^deploy\/litestream\.yml$/, ["restore-drill", "conformance", "image"]],
+  // The image copies the entrypoint and the ignore file into its build, and
+  // `ci/entrypoint.test.ts` runs the entrypoint.
+  [
+    /^deploy\/(entrypoint\.sh|Dockerfile\.dockerignore)$/,
+    ["workspace", "image"],
+  ],
   [/^deploy\//, []],
 
   [/^packages\/types\//, [...SERVER, "types-freshness"]],
@@ -189,6 +199,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ],
   ],
 
+  [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
   [/^ci\//, ["workspace"]],
   [/^scripts\/generate-core-contract\.ts$/, ["workspace", "clients-freshness"]],
   [/^scripts\//, ["workspace"]],

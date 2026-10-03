@@ -160,6 +160,27 @@ describe("deploy/entrypoint.sh", () => {
     expect(await run.exited).toBe(0);
   });
 
+  // A server that stops at once on the signal has ended by the time the
+  // entrypoint's wait notices the signal, which reports 143 for itself and
+  // not the server's status.
+  it("ends 0 when the server stops cleanly the moment it is signalled", async () => {
+    const run = start({
+      body: [
+        `trap 'exit 0' TERM`,
+        `echo ready > "$marker/ready"`,
+        "while :; do sleep 0.1; done",
+      ].join("\n"),
+    });
+    for (let i = 0; i < 100 && !existsSync(join(run.dir, "ready")); i += 1) {
+      await pause(50);
+    }
+    expect(existsSync(join(run.dir, "ready"))).toBe(true);
+
+    run.child.kill("SIGTERM");
+
+    expect(await run.exited).toBe(0);
+  });
+
   it("hands the server the signal that stops the container, and ends with the server's status", async () => {
     const run = start({
       body: [
