@@ -11,6 +11,7 @@ export async function runAuditedTransaction<T>(
   storage: Storage,
   work: () => T | Promise<T>,
   entry: AuditLogEntry | ((result: T) => AuditLogEntry | null),
+  options: { retainCommitHooksOnUncertain?: boolean } = {},
 ): Promise<T> {
   const nested = transactionControl.getStore() !== undefined;
   const id = generateId();
@@ -36,24 +37,24 @@ export async function runAuditedTransaction<T>(
       error instanceof TransactionFailure &&
       error.control.outcome === "unknown"
     ) {
-      try {
-        if (!witness.recorded) {
-          reconcileCommitHooks(error, "unknown");
-          throw error;
+      if (witness.recorded) {
+        try {
+          const committed = await storage.runInTransaction(() =>
+            storage.audit.has(id),
+          );
+          if (committed) {
+            reconcileCommitHooks(error, "committed");
+            return result;
+          }
+        } catch {
+          // A failed read cannot settle the outcome.
         }
-        const committed = await storage.runInTransaction(() =>
-          storage.audit.has(id),
-        );
-        if (committed) {
-          reconcileCommitHooks(error, "committed");
-          return result;
-        }
-        // Absence cannot distinguish rollback from a witness retired while
-        // this process was suspended. Only positive evidence settles a commit.
-        reconcileCommitHooks(error, "unknown");
-      } catch {
-        reconcileCommitHooks(error, "unknown");
       }
+      // Absence cannot distinguish rollback from a witness retired while this
+      // process was suspended. A bulk worker may still own a checkpoint oracle;
+      // otherwise end retained delivery explicitly rather than leak its frame.
+      if (!options.retainCommitHooksOnUncertain)
+        reconcileCommitHooks(error, "unknown");
     }
     throw error;
   }

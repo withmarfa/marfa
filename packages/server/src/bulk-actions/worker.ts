@@ -376,6 +376,7 @@ export class BulkActionWorker {
                     errored_total: checkpoint.errored_count,
                   },
                 },
+          { retainCommitHooksOnUncertain: true },
         );
       } catch (error) {
         if (error instanceof BulkActionLeaseLost) return;
