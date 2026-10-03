@@ -1017,11 +1017,20 @@ impl Folder {
         // cannot withhold a note's identity by sharing it.
         let identities = identity::resolve(&held);
         let mut files = Vec::new();
+        // Reading may wait across several scans after a rename; the file
+        // is still present by identity even before its new path is bound.
+        let mut unread_marks = HashSet::new();
         for path in held {
+            let mut keep_identity = || {
+                if let Some(mark) = identities.get(&path) {
+                    unread_marks.insert(mark.key());
+                }
+            };
             if let Some(settle) = settle
                 && !is_document(&path)
                 && changed_within(&path, settle)
             {
+                keep_identity();
                 report.settling.push(identity::relative(&self.root, &path)?);
                 continue;
             }
@@ -1032,6 +1041,7 @@ impl Folder {
                 None => {
                     let stat = stat_of(&path);
                     let Ok(bytes) = std::fs::read(&path) else {
+                        keep_identity();
                         continue;
                     };
                     if let Some(stat) = stat {
@@ -1042,6 +1052,7 @@ impl Folder {
             };
             // No blob the server holds is empty.
             if bytes.is_empty() && !is_document(&path) {
+                keep_identity();
                 report.skipped += 1;
                 continue;
             }
@@ -1355,7 +1366,12 @@ impl Folder {
         };
         for row in bound {
             let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
-            if seen.contains(&row.path) {
+            if seen.contains(&row.path)
+                || row
+                    .identity
+                    .as_ref()
+                    .is_some_and(|mark| unread_marks.contains(mark))
+            {
                 // Back inside the grace, so the server never hears of it.
                 if held {
                     let conn = self.core.conn()?;
@@ -1617,8 +1633,6 @@ impl Folder {
         Ok((claims, waiting))
     }
 
-    /// Whether the file holds what the item would be written as: a file
-    /// item's bytes, or a text file's body.
     fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
         if item.r#type.starts_with("system.") || !suited(item, &file.key, catalog) {
             return false;
@@ -1629,11 +1643,13 @@ impl Folder {
             }),
             None => {
                 file.unreadable.is_none()
-                    && item
-                        .properties
-                        .get(fields::body_field(catalog, &item.r#type))
-                        .and_then(Value::as_str)
-                        .is_some_and(|body| state::hash(body.as_bytes()) == file.hash)
+                    && state::hash(
+                        item.properties
+                            .get(fields::body_field(catalog, &item.r#type))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .as_bytes(),
+                    ) == file.hash
             }
         }
     }

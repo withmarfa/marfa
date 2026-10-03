@@ -87,8 +87,6 @@ impl Folder {
             .min_by_key(rank_of))
     }
 
-    /// Every item placed in this folder, by its path folded as names are
-    /// compared, the older placement first.
     pub(super) fn placed_here(&self) -> Result<HashMap<String, Vec<Edge>>> {
         let mut placed: HashMap<String, Vec<Edge>> = HashMap::new();
         for edge in self.core.edges_to(&self.folder)? {

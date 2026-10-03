@@ -9426,6 +9426,155 @@ describe("where a file sits", () => {
     expect(existsSync(join(harness.dir, "Elsewhere", "Plan.md"))).toBe(false);
   });
 
+  it("keeps the item of a renamed file that is still settling", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016f1";
+    const bytes = Buffer.from("initial file bytes");
+    const placed = await placedHarness(
+      "folder-rename-settling",
+      [
+        {
+          id,
+          title: "capture.bin",
+          type: "core.file",
+          path: "capture.bin",
+          properties: {
+            title: "capture.bin",
+            blob_ref: hashOf(bytes),
+            mime_type: "application/octet-stream",
+          },
+        },
+      ],
+      { search: { types: ["core.file"] } },
+    );
+    harness = placed.harness;
+    scriptBlob(harness.server, bytes);
+    acceptUploads(harness.server);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const moving = join(harness.dir, "renamed.bin");
+    renameSync(join(harness.dir, "capture.bin"), moving);
+    const writing = setInterval(
+      () => appendFileSync(moving, Buffer.from("more")),
+      30,
+    );
+    appendFileSync(moving, Buffer.from("first edit"));
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("still changing"),
+        { timeout: 30000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 12000));
+      expect(watching.running(), watching.stderr).toBe(true);
+      const deletes = harness.server.requests.filter(
+        (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+      );
+      expect(existsSync(moving)).toBe(true);
+      expect(
+        deletes,
+        "the moved file is present and changing but its item was trashed",
+      ).toEqual([]);
+      clearInterval(writing);
+      scriptBlob(harness.server, readFileSync(moving));
+      await vi.waitFor(
+        () =>
+          expect(placed.edges.placements(harness!.settings.id).get(id)).toBe(
+            "renamed.bin",
+          ),
+        { timeout: 30000, interval: 100 },
+      );
+      expect(sentCreates(harness)).toEqual([]);
+      rmSync(moving);
+      await vi.waitFor(
+        () =>
+          expect(
+            harness!.server.requests.some(
+              (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+            ),
+          ).toBe(true),
+        { timeout: 30000, interval: 100 },
+      );
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
+  });
+
+  it.each(["empty", "unreadable"])(
+    "keeps a renamed file's item while its bytes are %s",
+    async (kind) => {
+      const id = "01a00000-0000-7000-8000-0000000016f1";
+      const bytes = Buffer.from("initial file bytes");
+      const placed = await placedHarness(
+        "folder-rename-unread",
+        [
+          {
+            id,
+            title: "capture.bin",
+            type: "core.file",
+            path: "capture.bin",
+            properties: {
+              title: "capture.bin",
+              blob_ref: hashOf(bytes),
+              mime_type: "application/octet-stream",
+            },
+          },
+        ],
+        { search: { types: ["core.file"] } },
+      );
+      harness = placed.harness;
+      scriptBlob(harness.server, bytes);
+      acceptUploads(harness.server);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const moving = join(harness.dir, "renamed.bin");
+      renameSync(join(harness.dir, "capture.bin"), moving);
+      if (kind === "empty") writeFileSync(moving, "");
+      else chmodSync(moving, 0);
+      try {
+        const scanned = await harness.folder.scan();
+        expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+        expect(scanned.ok && scanned.value.missing).toBe(0);
+      } finally {
+        chmodSync(moving, 0o600);
+      }
+      writeFileSync(moving, bytes);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(placed.edges.placements(harness.settings.id).get(id)).toBe(
+        "renamed.bin",
+      );
+      expect(sentCreates(harness)).toEqual([]);
+    },
+  );
+
+  it("takes back an empty text file rendered from a missing body", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016f1";
+    const placed = await placedHarness(
+      "folder-empty-body",
+      [
+        {
+          id,
+          title: "empty",
+          type: "core.event",
+          path: "empty.txt",
+          properties: { title: "empty" },
+        },
+      ],
+      { search: { types: ["core.note", "core.event"] } },
+    );
+    harness = placed.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(read(harness, "empty.txt")).toBe("");
+    expect((await harness.folder.remove()).ok).toBe(true);
+    expect((await harness.folder.add(harness.settings.id)).ok).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentCreates(harness), JSON.stringify(pushed)).toEqual([]);
+    const status = await harness.folder.status();
+    expect(
+      status.ok && status.value.files.map((file) => [file.path, file.item_id]),
+    ).toEqual([["empty.txt", id]]);
+  });
+
   it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
     const [photo, paper, words] = [
       "01a00000-0000-7000-8000-0000000016f1",
