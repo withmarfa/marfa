@@ -536,9 +536,26 @@ async function ownedWebhook(
 
 /** A subscription as the wire carries it: no owner, secret redacted. */
 function wireWebhook(webhook: StoredWebhook, revealSecret = false) {
-  const wire: Omit<StoredWebhook, "owner"> &
-    Partial<Pick<StoredWebhook, "owner">> = { ...webhook };
-  delete wire.owner;
+  const {
+    id,
+    url,
+    secret,
+    events,
+    type_filter,
+    active,
+    created_at,
+    updated_at,
+  } = webhook;
+  const wire = {
+    id,
+    url,
+    secret,
+    events,
+    type_filter,
+    active,
+    created_at,
+    updated_at,
+  };
   return revealSecret ? wire : { ...wire, secret: redactSecret(wire.secret) };
 }
 

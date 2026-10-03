@@ -18,7 +18,6 @@ export const TELEMETRY_FLUSH_TIMEOUT_MS = 2_000;
 
 /** What the sequence stops, in the shapes it needs from each. */
 export interface ShutdownParts {
-  webhookConsumer: { stop(): void };
   bulkActionWorker: { stop(): void };
   housekeeping: { stop(): Promise<void> };
   server: {
@@ -61,7 +60,6 @@ export async function shutdownInOrder(
   // pipeline as early as possible; everything below only shortens the time
   // it has to get out.
   log("info", "Shutting down...");
-  parts.webhookConsumer.stop();
   parts.bulkActionWorker.stop();
   const housekeepingStopped = parts.housekeeping.stop();
   let exitCode = 0;

@@ -20,17 +20,22 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { publish } from "../pubsub.js";
-import { WebhookConsumer } from "./delivery.js";
+import { initEventLog, __resetEventLogForTests, publish } from "../pubsub.js";
+import { WebhookScheduler } from "./delivery.js";
 import type { WebhookHttpClient, WebhookPost } from "./outbound-http.js";
 
 let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  initEventLog(ctx.storage.eventLog);
+  await ctx.storage.runInTransaction(() =>
+    ctx.storage.outboundWebhooks.checkpoint(),
+  );
 });
 
 afterAll(async () => {
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -116,10 +121,12 @@ function item(id: string, type = "core.note"): Item {
     state: "active",
     tier: "library",
     source: "test",
+    schema_version: 1,
+    occurred_at: new Date().toISOString(),
     properties: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  } as unknown as Item;
+  };
 }
 
 async function delivered(items: Item[]): Promise<string[]> {
@@ -134,15 +141,11 @@ async function delivered(items: Item[]): Promise<string[]> {
       });
     },
   };
-  const consumer = new WebhookConsumer({ storage: ctx.storage, http });
-  consumer.start();
-  await new Promise((r) => setTimeout(r, 20));
-  try {
-    for (const i of items) await publish({ type: "created", item: i });
-    await new Promise((r) => setTimeout(r, 100));
-  } finally {
-    consumer.stop();
-  }
+  for (const i of items) await publish({ type: "created", item: i });
+  const scheduler = new WebhookScheduler({ storage: ctx.storage, http });
+  const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head)
+    await scheduler.runOnce();
   return posts.map(
     (p) => (JSON.parse(p.body) as { item: { id: string } }).item.id,
   );

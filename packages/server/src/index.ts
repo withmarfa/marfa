@@ -16,8 +16,6 @@ import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { setBusyBudgetMs } from "./storage/sqlite/connection.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
-import { WebhookConsumer } from "./webhooks/delivery.js";
-import { createWebhookHttpClient } from "./webhooks/outbound-http.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { registerHousekeepingJobs } from "./housekeeping/registrations.js";
 import { initEventLog } from "./pubsub.js";
@@ -66,14 +64,6 @@ async function main() {
     pollIntervalMs: config.housekeepingPollIntervalMs ?? 1_000,
   });
   registerHousekeepingJobs(housekeeping, storage, blobs, config);
-
-  const webhookConsumer = new WebhookConsumer({
-    storage,
-    http: createWebhookHttpClient({
-      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
-    }),
-  });
-  webhookConsumer.start();
 
   const bulkActionWorker = new BulkActionWorker({
     storage,
@@ -147,6 +137,7 @@ async function main() {
 
   const app = createApp(storage, blobs, housekeeping, config, instanceId);
   await housekeeping.start();
+  await housekeeping.runNow("webhook-schedule");
   log("info", "Housekeeping started", { names: housekeeping.names() });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
@@ -160,7 +151,6 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     void shutdownInOrder({
-      webhookConsumer,
       bulkActionWorker,
       housekeeping,
       server,

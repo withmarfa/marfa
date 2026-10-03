@@ -55,6 +55,7 @@ async function namesUnder(
 const ALWAYS = [
   "event-log-cleanup",
   "audit-cleanup",
+  "webhook-schedule",
   "webhook-poll",
   "version-thinning",
   "trash-purge",
@@ -71,6 +72,7 @@ describe("the housekeeping registrations", () => {
     expect(names).toEqual([
       "event-log-cleanup",
       "audit-cleanup",
+      "webhook-schedule",
       "webhook-poll",
       "version-thinning",
       "trash-purge",

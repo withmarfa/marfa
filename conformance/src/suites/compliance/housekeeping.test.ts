@@ -28,6 +28,7 @@ const ALWAYS_LISTED = [
   "trash-purge",
   "version-thinning",
   "webhook-poll",
+  "webhook-schedule",
 ];
 
 describe("the housekeeping the server runs on itself", () => {

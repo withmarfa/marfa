@@ -13,7 +13,8 @@ import {
 import { hashApiKey } from "../middleware/auth.js";
 import type { StoredWebhook, WebhookOwner } from "../storage/interface.js";
 import {
-  __listenerCountForTests,
+  initEventLog,
+  __resetEventLogForTests,
   publish,
   publishEdge,
   storedFrame,
@@ -22,7 +23,7 @@ import {
 import {
   DELIVERY_CANCELLED,
   WEBHOOK_POLL_INTERVAL_MS,
-  WebhookConsumer,
+  WebhookScheduler,
   WebhookPoller,
   buildSignatureHeader,
   parseRetryAfter,
@@ -87,9 +88,14 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  initEventLog(ctx.storage.eventLog);
+  await ctx.storage.runInTransaction(() =>
+    ctx.storage.outboundWebhooks.checkpoint(),
+  );
 });
 
 afterAll(async () => {
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -189,10 +195,12 @@ function item(id: string, type = "core.note"): Item {
     state: "active",
     tier: "library",
     source: "test",
+    schema_version: 1,
+    occurred_at: new Date().toISOString(),
     properties: { title: id },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  } as unknown as Item;
+  };
 }
 
 function edge(id: string, sourceId: string, edgeType = "references"): Edge {
@@ -208,25 +216,16 @@ function edge(id: string, sourceId: string, edgeType = "references"): Edge {
   };
 }
 
-async function settle(): Promise<void> {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
-
-/** Start a consumer, publish, let its deliveries go, stop it. */
+/** Persist events, then run the durable scheduler. */
 async function dispatch(
   http: Recorder,
   publishAll: () => Promise<void>,
 ): Promise<void> {
-  const consumer = new WebhookConsumer({ storage: ctx.storage, http });
-  consumer.start();
-  await settle();
-  try {
-    await publishAll();
-    await settle();
-  } finally {
-    consumer.stop();
-  }
+  await publishAll();
+  const scheduler = new WebhookScheduler({ storage: ctx.storage, http });
+  const head = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+  while ((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId < head)
+    await scheduler.runOnce();
 }
 
 function sentBodies(http: Recorder): Record<string, unknown>[] {
@@ -720,44 +719,5 @@ describe("when a delivery stops", () => {
       });
     }
     expect(http.posts).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WebhookConsumer — stopping ends both subscriptions
-// ---------------------------------------------------------------------------
-
-describe("WebhookConsumer stop", () => {
-  it("leaves no listener behind after several start and stop cycles on a quiet bus", async () => {
-    const baseline = __listenerCountForTests();
-    const c = new WebhookConsumer({ storage: ctx.storage, http: recorder() });
-    for (let cycle = 0; cycle < 5; cycle++) {
-      c.start();
-      await settle();
-      // The witness: a running consumer holds one listener per loop.
-      expect(__listenerCountForTests()).toBe(baseline + 2);
-      c.stop();
-      await settle();
-      expect(__listenerCountForTests()).toBe(baseline);
-    }
-  });
-
-  it("starts again after a stop and delivers what follows", async () => {
-    const { id } = await owner();
-    await subscription(id, ["item.created"]);
-    const http = recorder();
-    const baseline = __listenerCountForTests();
-    const c = new WebhookConsumer({ storage: ctx.storage, http });
-    c.start();
-    c.stop();
-    c.start();
-    await settle();
-    expect(__listenerCountForTests()).toBe(baseline + 2);
-    await publish({ type: "created", item: item("01HRESTARTRESTARTRESTART0") });
-    await settle();
-    c.stop();
-    await settle();
-    expect(http.posts).toHaveLength(1);
-    expect(__listenerCountForTests()).toBe(baseline);
   });
 });
