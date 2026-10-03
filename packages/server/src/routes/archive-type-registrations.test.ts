@@ -123,7 +123,6 @@ async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
 describe("archives carry type registrations", () => {
   it("round-trips a database whose items use its own types", async () => {
     const source = await newContext();
-    const destination = await newContext();
     const suffix = uniqueSuffix();
     const typeId = `user.recipe_${suffix}`;
     const edgeTypeId = `user.cooked-with-${suffix}`;
@@ -177,6 +176,7 @@ describe("archives carry type registrations", () => {
     expect(manifest.type_count).toBe(1);
     expect(manifest.edge_type_count).toBe(1);
 
+    const destination = await newContext();
     const res = await restore(destination, archive);
     expect(
       res.status,

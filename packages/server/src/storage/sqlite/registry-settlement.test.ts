@@ -313,6 +313,7 @@ it.each(["before", "after"] as const)(
     expect(created.status).toBe(201);
     const { item } = (await created.json()) as { item: { id: string } };
     const cursor = (await ctx.storage.eventLog.getMaxId())!;
+    let announced = 0;
     const stream = await request(ctx.app, "GET", "/events", {
       key: ctx.workingKey,
       headers: { "Last-Event-ID": String(cursor) },
@@ -324,7 +325,10 @@ it.each(["before", "after"] as const)(
         fault.mode = mode;
         await expect(
           ctx.storage.runInTransaction(async () => {
-            await ctx.storage.types.update(schema.id, changed);
+            await ctx.storage.types.update(schema.id, schema);
+            afterCommit(() => {
+              announced++;
+            });
             const updated = await request(
               ctx.app,
               "PATCH",
@@ -344,14 +348,28 @@ it.each(["before", "after"] as const)(
     expect(live.text).toContain("event: stream_incomplete");
     expect(live.text).toContain('"reason":"live_delivery_failed"');
     expect(live.text).not.toContain("event: item.updated");
+    expect(announced).toBe(0);
     const events = await ctx.storage.eventLog.getAfter(cursor, 10);
+    const independentRows = await observer.execute({
+      sql: "SELECT version, json(properties) AS properties FROM items WHERE id = ?",
+      args: [item.id],
+    });
+    const independentEvents = await observer.execute({
+      sql: "SELECT count(*) AS count FROM event_log WHERE id > ?",
+      args: [cursor],
+    });
+    expect(independentRows.rows[0]?.version).toBe(mode === "after" ? 2 : 1);
+    expect(JSON.parse(independentRows.rows[0]?.properties as string)).toEqual({
+      body: mode === "after" ? "committed event" : "original",
+    });
+    expect(independentEvents.rows[0]?.count).toBe(mode === "after" ? 1 : 0);
     expect(events).toHaveLength(mode === "after" ? 1 : 0);
     const current = await ctx.storage.items.get(item.id);
     expect(current?.version).toBe(mode === "after" ? 2 : 1);
     expect(current?.properties.body).toBe(
       mode === "after" ? "committed event" : "original",
     );
-    expect(await durable()).toEqual(mode === "after" ? changed : schema);
+    expect(await durable()).toEqual(schema);
     expect(getTypeSchema(schema.id)).toEqual(await durable());
     const reconnect = await request(ctx.app, "GET", "/events", {
       key: ctx.workingKey,
