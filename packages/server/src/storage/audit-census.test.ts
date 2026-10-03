@@ -31,7 +31,7 @@ const READS: Record<string, string> = {
   EventLogStore: "getAfter getMinRetainedId getMaxId",
   SettingsStore: "get",
   EdgeStore:
-    "get listFromSource listToTarget list countBySource countByTarget countsBySourceBatch countsByTargetBatch existsExact existsExactBatch findByTriplesBatch listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched",
+    "get listFromSource listToTarget list countBySource countByTarget countsBySourceBatch countsByTargetBatch existsExact existsExactBatch findByTriplesBatch listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",
   OwnerStore: "find",
   BulkActionJobStore: "scanPendingPropertyPatches getById carriedItems",
   EnrichmentStore: "listCandidates get",
