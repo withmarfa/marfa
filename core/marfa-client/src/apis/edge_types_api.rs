@@ -28,6 +28,13 @@ pub struct DeleteEdgeTypeParams {
     pub force: Option<String>,
 }
 
+/// struct for passing parameters to the method [`list_edge_types`]
+#[derive(Clone, Debug)]
+pub struct ListEdgeTypesParams {
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
+}
+
 /// struct for typed successes of method [`create_edge_type`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -86,6 +93,7 @@ pub enum DeleteEdgeTypeError {
 #[serde(untagged)]
 pub enum ListEdgeTypesError {
     Status401(models::UnauthorizedRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -184,12 +192,16 @@ pub fn delete_edge_type(
 /// Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
 pub fn list_edge_types(
     configuration: &configuration::Configuration,
+    params: ListEdgeTypesParams,
 ) -> Result<ResponseContent<ListEdgeTypesSuccess>, Error<ListEdgeTypesError>> {
     let uri_str = format!("{}/edge-types", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());

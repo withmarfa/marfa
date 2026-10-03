@@ -81,6 +81,8 @@ pub struct GetItemParams {
     pub id: String,
     /// Comma-separated extras to hydrate inline: backrefs, neighbors, versions.
     pub include: Option<String>,
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
 }
 
 /// struct for passing parameters to the method [`get_item_stats`]
@@ -156,6 +158,8 @@ pub struct ListItemsParams {
     pub cursor: Option<String>,
     /// Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token.
     pub include: Option<String>,
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_occurrences`]
@@ -516,6 +520,7 @@ pub enum GetItemError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -553,6 +558,7 @@ pub enum ListItemsError {
     Status400(models::MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -1051,6 +1057,9 @@ pub fn get_item(
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
+    }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());
     };
@@ -1258,6 +1267,9 @@ pub fn list_items(
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());

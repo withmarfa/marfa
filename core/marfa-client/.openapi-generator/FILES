@@ -220,6 +220,7 @@ src/models/item_list_row.rs
 src/models/item_not_found_refusal.rs
 src/models/item_not_found_refusal_error.rs
 src/models/item_page.rs
+src/models/item_read_with_metadata.rs
 src/models/item_stale_version.rs
 src/models/item_state.rs
 src/models/item_version_conflict.rs
@@ -264,6 +265,8 @@ src/models/range_not_satisfiable_refusal.rs
 src/models/range_not_satisfiable_refusal_error.rs
 src/models/rate_limited_refusal.rs
 src/models/rate_limited_refusal_error.rs
+src/models/read_view_changed_refusal.rs
+src/models/read_view_changed_refusal_error.rs
 src/models/register_connector_request.rs
 src/models/register_o_auth_client_201_response.rs
 src/models/register_o_auth_client_400_response.rs

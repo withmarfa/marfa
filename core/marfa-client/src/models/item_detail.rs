@@ -19,8 +19,11 @@ pub struct ItemDetail {
     pub metadata: Box<models::Metadata>,
     #[serde(rename = "backrefs", skip_serializing_if = "Option::is_none")]
     pub backrefs: Option<std::collections::HashMap<String, models::EdgePage>>,
+    /// Required on conditional copy reads; direct authority is independent of this item-set membership.
+    #[serde(rename = "listed", skip_serializing_if = "Option::is_none")]
+    pub listed: Option<bool>,
     #[serde(rename = "neighbors", skip_serializing_if = "Option::is_none")]
-    pub neighbors: Option<Vec<models::ItemWithMetadata>>,
+    pub neighbors: Option<Vec<models::ItemReadWithMetadata>>,
     #[serde(
         rename = "neighbors_truncated",
         skip_serializing_if = "Option::is_none"
@@ -38,6 +41,7 @@ impl ItemDetail {
             item: Box::new(item),
             metadata: Box::new(metadata),
             backrefs: None,
+            listed: None,
             neighbors: None,
             neighbors_truncated: None,
             neighbors_omitted: None,
