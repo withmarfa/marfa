@@ -148,13 +148,15 @@ function countTransactions(): Injection {
  * the transaction — which is the only position from which a publish inside
  * it would have had something to describe.
  */
-function rollBackAfterTheWrite(): Injection {
+function rollBackAfterTheWrite(target = 1): Injection {
   const original = ctx.storage.runInTransaction.bind(ctx.storage);
   let fired = 0;
+  let seen = 0;
   ctx.storage.runInTransaction = async <T>(
     fn: () => T | Promise<T>,
   ): Promise<T> => {
     if (outermost.getStore()) return original(fn);
+    if (++seen !== target) return outermost.run(true, () => original(fn));
     return outermost.run(true, () =>
       original(async () => {
         await fn();
@@ -272,6 +274,8 @@ interface Door {
    * says what changed.
    */
   transactions: number;
+  /** Skip audited enqueue so the failure reaches the resource-changing chunk. */
+  rollbackAt?: number;
   setup: () => Promise<Partial<DoorState>>;
   /** Drive the door. Resolves to whether it reported success. */
   act: (s: DoorState) => Promise<boolean>;
@@ -985,7 +989,8 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions transitions a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk transition");
@@ -1016,7 +1021,8 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions purges a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk purge");
@@ -1059,7 +1065,8 @@ const doors: Door[] = [
     // the only kind worth guarding.
     name: "POST /items/bulk-actions retags a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk retag");
@@ -1085,7 +1092,8 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions retiers a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk retier");
@@ -1111,7 +1119,8 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions patches properties on a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("before");
@@ -1140,7 +1149,8 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions restamps a filtered set",
     family: "bulk",
-    transactions: 1,
+    transactions: 2,
+    rollbackAt: 2,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk restamp");
@@ -1203,7 +1213,7 @@ describe("a rolled-back write announces nothing", () => {
 
       it("announces nothing when the write is forced to come apart", async () => {
         const state = { ...NO_STATE, ...(await door.setup()) };
-        const injection = rollBackAfterTheWrite();
+        const injection = rollBackAfterTheWrite(door.rollbackAt);
         let succeeded = true;
         let heard: Heard;
         try {

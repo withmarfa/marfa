@@ -710,9 +710,8 @@ describe("POST /admin/restore-archive against the orphan sweep", () => {
 
 describe("POST /admin/restore-archive refused after its blobs are stored", () => {
   it("never takes back bytes an upload was told are stored meanwhile", async () => {
-    // The restore registers the blob, then its rows fail and it undoes
-    // what it wrote. An upload of the same bytes answered 201 in between
-    // must keep them.
+    // Blob preparation commits before item restore; a refused item restore
+    // keeps those audited bytes. An upload of the same bytes also keeps them.
     const blob = makeBlobData(
       `uploaded during a refused restore ${String(Date.now())}`,
     );

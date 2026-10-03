@@ -8,6 +8,7 @@ import {
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
 import { extractText, isEnrichableMime } from "./extract.js";
@@ -309,15 +310,32 @@ export class TextEnrichmentSweeper {
 
       let written;
       try {
-        written = await writeItem(
+        written = await runAuditedTransaction(
           storage,
-          { kind: "platform" },
-          {
-            op: "update",
-            id: candidate.item_id,
-            properties: kept,
-            version: fresh.version,
-          },
+          () =>
+            writeItem(
+              storage,
+              { kind: "platform" },
+              {
+                op: "update",
+                id: candidate.item_id,
+                properties: kept,
+                version: fresh.version,
+              },
+            ),
+          (result) =>
+            result.outcome === "updated"
+              ? {
+                  action: "item.enrich",
+                  resource_type: "item",
+                  resource_id: candidate.item_id,
+                  client_ip: null,
+                  details: {
+                    fields: Object.keys(kept),
+                    version: result.item.version,
+                  },
+                }
+              : null,
         );
       } catch (err) {
         if (

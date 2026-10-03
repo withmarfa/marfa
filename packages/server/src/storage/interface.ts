@@ -805,9 +805,10 @@ export interface ItemStore {
    * Unlike `purge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
    * the automatic trash lifecycle with no route layer above it to do the
-   * cleanup, and edges have no FK to items to fall back on.
+   * cleanup, and edges have no FK to items to fall back on. At most `limit`
+   * rows per transaction (200 by default), oldest first.
    */
-  purgeTrashedOlderThan(beforeDate: string): Promise<number>;
+  purgeTrashedOlderThan(beforeDate: string, limit?: number): Promise<number>;
   /**
    * Hard-delete every revoked **application** grant row whose
    * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
@@ -1268,12 +1269,6 @@ export interface BlobRegistry {
    * record, so a purge cut short never finishes on bytes stored again.
    */
   recordUploader(hash: string, uploader: string): Promise<void>;
-  /**
-   * Remove the row a refused restore registered, unless something has
-   * claimed it since: another credential that sent the bytes, or anything
-   * that references the blob. Answers whether it went.
-   */
-  removeUnclaimed(hash: string, uploader: string): Promise<boolean>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 
   /**
@@ -1296,6 +1291,16 @@ export interface BlobRegistry {
    */
   recordLocation(hash: string, storeId: string): Promise<void>;
   listLocations(hash: string): Promise<BlobLocation[]>;
+  /** Durable cleanup intent, written with the location removal and its audit. */
+  queueCopyDeletion(hash: string, storeId: string): Promise<void>;
+  /** Move a pending intent to the retry tail before I/O; caller holds the per-hash lock. */
+  beginCopyDeletionAttempt(hash: string, storeId: string): Promise<boolean>;
+  listPendingCopyDeletions(
+    limit: number,
+  ): Promise<{ hash: string; store_id: string }[]>;
+  /** Operational acknowledgement after bytes are removed; does not repeat the audit. */
+  settleCopyDeletion(hash: string, storeId: string): Promise<void>;
+
   /** Strike one store's copy from the log. True when a row went. */
   removeLocation(hash: string, storeId: string): Promise<boolean>;
   /**
@@ -2012,39 +2017,11 @@ export interface AuditLogEntry {
 }
 
 export interface AuditStore {
-  /**
-   * Write an audit row off the critical path. **Never rejects**, whatever
-   * the database does: the write runs under a tracker that logs a failure
-   * and drops it, so a caller cannot be broken by one.
-   *
-   * That is the right contract for almost every audit row, and it is a
-   * contract, not an accident — the guarantee is what lets a route emit one
-   * without a try/catch. What it is not is a guarantee that the row landed,
-   * and awaiting it does not make it one: a try/catch around the await,
-   * built to fail the operation on an unaudited write, is unreachable.
-   * Awaiting is still worth doing where the row has to be issued inside the
-   * caller's transaction, but say so at the call site, because the failure
-   * handling reads as live otherwise.
-   *
-   * Use `logOrThrow` when an unaudited operation must not stand.
-   */
+  /** Remaining credential callers are converted with provider transaction enlistment. */
   log(entry: AuditLogEntry): Promise<void>;
-  /**
-   * Write an audit row and propagate a failure to the caller.
-   *
-   * For the operations where an unaudited success is worse than a loud
-   * failure: removing a platform type, creating the owner. Untracked
-   * deliberately, because the caller is awaiting it, so there is nothing
-   * in flight for shutdown to drain.
-   *
-   * **Propagating is the whole of what this promises.** It is not by
-   * itself a transactional write. Which connection the insert lands on is
-   * decided by the db handle the store was built with and by whatever
-   * request context is installed around the call, neither of which is this
-   * method's to choose. A caller that needs the row to commit or roll back
-   * with its own transaction has to put the store on that transaction.
-   */
-  logOrThrow(entry: AuditLogEntry): Promise<void>;
+  /** Strict insertion on the current storage transaction; id supports commit reconciliation. */
+  logOrThrow(entry: AuditLogEntry, id?: string): Promise<void>;
+  has(id: string): Promise<boolean>;
   /**
    * Resolve once every in-flight `log` write has settled.
    *

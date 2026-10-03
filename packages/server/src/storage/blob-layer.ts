@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import { DiskBlobStore, type BlobStore } from "./blob-store.js";
 import { S3BlobStore } from "./blob-s3.js";
 import type { Storage } from "./interface.js";
+import { runAuditedTransaction } from "./audited-transaction.js";
 
 /**
  * The stores this instance has attached, built in one place so that every
@@ -48,17 +49,51 @@ export async function createBlobLayer(
       })
     : null;
   const stores: BlobStore[] = s3 ? [disk, s3] : [disk];
-  for (const store of stores) {
-    await store.attach();
-    await storage.blobs.attachStore({
-      id: store.id,
-      kind: store.kind,
-      locator: store.locator,
-    });
-  }
-  // A store the configuration no longer names keeps its rows and stops
-  // counting: nothing can reach it to check a copy is still there.
-  await storage.blobs.detachStoresExcept(stores.map((store) => store.id));
+  // Marker creation and remote store discovery cannot be rolled back by SQL.
+  // Finish both before claiming any registry change.
+  for (const store of stores) await store.attach();
+  await runAuditedTransaction(
+    storage,
+    async () => {
+      const existing = await storage.blobs.listStores();
+      const byId = new Map(existing.map((store) => [store.id, store]));
+      const configuredIds = new Set(stores.map((store) => store.id));
+      const attached: string[] = [];
+      const updated: string[] = [];
+      for (const store of stores) {
+        const prior = byId.get(store.id);
+        if (
+          prior?.detached_at === null &&
+          prior.kind === store.kind &&
+          prior.locator === store.locator
+        )
+          continue;
+        await storage.blobs.attachStore({
+          id: store.id,
+          kind: store.kind,
+          locator: store.locator,
+        });
+        (prior?.detached_at === null ? updated : attached).push(store.id);
+      }
+      const detached = existing
+        .filter(
+          (store) => store.detached_at === null && !configuredIds.has(store.id),
+        )
+        .map((store) => store.id);
+      if (detached.length > 0)
+        await storage.blobs.detachStoresExcept([...configuredIds]);
+      return { attached, updated, detached };
+    },
+    (changes) =>
+      Object.values(changes).some((ids) => ids.length > 0)
+        ? {
+            action: "blob.stores_configured",
+            resource_type: "blob_store",
+            client_ip: null,
+            details: changes,
+          }
+        : null,
+  );
   const byId = new Map(stores.map((store) => [store.id, store] as const));
   return {
     disk,

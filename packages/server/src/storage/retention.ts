@@ -5,6 +5,8 @@ import type {
   Storage,
 } from "./interface.js";
 import type { InstanceConfig } from "@withmarfa/shared";
+import { runAuditedTransaction } from "./audited-transaction.js";
+import { itemWrites } from "./item-writes.js";
 import { readInstanceConfig } from "./instance-config.js";
 import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
@@ -70,15 +72,15 @@ export interface RetentionOverride {
  */
 export class TrashPurger {
   constructor(
-    private items: Pick<ItemStore, "purgeTrashedOlderThan">,
+    private storage: Storage,
     private retentionDays: number,
     private nowFn: () => Date = () => new Date(),
     private configOverride?: RetentionOverride,
   ) {}
 
   /**
-   * One sweep. Computes the cutoff date from the injected clock and asks
-   * the `ItemStore` to delete every trashed row strictly older than it.
+   * One sweep. Computes the cutoff date from the injected clock and deletes
+   * at most 200 trashed rows strictly older than it, with one audit.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.
@@ -90,7 +92,7 @@ export class TrashPurger {
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
-          sweep: (cutoff) => this.items.purgeTrashedOlderThan(cutoff),
+          sweep: (cutoff) => this.purge(cutoff),
         })
       : await this.runOnceGlobal();
     if (deleted > 0) {
@@ -102,12 +104,28 @@ export class TrashPurger {
     return deleted;
   }
 
+  private purge(cutoff: string): Promise<number> {
+    return runAuditedTransaction(
+      this.storage,
+      () => itemWrites(this.storage).purgeTrashedOlderThan(cutoff, 200),
+      (deleted) =>
+        deleted > 0
+          ? {
+              action: "items.trash_purged",
+              resource_type: "item",
+              client_ip: null,
+              details: { deleted, before: cutoff },
+            }
+          : null,
+    );
+  }
+
   private async runOnceGlobal(): Promise<number> {
     if (this.retentionDays <= 0) return 0;
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    return this.items.purgeTrashedOlderThan(cutoff);
+    return this.purge(cutoff);
   }
 }
 

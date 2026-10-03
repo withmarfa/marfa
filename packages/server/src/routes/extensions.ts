@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Extension routes — namespaced metadata on items.
  *
@@ -370,61 +371,68 @@ export function extensionRoutes(storage: Storage) {
     const body = c.req.valid("json");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { extensions } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
-      );
-      // An extension is part of the item's row, so the item's type gate runs
-      // first, as it does on the tag doors, whatever the namespace grants.
-      requireTypeAccess(c, item.type, "write");
-
-      if (RESERVED_NAMESPACES.has(namespace)) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Namespace "${namespace}" is reserved`,
+    const { extensions } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
         );
-      }
+        // An extension is part of the item's row, so the item's type gate runs
+        // first, as it does on the tag doors, whatever the namespace grants.
+        requireTypeAccess(c, item.type, "write");
 
-      checkExtensionPermission(apiKey, namespace, "write");
+        if (RESERVED_NAMESPACES.has(namespace)) {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            `Namespace "${namespace}" is reserved`,
+          );
+        }
 
-      const serialized = JSON.stringify(body);
-      if (serialized.length > 102_400) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "Extension data exceeds maximum size of 100KB",
+        checkExtensionPermission(apiKey, namespace, "write");
+
+        const serialized = JSON.stringify(body);
+        if (serialized.length > 102_400) {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            "Extension data exceeds maximum size of 100KB",
+          );
+        }
+
+        const written = await storage.metadata.setExtension(
+          id,
+          namespace,
+          body,
         );
-      }
 
-      const written = await storage.metadata.setExtension(id, namespace, body);
+        // The extensions map and the tags are one metadata row, and the four
+        // doors that write the other half of it publish. A subscriber cannot
+        // tell which door wrote the row, so emitting for one and not the other
+        // makes propagation depend on which the writer happened to use — and an
+        // app storing sidecar state here changed a record no second device was
+        // ever told about.
+        //
+        // Read the row back rather than composing the event from the extensions
+        // this call returned: the payload carries the whole metadata, and half
+        // of it is the half this door did not touch.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: await storage.metadata.get(id),
+        });
+        return { extensions: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "extension.set",
+        resource_type: "item",
+        resource_id: id,
+        details: { namespace },
+      },
+    );
 
-      // The extensions map and the tags are one metadata row, and the four
-      // doors that write the other half of it publish. A subscriber cannot
-      // tell which door wrote the row, so emitting for one and not the other
-      // makes propagation depend on which the writer happened to use — and an
-      // app storing sidecar state here changed a record no second device was
-      // ever told about.
-      //
-      // Read the row back rather than composing the event from the extensions
-      // this call returned: the payload carries the whole metadata, and half
-      // of it is the half this door did not touch.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: await storage.metadata.get(id),
-      });
-      return { extensions: written };
-    });
-
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "extension.set",
-      resource_type: "item",
-      resource_id: id,
-      details: { namespace },
-    });
     return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 
@@ -438,49 +446,52 @@ export function extensionRoutes(storage: Storage) {
     const apiKey = c.get("apiKey");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { extensions } = await storage.runInTransaction(async () => {
-      const item = requireWritableRow(
-        c,
-        await storage.items.getIncludingTrashed(id),
-        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
-      );
-      // An extension is part of the item's row, so the item's type gate runs
-      // first, as it does on the tag doors, whatever the namespace grants.
-      requireTypeAccess(c, item.type, "write");
-
-      if (RESERVED_NAMESPACES.has(namespace)) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Namespace "${namespace}" is reserved`,
+    const { extensions } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const item = requireWritableRow(
+          c,
+          await storage.items.getIncludingTrashed(id),
+          () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
         );
-      } else {
-        const isOwner = extensionLabelOf(apiKey) === namespace;
-        if (!isOwner) {
-          checkExtensionPermission(apiKey, namespace, "write");
+        // An extension is part of the item's row, so the item's type gate runs
+        // first, as it does on the tag doors, whatever the namespace grants.
+        requireTypeAccess(c, item.type, "write");
+
+        if (RESERVED_NAMESPACES.has(namespace)) {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            `Namespace "${namespace}" is reserved`,
+          );
+        } else {
+          const isOwner = extensionLabelOf(apiKey) === namespace;
+          if (!isOwner) {
+            checkExtensionPermission(apiKey, namespace, "write");
+          }
         }
-      }
 
-      const written = await storage.metadata.deleteExtension(id, namespace);
+        const written = await storage.metadata.deleteExtension(id, namespace);
 
-      // A removal is as observable as a write, and for the same reason as
-      // the replace door above: the namespace's absence from the payload is
-      // how a subscriber learns to drop its own copy.
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item),
-        metadata: await storage.metadata.get(id),
-      });
-      return { extensions: written };
-    });
+        // A removal is as observable as a write, and for the same reason as
+        // the replace door above: the namespace's absence from the payload is
+        // how a subscriber learns to drop its own copy.
+        await publish({
+          type: "metadata_changed",
+          item: await itemAfterMetadataWrite(storage, item),
+          metadata: await storage.metadata.get(id),
+        });
+        return { extensions: written };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "extension.delete",
+        resource_type: "item",
+        resource_id: id,
+        details: { namespace },
+      },
+    );
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "extension.delete",
-      resource_type: "item",
-      resource_id: id,
-      details: { namespace },
-    });
     return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 

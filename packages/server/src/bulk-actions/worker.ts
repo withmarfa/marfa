@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   ErrorCode,
   generateId,
@@ -296,7 +297,8 @@ export class BulkActionWorker {
       let refused: BulkActionErrorEntry[] = [];
       let committed: BulkActionJobRow | null;
       try {
-        committed = await this.storage.runInTransaction(
+        committed = await runAuditedTransaction(
+          this.storage,
           async () => {
             const current = await this.jobs.beginChunk(
               lease,
@@ -358,6 +360,22 @@ export class BulkActionWorker {
               this.nowFn().toISOString(),
             );
           },
+          (checkpoint) =>
+            checkpoint === null
+              ? null
+              : {
+                  key_id: job.api_key_id ?? undefined,
+                  action: "items.bulk_action.chunk",
+                  resource_type: "items.bulk_action",
+                  resource_id: job.id,
+                  details: {
+                    sub_action: input.action,
+                    from_offset: offset,
+                    to_offset: toOffset,
+                    succeeded_total: checkpoint.succeeded_count,
+                    errored_total: checkpoint.errored_count,
+                  },
+                },
           { retainCommitHooksOnUncertain: true },
         );
       } catch (error) {

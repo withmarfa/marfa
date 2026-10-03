@@ -29732,7 +29732,7 @@
             }
           },
           "400": {
-            "description": "`validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; the whole archive is refused before anything is written.",
+            "description": "`validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; item and edge restoration is refused; previously committed type preparation remains audited.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29822,7 +29822,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, and nothing was written. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops there, before any row or blob is written.",
+            "description": "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, and nothing was written. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops before items or blobs are written; earlier type registrations remain audited.",
             "content": {
               "application/json": {
                 "schema": {

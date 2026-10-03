@@ -1662,7 +1662,10 @@ export class SqliteItemStore implements ItemStore {
     if (deleted.length > 0) markStructuralReadChange();
   }
 
-  async purgeTrashedOlderThan(beforeDate: string): Promise<number> {
+  async purgeTrashedOlderThan(
+    beforeDate: string,
+    limit = 200,
+  ): Promise<number> {
     const baseConditions = [
       eq(items.state, "trashed"),
       // The window runs from when the row entered the bin, not from when it
@@ -1678,6 +1681,8 @@ export class SqliteItemStore implements ItemStore {
         .select({ id: items.id })
         .from(items)
         .where(where)
+        .orderBy(items.trashed_at, items.id)
+        .limit(limit)
         .all();
       if (idRows.length === 0) return 0;
 

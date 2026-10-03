@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Operator surface for shipped types an instance still carries that its
  * build no longer names.
@@ -223,52 +224,51 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     // registry before it commits, and an item create asks the registry
     // inside its own transaction, so an item written meanwhile either lands
     // first and is counted or comes after and is refused.
-    await storage.runInTransaction(async () => {
-      // Recomputed, never the listing's copy. This is the one part of the
-      // report that changes without a restart, and a removal reasoning from
-      // a stale count is the failure this route exists to avoid.
-      const itemCount = await storage.items.countByType(id);
-      if (itemCount > 0) {
-        throw new MarfaError(
-          ErrorCode.CONFLICT,
-          `${String(itemCount)} item(s) still carry "${id}". The row is what makes them resolve, so it stays registered until they move.`,
-          { type: id, item_count: itemCount },
-        );
-      }
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        // Recomputed, never the listing's copy. This is the one part of the
+        // report that changes without a restart, and a removal reasoning from
+        // a stale count is the failure this route exists to avoid.
+        const itemCount = await storage.items.countByType(id);
+        if (itemCount > 0) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `${String(itemCount)} item(s) still carry "${id}". The row is what makes them resolve, so it stays registered until they move.`,
+            { type: id, item_count: itemCount },
+          );
+        }
 
-      // Asked after the item count and before the write, because it is the
-      // guard the item count cannot stand in for: the types most certain to
-      // report zero items are the abstract parents.
-      const children = await declaredChildrenOf(storage, id);
-      if (children.length > 0) {
-        throw new MarfaError(
-          ErrorCode.CONFLICT,
-          `${String(children.length)} type(s) inherit from "${id}": ${children.join(", ")}. Removing it would leave them resolving without the fields they inherit.`,
-          { type: id, child_types: children },
-        );
-      }
+        // Asked after the item count and before the write, because it is the
+        // guard the item count cannot stand in for: the types most certain to
+        // report zero items are the abstract parents.
+        const children = await declaredChildrenOf(storage, id);
+        if (children.length > 0) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `${String(children.length)} type(s) inherit from "${id}": ${children.join(", ")}. Removing it would leave them resolving without the fields they inherit.`,
+            { type: id, child_types: children },
+          );
+        }
 
-      const removed = await storage.types.deletePlatformType(id);
-      if (!removed) {
-        throw new MarfaError(
-          ErrorCode.NOT_FOUND,
-          `No platform row for "${id}"`,
-          { type: id },
-        );
-      }
-
-      // Audited because it is irreversible, and in the same transaction, so
-      // a removal is never reported that nothing recorded nor recorded
-      // without happening.
-      await storage.audit.logOrThrow({
+        const removed = await storage.types.deletePlatformType(id);
+        if (!removed) {
+          throw new MarfaError(
+            ErrorCode.NOT_FOUND,
+            `No platform row for "${id}"`,
+            { type: id },
+          );
+        }
+      },
+      {
         action: "platform_type.removed",
         resource_type: "type",
         resource_id: id,
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
         details: { type: id },
-      });
-    });
+      },
+    );
 
     return c.json({ removed: true as const, id }, 200);
   });

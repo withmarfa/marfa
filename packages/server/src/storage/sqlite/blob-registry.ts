@@ -20,6 +20,7 @@ import type {
   BlobStoreRow,
 } from "../interface.js";
 import {
+  blobCopyDeletions,
   blobLocations,
   blobOrphans,
   blobPurges,
@@ -37,6 +38,10 @@ import { allowedTypesCondition } from "./item-store.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { collectBlobHashes } from "../blob-utils.js";
 import { scanPendingPropertyPatches } from "./bulk-action-job-store.js";
+
+// Enqueue and each attempt move to the durable tail; a failed first deletion
+// cannot monopolize a bounded cleanup page, including after a restart.
+const nextCopyDeletionOrder = sql`(SELECT COALESCE(MAX(${blobCopyDeletions.retry_order}), 0) + 1 FROM ${blobCopyDeletions})`;
 
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
@@ -136,25 +141,6 @@ export class SqliteBlobRegistry implements BlobRegistry {
     await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
   }
 
-  async removeUnclaimed(hash: string, uploader: string): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      const other = await tx
-        .select({ one: sql<number>`1` })
-        .from(blobUploaders)
-        .where(
-          and(
-            eq(blobUploaders.hash, hash),
-            not(eq(blobUploaders.uploader, uploader)),
-          ),
-        )
-        .limit(1)
-        .get();
-      if (other || (await referencedIn(tx, hash))) return false;
-      await tx.delete(blobs).where(eq(blobs.hash, hash)).run();
-      return true;
-    });
-  }
-
   async count(): Promise<{ count: number; total_size_bytes: number }> {
     const row = await this.db
       .select({
@@ -226,15 +212,83 @@ export class SqliteBlobRegistry implements BlobRegistry {
   }
 
   async recordLocation(hash: string, storeId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(blobCopyDeletions)
+        .where(
+          and(
+            eq(blobCopyDeletions.hash, hash),
+            eq(blobCopyDeletions.store_id, storeId),
+          ),
+        )
+        .run();
+      await tx
+        .insert(blobLocations)
+        .values({
+          hash,
+          store_id: storeId,
+          recorded_at: new Date().toISOString(),
+          verified_at: null,
+        })
+        .onConflictDoNothing()
+        .run();
+    });
+  }
+
+  async queueCopyDeletion(hash: string, storeId: string): Promise<void> {
     await this.db
-      .insert(blobLocations)
-      .values({
-        hash,
-        store_id: storeId,
-        recorded_at: new Date().toISOString(),
-        verified_at: null,
-      })
+      .insert(blobCopyDeletions)
+      .values({ hash, store_id: storeId, retry_order: nextCopyDeletionOrder })
       .onConflictDoNothing()
+      .run();
+  }
+
+  async beginCopyDeletionAttempt(
+    hash: string,
+    storeId: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(blobCopyDeletions)
+      .set({ retry_order: nextCopyDeletionOrder })
+      .where(
+        and(
+          eq(blobCopyDeletions.hash, hash),
+          eq(blobCopyDeletions.store_id, storeId),
+        ),
+      )
+      .run();
+    return result.rowsAffected > 0;
+  }
+
+  async listPendingCopyDeletions(
+    limit: number,
+  ): Promise<{ hash: string; store_id: string }[]> {
+    return this.db
+      .select({
+        hash: blobCopyDeletions.hash,
+        store_id: blobCopyDeletions.store_id,
+      })
+      .from(blobCopyDeletions)
+      .innerJoin(blobStores, eq(blobCopyDeletions.store_id, blobStores.id))
+      .where(isNull(blobStores.detached_at))
+      .orderBy(
+        blobCopyDeletions.retry_order,
+        blobCopyDeletions.hash,
+        blobCopyDeletions.store_id,
+      )
+      .limit(limit)
+      .all();
+  }
+
+  async settleCopyDeletion(hash: string, storeId: string): Promise<void> {
+    await this.db
+      .delete(blobCopyDeletions)
+      .where(
+        and(
+          eq(blobCopyDeletions.hash, hash),
+          eq(blobCopyDeletions.store_id, storeId),
+        ),
+      )
       .run();
   }
 

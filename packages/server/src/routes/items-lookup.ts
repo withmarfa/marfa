@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 // The doors a connector finds its rows, and the tombstones its purges left, by.
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -408,22 +409,25 @@ export function itemsLookupRoutes(storage: Storage) {
 
     const tombstones = inOrder(
       selector.values,
-      await storage.runInTransaction(() =>
-        storage.items.settleTombstones(
-          type,
-          tombstoneSelector(selector),
-          settledAt,
-        ),
+      await runAuditedTransaction(
+        storage,
+        () =>
+          storage.items.settleTombstones(
+            type,
+            tombstoneSelector(selector),
+            settledAt,
+          ),
+        (tombstones) => ({
+          client_ip: c.get("clientIp") ?? null,
+          key_id: c.get("apiKey")?.id,
+          action: "items.tombstones",
+          resource_type: "type",
+          resource_id: type,
+          details: { settled_at: settledAt, count: tombstones.length },
+        }),
       ),
     );
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "items.tombstones",
-      resource_type: "type",
-      resource_id: type,
-      details: { settled_at: settledAt, count: tombstones.length },
-    });
+
     return c.json({ tombstones }, 200);
   });
 

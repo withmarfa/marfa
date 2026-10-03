@@ -270,6 +270,14 @@ CREATE TABLE IF NOT EXISTS `auth_verification` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
+CREATE TABLE IF NOT EXISTS `blob_copy_deletions` (
+	`hash` text NOT NULL,
+	`store_id` text NOT NULL,
+	`retry_order` integer NOT NULL,
+	PRIMARY KEY(`hash`, `store_id`)
+);
+
+CREATE INDEX IF NOT EXISTS `idx_blob_copy_deletions_retry` ON `blob_copy_deletions` (`retry_order`,`hash`,`store_id`);
 CREATE TABLE IF NOT EXISTS `blob_locations` (
 	`hash` text NOT NULL,
 	`store_id` text NOT NULL,

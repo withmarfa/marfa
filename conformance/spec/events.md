@@ -34,7 +34,45 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
 ## Audit
 
-18. Every write is recorded at `GET /audit` with the acting key, the action, the resource type and id, and details; the listing filters by `action`, `resource_type` and `resource_id`, bounds by `created_after` and `created_before` (both exclusive of the row's own instant, and both refused when they are not an instant), paginates by cursor, needs `audit.read`, refuses a query key it does not declare, and refuses no credential. `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› bounds by created_after and created_before, both exclusive`, `› reads a bound at any precision, and refuses one that is not an instant`, `› paginates with a cursor and delivers every row once`, `› refuses an undeclared bound rather than answering the whole trail`, `› refuses a key without audit.read`, `› refuses a request with no credential`, `compliance/edge-events.test.ts › audit log records edge mutations with edge_id in resource_id`.
+18. The server MUST record every write at `GET /audit` with the acting key, action, resource type and ID, and details, subject to the operational exemptions below.
+
+    When a domain change commits, the server MUST commit its audit record in the same database unit.
+
+    When the server returns success for a domain change, its audit record MUST be readable.
+
+    If audit insertion fails, the server MUST roll back the represented database unit and its events.
+
+    When an atomic bulk page commits, the server MUST record one aggregate audit entry.
+
+    When a best-effort page commits an entry, the server MUST record an audit entry containing the page's shared `details.operation_id` and the entry's input `details.index`.
+
+    When a best-effort entry is an acknowledged duplicate, skipped or refused, the server MUST NOT record a mutation for that entry.
+
+    When the server records an atomic page summary, it MUST include the skipped count.
+
+    When an asynchronous bulk job is enqueued, the server MUST record the enqueue.
+
+    When cancellation changes an asynchronous bulk job's status, the server MUST record the cancellation.
+
+    When an asynchronous bulk job commits a resource-changing chunk, the server MUST record the chunk.
+
+    When blob or archive work requires external bytes, the server MUST stage those bytes before opening the short database units that record them.
+
+    When a blob or archive preparation unit commits, the server MUST retain its own audit record even if later restore work fails.
+
+    When automated enrichment, retention or blob work changes a resource, the server MUST record a system audit entry without an acting key.
+
+    The domain audit requirement excludes connector heartbeats, run reports, holds, checkpoints and agreements; inbound receipt bookkeeping; delivery attempts; and internal scheduler, authentication-use and telemetry bookkeeping. Schema seeding, structural generation and stable instance identity initialization are startup bookkeeping.
+
+    When an authorized export is accepted, the server MUST persist a standalone `export.run` observation before opening the stream.
+
+    If the export observation cannot be persisted, the server MUST refuse the export before opening the stream.
+
+    Rationale: Earlier best-effort entries remain committed when a later entry fails. Separately committed archive preparation remains after a later restore refusal. The export observation represents an extraction attempt and does not certify completion of streaming.
+
+    Native tests: `routes/audit-atomicity.test.ts`, `routes/bulk-audit.test.ts`, `housekeeping/external-audit.test.ts` and `storage/audited-transaction.test.ts` exercise refused audit insertion, rollback, success, no-op and uncertain commit controls. The external audit suite exercises both export formats with successful and refused audit insertion.
+
+    The listing filters by `action`, `resource_type` and `resource_id`, bounds by `created_after` and `created_before` (both exclusive of the row's own instant, and both refused when they are not an instant), paginates by cursor, needs `audit.read`, refuses a query key it does not declare, and refuses no credential. `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› exposes each committed best-effort entry immediately with one operation context`, `› filters by action and resource type with an excluded control`, `› bounds by created_after and created_before, both exclusive`, `› reads a bound at any precision, and refuses one that is not an instant`, `› paginates with a cursor and delivers every row once`, `› refuses an undeclared bound rather than answering the whole trail`, `› refuses a key without audit.read`, `› refuses a request with no credential`, `compliance/edge-events.test.ts › audit log records edge mutations with edge_id in resource_id`.
 
 ## Permissions
 
@@ -60,7 +98,7 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
 30. **Webhook retries preserve accepted outcomes and can be explicitly reopened.** A cycle has eight attempts, with seven scheduled waits of 1, 5, 25, 125, 625, 3125 and 15625 seconds, totaling 19531 seconds. A valid `Retry-After` is a minimum against the ordinary backoff, capped at five minutes; shorter hints cannot shorten the ordinary schedule. The ordinary retry poll cadence remains 30 seconds; committed scheduling and saturated batches may wake it sooner, but only due rows with eligible claims are attempted. Poll cadence, attempt duration and process downtime can delay dispatch. Redirects and permanent 4xx responses other than 408 and 429 give up immediately. A fresh claim token fences every accepted outcome and per-attempt cancellation: an old in-flight completion cannot change another claim or a reopened cycle. The delivery's `attempt` is a cumulative accepted-outcome ordinal, not a census of concurrent or lost HTTP sends. `webhooks/retry.test.ts` checks the schedule with a controlled clock and stale outcomes with explicitly shortened claim timestamps.
 
-31. **Only the subscription owner can queue a retained failed delivery again.** `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` takes no body and returns the same delivery projection with `202` and `status: pending`, preserving identity and the last accepted outcome until the next accepted completion. It atomically checks the current owner, active subscription, live credential and retained frame, uses the current address and signing secret, and allocates a fresh eight-attempt cycle. Missing or foreign subscriptions or deliveries answer `404 webhook_not_found`; a nonfailed, expired or unavailable frame answers `409 conflict`. Concurrent duplicate requests queue one transition. A failed frame stays until the original effective audit retention expires; reopening never restarts retention. Success and cancellation discard replay frames. Per-attempt live credential and read-reach checks still apply. `webhooks/retry.test.ts` holds ownership, grant, retention, malformed frame, concurrent reopening and narrowed reach controls; `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity` proves actual signed receiver delivery.
+31. **Only the subscription owner can queue a retained failed delivery again.** `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` takes no body and returns the same delivery projection with `202` and `status: pending`, preserving identity and the last accepted outcome until the next accepted completion. It atomically checks the current owner, active subscription, live credential and retained frame, uses the current address and signing secret, and allocates a fresh eight-attempt cycle. Missing or foreign subscriptions or deliveries answer `404 webhook_not_found`; a nonfailed, expired or unavailable frame answers `409 conflict`. Concurrent duplicate requests queue one transition. When explicit redelivery is accepted, the server MUST commit the transition and its `webhook.delivery.redeliver` audit record together. When recording that transition, the server MUST identify the delivery as `resource_id` and the subscription as `details.webhook_id`. If redelivery is refused or duplicated, the server MUST NOT add an audit record. If audit insertion fails, the server MUST leave the failed delivery unchanged. A failed frame stays until the original effective audit retention expires; reopening never restarts retention. Success and cancellation discard replay frames. Per-attempt live credential and read-reach checks still apply. `webhooks/retry.test.ts` holds ownership, grant, retention, malformed frame, concurrent reopening and narrowed reach controls; `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity` proves actual signed receiver delivery.
 
 32. **An answered outbound request releases its response without losing the answer.** Webhook and heartbeat responses are canceled before completion, including non-2xx responses. If cancellation fails, an owned abort releases the response; the observed HTTP status remains authoritative and cleanup failure is logged separately using safe facts. `webhooks/response-cleanup.test.ts` uses owned finite and streaming HTTP receivers, including a controlled cancellation failure, and proves their release for 2xx and non-2xx responses.
 

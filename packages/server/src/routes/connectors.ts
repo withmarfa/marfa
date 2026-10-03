@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * /connectors: the smallest door a process outside the server needs. It
  * registers under the key it holds, heartbeats, and reports each run with
@@ -669,19 +670,23 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(registerConnectorRoute, async (c) => {
     const key = requireAuth(c);
     const body = c.req.valid("json");
-    const { connector, created } = await storage.connectors.register(
-      { id: key.id, source: key.source },
-      body.name,
-      body.description ?? null,
+    const { connector, created } = await runAuditedTransaction(
+      storage,
+      () =>
+        storage.connectors.register(
+          { id: key.id, source: key.source },
+          body.name,
+          body.description ?? null,
+        ),
+      ({ connector, created }) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "connector.register",
+        resource_type: "connector",
+        resource_id: connector.id,
+        details: { name: connector.name, created },
+      }),
     );
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "connector.register",
-      resource_type: "connector",
-      resource_id: connector.id,
-      details: { name: connector.name, created },
-    });
     return c.json(connector, created ? 201 : 200);
   });
 
@@ -706,20 +711,25 @@ export function connectorRoutes(storage: Storage) {
     }
     // Two removals at once: the one whose statement deleted nothing answers
     // as if it had arrived after the other, and audits nothing.
-    if (!(await storage.connectors.remove(connector.id))) {
-      throw new MarfaError(
-        ErrorCode.CONNECTOR_NOT_FOUND,
-        "Connector not found",
-      );
-    }
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "connector.delete",
-      resource_type: "connector",
-      resource_id: connector.id,
-      details: { name: connector.name },
-    });
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        if (!(await storage.connectors.remove(connector.id))) {
+          throw new MarfaError(
+            ErrorCode.CONNECTOR_NOT_FOUND,
+            "Connector not found",
+          );
+        }
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "connector.delete",
+        resource_type: "connector",
+        resource_id: connector.id,
+        details: { name: connector.name },
+      },
+    );
     return c.json({ ok: true as const }, 200);
   });
 
@@ -769,30 +779,36 @@ export function connectorRoutes(storage: Storage) {
     requireOwnKeyOrOperator(connector.key_id, key);
     const body = c.req.valid("json");
     const token = mintInboundToken();
-    const endpoint = await storage.inbound.createEndpoint(
-      {
-        connectorId: connector.id,
-        tokenHash: hashInboundToken(token),
-        tokenLast4: token.slice(-4),
-        label: body.label ?? null,
-        duplicateHeader: body.duplicate_header?.toLowerCase() ?? null,
+    const endpoint = await runAuditedTransaction(
+      storage,
+      async () => {
+        const endpoint = await storage.inbound.createEndpoint(
+          {
+            connectorId: connector.id,
+            tokenHash: hashInboundToken(token),
+            tokenLast4: token.slice(-4),
+            label: body.label ?? null,
+            duplicateHeader: body.duplicate_header?.toLowerCase() ?? null,
+          },
+          MAX_LIVE_ENDPOINTS,
+        );
+        if (endpoint === "limit") {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `A connector holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints; retire one first`,
+          );
+        }
+        return endpoint;
       },
-      MAX_LIVE_ENDPOINTS,
+      (endpoint) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "inbound_endpoint.create",
+        resource_type: "inbound_endpoint",
+        resource_id: endpoint.id,
+        details: { connector_id: connector.id, label: endpoint.label },
+      }),
     );
-    if (endpoint === "limit") {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `A connector holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints; retire one first`,
-      );
-    }
-    await storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: key.id,
-      action: "inbound_endpoint.create",
-      resource_type: "inbound_endpoint",
-      resource_id: endpoint.id,
-      details: { connector_id: connector.id, label: endpoint.label },
-    });
     return c.json(endpointView(endpoint, `${INBOUND_PREFIX}${token}`), 201);
   });
 
@@ -815,23 +831,33 @@ export function connectorRoutes(storage: Storage) {
     const { id, endpoint_id } = c.req.valid("param");
     const connector = await connectorOrRefuse(storage, id);
     requireOwnKeyOrOperator(connector.key_id, key);
-    const retired = await storage.inbound.retireEndpoint(
-      connector.id,
-      endpoint_id,
+    const retired = await runAuditedTransaction(
+      storage,
+      async () => {
+        const retired = await storage.inbound.retireEndpoint(
+          connector.id,
+          endpoint_id,
+        );
+        if (retired === null) {
+          throw new MarfaError(
+            ErrorCode.ENDPOINT_NOT_FOUND,
+            "Endpoint not found",
+          );
+        }
+        return retired;
+      },
+      (retired) =>
+        retired.retired
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: key.id,
+              action: "inbound_endpoint.retire",
+              resource_type: "inbound_endpoint",
+              resource_id: retired.endpoint.id,
+              details: { connector_id: connector.id },
+            }
+          : null,
     );
-    if (retired === null) {
-      throw new MarfaError(ErrorCode.ENDPOINT_NOT_FOUND, "Endpoint not found");
-    }
-    if (retired.retired) {
-      await storage.audit.log({
-        client_ip: c.get("clientIp") ?? null,
-        key_id: key.id,
-        action: "inbound_endpoint.retire",
-        resource_type: "inbound_endpoint",
-        resource_id: retired.endpoint.id,
-        details: { connector_id: connector.id },
-      });
-    }
     return c.json(endpointView(retired.endpoint), 200);
   });
 

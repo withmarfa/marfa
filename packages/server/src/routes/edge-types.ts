@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import {
@@ -442,24 +443,28 @@ export function edgeTypeRoutes(storage: Storage) {
 
     // Names are checked under the writer lock so concurrent registrations
     // cannot both take the same forward or reverse name.
-    const schema = await storage.runInTransaction(async () => {
-      if (getEdgeTypeSchema(body.id)) {
-        throw new MarfaError(
-          ErrorCode.CONFLICT,
-          `Edge type ${body.id} already exists`,
-        );
-      }
-      const built = edgeTypeFromRequest(body);
-      await storage.edgeTypes.create(built);
-      return built;
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edge_type.create",
-      resource_type: "edge_type",
-      resource_id: schema.id,
-    });
+    const schema = await runAuditedTransaction(
+      storage,
+      async () => {
+        if (getEdgeTypeSchema(body.id)) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `Edge type ${body.id} already exists`,
+          );
+        }
+        const built = edgeTypeFromRequest(body);
+        await storage.edgeTypes.create(built);
+        return built;
+      },
+      (schema) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "edge_type.create",
+        resource_type: "edge_type",
+        resource_id: schema.id,
+      }),
+    );
+
     return c.json({ edge_type: edgeTypeResponse(schema) }, 201);
   });
 
@@ -485,36 +490,40 @@ export function edgeTypeRoutes(storage: Storage) {
     // An edge write asks the table inside its own, so it is either counted
     // here or refused once the row is gone, and of two deletes in flight the
     // second finds no row.
-    await storage.runInTransaction(async () => {
-      const existing = await storage.edgeTypes.get(id);
-      if (!existing) {
-        throw new MarfaError(
-          ErrorCode.EDGE_TYPE_NOT_FOUND,
-          `Edge type ${id} not found`,
-        );
-      }
-      requireEdgeTypeSchemaWrite(c, "change", [id, existing.reverse_name]);
-      // The sibling's shape, asked the same way: one row of the type is
-      // enough to know, so the query is bounded rather than a count.
-      if (force !== "true") {
-        const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
-        if (inUse.data.length > 0) {
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        const existing = await storage.edgeTypes.get(id);
+        if (!existing) {
           throw new MarfaError(
-            ErrorCode.EDGE_TYPE_IN_USE,
-            `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
-            { edge_type: id },
+            ErrorCode.EDGE_TYPE_NOT_FOUND,
+            `Edge type ${id} not found`,
           );
         }
-      }
-      await storage.edgeTypes.delete(id);
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "edge_type.delete",
-      resource_type: "edge_type",
-      resource_id: id,
-    });
+        requireEdgeTypeSchemaWrite(c, "change", [id, existing.reverse_name]);
+        // The sibling's shape, asked the same way: one row of the type is
+        // enough to know, so the query is bounded rather than a count.
+        if (force !== "true") {
+          const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
+          if (inUse.data.length > 0) {
+            throw new MarfaError(
+              ErrorCode.EDGE_TYPE_IN_USE,
+              `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
+              { edge_type: id },
+            );
+          }
+        }
+        await storage.edgeTypes.delete(id);
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "edge_type.delete",
+        resource_type: "edge_type",
+        resource_id: id,
+      },
+    );
+
     return c.json({ ok: true as const }, 200);
   });
 

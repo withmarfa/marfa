@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
  * /folders: the one door that writes `system.folder`. The item doors refuse
@@ -475,24 +476,29 @@ export function folderRoutes(storage: Storage) {
     const body = c.req.valid("json");
     assertSettings(body);
     const credential = c.get("apiKey");
-    const { item, metadata } = await writeItem(
+    const { item, metadata } = await runAuditedTransaction(
       storage,
-      { kind: "platform" },
-      {
-        op: "create",
-        type: FOLDER_TYPE,
-        properties: body,
-        source: itemProvenanceSource(credential),
-        blob_proof: requestBlobProof(c, storage),
-      },
+      () =>
+        writeItem(
+          storage,
+          { kind: "platform" },
+          {
+            op: "create",
+            type: FOLDER_TYPE,
+            properties: body,
+            source: itemProvenanceSource(credential),
+            blob_proof: requestBlobProof(c, storage),
+          },
+        ),
+      ({ item }) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: credential?.id,
+        action: "folder.create",
+        resource_type: "item",
+        resource_id: item.id,
+      }),
     );
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: credential?.id,
-      action: "folder.create",
-      resource_type: "item",
-      resource_id: item.id,
-    });
+
     rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, credential) },
@@ -510,22 +516,35 @@ export function folderRoutes(storage: Storage) {
       );
     }
     assertSettings(settings);
-    const result = await storage.runInTransaction(async () => {
-      const folder = await requireFolder(storage, id);
-      rememberItemSubject(folder, "write", true);
-      refuseRevoked(folder);
-      return await writeItem(
-        storage,
-        { kind: "platform" },
-        {
-          op: "update",
-          id,
-          properties: settings,
-          version,
-          blob_proof: requestBlobProof(c, storage),
-        },
-      );
-    });
+    const result = await runAuditedTransaction(
+      storage,
+      async () => {
+        const folder = await requireFolder(storage, id);
+        rememberItemSubject(folder, "write", true);
+        refuseRevoked(folder);
+        return await writeItem(
+          storage,
+          { kind: "platform" },
+          {
+            op: "update",
+            id,
+            properties: settings,
+            version,
+            blob_proof: requestBlobProof(c, storage),
+          },
+        );
+      },
+      (result) =>
+        result.outcome === "updated" || result.outcome === "created"
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "folder.update",
+              resource_type: "item",
+              resource_id: id,
+            }
+          : null,
+    );
     if (result.outcome === "conflict") {
       c.header("X-Error-Code", result.conflict.error.code);
       return c.json(result.conflict, 409);
@@ -534,13 +553,7 @@ export function folderRoutes(storage: Storage) {
       throw new Error("A folder update always carries settings to merge");
     }
     const { item, metadata } = written(result);
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "folder.update",
-      resource_type: "item",
-      resource_id: id,
-    });
+
     rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
@@ -552,35 +565,39 @@ export function folderRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     // One change to a subscriber: the stamp rides on the state change that
     // announces both.
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      const folder = await requireFolder(storage, id);
-      rememberItemSubject(folder, "write", true);
-      refuseRevoked(folder);
-      await writeItem(
-        storage,
-        { kind: "platform" },
-        {
-          op: "update",
-          id,
-          properties: { revoked_at: new Date().toISOString() },
-          blob_proof: requestBlobProof(c, storage),
-        },
-        { announce: false },
-      );
-      const { item: revoked } = await writeItem(
-        storage,
-        { kind: "platform" },
-        { op: "transition", id, state: "revoked" },
-      );
-      return { item: revoked, metadata: await storage.metadata.get(id) };
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "folder.revoke",
-      resource_type: "item",
-      resource_id: id,
-    });
+    const { item, metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const folder = await requireFolder(storage, id);
+        rememberItemSubject(folder, "write", true);
+        refuseRevoked(folder);
+        await writeItem(
+          storage,
+          { kind: "platform" },
+          {
+            op: "update",
+            id,
+            properties: { revoked_at: new Date().toISOString() },
+            blob_proof: requestBlobProof(c, storage),
+          },
+          { announce: false },
+        );
+        const { item: revoked } = await writeItem(
+          storage,
+          { kind: "platform" },
+          { op: "transition", id, state: "revoked" },
+        );
+        return { item: revoked, metadata: await storage.metadata.get(id) };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "folder.revoke",
+        resource_type: "item",
+        resource_id: id,
+      },
+    );
+
     rememberItemSubject(item, "write", true);
     return c.json(
       { item, metadata: readableMetadata(metadata, c.get("apiKey")) },

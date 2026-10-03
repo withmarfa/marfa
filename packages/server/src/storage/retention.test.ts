@@ -141,11 +141,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(
-      itemWrites(ctx.storage),
-      60,
-      () => FIXED_NOW,
-    );
+    const purger = new TrashPurger(ctx.storage, 60, () => FIXED_NOW);
 
     const deleted = await purger.runOnce();
     expect(deleted).toBe(2);
@@ -168,11 +164,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const disabled = new TrashPurger(
-      itemWrites(ctx.storage),
-      0,
-      () => FIXED_NOW,
-    );
+    const disabled = new TrashPurger(ctx.storage, 0, () => FIXED_NOW);
     expect(await disabled.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
   });
@@ -189,17 +181,13 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(
-      itemWrites(ctx.storage),
-      60,
-      () => FIXED_NOW,
-    );
+    const purger = new TrashPurger(ctx.storage, 60, () => FIXED_NOW);
     expect(await purger.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
 
     // Advance the clock past the cutoff and re-run.
     const laterPurger = new TrashPurger(
-      itemWrites(ctx.storage),
+      ctx.storage,
       60,
       () => new Date(FIXED_NOW.getTime() + 31 * MS_PER_DAY),
     );
@@ -232,7 +220,7 @@ describe("TrashPurger — the instance config override", () => {
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
-      itemWrites(ctx.storage),
+      ctx.storage,
       30, // the instance default the override beats
       () => FIXED_NOW,
       retentionOverride,
@@ -261,7 +249,7 @@ describe("TrashPurger — the instance config override", () => {
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
-      itemWrites(ctx.storage),
+      ctx.storage,
       60,
       () => FIXED_NOW,
       retentionOverride,

@@ -1,0 +1,453 @@
+{
+  "auth/bootstrap-secret.ts": {
+    "boundary": "Operational bootstrap latch; owner/key creation audit boundaries are credential work tracked in #1699.",
+    "calls": {
+      "SettingsStore.claim": 2,
+      "SettingsStore.release": 1
+    }
+  },
+  "auth/ceiling-catchup.ts": {
+    "boundary": "UNFINISHED #1699: provider scope ceiling change still uses the old audit writer.",
+    "calls": {
+      "AuditStore.log": 1,
+      "OauthProviderStore.widenClientScopes": 1
+    }
+  },
+  "auth/grant-lifecycle.ts": {
+    "boundary": "UNFINISHED #1699: grant/key/token retirement and its audit must share the credential transaction.",
+    "calls": {
+      "AuditStore.log": 2,
+      "KeyStore.revoke": 1,
+      "OauthProviderStore.deleteDeviceCodesForGrant": 1,
+      "OauthProviderStore.revokeTokensForGrant": 1,
+      "writeItem": 1
+    }
+  },
+  "auth/key-reach.ts": {
+    "boundary": "UNFINISHED #1699: credential reach/revocation helper, called from credential and folder paths.",
+    "calls": {
+      "KeyStore.revoke": 1,
+      "KeyStore.update": 1
+    }
+  },
+  "auth/keyed-throttle.ts": {
+    "boundary": "Existing operational exemption: authentication throttling counters.",
+    "calls": {
+      "RateLimitStore.incrementWindow": 1
+    }
+  },
+  "auth/oauth-provider.ts": {
+    "boundary": "UNFINISHED #1699: provider hook reconciliation and credential audit bridge.",
+    "calls": {
+      "AuditStore.log": 1,
+      "OauthProviderStore.revokeAccessTokensForGrant": 1,
+      "OauthProviderStore.setRegisteredScopes": 1
+    }
+  },
+  "bulk-actions/gc.ts": {
+    "boundary": "Existing operational exemption: expired completed bulk job bookkeeping, no resource changes.",
+    "calls": {
+      "BulkActionJobStore.gcExpired": 1
+    }
+  },
+  "bulk-actions/runner.ts": {
+    "boundary": "Contained subwrites: worker audited chunk owns item/tag writes, checkpoint, events and audit together; bulk-audit.test.ts.",
+    "calls": {
+      "MetadataStore.addTags": 1,
+      "MetadataStore.removeTag": 1,
+      "writeItem": 3
+    }
+  },
+  "bulk-actions/worker.ts": {
+    "boundary": "Audited resource-changing chunk plus checkpoint; leases/recovery/terminal status and failed-only checkpoints are operational. bulk-audit.test.ts and recovery-sweep.test.ts.",
+    "calls": {
+      "BulkActionJobStore.beginChunk": 2,
+      "BulkActionJobStore.checkpointChunk": 2,
+      "BulkActionJobStore.claimNext": 1,
+      "BulkActionJobStore.completeOwned": 1,
+      "BulkActionJobStore.failOwned": 2,
+      "BulkActionJobStore.recoverStale": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "enrichment/sweeper.ts": {
+    "boundary": "Audited system enrichment unit contains item event and enrichment result; external-audit.test.ts.",
+    "calls": {
+      "EnrichmentStore.upsert": 1,
+      "runAuditedTransaction": 1,
+      "writeItem": 1
+    }
+  },
+  "housekeeping/blob-delete.ts": {
+    "boundary": "Audited logical copy deletion/purge claims and settlements, external bytes outside writer; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.beginCopyDeletionAttempt": 1,
+      "BlobRegistry.claimOrphanPurge": 1,
+      "BlobRegistry.dropLocationKeeping": 1,
+      "BlobRegistry.queueCopyDeletion": 1,
+      "BlobRegistry.settleCopyDeletion": 2,
+      "BlobRegistry.settlePurge": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "housekeeping/blob-integrity.ts": {
+    "boundary": "Audited missing/corrupt copy registry changes; verified-at bookkeeping is operational; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.markVerified": 1,
+      "BlobRegistry.queueCopyDeletion": 1,
+      "BlobRegistry.removeLocation": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "housekeeping/blob-orphans.ts": {
+    "boundary": "Existing operational mark-and-sweep observation retains orphan detection timestamps; no blob removal here. Actual removal is audited in blob-delete.",
+    "calls": {
+      "BlobRegistry.retainOrphans": 1
+    }
+  },
+  "housekeeping/blob-replicate.ts": {
+    "boundary": "Audited registry copy publication after external I/O; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.recordLocation": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "housekeeping/registrations.ts": {
+    "boundary": "Existing operational retention of audit/event/idempotency/inbound/delivery logs; deleting the audit trail does not recursively audit itself.",
+    "calls": {
+      "AuditStore.cleanup": 1,
+      "EventLogStore.cleanup": 1,
+      "IdempotencyStore.cleanup": 1,
+      "InboundStore.cleanup": 1,
+      "WebhookDeliveryStore.cleanup": 1
+    }
+  },
+  "housekeeping/scheduler.ts": {
+    "boundary": "Existing operational exemption: scheduler leases, due times and run results.",
+    "calls": {
+      "HousekeepingStore.claim": 1,
+      "HousekeepingStore.claimDue": 1,
+      "HousekeepingStore.clearRunning": 1,
+      "HousekeepingStore.finish": 2,
+      "HousekeepingStore.removeExcept": 1,
+      "HousekeepingStore.upsert": 1,
+      "HousekeepingStore.wake": 1
+    }
+  },
+  "middleware/auth.ts": {
+    "boundary": "Existing operational exemption: credential last-used stamps; credential lifecycle is #1699.",
+    "calls": {
+      "KeyStore.updateLastUsed": 1,
+      "OauthProviderStore.updateLastUsedAt": 2
+    }
+  },
+  "middleware/idempotency.ts": {
+    "boundary": "Existing operational exemption: request ownership and response replay cache.",
+    "calls": {
+      "IdempotencyStore.claim": 1,
+      "IdempotencyStore.complete": 1,
+      "IdempotencyStore.release": 1,
+      "IdempotencyStore.takeOverExpiredClaim": 1
+    }
+  },
+  "middleware/rate-limit.ts": {
+    "boundary": "Existing operational exemption: request rate counters.",
+    "calls": {
+      "RateLimitStore.incrementWindows": 1
+    }
+  },
+  "pubsub.ts": {
+    "boundary": "Contained subwrite: durable event append runs inside resource transaction; live delivery releases after commit.",
+    "calls": {
+      "EventLogStore.append": 2
+    }
+  },
+  "routes/_edges-inline.ts": {
+    "boundary": "Contained edge subwrites under item create/update audited unit; audit-atomicity.test.ts.",
+    "calls": {
+      "EdgeStore.createRaw": 1,
+      "EdgeStore.deleteBySource": 1
+    }
+  },
+  "routes/admin-archive-types.ts": {
+    "boundary": "Audited bounded schema preparation unit; committed preparation remains truthfully recorded when later restore fails; external-audit.test.ts.",
+    "calls": {
+      "EdgeTypeStore.create": 1,
+      "TypeStore.create": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "routes/admin-archive.ts": {
+    "boundary": "Audited bounded blob preparation and final item/edge restore unit; external I/O completes first; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordUploader": 1,
+      "BlobRegistry.register": 1,
+      "EdgeStore.createRaw": 1,
+      "MetadataStore.setExtensions": 1,
+      "runAuditedTransaction": 2,
+      "writeItem": 1
+    }
+  },
+  "routes/admin-platform-types.ts": {
+    "boundary": "Audited platform type removal, registry settlement inside transaction; admin-platform-types.test.ts.",
+    "calls": {
+      "TypeStore.deletePlatformType": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "routes/auth-consent.ts": {
+    "boundary": "UNFINISHED #1699: consent/provider/grant changes and old writer await credential bridge.",
+    "calls": {
+      "AuditStore.log": 1,
+      "OauthProviderStore.revokeAccessTokensForGrant": 1,
+      "OauthProviderStore.setConsentScopes": 1,
+      "writeItem": 2
+    }
+  },
+  "routes/auth-pages.ts": {
+    "boundary": "UNFINISHED #1699: grant/consent/device approval and old audit writer await credential bridge.",
+    "calls": {
+      "AuditStore.log": 3,
+      "OauthProviderStore.narrowDeviceCodeScope": 1,
+      "OauthProviderStore.upsertConsent": 1,
+      "writeItem": 2
+    }
+  },
+  "routes/blobs.ts": {
+    "boundary": "Audited uploader/registry publication after staged bytes; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.recordLocation": 1,
+      "BlobRegistry.recordUploader": 1,
+      "BlobRegistry.register": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "routes/bulk.ts": {
+    "boundary": "Audited atomic page, each best-effort entry, enqueue and changed cancellation; no-op entries have no record; bulk-audit.test.ts.",
+    "calls": {
+      "BulkActionJobStore.cancel": 1,
+      "BulkActionJobStore.create": 1,
+      "runAuditedTransaction": 4,
+      "writeItem": 1
+    }
+  },
+  "routes/config.ts": {
+    "boundary": "Audited instance configuration write; audit-atomicity.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 1,
+      "writeInstanceConfig": 1
+    }
+  },
+  "routes/connector-state.ts": {
+    "boundary": "Audited explicit state clear; existing connector contract exempts holds, checkpoint documents and agreements from audit; audit-atomicity.test.ts.",
+    "calls": {
+      "ConnectorStateStore.clear": 1,
+      "ConnectorStateStore.putState": 1,
+      "ConnectorStateStore.writeAgreements": 1,
+      "ConnectorStore.releaseHold": 1,
+      "ConnectorStore.takeHold": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "routes/connectors.ts": {
+    "boundary": "Audited registration, removal and inbound endpoint changes; heartbeats/run reports/receipt handling are existing operational exemptions; audit-atomicity.test.ts.",
+    "calls": {
+      "ConnectorStore.heartbeat": 1,
+      "ConnectorStore.recordRun": 1,
+      "ConnectorStore.register": 1,
+      "ConnectorStore.remove": 1,
+      "InboundStore.createEndpoint": 1,
+      "InboundStore.markHandled": 1,
+      "InboundStore.retireEndpoint": 1,
+      "runAuditedTransaction": 4
+    }
+  },
+  "routes/edge-types.ts": {
+    "boundary": "Audited registry type create/delete; audit-atomicity.test.ts.",
+    "calls": {
+      "EdgeTypeStore.create": 1,
+      "EdgeTypeStore.delete": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "routes/edges-bulk.ts": {
+    "boundary": "Audited atomic page and each best-effort changed entry; bulk-audit.test.ts.",
+    "calls": {
+      "EdgeStore.createRaw": 1,
+      "EdgeStore.updateProperties": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "routes/edges.ts": {
+    "boundary": "Audited edge create/update/delete, acknowledged duplicate has no new record; audit-atomicity.test.ts.",
+    "calls": {
+      "EdgeStore.createRaw": 1,
+      "EdgeStore.delete": 1,
+      "EdgeStore.updateProperties": 2,
+      "runAuditedTransaction": 3
+    }
+  },
+  "routes/export.ts": {
+    "boundary": "Standalone strict observation audit before opening stream, no writer held across stream; external-audit.test.ts.",
+    "calls": {
+      "AuditStore.logOrThrow": 1
+    }
+  },
+  "routes/extensions.ts": {
+    "boundary": "Audited extension write/delete with metadata event; audit-atomicity.test.ts.",
+    "calls": {
+      "MetadataStore.deleteExtension": 1,
+      "MetadataStore.setExtension": 1,
+      "runAuditedTransaction": 2
+    }
+  },
+  "routes/folders.ts": {
+    "boundary": "Audited domain folder create/update/delete unit; credential consequences remain explicitly tracked by #1699; audit-atomicity.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 3,
+      "writeItem": 4
+    }
+  },
+  "routes/inbound.ts": {
+    "boundary": "Existing operational exemption: ingress rate accounting and received delivery spool; endpoint configuration is audited in connectors.ts.",
+    "calls": {
+      "InboundStore.receive": 1,
+      "RateLimitStore.incrementWindows": 1
+    }
+  },
+  "routes/items-lifecycle.ts": {
+    "boundary": "Audited restore/transition with cascades and events; audit-atomicity.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 2,
+      "writeItem": 2
+    }
+  },
+  "routes/items-lookup.ts": {
+    "boundary": "Audited explicit tombstone settlement; audit-atomicity.test.ts.",
+    "calls": {
+      "ItemStore.settleTombstones": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "routes/items.ts": {
+    "boundary": "Audited create/update/delete/purge/tag/metadata units; acknowledgement without mutation adds no record; audit-atomicity.test.ts.",
+    "calls": {
+      "MetadataStore.addTags": 1,
+      "MetadataStore.merge": 1,
+      "MetadataStore.removeTag": 1,
+      "MetadataStore.set": 1,
+      "runAuditedTransaction": 8,
+      "writeItem": 4
+    }
+  },
+  "routes/keys.ts": {
+    "boundary": "UNFINISHED #1699: key creation/bootstrap and old audit writer await credential bridge.",
+    "calls": {
+      "AuditStore.log": 3,
+      "KeyStore.create": 1,
+      "SettingsStore.claim": 1,
+      "SettingsStore.release": 1
+    }
+  },
+  "routes/owner.ts": {
+    "boundary": "Existing strict owner setup audit, bootstrap latch operational; provider-owned owner/session transaction bridge is #1699.",
+    "calls": {
+      "AuditStore.logOrThrow": 1,
+      "SettingsStore.claim": 2,
+      "SettingsStore.release": 2
+    }
+  },
+  "routes/types.ts": {
+    "boundary": "Audited type create/update/delete and registry settlement; audit-atomicity.test.ts.",
+    "calls": {
+      "TypeStore.create": 1,
+      "TypeStore.delete": 1,
+      "TypeStore.update": 1,
+      "runAuditedTransaction": 3
+    }
+  },
+  "routes/webhooks.ts": {
+    "boundary": "Audited subscription and owned failed-delivery redelivery transitions; no audit on duplicate/refusal; audit-atomicity.test.ts.",
+    "calls": {
+      "WebhookDeliveryStore.cancelPending": 3,
+      "WebhookDeliveryStore.reopen": 1,
+      "WebhookStore.create": 1,
+      "WebhookStore.delete": 1,
+      "WebhookStore.update": 1,
+      "runAuditedTransaction": 4
+    }
+  },
+  "storage/audited-transaction.ts": {
+    "boundary": "Shared strict transactional audit insertion and positive durable commit witness; audited-transaction.test.ts.",
+    "calls": {
+      "AuditStore.logOrThrow": 1
+    }
+  },
+  "storage/blob-layer.ts": {
+    "boundary": "Audited changed store attachment/detachment after all external attachment succeeds; unchanged startup is a no-op; blob-layer.test.ts.",
+    "calls": {
+      "BlobRegistry.attachStore": 1,
+      "BlobRegistry.detachStoresExcept": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "storage/instance-config.ts": {
+    "boundary": "Contained settings write under config route audited transaction; audit-atomicity.test.ts.",
+    "calls": {
+      "SettingsStore.set": 1
+    }
+  },
+  "storage/instance-id.ts": {
+    "boundary": "Existing operational bootstrap of the stable instance identifier, not a resource mutation door.",
+    "calls": {
+      "SettingsStore.claim": 1
+    }
+  },
+  "storage/item-write.ts": {
+    "boundary": "Contained item/cascade/metadata primitives, event/version/index work joins caller transaction. Credential callers explicitly remain #1699.",
+    "calls": {
+      "EdgeStore.deleteBySource": 1,
+      "EdgeStore.deleteByTarget": 1,
+      "ItemStore.create": 2,
+      "ItemStore.delete": 1,
+      "ItemStore.purge": 1,
+      "ItemStore.restore": 1,
+      "ItemStore.restoreBeneath": 2,
+      "ItemStore.transition": 1,
+      "ItemStore.update": 1,
+      "MetadataStore.set": 1
+    }
+  },
+  "storage/retention.ts": {
+    "boundary": "Audited bounded trash resource purge; expired auth sessions and rate records operational. UNFINISHED #1699: revoked grants/keys/provider cleanup audit.",
+    "calls": {
+      "AuditStore.log": 1,
+      "AuthSessionStore.deleteExpired": 1,
+      "ItemStore.purgeRevokedAppGrantsOlderThan": 1,
+      "ItemStore.purgeTrashedOlderThan": 1,
+      "KeyStore.deleteRevokedKeysOlderThan": 1,
+      "OauthProviderStore.deleteGrantlessClientsOlderThan": 1,
+      "RateLimitStore.cleanup": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "storage/version-thinner.ts": {
+    "boundary": "Audited bounded system version removal; external-audit.test.ts.",
+    "calls": {
+      "VersionStore.deleteByIds": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "webhooks/delivery.ts": {
+    "boundary": "Existing operational exemption: automatic scheduling, cursor, attempt lease and accepted delivery outcomes; user-requested redelivery audited in routes/webhooks.ts.",
+    "calls": {
+      "WebhookDeliveryStore.getPending": 1,
+      "WebhookDeliveryStore.markCanceled": 1,
+      "WebhookDeliveryStore.markFailed": 4,
+      "WebhookDeliveryStore.markSuccess": 1,
+      "WebhookDeliveryStore.schedule": 1,
+      "WebhookStore.acknowledge": 1
+    }
+  }
+}

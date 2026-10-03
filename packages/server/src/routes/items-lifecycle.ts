@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
@@ -168,21 +169,25 @@ export function itemsLifecycleRoutes(storage: Storage) {
 
     const key = requireAuth(c);
     // The move, its events and what the answer reads, in one transaction.
-    const { restored, metadata } = await storage.runInTransaction(async () => {
-      const { item: restored } = await writeItem(
-        storage,
-        { kind: "credential", key },
-        { op: "restore", id },
-      );
-      return { restored, metadata: await storage.metadata.get(id) };
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "item.restore",
-      resource_type: "item",
-      resource_id: id,
-    });
+    const { restored, metadata } = await runAuditedTransaction(
+      storage,
+      async () => {
+        const { item: restored } = await writeItem(
+          storage,
+          { kind: "credential", key },
+          { op: "restore", id },
+        );
+        return { restored, metadata: await storage.metadata.get(id) };
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "item.restore",
+        resource_type: "item",
+        resource_id: id,
+      },
+    );
+
     return c.json(
       {
         item: restored,
@@ -208,7 +213,8 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // Read past the trash, so a transition out of it is judged by the type's
     // graph: `trashed` admits `active` alone. A move into the bin takes what
     // a delete takes and is held by what holds a delete.
-    const { updated, from, metadata } = await storage.runInTransaction(
+    const { updated, metadata } = await runAuditedTransaction(
+      storage,
       async () => {
         const { item: updated, from } = await writeItem(
           storage,
@@ -217,15 +223,16 @@ export function itemsLifecycleRoutes(storage: Storage) {
         );
         return { updated, from, metadata: await storage.metadata.get(id) };
       },
+      ({ from }) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "item.transition",
+        resource_type: "item",
+        resource_id: id,
+        details: { from_state: from, to_state: state },
+      }),
     );
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "item.transition",
-      resource_type: "item",
-      resource_id: id,
-      details: { from_state: from, to_state: state },
-    });
+
     return c.json(
       {
         item: updated,

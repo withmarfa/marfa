@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
@@ -650,21 +651,24 @@ export function webhookRoutes(
     const body = c.req.valid("json");
     assertUrlAccepted(body.url, options.allowPrivateAddresses);
 
-    const webhook = await storage.outboundWebhooks.create({
-      url: body.url,
-      events: body.events,
-      type_filter: normalizeTypeFilter(body.type_filter) ?? undefined,
-      secret: body.secret,
-      owner: callerOwner(c),
-    });
-
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "webhook.create",
-      resource_type: "webhook",
-      resource_id: webhook.id,
-    });
+    const webhook = await runAuditedTransaction(
+      storage,
+      () =>
+        storage.outboundWebhooks.create({
+          url: body.url,
+          events: body.events,
+          type_filter: normalizeTypeFilter(body.type_filter) ?? undefined,
+          secret: body.secret,
+          owner: callerOwner(c),
+        }),
+      (webhook) => ({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "webhook.create",
+        resource_type: "webhook",
+        resource_id: webhook.id,
+      }),
+    );
     return c.json(wireWebhook(webhook, true), 201);
   });
 
@@ -698,35 +702,37 @@ export function webhookRoutes(
       assertUrlAccepted(body.url, options.allowPrivateAddresses);
     }
 
-    const updated = await storage.runInTransaction(async () => {
-      const existing = await ownedWebhook(storage, c, id);
-      const next = await storage.outboundWebhooks.update(id, {
-        url: body.url,
-        events: body.events,
-        type_filter: normalizeTypeFilter(body.type_filter),
-        active: body.active,
-      });
-      if (next.url !== existing.url) {
-        await storage.outboundWebhookDeliveries.cancelPending(
-          id,
-          DELIVERY_CANCELED.repointed,
-        );
-      } else if (!next.active) {
-        await storage.outboundWebhookDeliveries.cancelPending(
-          id,
-          DELIVERY_CANCELED.inactive,
-        );
-      }
-      return next;
-    });
-
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "webhook.update",
-      resource_type: "webhook",
-      resource_id: id,
-    });
+    const updated = await runAuditedTransaction(
+      storage,
+      async () => {
+        const existing = await ownedWebhook(storage, c, id);
+        const next = await storage.outboundWebhooks.update(id, {
+          url: body.url,
+          events: body.events,
+          type_filter: normalizeTypeFilter(body.type_filter),
+          active: body.active,
+        });
+        if (next.url !== existing.url) {
+          await storage.outboundWebhookDeliveries.cancelPending(
+            id,
+            DELIVERY_CANCELED.repointed,
+          );
+        } else if (!next.active) {
+          await storage.outboundWebhookDeliveries.cancelPending(
+            id,
+            DELIVERY_CANCELED.inactive,
+          );
+        }
+        return next;
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "webhook.update",
+        resource_type: "webhook",
+        resource_id: id,
+      },
+    );
     return c.json(wireWebhook(updated), 200);
   });
 
@@ -734,21 +740,24 @@ export function webhookRoutes(
     requireAuth(c);
     const { id } = c.req.valid("param");
 
-    await storage.runInTransaction(async () => {
-      await ownedWebhook(storage, c, id);
-      await storage.outboundWebhooks.delete(id);
-      await storage.outboundWebhookDeliveries.cancelPending(
-        id,
-        DELIVERY_CANCELED.removed,
-      );
-    });
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "webhook.delete",
-      resource_type: "webhook",
-      resource_id: id,
-    });
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        await ownedWebhook(storage, c, id);
+        await storage.outboundWebhooks.delete(id);
+        await storage.outboundWebhookDeliveries.cancelPending(
+          id,
+          DELIVERY_CANCELED.removed,
+        );
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "webhook.delete",
+        resource_type: "webhook",
+        resource_id: id,
+      },
+    );
     return c.json({ ok: true as const }, 200);
   });
 
@@ -768,42 +777,56 @@ export function webhookRoutes(
   router.openapi(redeliverRoute, async (c) => {
     requireAuth(c);
     const { id, delivery_id } = c.req.valid("param");
-    const delivery = await storage.runInTransaction(async () => {
-      const subscription = await ownedWebhook(storage, c, id);
-      const existing = await storage.outboundWebhookDeliveries.get(
-        id,
-        delivery_id,
-      );
-      if (!existing)
-        throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
-      if (
-        !subscription.active ||
-        !(await ownerCredential(storage, subscription.owner))
-      )
-        throw new MarfaError(
-          ErrorCode.CONFLICT,
-          "Delivery cannot be redelivered",
+    const delivery = await runAuditedTransaction(
+      storage,
+      async () => {
+        const subscription = await ownedWebhook(storage, c, id);
+        const existing = await storage.outboundWebhookDeliveries.get(
+          id,
+          delivery_id,
         );
-      const config = await readInstanceConfig(storage.settings);
-      const retention =
-        config?.audit_retention_days ?? c.get("config").auditRetentionDays;
-      const now = new Date();
-      const reopened = await storage.outboundWebhookDeliveries.reopen(
-        id,
-        delivery_id,
-        subscription.url,
-        now.toISOString(),
-        retention > 0
-          ? new Date(now.getTime() - retention * 86400000).toISOString()
-          : null,
-      );
-      if (!reopened)
-        throw new MarfaError(
-          ErrorCode.CONFLICT,
-          "Delivery cannot be redelivered",
+        if (!existing)
+          throw new MarfaError(
+            ErrorCode.WEBHOOK_NOT_FOUND,
+            "Webhook not found",
+          );
+        if (
+          !subscription.active ||
+          !(await ownerCredential(storage, subscription.owner))
+        )
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            "Delivery cannot be redelivered",
+          );
+        const config = await readInstanceConfig(storage.settings);
+        const retention =
+          config?.audit_retention_days ?? c.get("config").auditRetentionDays;
+        const now = new Date();
+        const reopened = await storage.outboundWebhookDeliveries.reopen(
+          id,
+          delivery_id,
+          subscription.url,
+          now.toISOString(),
+          retention > 0
+            ? new Date(now.getTime() - retention * 86400000).toISOString()
+            : null,
         );
-      return reopened;
-    });
+        if (!reopened)
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            "Delivery cannot be redelivered",
+          );
+        return reopened;
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: requireAuth(c).id,
+        action: "webhook.delivery.redeliver",
+        resource_type: "webhook_delivery",
+        resource_id: delivery_id,
+        details: { webhook_id: id },
+      },
+    );
     return c.json(delivery, 202);
   });
   return router;

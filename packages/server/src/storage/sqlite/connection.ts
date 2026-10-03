@@ -915,6 +915,7 @@ function toLibsqlUrl(pathOrUrl: string): string {
 export async function createConnection(sqlitePath: string): Promise<{
   db: DrizzleDb;
   raw: RawDb;
+  inspectQueryPlan: (query: string) => Promise<ResultSet>;
   close: () => Promise<void>;
   captureRead: CaptureRead;
 }> {
@@ -1028,6 +1029,19 @@ export async function createConnection(sqlitePath: string): Promise<{
   return {
     db,
     raw: client,
+    // Native EXPLAIN of a write retains an active prepared statement until
+    // collection. Reusing that connection for SELECT can pin its implicit
+    // snapshot indefinitely. Test inspection owns a disposable connection;
+    // application reads and certified snapshots keep their existing lifetimes.
+    inspectQueryPlan: async (query) => {
+      const reader = createClient({ url: toLibsqlUrl(sqlitePath) });
+      try {
+        await reader.execute("PRAGMA query_only = ON");
+        return await reader.execute(query);
+      } finally {
+        reader.close();
+      }
+    },
     captureRead,
     close: async () => {
       await closeReads();

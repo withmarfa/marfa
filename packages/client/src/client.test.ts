@@ -537,3 +537,39 @@ describe("pages", () => {
     await expect(walk()).rejects.toThrow(/would not end/);
   });
 });
+
+it.each(["items", "edges"] as const)(
+  "preserves an uncertain %s bulk result without replaying the partial page",
+  async (family) => {
+    const body = {
+      counts: { created: 2, updated: 0, skipped: 0, errored: 1 },
+      results: [
+        { index: 0, outcome: "created", id: "first" },
+        {
+          index: 1,
+          outcome: "errored",
+          error: {
+            code: "internal_error",
+            message: "The entry may have been written",
+            details: { write_outcome: "unknown" },
+          },
+        },
+        { index: 2, outcome: "created", id: "last" },
+      ],
+    };
+    const server = stubServer(() => ({ body: JSON.stringify(body) }));
+    const client = make(server);
+    const answer =
+      family === "items"
+        ? await client.POST("/items/bulk", {
+            body: { atomic: false, items: [] },
+          })
+        : await client.POST("/edges/bulk", {
+            body: { atomic: false, edges: [] },
+          });
+    expect(answer.response.status).toBe(200);
+    expect(answer.data).toEqual(body);
+    expect(answer.error).toBeUndefined();
+    expect(server.seen).toHaveLength(1);
+  },
+);

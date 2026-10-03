@@ -2,6 +2,11 @@ import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import {
+  finishCopyDeletion,
+  finishPendingCopyDeletions,
+} from "./blob-delete.js";
 import type { Stores } from "./blob-delete.js";
 
 export interface ReplicationBounds {
@@ -43,6 +48,11 @@ export class BlobReplicator {
   ) {}
 
   async runOnce(): Promise<ReplicationResult> {
+    await finishPendingCopyDeletions(
+      this.storage,
+      this.stores,
+      this.bounds.maxBlobs,
+    );
     let copied = 0;
     let bytes = 0;
     for (const target of this.stores.stores) {
@@ -83,6 +93,8 @@ export class BlobReplicator {
    *  and a source still has it. Answers whether the copy landed. */
   private async copy(hash: string, target: BlobStore): Promise<boolean> {
     if (!(await this.storage.blobs.get(hash))) return false;
+    await finishCopyDeletion(this.storage, target, hash);
+    const present = (await target.has(hash)) !== null;
     const source = await this.sourceFor(hash, target.id);
     if (!source) return false;
     const read = await source.get(hash);
@@ -106,7 +118,38 @@ export class BlobReplicator {
       });
       return false;
     }
-    await this.storage.blobs.recordLocation(hash, target.id);
+    try {
+      await runAuditedTransaction(
+        this.storage,
+        () => this.storage.blobs.recordLocation(hash, target.id),
+        {
+          action: "blob.copy_replicated",
+          resource_type: "blob",
+          resource_id: hash,
+          client_ip: null,
+          details: { from: source.id, store_id: target.id },
+        },
+      );
+    } catch (err) {
+      if (!present) {
+        try {
+          // A committed or uncertain location keeps its bytes.
+          if (
+            !(await this.storage.blobs.listLocations(hash)).some(
+              (location) => location.store_id === target.id,
+            )
+          )
+            await target.delete(hash);
+        } catch (cleanupErr) {
+          log("error", "blob.orphaned_after_refused_replication", {
+            hash,
+            store_id: target.id,
+            error: String(cleanupErr),
+          });
+        }
+      }
+      throw err;
+    }
     return true;
   }
 

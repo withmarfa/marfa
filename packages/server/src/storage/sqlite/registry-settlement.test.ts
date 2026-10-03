@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from "../audited-transaction.js";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { join } from "node:path";
@@ -167,14 +168,80 @@ it.each(["before", "after"] as const)(
   },
 );
 
+it.each(["before", "after"] as const)(
+  "the audit witness settles a structural %s-COMMIT only after registry reconstruction",
+  async (mode) => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "extension owner" } },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+    let emitted = 0,
+      writes = 0;
+    fault.mode = mode;
+    const operation = runAuditedTransaction(
+      ctx.storage,
+      async () => {
+        writes++;
+        await ctx.storage.types.update(schema.id, changed);
+        await ctx.storage.metadata.setExtension(item.id, "test", {
+          value: "committed",
+        });
+        afterCommit(() => {
+          emitted++;
+        });
+        return "accepted";
+      },
+      {
+        action: "test.structural",
+        resource_type: "type",
+        resource_id: schema.id,
+      },
+    );
+    if (mode === "after") await expect(operation).resolves.toBe("accepted");
+    else
+      await expect(operation).rejects.toThrow(
+        "structural acknowledgment witness",
+      );
+    expect(writes).toBe(1);
+    expect(emitted).toBe(mode === "after" ? 1 : 0);
+    expect(await durable()).toEqual(mode === "after" ? changed : schema);
+    expect(getTypeSchema(schema.id)).toEqual(await durable());
+    const audits = await observer.execute(
+      "SELECT count(*) AS count FROM audit_log WHERE action = 'test.structural'",
+    );
+    expect(audits.rows[0]?.count).toBe(mode === "after" ? 1 : 0);
+    expect(await ctx.storage.metadata.getExtensions(item.id)).toEqual(
+      mode === "after" ? { test: { value: "committed" } } : {},
+    );
+  },
+);
+
 it("failed independent reconstruction fences registry-backed reads/writes until authoritative boot", async () => {
   fault.mode = "after";
   fault.readFailed = true;
   await expect(
-    ctx.storage.runInTransaction(() =>
-      ctx.storage.types.update(schema.id, changed),
+    runAuditedTransaction(
+      ctx.storage,
+      () => ctx.storage.types.update(schema.id, changed),
+      {
+        action: "test.fenced_registry",
+        resource_type: "type",
+        resource_id: schema.id,
+      },
     ),
-  ).rejects.toThrow("structural acknowledgment witness");
+  ).rejects.toMatchObject({
+    message: "structural acknowledgment witness",
+    control: { outcome: "unknown" },
+  });
+  expect(
+    (
+      await observer.execute(
+        "SELECT count(*) AS count FROM audit_log WHERE action = 'test.fenced_registry'",
+      )
+    ).rows[0]?.count,
+  ).toBe(1);
   expect(await durable()).toEqual(changed);
   expect(() => getTypeSchema(schema.id)).toThrow(
     "Storage registry state is unavailable",

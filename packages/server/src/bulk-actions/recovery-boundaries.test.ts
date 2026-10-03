@@ -55,11 +55,21 @@ vi.mock("@libsql/client", async (importOriginal) => {
 let ctx: TestContext;
 let keyId: string;
 let clock: number;
+let restoreAuditWitness: () => void;
 beforeEach(async () => {
   fault.mode = "none";
   fault.fired = false;
   clock = Date.now();
   ctx = await createTestContext();
+  // This suite exercises the worker's checkpoint oracle after the common
+  // audit witness cannot be read. Its positive audit-witness control below
+  // restores the actual native query instead.
+  const auditWitness = vi
+    .spyOn(ctx.storage.audit, "has")
+    .mockRejectedValue(new Error("audit witness unavailable"));
+  restoreAuditWitness = () => {
+    auditWitness.mockRestore();
+  };
   keyId = (
     (await (
       await request(ctx.app, "GET", "/keys/current", { key: ctx.workingKey })
@@ -415,31 +425,35 @@ it("polling exposes committed counters and omits every private checkpoint and ow
     expect(wire).not.toHaveProperty(name);
 });
 
-it("a live SSE subscriber receives the original reconciled frame before a later ordinary event", async () => {
-  const ids = [await note("bulk"), await note("ordinary")];
-  await queue([ids[0]!]);
-  const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
-  armCommit("after");
-  const response = await request(ctx.app, "GET", "/events", {
-    key: ctx.workingKey,
-    headers: { "Last-Event-ID": String(cursor) },
-  });
-  const { text } = await readSseWriting(
-    response,
-    "event: stream_live",
-    async () => {
-      expect(await worker().runOnce()).toBe(true);
-      await patch(ids[1]!);
-    },
-    (seen) => seen.includes(ids[1]!),
-  );
-  const durable = await events(cursor);
-  expect(durable.map((e) => e.item_id)).toEqual(ids);
-  expect(text.indexOf(ids[0]!)).toBeLessThan(text.indexOf(ids[1]!));
-  for (const event of durable)
-    expect(text.split(`id: ${String(event.id)}\n`)).toHaveLength(2);
-  expect(text).not.toContain("stream_incomplete");
-});
+it.each(["audit", "checkpoint"])(
+  "a live SSE subscriber receives the original frame reconciled by the %s witness before a later ordinary event",
+  async (witness) => {
+    if (witness === "audit") restoreAuditWitness();
+    const ids = [await note("bulk"), await note("ordinary")];
+    await queue([ids[0]!]);
+    const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    armCommit("after");
+    const response = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    const { text } = await readSseWriting(
+      response,
+      "event: stream_live",
+      async () => {
+        expect(await worker().runOnce()).toBe(true);
+        await patch(ids[1]!);
+      },
+      (seen) => seen.includes(ids[1]!),
+    );
+    const durable = await events(cursor);
+    expect(durable.map((e) => e.item_id)).toEqual(ids);
+    expect(text.indexOf(ids[0]!)).toBeLessThan(text.indexOf(ids[1]!));
+    for (const event of durable)
+      expect(text.split(`id: ${String(event.id)}\n`)).toHaveLength(2);
+    expect(text).not.toContain("stream_incomplete");
+  },
+);
 
 it("holds a later committed writer's announcement behind an uncertain earlier frame", async () => {
   const ids = [await note("bulk"), await note("ordinary")];

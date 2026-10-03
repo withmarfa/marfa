@@ -40,9 +40,12 @@ export class SqliteAuditStore implements AuditStore {
 
   constructor(private db: DrizzleDb) {}
 
-  private buildRow(entry: AuditLogEntry): typeof auditLog.$inferInsert {
+  private buildRow(
+    entry: AuditLogEntry,
+    id = generateId(),
+  ): typeof auditLog.$inferInsert {
     return {
-      id: generateId(),
+      id,
       created_at: new Date().toISOString(),
       key_id: entry.key_id ?? null,
       action: entry.action,
@@ -71,8 +74,18 @@ export class SqliteAuditStore implements AuditStore {
   /** The propagating form. Not tracked: the caller is awaiting it, so there
    *  is nothing in flight for shutdown to find, and tracking would swallow
    *  the very failure this exists to surface. */
-  async logOrThrow(entry: AuditLogEntry): Promise<void> {
-    await this.db.insert(auditLog).values(this.buildRow(entry)).run();
+  async logOrThrow(entry: AuditLogEntry, id?: string): Promise<void> {
+    await this.db.insert(auditLog).values(this.buildRow(entry, id)).run();
+  }
+
+  async has(id: string): Promise<boolean> {
+    return (
+      (await this.db
+        .select({ id: auditLog.id })
+        .from(auditLog)
+        .where(eq(auditLog.id, id))
+        .get()) !== undefined
+    );
   }
 
   /** Resolve once every in-flight audit write has settled. Called by the
