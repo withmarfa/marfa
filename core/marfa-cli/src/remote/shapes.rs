@@ -42,6 +42,7 @@ fn params() -> ListItemsParams {
         limit: None,
         cursor: None,
         include: None,
+        x_marfa_read_view: None,
     }
 }
 
@@ -79,7 +80,7 @@ fn a_page_of_items_with_their_metadata_decodes_into_the_generated_page() {
         Some(ListItemsSuccess::Status200(page)) => {
             assert_eq!(page.next_cursor, None);
             match page.data.as_slice() {
-                [ItemListRow::ItemWithMetadata(row)] => {
+                [ItemListRow::ItemReadWithMetadata(row)] => {
                     assert_eq!(row.item.id, "01a0d0d0-139f-730c-9f33-b36287371376");
                     assert_eq!(row.metadata.tags, vec!["reading".to_string()]);
                 }
@@ -104,6 +105,7 @@ fn an_item_decodes_into_the_generated_detail() {
         GetItemParams {
             id: "01a0d0d0-139f-730c-9f33-b36287371376".into(),
             include: Some("backrefs,versions".into()),
+            x_marfa_read_view: None,
         },
     )
     .unwrap();
