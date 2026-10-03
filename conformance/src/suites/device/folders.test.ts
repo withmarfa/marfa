@@ -44,6 +44,7 @@ import {
   writeAnswers,
   SCRIPTED_TYPES,
   wireType,
+  typeCatalog,
 } from "../../device/marfa-answers.js";
 import {
   KEY,
@@ -18135,7 +18136,22 @@ describe("large removals, status and size", () => {
   });
 
   it("warns of a text near the limit", async () => {
-    harness = await folderHarness("folder-size");
+    const largeType = "user.large_text";
+    harness = await folderHarness("folder-size", {
+      settings: {
+        search: { types: ["core.note", largeType] },
+        defaults: { type: largeType },
+      },
+      catalog: typeCatalog([
+        wireType(largeType, {
+          bodyField: "body",
+          fields: {
+            title: { type: "string" },
+            body: { type: "string", required: true, maxLength: 1_000_000 },
+          },
+        }),
+      ]),
+    });
     scriptFolderWrites(harness);
     put(harness, "small.md", "---\ntitle: Small\n---\nbody\n");
     put(
@@ -18143,9 +18159,20 @@ describe("large removals, status and size", () => {
       "large.md",
       `---\ntitle: Large\n---\n${"x".repeat(960_000)}\n`,
     );
+    put(
+      harness,
+      "default.md",
+      `---\ntype: core.note\ntitle: Default\n---\n${"x".repeat(100_001)}\n`,
+    );
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;
+    expect(scanned.value.created).toBe(2);
+    expect(scanned.value.flagged.map((file) => file.path)).toEqual([
+      "default.md",
+    ]);
+    expect(scanned.value.flagged[0]?.reason).toContain("body");
+    expect(scanned.value.flagged[0]?.reason).toContain("100000");
     expect(
       scanned.value.warnings.map((file) => [file.path, file.flag]),
       "a text near the server's limit went without a warning, or a small one was warned of",
