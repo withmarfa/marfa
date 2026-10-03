@@ -10,6 +10,7 @@ import {
   check,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import type { WebhookDeliveryStatus } from "@withmarfa/shared";
 
 export const items = sqliteTable(
   "items",
@@ -558,17 +559,20 @@ export const outboundWebhookDeliveries = sqliteTable(
   {
     id: text("id").primaryKey(),
     webhook_id: text("webhook_id").notNull(),
+    event_id: text("event_id").notNull(),
     event_type: text("event_type").notNull(),
     status_code: integer("status_code"),
     attempt: integer("attempt").notNull(),
-    succeeded: integer("succeeded").notNull().default(0),
     error: text("error"),
     created_at: text("created_at").notNull(),
     next_attempt_at: text("next_attempt_at"),
     payload: text("payload"),
     webhook_url: text("webhook_url"),
     max_attempts: integer("max_attempts").notNull().default(4),
-    status: text("status").notNull().default("pending"),
+    status: text("status")
+      .$type<WebhookDeliveryStatus>()
+      .notNull()
+      .default("pending"),
   },
   (table) => [
     index("idx_outbound_webhook_deliveries_webhook_id").on(table.webhook_id),

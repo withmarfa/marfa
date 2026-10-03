@@ -3097,6 +3097,8 @@ export interface components {
         };
         WebhookDelivery: {
             id: string;
+            /** @enum {string} */
+            status: "pending" | "success" | "dead_letter" | "canceled";
             webhook_id: string;
             event_type: string;
             status_code: number | null;
@@ -15365,6 +15367,7 @@ export interface operations {
                 "application/json": {
                     url: string;
                     events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    /** @description One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter. */
                     type_filter?: string | null;
                     secret?: string;
                 };
@@ -15710,6 +15713,7 @@ export interface operations {
                 "application/json": {
                     url?: string;
                     events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    /** @description One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter. */
                     type_filter?: string | null;
                     active?: boolean;
                 };

@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub struct WebhookDelivery {
     #[serde(rename = "id")]
     pub id: String,
+    #[serde(rename = "status")]
+    pub status: Status,
     #[serde(rename = "webhook_id")]
     pub webhook_id: String,
     #[serde(rename = "event_type")]
@@ -34,6 +36,7 @@ pub struct WebhookDelivery {
 impl WebhookDelivery {
     pub fn new(
         id: String,
+        status: Status,
         webhook_id: String,
         event_type: String,
         status_code: Option<f64>,
@@ -44,6 +47,7 @@ impl WebhookDelivery {
     ) -> WebhookDelivery {
         WebhookDelivery {
             id,
+            status,
             webhook_id,
             event_type,
             status_code,
@@ -52,5 +56,23 @@ impl WebhookDelivery {
             error,
             created_at,
         }
+    }
+}
+///
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum Status {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "success")]
+    Success,
+    #[serde(rename = "dead_letter")]
+    DeadLetter,
+    #[serde(rename = "canceled")]
+    Canceled,
+}
+
+impl Default for Status {
+    fn default() -> Status {
+        Self::Pending
     }
 }

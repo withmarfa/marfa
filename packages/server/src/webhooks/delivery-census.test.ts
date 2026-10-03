@@ -165,6 +165,7 @@ describe("a delivery driven end to end", () => {
     expect(res.status).toBe(201);
     const { id } = (await res.json()) as { id: string };
     await ctx.storage.outboundWebhookDeliveries.schedule({
+      eventId: 1n,
       webhookId: id,
       eventType: "item.created",
       payload: JSON.stringify({

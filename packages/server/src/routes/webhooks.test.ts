@@ -287,6 +287,7 @@ describe("GET /webhooks/:id/deliveries", () => {
 
     for (let i = 0; i < 3; i++) {
       const id = await ctx.storage.outboundWebhookDeliveries.schedule({
+        eventId: 1n,
         webhookId: created.id,
         eventType: "item.created",
         payload: "{}",

@@ -36,7 +36,8 @@ function rowToDelivery(
     event_type: row.event_type,
     status_code: row.status_code ?? null,
     attempt: row.attempt,
-    succeeded: row.succeeded === 1,
+    status: row.status,
+    succeeded: row.status === "success",
     error: row.error ?? null,
     created_at: row.created_at,
   };
@@ -88,6 +89,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
 
   async schedule(entry: {
     webhookId: string;
+    eventId: bigint;
     eventType: string;
     payload: string;
     webhookUrl: string;
@@ -99,10 +101,10 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .values({
         id,
         webhook_id: entry.webhookId,
+        event_id: entry.eventId.toString(),
         event_type: entry.eventType,
         status_code: null,
         attempt: 0,
-        succeeded: 0,
         error: null,
         created_at: new Date().toISOString(),
         next_attempt_at: entry.nextAttemptAt,
@@ -120,6 +122,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     const rows = await this.db.all<{
       id: string;
       webhook_id: string;
+      event_id: string;
       event_type: string;
       payload: string | null;
       webhook_url: string | null;
@@ -135,12 +138,13 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
             ORDER BY next_attempt_at
             LIMIT ${limit}
           )
-          RETURNING id, webhook_id, event_type, payload, webhook_url, attempt, max_attempts
+          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, max_attempts
         `,
     );
     return rows.map((r) => ({
       id: r.id,
       webhook_id: r.webhook_id,
+      event_id: r.event_id,
       event_type: r.event_type,
       payload: r.payload ?? "",
       webhook_url: r.webhook_url ?? "",
@@ -159,6 +163,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     const rows = await this.db.all<{
       id: string;
       webhook_id: string;
+      event_id: string;
       event_type: string;
       payload: string | null;
       webhook_url: string | null;
@@ -171,7 +176,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
           WHERE id = ${id}
             AND status = 'pending'
             AND next_attempt_at <= ${now}
-          RETURNING id, webhook_id, event_type, payload, webhook_url, attempt, max_attempts
+          RETURNING id, webhook_id, event_id, event_type, payload, webhook_url, attempt, max_attempts
         `,
     );
     const row = rows[0];
@@ -179,6 +184,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     return {
       id: row.id,
       webhook_id: row.webhook_id,
+      event_id: row.event_id,
       event_type: row.event_type,
       payload: row.payload ?? "",
       webhook_url: row.webhook_url ?? "",
@@ -196,7 +202,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .update(outboundWebhookDeliveries)
       .set({
         status: "success",
-        succeeded: 1,
+        error: null,
         status_code: statusCode,
         attempt,
         ...SETTLED,
@@ -226,19 +232,11 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .run();
   }
 
-  async markDeadLetter(id: string): Promise<void> {
-    await this.db
-      .update(outboundWebhookDeliveries)
-      .set({ status: "dead_letter", ...SETTLED })
-      .where(stillPending(id))
-      .run();
-  }
-
-  async markCancelled(id: string, reason: string): Promise<void> {
+  async markCanceled(id: string, reason: string): Promise<void> {
     await this.db
       .update(outboundWebhookDeliveries)
       .set({
-        status: "cancelled",
+        status: "canceled",
         error: reason,
         next_attempt_at: null,
         ...SETTLED,
@@ -251,7 +249,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     await this.db
       .update(outboundWebhookDeliveries)
       .set({
-        status: "cancelled",
+        status: "canceled",
         error: reason,
         next_attempt_at: null,
         ...SETTLED,

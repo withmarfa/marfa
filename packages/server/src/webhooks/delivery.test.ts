@@ -21,7 +21,7 @@ import {
   type PubsubEvent,
 } from "../pubsub.js";
 import {
-  DELIVERY_CANCELLED,
+  DELIVERY_CANCELED,
   WEBHOOK_POLL_INTERVAL_MS,
   WebhookScheduler,
   WebhookPoller,
@@ -179,6 +179,7 @@ async function pending(
   eventType: string,
 ): Promise<string> {
   return ctx.storage.outboundWebhookDeliveries.schedule({
+    eventId: 1n,
     webhookId: webhook.id,
     eventType,
     payload: JSON.stringify(storedFrame(event)),
@@ -623,8 +624,8 @@ describe("what a delivery carries", () => {
     await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
     expect(http.posts).toHaveLength(0);
     expect(await row(deliveryId)).toMatchObject({
-      status: "cancelled",
-      error: DELIVERY_CANCELLED.unreadable,
+      status: "canceled",
+      error: DELIVERY_CANCELED.unreadable,
     });
   });
 });
@@ -662,8 +663,8 @@ describe("when a delivery stops", () => {
     await new WebhookPoller({ storage: ctx.storage, http: after }).runOnce();
     expect(after.posts).toHaveLength(0);
     expect(await row(left)).toMatchObject({
-      status: "cancelled",
-      error: DELIVERY_CANCELLED.removed,
+      status: "canceled",
+      error: DELIVERY_CANCELED.removed,
     });
     // Deleted with the key, as a witnessed subscription.
     expect(await ctx.storage.outboundWebhooks.get(webhook.id)).toBeNull();
@@ -681,7 +682,7 @@ describe("when a delivery stops", () => {
     const http = recorder();
     await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
     expect(http.posts).toHaveLength(0);
-    expect(await row(left)).toMatchObject({ status: "cancelled" });
+    expect(await row(left)).toMatchObject({ status: "canceled" });
   });
 
   it("sends no pending delivery of a subscription removed, turned off or pointed elsewhere", async () => {
@@ -689,15 +690,15 @@ describe("when a delivery stops", () => {
     const http = recorder();
     const cases: [string, (w: StoredWebhook) => Promise<unknown>][] = [
       [
-        DELIVERY_CANCELLED.removed,
+        DELIVERY_CANCELED.removed,
         (w) => ctx.storage.outboundWebhooks.delete(w.id),
       ],
       [
-        DELIVERY_CANCELLED.inactive,
+        DELIVERY_CANCELED.inactive,
         (w) => ctx.storage.outboundWebhooks.update(w.id, { active: false }),
       ],
       [
-        DELIVERY_CANCELLED.repointed,
+        DELIVERY_CANCELED.repointed,
         (w) =>
           ctx.storage.outboundWebhooks.update(w.id, {
             url: "https://elsewhere.example/hook",
@@ -714,7 +715,7 @@ describe("when a delivery stops", () => {
       await change(webhook);
       await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
       expect(await row(left)).toMatchObject({
-        status: "cancelled",
+        status: "canceled",
         error: reason,
       });
     }

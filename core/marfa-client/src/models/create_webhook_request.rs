@@ -17,6 +17,7 @@ pub struct CreateWebhookRequest {
     pub url: String,
     #[serde(rename = "events")]
     pub events: Vec<Events>,
+    /// One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.
     #[serde(
         rename = "type_filter",
         default,

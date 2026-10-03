@@ -1,12 +1,17 @@
 import { createHmac } from "node:crypto";
-import { hasPermission, matchesTypePattern } from "@withmarfa/shared";
+import { hasPermission } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   Storage,
   WebhookDeliveryStore,
   WebhookOwner,
 } from "../storage/interface.js";
-import { wireEventName, type EdgeEvent, type ItemEvent } from "../pubsub.js";
+import {
+  eventMatchesTypeFilter,
+  wireEventName,
+  type EdgeEvent,
+  type ItemEvent,
+} from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 import {
   resolveLiveCredential,
@@ -117,7 +122,7 @@ export interface WebhookDeliveryContext {
 }
 
 /** Why a pending delivery is settled unsent, as the delivery log says it. */
-export const DELIVERY_CANCELLED = {
+export const DELIVERY_CANCELED = {
   removed: "The subscription was removed.",
   inactive: "The subscription was turned off.",
   repointed: "The subscription was pointed at another URL.",
@@ -169,32 +174,34 @@ export async function deliveryInReach(
   delivery: PendingWebhookDelivery,
 ): Promise<{ body: string; secret: string } | { cancel: string }> {
   const subscription = await storage.outboundWebhooks.get(delivery.webhook_id);
-  if (!subscription) return { cancel: DELIVERY_CANCELLED.removed };
-  if (!subscription.active) return { cancel: DELIVERY_CANCELLED.inactive };
+  if (!subscription) return { cancel: DELIVERY_CANCELED.removed };
+  if (!subscription.active) return { cancel: DELIVERY_CANCELED.inactive };
   if (subscription.url !== delivery.webhook_url) {
-    return { cancel: DELIVERY_CANCELLED.repointed };
+    return { cancel: DELIVERY_CANCELED.repointed };
   }
   const credential = await ownerCredential(storage, subscription.owner);
-  if (!credential) return { cancel: DELIVERY_CANCELLED.credential };
+  if (!credential) return { cancel: DELIVERY_CANCELED.credential };
   let stored: unknown;
   try {
     stored = JSON.parse(delivery.payload);
   } catch {
-    return { cancel: DELIVERY_CANCELLED.unreadable };
+    return { cancel: DELIVERY_CANCELED.unreadable };
   }
   if (typeof stored !== "object" || stored === null) {
-    return { cancel: DELIVERY_CANCELLED.unreadable };
+    return { cancel: DELIVERY_CANCELED.unreadable };
   }
   const frame = await frameInReach(
     storage,
     credential.key,
     stored as Record<string, unknown>,
   );
-  if (!frame) return { cancel: DELIVERY_CANCELLED.unreadable };
+  if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
   delete frame.type;
   const body = JSON.stringify({
-    event_type: delivery.event_type,
     ...frame,
+    event_type: delivery.event_type,
+    event_id: delivery.event_id,
+    delivery_id: delivery.id,
     ...("item" in frame && { metadata: frame.metadata ?? null }),
     delivered_at: new Date().toISOString(),
   });
@@ -228,8 +235,8 @@ export async function deliverWebhookAttempt(
   try {
     const prepared = await deliveryInReach(context.storage, delivery);
     if ("cancel" in prepared) {
-      await store.markCancelled(delivery.id, prepared.cancel);
-      log("info", "Webhook delivery cancelled", {
+      await store.markCanceled(delivery.id, prepared.cancel);
+      log("info", "Webhook delivery canceled", {
         ...logged,
         reason: prepared.cancel,
       });
@@ -296,7 +303,13 @@ export async function deliverWebhookAttempt(
       outcome.status < 500 &&
       !RETRYABLE_4XX.has(outcome.status)
     ) {
-      await store.markDeadLetter(delivery.id);
+      await store.markFailed(
+        delivery.id,
+        outcome.status,
+        `HTTP ${String(outcome.status)}`,
+        nextAttempt,
+        null,
+      );
       log("error", "Webhook dead-lettered", {
         ...logged,
         status: outcome.status,
@@ -488,14 +501,14 @@ export class WebhookScheduler {
               subscription.active &&
               event.id > subscription.event_start_id &&
               subscription.events.includes(eventType);
-            if (eligible && subscription.type_filter) {
+            if (eligible && !isEdge && subscription.type_filter) {
               const item = frame.item;
               eligible =
                 typeof item === "object" &&
                 item !== null &&
                 "type" in item &&
                 typeof item.type === "string" &&
-                matchesTypePattern(item.type, [subscription.type_filter]);
+                eventMatchesTypeFilter(item.type, subscription.type_filter);
             }
             if (eligible) {
               const name = ownerName(subscription.owner);
@@ -517,6 +530,7 @@ export class WebhookScheduler {
               ids.push(
                 await storage.outboundWebhookDeliveries.schedule({
                   webhookId: subscription.id,
+                  eventId: event.id,
                   eventType,
                   payload: event.payload,
                   webhookUrl: subscription.url,
@@ -580,7 +594,7 @@ export class WebhookScheduler {
    * fails — e.g. the poller raced us to it — returns silently; the other
    * worker is already responsible. If the claim succeeds, the HTTP
    * attempt runs with a shorter timeout than the poller; outcomes go
-   * through the same `markSuccess` / `markFailed` / `markDeadLetter`
+   * through the same `markSuccess` / `markFailed`
    * state transitions, so on a network error / 5xx the poller picks the
    * row up on its next run exactly as it would today.
    *

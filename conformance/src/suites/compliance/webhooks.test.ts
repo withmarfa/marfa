@@ -9,6 +9,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createTask } from "../../generators/items.js";
+import { withStream, collectUntil } from "../../utils/stream.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import {
   expectSignedBy,
@@ -19,11 +20,15 @@ import {
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 let receiver: Receiver;
 let receiverUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext("compliance", "webhooks"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "webhooks",
+  ));
   receiver = await startReceiver();
   receiverUrl = receiver.url;
 });
@@ -62,7 +67,9 @@ describe("outbound webhooks", () => {
     expect(mine?.secret).not.toBe(created.data.secret);
   });
 
-  it("delivers a matching event to the URL with a verifiable signature", async () => {
+  it("delivers a matching event to the URL with a verifiable signature", async ({
+    signal,
+  }) => {
     const created = await client.createWebhook({
       url: receiver.hookUrl("signed"),
       events: ["item.created"],
@@ -71,42 +78,113 @@ describe("outbound webhooks", () => {
     trackWebhook(ctx, created.data.id, client);
     const secret = created.data.secret;
 
-    const item = await client.createItem(
-      createNote({ source: ctx.source, properties: { body: "delivered" } }),
-    );
-    expect(item.ok).toBe(true);
-    trackItem(ctx, item.data.item.id);
+    await withStream(apiUrl, apiKey, {}, async (stream) => {
+      const item = await client.createItem(
+        createNote({ source: ctx.source, properties: { body: "delivered" } }),
+      );
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
 
-    const delivery = await receiver.waitFor(
-      (r) => r.path === "/hook/signed" && r.body.includes(item.data.item.id),
-    );
-    expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
-    expect(delivery.headers["content-type"]).toContain("application/json");
-    const payload = JSON.parse(delivery.body) as {
-      event_type: string;
-      item: { id: string; type: string };
-    };
-    expect(payload.event_type).toBe("item.created");
-    expect(payload.item.id).toBe(item.data.item.id);
-    expect(payload.item.type).toBe("core.note");
+      const delivery = await receiver.waitFor(
+        (r) => r.path === "/hook/signed" && r.body.includes(item.data.item.id),
+      );
+      expect(delivery.headers["x-marfa-event-type"]).toBe("item.created");
+      expect(delivery.headers["content-type"]).toContain("application/json");
+      const payload = JSON.parse(delivery.body) as {
+        event_type: string;
+        event_id: string;
+        delivery_id: string;
+        delivered_at: string;
+        item: { id: string; type: string };
+      };
+      const { events } = await collectUntil(
+        stream,
+        (frames) =>
+          frames.some(
+            (frame) =>
+              frame.event === "item.created" &&
+              (frame.data as { item?: { id?: string } }).item?.id ===
+                item.data.item.id,
+          ),
+        "the delivered item event and its exact cursor",
+        signal,
+      );
+      const event = events.find(
+        (frame) =>
+          frame.event === "item.created" &&
+          (frame.data as { item?: { id?: string } }).item?.id ===
+            item.data.item.id,
+      );
+      expect(payload.event_id).toBe(event?.id);
+      expect(payload.event_id).toMatch(/^(0|[1-9][0-9]*)$/);
+      expect(Number.isNaN(Date.parse(payload.delivered_at))).toBe(false);
+      expect(payload.event_type).toBe("item.created");
+      expect(payload.item.id).toBe(item.data.item.id);
+      expect(payload.item.type).toBe("core.note");
 
-    expectSignedBy(delivery, secret);
+      expectSignedBy(delivery, secret);
 
-    const deliveries = await client.listWebhookDeliveries(created.data.id);
-    expect(deliveries.ok).toBe(true);
-    await expectMatchesSchema(
-      "GET",
-      "/webhooks/{id}/deliveries",
-      200,
-      deliveries.data,
-    );
-    const row = deliveries.data.data.find(
-      (d) => d.event_type === "item.created",
-    );
-    expect(row).toBeDefined();
-    expect(row?.succeeded).toBe(true);
-    expect(row?.status_code).toBe(200);
-    expect(row?.attempt).toBe(1);
+      const deliveries = await client.listWebhookDeliveries(created.data.id);
+      expect(deliveries.ok).toBe(true);
+      await expectMatchesSchema(
+        "GET",
+        "/webhooks/{id}/deliveries",
+        200,
+        deliveries.data,
+      );
+      const row = deliveries.data.data.find(
+        (d) => d.event_type === "item.created",
+      );
+      expect(row).toBeDefined();
+      expect(row?.id).toBe(payload.delivery_id);
+      expect(row?.status).toBe("success");
+      expect(row?.error).toBeNull();
+      expect(row?.succeeded).toBe(true);
+      expect(row?.status_code).toBe(200);
+      expect(row?.attempt).toBe(1);
+    });
+  });
+
+  it("normalizes one item filter and preserves it after refused updates", async () => {
+    const created = await client.createWebhook({
+      url: receiver.hookUrl("filter-validation"),
+      events: ["edge.created"],
+      type_filter: " core.note ",
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, client);
+    expect(created.data.type_filter).toBe("core.note");
+    for (const type_filter of ["*", "bad filter", "core.note,core.task"]) {
+      expect(
+        (
+          await client.createWebhook({
+            url: receiver.hookUrl("invalid-filter"),
+            events: ["item.created"],
+            type_filter,
+          })
+        ).status,
+      ).toBe(400);
+      const changed = await client.updateWebhook(created.data.id, {
+        type_filter,
+      });
+      expect(changed.status).toBe(400);
+      expect((await client.getWebhook(created.data.id)).data.type_filter).toBe(
+        "core.note",
+      );
+    }
+    for (const type_filter of ["core.*", "demo.unregistered"]) {
+      expect(
+        (await client.updateWebhook(created.data.id, { type_filter })).status,
+      ).toBe(200);
+    }
+    for (const type_filter of [" ", "", null]) {
+      expect(
+        (await client.updateWebhook(created.data.id, { type_filter })).status,
+      ).toBe(200);
+      expect(
+        (await client.getWebhook(created.data.id)).data.type_filter ?? null,
+      ).toBeNull();
+    }
   });
 
   it("pages its delivery log by cursor, every attempt once", async () => {
