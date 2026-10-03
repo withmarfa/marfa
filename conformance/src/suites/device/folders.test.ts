@@ -9426,78 +9426,112 @@ describe("where a file sits", () => {
     expect(existsSync(join(harness.dir, "Elsewhere", "Plan.md"))).toBe(false);
   });
 
-  it("keeps the item of a renamed file that is still settling", async () => {
-    const id = "01a00000-0000-7000-8000-0000000016f1";
-    const bytes = Buffer.from("initial file bytes");
-    const placed = await placedHarness(
-      "folder-rename-settling",
-      [
-        {
-          id,
-          title: "capture.bin",
-          type: "core.file",
-          path: "capture.bin",
-          properties: {
+  it.each([false, true])(
+    "keeps the item of a renamed file that is still settling (replacement %s)",
+    async (replacement) => {
+      const id = "01a00000-0000-7000-8000-0000000016f1";
+      const bytes = Buffer.from("initial file bytes");
+      const placed = await placedHarness(
+        "folder-rename-settling",
+        [
+          {
+            id,
             title: "capture.bin",
-            blob_ref: hashOf(bytes),
-            mime_type: "application/octet-stream",
+            type: "core.file",
+            path: "capture.bin",
+            properties: {
+              title: "capture.bin",
+              blob_ref: hashOf(bytes),
+              mime_type: "application/octet-stream",
+            },
           },
-        },
-      ],
-      { search: { types: ["core.file"] } },
-    );
-    harness = placed.harness;
-    scriptBlob(harness.server, bytes);
-    acceptUploads(harness.server);
-    expect((await harness.folder.pull()).ok).toBe(true);
-    const moving = join(harness.dir, "renamed.bin");
-    renameSync(join(harness.dir, "capture.bin"), moving);
-    const writing = setInterval(
-      () => appendFileSync(moving, Buffer.from("more")),
-      30,
-    );
-    appendFileSync(moving, Buffer.from("first edit"));
-    const watching = harness.folder.watchText();
-    try {
-      await vi.waitFor(
-        () => expect(watching.stdout).toContain("still changing"),
-        { timeout: 30000, interval: 100 },
+        ],
+        { search: { types: ["core.file"] } },
       );
-      await new Promise((resolve) => setTimeout(resolve, 12000));
-      expect(watching.running(), watching.stderr).toBe(true);
-      const deletes = harness.server.requests.filter(
-        (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+      harness = placed.harness;
+      scriptBlob(harness.server, bytes);
+      acceptUploads(harness.server);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const moving = join(harness.dir, "renamed.bin");
+      renameSync(join(harness.dir, "capture.bin"), moving);
+      if (replacement) put(harness, "capture.bin", "different new file");
+      const writing = setInterval(
+        () => appendFileSync(moving, Buffer.from("more")),
+        30,
       );
-      expect(existsSync(moving)).toBe(true);
-      expect(
-        deletes,
-        "the moved file is present and changing but its item was trashed",
-      ).toEqual([]);
-      clearInterval(writing);
-      scriptBlob(harness.server, readFileSync(moving));
-      await vi.waitFor(
-        () =>
-          expect(placed.edges.placements(harness!.settings.id).get(id)).toBe(
-            "renamed.bin",
-          ),
-        { timeout: 30000, interval: 100 },
-      );
-      expect(sentCreates(harness)).toEqual([]);
-      rmSync(moving);
-      await vi.waitFor(
-        () =>
-          expect(
-            harness!.server.requests.some(
-              (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+      appendFileSync(moving, Buffer.from("first edit"));
+      const watching = harness.folder.watchText();
+      try {
+        await vi.waitFor(
+          () => expect(watching.stdout).toContain("still changing"),
+          { timeout: 30000, interval: 100 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 12000));
+        expect(watching.running(), watching.stderr).toBe(true);
+        const deletes = harness.server.requests.filter(
+          (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+        );
+        expect(existsSync(moving)).toBe(true);
+        expect(
+          deletes,
+          "the moved file is present and changing but its item was trashed",
+        ).toEqual([]);
+        expect(sentUpdates(harness)).toEqual([]);
+        const status = await harness.folder.status();
+        expect(
+          status.ok &&
+            status.value.files.find((file) => file.path === "renamed.bin")
+              ?.item_id,
+        ).toBe(id);
+        if (replacement) {
+          const other =
+            status.ok &&
+            status.value.files.find((file) => file.path === "capture.bin")
+              ?.item_id;
+          expect(other).toEqual(expect.any(String));
+          expect(other).not.toBe(id);
+        }
+        clearInterval(writing);
+        const settled = readFileSync(moving);
+        scriptBlob(harness.server, settled);
+        await vi.waitFor(
+          () =>
+            expect(sentUpdates(harness!)).toContainEqual(
+              expect.objectContaining({
+                id,
+                body: expect.objectContaining({
+                  properties: expect.objectContaining({
+                    blob_ref: hashOf(settled),
+                  }),
+                }),
+              }),
             ),
-          ).toBe(true),
-        { timeout: 30000, interval: 100 },
-      );
-    } finally {
-      clearInterval(writing);
-      await watching.stop();
-    }
-  });
+          { timeout: 30000, interval: 100 },
+        );
+        await vi.waitFor(
+          () =>
+            expect(placed.edges.placements(harness!.settings.id).get(id)).toBe(
+              "renamed.bin",
+            ),
+          { timeout: 30000, interval: 100 },
+        );
+        expect(sentCreates(harness)).toHaveLength(replacement ? 1 : 0);
+        rmSync(moving);
+        await vi.waitFor(
+          () =>
+            expect(
+              harness!.server.requests.some(
+                (r) => r.method === "DELETE" && r.pathname === `/items/${id}`,
+              ),
+            ).toBe(true),
+          { timeout: 30000, interval: 100 },
+        );
+      } finally {
+        clearInterval(writing);
+        await watching.stop();
+      }
+    },
+  );
 
   it.each(["empty", "unreadable"])(
     "keeps a renamed file's item while its bytes are %s",
@@ -9543,6 +9577,58 @@ describe("where a file sits", () => {
         "renamed.bin",
       );
       expect(sentCreates(harness)).toEqual([]);
+    },
+  );
+
+  it.each([true, false])(
+    "keeps unread rename ownership over a replacement at the old path: %s",
+    async (unread) => {
+      const id = "01a00000-0000-7000-8000-0000000016f1";
+      const bytes = Buffer.from("original bytes");
+      const placed = await placedHarness(
+        "folder-unread-owner",
+        [
+          {
+            id,
+            title: "capture.bin",
+            type: "core.file",
+            path: "capture.bin",
+            properties: {
+              title: "capture.bin",
+              blob_ref: hashOf(bytes),
+              mime_type: "application/octet-stream",
+            },
+          },
+        ],
+        { search: { types: ["core.file"] } },
+      );
+      harness = placed.harness;
+      scriptBlob(harness.server, bytes);
+      acceptUploads(harness.server);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const moving = join(harness.dir, "renamed.bin");
+      renameSync(join(harness.dir, "capture.bin"), moving);
+      if (unread) writeFileSync(moving, "");
+      writeFileSync(join(harness.dir, "capture.bin"), "different new file");
+      const scanned = await harness.folder.scan();
+      expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+      writeFileSync(moving, bytes);
+      const after = await harness.folder.scan();
+      const status = await harness.folder.status();
+      expect(
+        status.ok &&
+          status.value.files.find((f) => f.path === "renamed.bin")?.item_id,
+        JSON.stringify({ after, status }),
+      ).toBe(id);
+      expect(scanned.ok && scanned.value.updated, JSON.stringify(scanned)).toBe(
+        0,
+      );
+      const other =
+        status.ok &&
+        status.value.files.find((file) => file.path === "capture.bin")?.item_id;
+      expect(other).toEqual(expect.any(String));
+      expect(other).not.toBe(id);
+      expect(status.ok && status.value.files).toHaveLength(2);
     },
   );
 

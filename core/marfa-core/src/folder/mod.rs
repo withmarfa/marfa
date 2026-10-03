@@ -794,11 +794,31 @@ struct Scanned {
     /// server could have minted.
     line: Option<i64>,
     unreadable: Option<String>,
+    deferred: bool,
     /// `None` on a volume that keeps no permission.
     executable: Option<bool>,
 }
 
 impl Scanned {
+    fn deferred(root: &Path, path: &Path, mark: Option<String>) -> Result<Self> {
+        Ok(Self {
+            key: identity::relative(root, path)?,
+            path: path.to_path_buf(),
+            mark,
+            born: std::fs::symlink_metadata(path)
+                .ok()
+                .as_ref()
+                .and_then(identity::born),
+            text: String::new(),
+            hash: String::new(),
+            id: None,
+            line: None,
+            unreadable: None,
+            deferred: true,
+            executable: None,
+        })
+    }
+
     fn document(&self) -> document::Document {
         if carries_frontmatter(&self.path) {
             document::read(&self.text)
@@ -1017,20 +1037,21 @@ impl Folder {
         // cannot withhold a note's identity by sharing it.
         let identities = identity::resolve(&held);
         let mut files = Vec::new();
-        // Reading may wait across several scans after a rename; the file
-        // is still present by identity even before its new path is bound.
-        let mut unread_marks = HashSet::new();
         for path in held {
-            let mut keep_identity = || {
-                if let Some(mark) = identities.get(&path) {
-                    unread_marks.insert(mark.key());
-                }
+            // Unread bytes still claim their file's identity before another
+            // file at its old path can take its item.
+            let deferred = || {
+                Scanned::deferred(
+                    &self.root,
+                    &path,
+                    identities.get(&path).map(|mark| mark.key()),
+                )
             };
             if let Some(settle) = settle
                 && !is_document(&path)
                 && changed_within(&path, settle)
             {
-                keep_identity();
+                files.push(deferred()?);
                 report.settling.push(identity::relative(&self.root, &path)?);
                 continue;
             }
@@ -1041,7 +1062,7 @@ impl Folder {
                 None => {
                     let stat = stat_of(&path);
                     let Ok(bytes) = std::fs::read(&path) else {
-                        keep_identity();
+                        files.push(deferred()?);
                         continue;
                     };
                     if let Some(stat) = stat {
@@ -1052,7 +1073,7 @@ impl Folder {
             };
             // No blob the server holds is empty.
             if bytes.is_empty() && !is_document(&path) {
-                keep_identity();
+                files.push(deferred()?);
                 report.skipped += 1;
                 continue;
             }
@@ -1104,12 +1125,13 @@ impl Folder {
                 id,
                 line,
                 unreadable,
+                deferred: false,
                 path,
             });
         }
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
-        let changed = files.iter().any(|file| {
+        let changed = files.iter().filter(|file| !file.deferred).any(|file| {
             !snapshot
                 .iter()
                 .any(|bound| bound.path == file.key && bound.content_hash == file.hash)
@@ -1135,6 +1157,31 @@ impl Folder {
                     flag: "waiting",
                     reason,
                 });
+                continue;
+            }
+            if file.deferred {
+                if let Some(Claim {
+                    bound: Some(bound), ..
+                }) = claim
+                {
+                    if bound.path != file.key {
+                        self.unbind_if_still(&bound)?;
+                        self.place(&bound.item_id, &file.key, &withheld)?;
+                        report.renamed += 1;
+                    }
+                    if bound.path != file.key || bound.identity != file.mark {
+                        let conn = self.core.conn()?;
+                        state::bind(
+                            &conn,
+                            &state::Bound {
+                                path: file.key.clone(),
+                                identity: file.mark.clone(),
+                                ..bound
+                            },
+                        )?;
+                        state::journal_clear(&conn, &file.key)?;
+                    }
+                }
                 continue;
             }
             // A file item's file is its bytes, whatever its name says.
@@ -1366,12 +1413,7 @@ impl Folder {
         };
         for row in bound {
             let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
-            if seen.contains(&row.path)
-                || row
-                    .identity
-                    .as_ref()
-                    .is_some_and(|mark| unread_marks.contains(mark))
-            {
+            if seen.contains(&row.path) {
                 // Back inside the grace, so the server never hears of it.
                 if held {
                     let conn = self.core.conn()?;
@@ -1544,7 +1586,8 @@ impl Folder {
         // left by state, has a file elsewhere or none, and a copy of it is new.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         for (at, file) in files.iter().enumerate() {
-            if claims[at].is_some()
+            if file.deferred
+                || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
                 || carries_frontmatter(&file.path)
@@ -1596,7 +1639,8 @@ impl Folder {
         // A file that cannot carry an id, moved here from another folder on
         // this machine, is the item that folder bound it to.
         for (at, file) in files.iter().enumerate() {
-            if claims[at].is_some()
+            if file.deferred
+                || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
                 || carries_frontmatter(&file.path)
