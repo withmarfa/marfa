@@ -717,7 +717,6 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
                 | CoreError::StorageFull(_)
-                | CoreError::Redirected { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),
@@ -737,7 +736,6 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
                 | CoreError::StorageFull(_)
-                | CoreError::Redirected { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),
@@ -1592,10 +1590,9 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
     }) {
         Err(
             error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
+            | CoreError::ContractMismatch { .. }
             | CoreError::RenewalFailed(_)
             | CoreError::StorageFull(_)
-            | CoreError::Redirected { .. }
             | CoreError::CopyExpired { .. }
             | CoreError::StreamIncomplete { .. }),
         ) => Err(error),
@@ -1680,7 +1677,6 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
                 | CoreError::SignedOut { .. }
                 | CoreError::NoKeychain(_)
                 | CoreError::StorageFull(_)
-                | CoreError::Redirected { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::StreamIncomplete { .. }),
             ) => return Err(error),

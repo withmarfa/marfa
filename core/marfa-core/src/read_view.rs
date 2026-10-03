@@ -322,6 +322,22 @@ mod tests {
     }
 
     #[test]
+    fn read_view_malformed_edge_type_expires_while_ordinary_decode_stays_typed() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        server.on(
+            "/edge-types",
+            vec![certified(json(200, r#"{"data":[{}],"next_cursor":null}"#))],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        assert!(matches!(http.edge_types(), Err(CoreError::Decoding(_))));
+        assert!(matches!(
+            http.for_view(FENCE).edge_types(),
+            Err(CoreError::CopyExpired { .. })
+        ));
+    }
+
+    #[test]
     fn read_view_pin_aba_and_old_generation_reply_cannot_change_rebuilt_copy() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = core(&server);

@@ -381,7 +381,11 @@ impl Http {
             let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &params)?;
             for row in page.data {
                 serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
-                    CoreError::Decoding(format!("an edge type the server listed: {error}"))
+                    if self.view.is_some() {
+                        crate::read_view::invalid()
+                    } else {
+                        CoreError::Decoding(format!("an edge type the server listed: {error}"))
+                    }
                 })?;
                 rows.push(row);
             }

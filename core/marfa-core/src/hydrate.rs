@@ -217,6 +217,7 @@ fn hydrate_inner(
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
+            let catalog = Catalog::load(&tx)?;
             lay_queue_over(&tx, &catalog, &edge_types)?;
             store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
             let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
