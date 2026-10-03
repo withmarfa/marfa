@@ -35,7 +35,11 @@ pub enum CoreError {
     #[error(
         "{origin} answered {status} naming no contract, taken as from something in front of the server; if it repeats while the server otherwise answers, its refusals are losing the contract header on the way"
     )]
-    Unnamed { origin: String, status: u16 },
+    Unnamed {
+        origin: String,
+        status: u16,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("decoding: {0}")]
     Decoding(String),
     #[error("store: {0}")]
@@ -100,6 +104,11 @@ impl CoreError {
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             CoreError::RateLimited {
+                retry_after_seconds: Some(seconds),
+                ..
+            }
+            | CoreError::Unnamed {
+                status: 429,
                 retry_after_seconds: Some(seconds),
                 ..
             } => Some(Duration::from_secs(*seconds).min(RETRY_AFTER_MOST)),

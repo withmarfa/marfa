@@ -1796,6 +1796,7 @@ mod tests {
                 E::Unnamed {
                     origin: text(),
                     status: 401,
+                    retry_after_seconds: None,
                 }
                 .into(),
                 "Unnamed",

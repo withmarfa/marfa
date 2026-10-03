@@ -320,8 +320,6 @@ pub fn unplaced_line(unplaced: usize) -> Option<String> {
     })
 }
 
-/// A folder another process holds is refused at its open, and said of the
-/// folder.
 fn held(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
     move |error| match error {
         CoreError::ReadingHandle => CliError::FolderHeld(dir.to_path_buf()),

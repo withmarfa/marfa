@@ -262,6 +262,7 @@ impl Http {
             CoreError::Unnamed {
                 origin: self.origin(),
                 status,
+                retry_after_seconds,
             }
         }
     }
@@ -867,6 +868,21 @@ mod tests {
             vec![crate::scripted::refusal(404, "item_not_found")],
         );
         assert!(matches!(http.item("x"), Ok(None)));
+    }
+
+    #[test]
+    fn unnamed_rate_limits_keep_the_wait_without_trusting_the_refusal() {
+        let http = Http::new("https://marfa.example", "k").unwrap();
+        for (seconds, expected) in [(None, None), (Some(7), Some(7)), (Some(86_400), Some(300))] {
+            let error = http.refused(429, false, "slow down", seconds);
+            assert!(matches!(error, CoreError::Unnamed { status: 429, .. }));
+            assert!(error.is_environmental());
+            assert_eq!(error.retry_after().map(|wait| wait.as_secs()), expected);
+        }
+        assert_eq!(
+            http.refused(401, false, "no key", Some(7)).retry_after(),
+            None
+        );
     }
 
     #[test]

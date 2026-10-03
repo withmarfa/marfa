@@ -249,37 +249,41 @@ describe("an environmental failure retries and is never counted", () => {
     ]);
   });
 
-  it("passes on the wait a read reconciling a refusal was asked for", async () => {
-    harness = await hydratedHarness("class-read-waits", { rows: held() });
-    const { server, device } = harness;
-    expect(
-      (
-        await device.update(HELD.id, {
-          properties: { title: "edited" },
-          version: HELD.version,
-        })
-      ).ok,
-    ).toBe(true);
-    scriptWrites(server, {
-      update: [refusal(400, "invalid_properties", "not a title")],
-      read: [
-        {
-          kind: "json",
-          status: 429,
-          body: { error: { code: "rate_limited", message: "slow down" } },
-          headers: { "Retry-After": "7" },
-        },
-      ],
-    });
-    const drained = await device.drain();
-    expect(drained.ok, JSON.stringify(drained)).toBe(true);
-    if (!drained.ok) return;
-    expect(drained.value.unavailable).toMatch(/429|rate/);
-    expect(
-      drained.value.retry_after_seconds,
-      "the wait the server asked for on the read was lost, so a caller asks again at once",
-    ).toBe(7);
-  });
+  it.each([undefined, null])(
+    "passes on the wait a read reconciling a refusal was asked for (contract %s)",
+    async (contract) => {
+      harness = await hydratedHarness("class-read-waits", { rows: held() });
+      const { server, device } = harness;
+      expect(
+        (
+          await device.update(HELD.id, {
+            properties: { title: "edited" },
+            version: HELD.version,
+          })
+        ).ok,
+      ).toBe(true);
+      scriptWrites(server, {
+        update: [refusal(400, "invalid_properties", "not a title")],
+        read: [
+          {
+            kind: "json",
+            status: 429,
+            contract,
+            body: { error: { code: "rate_limited", message: "slow down" } },
+            headers: { "Retry-After": "7" },
+          },
+        ],
+      });
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(drained.value.unavailable).toMatch(/429|rate/);
+      expect(
+        drained.value.retry_after_seconds,
+        "the wait the server asked for on the read was lost, so a caller asks again at once",
+      ).toBe(7);
+    },
+  );
 
   it("counts the writes it settled without sending apart from those the server answered", async () => {
     harness = await hydratedHarness("class-unsent", { rows: held() });
