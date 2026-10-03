@@ -1,4 +1,7 @@
-import { Hono } from "hono";
+import { EVENT_LIMITS } from "./_event-limits.js";
+import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
+import { invalidReadViewRequest } from "../middleware/read-view.js";
+import { Hono, type MiddlewareHandler } from "hono";
 import {
   ErrorCode,
   GLOBAL_TYPE_WILDCARD,
@@ -31,8 +34,8 @@ import { readableMetadata } from "./_extension-reach.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
-const KEEPALIVE_INTERVAL_MS = 30_000;
-const REPLAY_BATCH_SIZE = 500;
+const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
+const REPLAY_BATCH_SIZE = EVENT_LIMITS.replayBatchSize;
 
 /**
  * The longest a replay goes without writing before it says it is still
@@ -63,7 +66,7 @@ const REPLAY_PROGRESS_MS = 1_000;
  * replay or the drained frames reached, or null. A client whose frames
  * are held indefinitely is in no state at all.
  */
-const HEAD_READ_TIMEOUT_MS = 5_000;
+const HEAD_READ_TIMEOUT_MS = EVENT_LIMITS.headReadTimeoutMs;
 
 /**
  * What a head read that outran its budget resolves to.
@@ -94,7 +97,7 @@ const HEAD_READ_TIMED_OUT = Symbol("head-read-timed-out");
  * and a few hundred stalled streams cost the server a bounded, stated
  * amount rather than whatever the writers produce.
  */
-const MAX_UNSENT_BYTES = 4 * 1024 * 1024;
+const MAX_UNSENT_BYTES = EVENT_LIMITS.maxUnsentBytes;
 
 /**
  * How long a stream waits for a reader that is taking nothing.
@@ -107,11 +110,11 @@ const MAX_UNSENT_BYTES = 4 * 1024 * 1024;
  * connection go. Without the second a reader that never reads again keeps
  * its unread frames in memory for as long as its socket lives.
  */
-const READER_STALL_MS = 30_000;
+const READER_STALL_MS = EVENT_LIMITS.readerStallMs;
 
 /** How often a writer waiting for room looks at whether the reader took a
  *  frame, which the stream says only once the queue is under the bound. */
-const ROOM_POLL_MS = 50;
+const ROOM_POLL_MS = EVENT_LIMITS.roomPollMs;
 
 /**
  * The wire name of the frame refusing a cursor beyond the log's head.
@@ -311,6 +314,7 @@ const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
 type HeldFrame = LiveFrame;
 
 export interface EventRoutesOptions {
+  readView?: { instanceId: string; signingKey: Buffer };
   /** Override for the head-read budget; tests drive the degraded path —
    *  no announcement, hold released — with a short one. Default is
    *  `HEAD_READ_TIMEOUT_MS`. */
@@ -355,7 +359,10 @@ function parseCursor(raw: string | undefined): bigint | null {
  * Shared by the live path and the replay, so a frame reads the same either
  * way: marks and metadata both narrowed to what this subscriber may read.
  */
-function itemFrameFor(stored: Record<string, unknown>, apiKey: ApiKey): string {
+export function itemFrameFor(
+  stored: Record<string, unknown>,
+  apiKey: ApiKey,
+): string {
   const frame = frameFor(stored, (type) => mayReadType(apiKey, type));
   // Shape-checked: `readableMetadata` iterates `.extensions`, and a
   // throw here would end a replay short of events the client never re-asks for.
@@ -428,7 +435,7 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
  * is a defect somebody has to find, and a silent skip leaves no trace of
  * it anywhere.
  */
-function decodeStoredEdge(
+export function decodeStoredEdge(
   payload: string,
 ): { edge: Edge; sourceType: string | undefined } | null {
   let parsed: unknown;
@@ -474,7 +481,40 @@ export function eventRoutes(
   let liveViewers = 0;
 
   // GET /events — Server-Sent Events stream with replay support
-  router.get("/", readsSomeType, (c) => {
+  const copyMode: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (c.req.query("copy") !== undefined) {
+      requireAuth(c);
+      copyStreamRequest(c);
+      const cap = options.maxViewers ?? 0;
+      if (cap > 0 && liveViewers >= cap)
+        throw new MarfaError(
+          ErrorCode.STREAM_CAPACITY_EXHAUSTED,
+          "This instance is serving its maximum number of live-update viewers; retry shortly",
+          { reason: "viewer_cap" },
+        );
+      liveViewers += 1;
+      let released = false;
+      const release = () => {
+        if (!released) {
+          released = true;
+          liveViewers -= 1;
+        }
+      };
+      try {
+        return await buildCopyStream(c, storage, options, release);
+      } catch (error) {
+        release();
+        throw error;
+      }
+    }
+    if (c.req.header("X-Marfa-Read-View") !== undefined) {
+      requireAuth(c);
+      throw invalidReadViewRequest("X-Marfa-Read-View requires copy=1");
+    }
+    await next();
+  };
+
+  router.get("/", copyMode, readsSomeType, (c) => {
     const apiKey = requireAuth(c);
     const typeParam = parseTypeFilter(c.req.query("type"));
     const edgeMode = parseEdgeMode(c.req.query("edges"));

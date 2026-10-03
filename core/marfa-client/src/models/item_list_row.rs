@@ -11,13 +11,13 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// ItemListRow : An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
-/// An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape.
+/// ItemListRow : An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape.
+/// An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ItemListRow {
     Item(Box<models::Item>),
-    ItemWithMetadata(Box<models::ItemWithMetadata>),
+    ItemReadWithMetadata(Box<models::ItemReadWithMetadata>),
 }
 
 impl Default for ItemListRow {

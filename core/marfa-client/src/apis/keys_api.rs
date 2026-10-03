@@ -19,6 +19,13 @@ pub struct CreateKeyParams {
     pub create_key_request: Option<models::CreateKeyRequest>,
 }
 
+/// struct for passing parameters to the method [`get_current_key`]
+#[derive(Clone, Debug)]
+pub struct GetCurrentKeyParams {
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
+}
+
 /// struct for passing parameters to the method [`revoke_key`]
 #[derive(Clone, Debug)]
 pub struct RevokeKeyParams {
@@ -94,6 +101,7 @@ pub enum CreateKeyError {
 pub enum GetCurrentKeyError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -183,12 +191,16 @@ pub fn create_key(
 /// Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
 pub fn get_current_key(
     configuration: &configuration::Configuration,
+    params: GetCurrentKeyParams,
 ) -> Result<ResponseContent<GetCurrentKeySuccess>, Error<GetCurrentKeyError>> {
     let uri_str = format!("{}/keys/current", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());

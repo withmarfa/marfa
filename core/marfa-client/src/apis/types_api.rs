@@ -35,6 +35,13 @@ pub struct GetTypeParams {
     pub id: String,
 }
 
+/// struct for passing parameters to the method [`list_types`]
+#[derive(Clone, Debug)]
+pub struct ListTypesParams {
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
+}
+
 /// struct for passing parameters to the method [`register_type`]
 #[derive(Clone, Debug)]
 pub struct RegisterTypeParams {
@@ -161,6 +168,7 @@ pub enum GetTypeError {
 #[serde(untagged)]
 pub enum ListTypesError {
     Status401(models::UnauthorizedRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -379,12 +387,16 @@ pub fn get_type(
 /// Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.
 pub fn list_types(
     configuration: &configuration::Configuration,
+    params: ListTypesParams,
 ) -> Result<ResponseContent<ListTypesSuccess>, Error<ListTypesError>> {
     let uri_str = format!("{}/types", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());

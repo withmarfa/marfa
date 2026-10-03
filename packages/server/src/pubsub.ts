@@ -325,6 +325,9 @@ export function emitWake(event: PubsubEventWithId): void {
 }
 
 export interface SubscribeOptions {
+  /** Internal copy-stream bound across queued and currently yielded frames. */
+  maxBufferedFrames?: number;
+  onBufferOverflow?: () => void;
   /** One type, or several. A list is answered by any entry matching, so
    *  the subtree rule above applies per entry rather than to the list. */
   typeFilter?: string | readonly string[];
@@ -500,6 +503,7 @@ export async function* subscribeAll(
   let wake: (() => void) | undefined;
   let ended = options?.signal?.aborted === true;
   let failure: Error | undefined;
+  let yieldedFrames = 0;
   const onFailure = (): void => {
     failure = new Error(
       "A transaction commit could not be reconciled for live delivery",
@@ -507,6 +511,16 @@ export async function* subscribeAll(
     wake?.();
   };
   const push = (frame: LiveFrame): void => {
+    if (failure || ended) return;
+    if (
+      options?.maxBufferedFrames !== undefined &&
+      queue.length + yieldedFrames >= options.maxBufferedFrames
+    ) {
+      failure = new Error("The live frame buffer overflowed");
+      options.onBufferOverflow?.();
+      wake?.();
+      return;
+    }
     queue.push(frame);
     wake?.();
   };
@@ -537,7 +551,10 @@ export async function* subscribeAll(
         wake = undefined;
         continue;
       }
-      yield queue.splice(0);
+      const batch = queue.splice(0);
+      yieldedFrames = batch.length;
+      yield batch;
+      yieldedFrames = 0;
     }
   } finally {
     emitter.off("LIVE_DELIVERY_FAILED", onFailure);

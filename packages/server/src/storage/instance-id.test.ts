@@ -102,10 +102,21 @@ function sequencedPair(inner: SettingsStore): [SettingsStore, SettingsStore] {
 }
 
 describe("the instance identity", () => {
-  it("mints one on a database that has none, and answers the same one after", async () => {
+  it("initializes identity at boot and answers the same one through ensured and pinned reads", async () => {
     const { storage } = await freshStorage();
-    expect(await storage.settings.get(INSTANCE_ID_KEY)).toBeNull();
+    const bootIdentity = await storage.settings.get(INSTANCE_ID_KEY);
+    expect(isValidId(bootIdentity!)).toBe(true);
+    expect(await ensureInstanceId(storage.settings)).toBe(bootIdentity);
+    expect(await storage.runInReadSnapshot((pin) => pin.instanceId)).toBe(
+      bootIdentity,
+    );
+    expect(await storage.settings.get(INSTANCE_ID_KEY)).toBe(bootIdentity);
+  });
 
+  it("ensureInstanceId mints and persists an identity when its settings store has none", async () => {
+    const { storage } = await freshStorage();
+    await storage.settings.release(INSTANCE_ID_KEY);
+    expect(await storage.settings.get(INSTANCE_ID_KEY)).toBeNull();
     const minted = await ensureInstanceId(storage.settings);
     expect(isValidId(minted)).toBe(true);
     expect(await ensureInstanceId(storage.settings)).toBe(minted);
@@ -137,6 +148,8 @@ describe("the instance identity", () => {
     // why nothing less does. The plain `Promise.all` version of this test
     // passed against `set` as happily as against `claim`.
     const { storage } = await freshStorage();
+    await storage.settings.release(INSTANCE_ID_KEY);
+    expect(await storage.settings.get(INSTANCE_ID_KEY)).toBeNull();
     const [leader, follower] = sequencedPair(storage.settings);
     const [a, b] = await Promise.all([
       ensureInstanceId(leader),

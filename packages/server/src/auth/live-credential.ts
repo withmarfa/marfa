@@ -1,6 +1,6 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
-import { oauthPrincipal } from "../middleware/auth.js";
+import { oauthPrincipal, toRequestApiKey } from "../middleware/auth.js";
 import type { CredentialKind } from "../routes/_blob-reach.js";
 
 /** A credential as it stands now, for work that outlives its request. */
@@ -102,4 +102,39 @@ export async function resolveLiveGrant(
   });
   if (!key) return null;
   return { key, kind: "oauth", permissions: scopes };
+}
+
+export type BoundCredential =
+  | Readonly<{ kind: "api_key"; id: string; hash: string }>
+  | Readonly<{
+      kind: "oauth";
+      id: string;
+      hash: string;
+      clientId: string;
+      authUserId: string;
+    }>;
+
+/** Reload only the bearer kind and identity authenticated at admission. */
+export async function resolveBoundCredential(
+  storage: Storage,
+  bound: BoundCredential,
+): Promise<LiveCredential | null> {
+  if (bound.kind === "api_key") {
+    const stored = await storage.keys.validate(bound.hash);
+    if (stored?.id !== bound.id) return null;
+    return {
+      key: toRequestApiKey(stored),
+      kind: "api_key",
+      permissions: stored.permissions,
+    };
+  }
+  const token = await storage.oauthProvider?.validateAccessToken(bound.hash);
+  if (
+    token?.id !== bound.id ||
+    token.clientId !== bound.clientId ||
+    token.userId !== bound.authUserId
+  )
+    return null;
+  const key = oauthPrincipal(token);
+  return key ? { key, kind: "oauth", permissions: token.scopes } : null;
 }

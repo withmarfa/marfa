@@ -7,6 +7,13 @@
 
 import { OpenAPIHono, z, type RouteConfig } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  conditionalReadBoundary,
+  CONDITIONAL_READ_OPERATIONS,
+  invalidReadViewRequest,
+} from "./middleware/read-view.js";
+import type { MiddlewareHandler } from "hono";
+import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
 
 /**
@@ -32,7 +39,23 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
       : Array.isArray(declared)
         ? declared
         : [declared];
-  return { ...route, middleware: [requireDeclaredCredential, ...rest] };
+  const copyBoundary: MiddlewareHandler<AppEnv> =
+    CONDITIONAL_READ_OPERATIONS.has(route.operationId ?? "")
+      ? conditionalReadBoundary
+      : async (c, next) => {
+          if (
+            c.req.method === "GET" &&
+            c.req.header("X-Marfa-Read-View") !== undefined
+          )
+            throw invalidReadViewRequest(
+              "This door does not support conditional copy reads",
+            );
+          await next();
+        };
+  return {
+    ...route,
+    middleware: [requireDeclaredCredential, copyBoundary, ...rest],
+  };
 }
 
 /**

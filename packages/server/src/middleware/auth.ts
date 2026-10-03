@@ -22,6 +22,8 @@ import {
 import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
 import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
+import type { BoundCredential } from "../auth/live-credential.js";
+import type { ReadViewAuthority } from "../storage/read-view.js";
 import { extensionLabelOf } from "../auth/extension-label.js";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +66,9 @@ export interface AppEnv extends Record<string, unknown> {
           authUserId: string | null;
         }
       | undefined;
+    boundCredential: BoundCredential | undefined;
+    readViewAuthority: ReadViewAuthority | undefined;
+    copyReadBoundary: MiddlewareHandler<AppEnv>;
     requestId: string;
     /**
      * The resolved `AppConfig`, stamped onto every request by `createApp`.
@@ -375,6 +380,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     }
 
     c.set("isBootstrap", false);
+    c.set("boundCredential", undefined);
 
     const authHeader = c.req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -420,12 +426,19 @@ export function authMiddleware(storage: Storage, salt: string) {
       const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
 
       const principal = oauthToken ? oauthPrincipal(oauthToken) : null;
-      if (!oauthToken || !principal) {
+      if (!oauthToken || !principal || oauthToken.userId === null) {
         c.set("apiKey", undefined);
         c.set("authType", undefined);
         return next();
       }
 
+      c.set("boundCredential", {
+        kind: "oauth",
+        id: oauthToken.id,
+        hash,
+        clientId: oauthToken.clientId,
+        authUserId: oauthToken.userId,
+      });
       c.set("apiKey", principal);
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
@@ -434,7 +447,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       c.set("oauthGrant", {
         scopes: oauthToken.scopes,
         clientId: oauthToken.clientId,
-        authUserId: oauthToken.userId ?? null,
+        authUserId: oauthToken.userId,
       });
 
       if (oauthToken.userId) {
@@ -457,6 +470,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
+      c.set("boundCredential", { kind: "api_key", id: stored.id, hash });
       c.set("apiKey", toRequestApiKey(stored));
       c.set("authType", "api_key");
 

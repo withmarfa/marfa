@@ -1,8 +1,15 @@
+import { readSnapshotRunner } from "./read-snapshot.js";
+import { initializeStructuralGeneration } from "./structural-generation.js";
+import { ensureInstanceId } from "../instance-id.js";
 import { publishBootRegistry } from "./registry-context.js";
 import { assertTransactionUsable } from "./transaction-control.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
-import { wrapDbWithRequestContext } from "./request-context.js";
+import {
+  wrapDbWithRequestContext,
+  guardStoreWithReadContext,
+  sqliteRequestContext,
+} from "./request-context.js";
 import { withCommitHooks } from "../commit-hooks.js";
 import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
@@ -54,9 +61,21 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     betterAuthDb: unknown;
   }
 > {
-  const { db: baseDb, raw, close } = await createConnection(sqlitePath);
+  const {
+    db: baseDb,
+    raw,
+    close,
+    captureRead,
+  } = await createConnection(sqlitePath);
 
+  try {
+    await initializeStructuralGeneration(raw);
+  } catch (error) {
+    await close();
+    throw error;
+  }
   const db = wrapDbWithRequestContext(baseDb);
+  await ensureInstanceId(new SqliteSettingsStore(db));
 
   const versionStore = new SqliteVersionStore(db);
   const searchStore = new SqliteSearchStore(db);
@@ -78,6 +97,14 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   // Awaited for the same reason as the type warmup below: a registry filled
   // after storage is handed back is a registry some request can miss.
   const loadedEdgeTypes = await edgeTypeStore.list();
+  const initialTypes = await typeStore.loadAll();
+  publishBootRegistry({
+    platform: projectPlatformRows(initialTypes),
+    custom: initialTypes
+      .filter((row) => row.origin !== "platform")
+      .map((row) => row.schema),
+    edges: loadedEdgeTypes.filter((schema) => !isCoreEdgeType(schema.id)),
+  });
 
   // Awaited rather than fire-and-forget: the platform vocabulary is seeded
   // data, so returning storage before the registry is filled opens a window
@@ -133,42 +160,49 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   reportEdgeNameCollisions(edgeNameCollisions());
 
   const storage = {
-    items: itemStore,
-    metadata: metadataStore,
-    versions: versionStore,
-    types: typeStore,
-    search: searchStore,
-    keys: keyStore,
-    blobs: blobRegistry,
-    edges: edgeStore,
-    edgeTypes: edgeTypeStore,
-    enrichment: enrichmentStore,
+    items: guardStoreWithReadContext(itemStore),
+    metadata: guardStoreWithReadContext(metadataStore),
+    versions: guardStoreWithReadContext(versionStore),
+    types: guardStoreWithReadContext(typeStore),
+    search: guardStoreWithReadContext(searchStore),
+    keys: guardStoreWithReadContext(keyStore),
+    blobs: guardStoreWithReadContext(blobRegistry),
+    edges: guardStoreWithReadContext(edgeStore),
+    edgeTypes: guardStoreWithReadContext(edgeTypeStore),
+    enrichment: guardStoreWithReadContext(enrichmentStore),
     // Thin reader over the @better-auth/oauth-provider plugin's tables
     // for the consent route and projection after-hooks. The plugin owns writes.
-    oauthProvider: oauthProviderStore,
-    outboundWebhooks: webhookStore,
-    outboundWebhookDeliveries: deliveryStore,
-    audit: auditStore,
-    eventLog: eventLogStore,
-    authSessions: authSessionStore,
-    owner: new SqliteOwnerStore(db),
-    settings: new SqliteSettingsStore(db),
+    oauthProvider: guardStoreWithReadContext(oauthProviderStore),
+    outboundWebhooks: guardStoreWithReadContext(webhookStore),
+    outboundWebhookDeliveries: guardStoreWithReadContext(deliveryStore),
+    audit: guardStoreWithReadContext(auditStore),
+    eventLog: guardStoreWithReadContext(eventLogStore),
+    authSessions: guardStoreWithReadContext(authSessionStore),
+    owner: guardStoreWithReadContext(new SqliteOwnerStore(db)),
+    settings: guardStoreWithReadContext(new SqliteSettingsStore(db)),
     // `bulk-action-job-store.ts` carries how a job is claimed without two
     // loops taking the same one.
-    bulkActionJobs: new SqliteBulkActionJobStore(db),
+    bulkActionJobs: guardStoreWithReadContext(new SqliteBulkActionJobStore(db)),
     // A claim has to commit whether or not the write's own transaction
     // does, and `db` is the only instance there is.
-    idempotency: new SqliteIdempotencyStore(db),
-    rateLimits: new SqliteRateLimitStore(db),
-    housekeeping: new SqliteHousekeepingStore(db),
-    connectors: new SqliteConnectorStore(db),
-    connectorState: new SqliteConnectorStateStore(db),
-    inbound: new SqliteInboundStore(db),
+    idempotency: guardStoreWithReadContext(new SqliteIdempotencyStore(db)),
+    rateLimits: guardStoreWithReadContext(new SqliteRateLimitStore(db)),
+    housekeeping: guardStoreWithReadContext(new SqliteHousekeepingStore(db)),
+    connectors: guardStoreWithReadContext(new SqliteConnectorStore(db)),
+    connectorState: guardStoreWithReadContext(
+      new SqliteConnectorStateStore(db),
+    ),
+    inbound: guardStoreWithReadContext(new SqliteInboundStore(db)),
     /**
      * Through the wrapped handle, so a call made inside an open transaction
      * becomes a savepoint of it, as the stores' own transactions do.
      */
-    assertTransactionUsable,
+    assertTransactionUsable() {
+      assertTransactionUsable();
+      const scope = sqliteRequestContext.getStore();
+      if (scope?.mode === "read") scope.assertActive();
+    },
+    runInReadSnapshot: readSnapshotRunner(captureRead),
     async runInTransaction<T>(
       fn: () => T | Promise<T>,
       options?: { retainCommitHooksOnUncertain?: boolean },

@@ -683,6 +683,38 @@ function decomposeCoveredTypes(types: string[]): {
   return { global: false, pairs };
 }
 
+export function sourceFilterIncludesItem(
+  filter: SourceFilterSettings | undefined,
+  item: { type: string; source: string },
+): boolean {
+  if (!filter) return true;
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  const covered =
+    global ||
+    pairs.some(
+      ({ exact }) => item.type === exact || item.type.startsWith(`${exact}.`),
+    );
+  return !covered || filter.sources.includes(item.source);
+}
+
+export function canonicalSourceFilter(
+  filter: SourceFilterSettings | undefined,
+): { types: string[]; sources: string[] } | null {
+  if (!filter) return null;
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  const roots = [...new Set(pairs.map(({ exact }) => exact))].sort();
+  const types = global
+    ? ["*"]
+    : roots.filter(
+        (root) =>
+          !roots.some(
+            (ancestor) => root !== ancestor && root.startsWith(`${ancestor}.`),
+          ),
+      );
+  if (types.length === 0) return null;
+  return { types, sources: [...new Set(filter.sources)].sort() };
+}
+
 /**
  * The `source_filter` lever as a row predicate, for the Drizzle query path.
  *

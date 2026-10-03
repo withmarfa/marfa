@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import {
+  markStructuralReadChange,
   ErrorCode,
   MarfaError,
   registerEdgeTypeSchema,
@@ -50,6 +51,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
           updated_at: now,
         })
         .run();
+      markStructuralReadChange();
       registerEdgeTypeSchema(schema);
       return schema;
     });
@@ -57,8 +59,14 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
 
   async delete(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
-      await tx.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
-      unregisterEdgeTypeSchema(id);
+      const deleted = await tx
+        .delete(edgeTypes)
+        .where(eq(edgeTypes.id, id))
+        .returning({ id: edgeTypes.id });
+      if (deleted.length > 0) {
+        markStructuralReadChange();
+        unregisterEdgeTypeSchema(id);
+      }
     });
   }
 }

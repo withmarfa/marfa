@@ -7,11 +7,18 @@ export type TransactionOutcome =
 
 export interface StructuralParticipant {
   readonly changed: boolean;
+  readonly structuralChanged: boolean;
+  seal(): void;
   prepare(): void;
   committed(): void;
   rolledBack(): void;
   unavailable(): void;
-  uncertain(load: () => Promise<RegistrySnapshot>): Promise<void>;
+  uncertain(
+    load: () => Promise<{
+      registry: RegistrySnapshot;
+      structuralGeneration: string;
+    }>,
+  ): Promise<void>;
 }
 
 /** Shared by the root transaction and every savepoint, including native cleanup. */

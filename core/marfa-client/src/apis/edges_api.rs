@@ -41,6 +41,8 @@ pub struct DeleteEdgeParams {
 pub struct GetEdgeParams {
     /// Edge id.
     pub id: String,
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_edges`]
@@ -56,6 +58,8 @@ pub struct ListEdgesParams {
     pub limit: Option<i32>,
     /// Pagination cursor from a previous response.
     pub cursor: Option<String>,
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_item_backrefs`]
@@ -82,6 +86,8 @@ pub struct ListItemEdgesParams {
     pub limit: Option<i32>,
     /// Pagination cursor from a previous response.
     pub cursor: Option<String>,
+    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    pub x_marfa_read_view: Option<String>,
 }
 
 /// struct for passing parameters to the method [`update_edge`]
@@ -213,6 +219,7 @@ pub enum GetEdgeError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::EdgeNotFoundRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -225,6 +232,7 @@ pub enum ListEdgesError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -251,6 +259,7 @@ pub enum ListItemEdgesError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
+    Status409(models::ReadViewChangedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -422,6 +431,9 @@ pub fn get_edge(
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
+    }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());
     };
@@ -475,6 +487,9 @@ pub fn list_edges(
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());
@@ -579,6 +594,9 @@ pub fn list_item_edges(
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(param_value) = params.x_marfa_read_view {
+        req_builder = req_builder.header("X-Marfa-Read-View", param_value.to_string());
     }
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());

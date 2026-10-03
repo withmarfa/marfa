@@ -1,5 +1,6 @@
 import { projectPlatformRows } from "../platform-family.js";
 import {
+  markStructuralReadChange,
   listTypes,
   getTypeSchema,
   registerTypeSchema,
@@ -52,6 +53,7 @@ export class SqliteTypeStore implements TypeStore {
         }
         throw err;
       }
+      markStructuralReadChange();
       // Rows a forced delete left are this type's again; the tombstones their
       // purges left were the deleted type's.
       await forgetType(tx, schema.id);
@@ -68,7 +70,11 @@ export class SqliteTypeStore implements TypeStore {
     const now = new Date().toISOString();
     await this.db.transaction(async (tx) => {
       const stored = await tx
-        .select({ origin: types.origin, family: types.family })
+        .select({
+          origin: types.origin,
+          family: types.family,
+          schema: types.schema,
+        })
         .from(types)
         .where(eq(types.id, id))
         .get();
@@ -84,6 +90,11 @@ export class SqliteTypeStore implements TypeStore {
           `Type "${id}" not found`,
         );
       }
+      if (
+        stored &&
+        (JSON.parse(stored.schema) as TypeSchema).parent !== schema.parent
+      )
+        markStructuralReadChange();
       if (getTypeSchema(id)?.link_field !== schema.link_field) {
         await rebuildTypeLinks(tx, id, schema.link_field);
       }
@@ -103,8 +114,11 @@ export class SqliteTypeStore implements TypeStore {
 
   async delete(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
-      await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
-      unregisterTypeSchema(id);
+      const deleted = await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
+      if (deleted.rowsAffected > 0) {
+        markStructuralReadChange();
+        unregisterTypeSchema(id);
+      }
       await forgetType(tx, id);
     });
   }
@@ -155,16 +169,22 @@ export class SqliteTypeStore implements TypeStore {
     seeded: readonly SeededPlatformType[],
   ): Promise<string[]> {
     const now = new Date().toISOString();
-    for (const { schema, family } of seeded) {
-      // Upsert rather than insert-if-absent: a redeploy carrying a changed
-      // shipped schema has to move the row, or the instance keeps resolving
-      // whatever it was first seeded with.
-      //
-      // **The `WHERE` is the guard.** `POST /types` stores a registration in
-      // this same table. Without it, a build that starts shipping an
-      // identifier somebody already registered rewrote their schema
-      // unattended on the next boot.
-      await this.db.run(sql`
+    return this.db.transaction(async (tx) => {
+      for (const { schema, family } of seeded) {
+        const previous = await tx
+          .select()
+          .from(types)
+          .where(eq(types.id, schema.id))
+          .get();
+        // Upsert rather than insert-if-absent: a redeploy carrying a changed
+        // shipped schema has to move the row, or the instance keeps resolving
+        // whatever it was first seeded with.
+        //
+        // **The `WHERE` is the guard.** `POST /types` stores a registration in
+        // this same table. Without it, a build that starts shipping an
+        // identifier somebody already registered rewrote their schema
+        // unattended on the next boot.
+        const written = await tx.run(sql`
         INSERT INTO types (id, schema, origin, family, created_at, updated_at)
         VALUES (${schema.id}, ${JSON.stringify(schema)}, 'platform', ${family}, ${now}, ${now})
         ON CONFLICT (id) DO UPDATE SET
@@ -174,21 +194,30 @@ export class SqliteTypeStore implements TypeStore {
           updated_at = ${now}
         WHERE types.origin = 'platform'
       `);
-    }
-    const rows = await this.db
-      .select({ id: types.id })
-      .from(types)
-      .where(
-        and(
-          ne(types.origin, "platform"),
-          inArray(
-            types.id,
-            seeded.map(({ schema }) => schema.id),
+        if (written.rowsAffected > 0) {
+          const previousParent = previous
+            ? (JSON.parse(previous.schema) as TypeSchema).parent
+            : undefined;
+          if (previous?.family !== family || previousParent !== schema.parent)
+            markStructuralReadChange();
+          stagePlatformRegistryType(schema, family);
+        }
+      }
+      const rows = await tx
+        .select({ id: types.id })
+        .from(types)
+        .where(
+          and(
+            ne(types.origin, "platform"),
+            inArray(
+              types.id,
+              seeded.map(({ schema }) => schema.id),
+            ),
           ),
-        ),
-      )
-      .all();
-    return rows.map((r) => r.id);
+        )
+        .all();
+      return rows.map((r) => r.id);
+    });
   }
 
   async deletePlatformType(id: string): Promise<boolean> {
@@ -197,7 +226,10 @@ export class SqliteTypeStore implements TypeStore {
         .delete(types)
         .where(and(eq(types.id, id), eq(types.origin, "platform")))
         .returning({ id: types.id });
-      if (deleted.length > 0) removePlatformRegistryType(id);
+      if (deleted.length > 0) {
+        markStructuralReadChange();
+        removePlatformRegistryType(id);
+      }
       return deleted.length > 0;
     });
   }

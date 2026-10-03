@@ -3,6 +3,7 @@ import {
   mergeRegistryFrame,
   discardRegistryFrame,
   type RegistryFrame,
+  type RegistryReadScope,
 } from "@withmarfa/shared";
 import {
   registryContext,
@@ -10,6 +11,7 @@ import {
   assertRegistryReady,
 } from "./registry-context.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { ReadLifetime } from "./read-lifetime.js";
 import type { DrizzleDb } from "./connection.js";
 import {
   TransactionControl,
@@ -69,9 +71,16 @@ export type SqliteTxContext = Parameters<
   Parameters<DrizzleDb["transaction"]>[0]
 >[0];
 
-interface SqliteRequestContext {
+export interface SqliteReadScope extends RegistryReadScope {
+  tx: DrizzleDb;
+  lifetime: ReadLifetime;
+  pin: Readonly<{ instanceId: string; structuralGeneration: string }>;
+}
+interface SqliteWriteScope {
+  mode: "write";
   tx: SqliteTxContext;
 }
+type SqliteRequestContext = SqliteWriteScope | SqliteReadScope;
 
 export const sqliteRequestContext =
   new AsyncLocalStorage<SqliteRequestContext>();
@@ -86,10 +95,20 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
   return new Proxy(baseDb, {
     get(target, prop, receiver) {
       const ctx = sqliteRequestContext.getStore();
+      if (ctx?.mode === "read") ctx.assertActive();
       // `tx` and `baseDb` differ in TS surface but are runtime-compatible
       // for the storage-layer surface area. The cast lets the proxy's
       // `get` trap forward through either uniformly.
       const source: object = ctx?.tx ?? target;
+
+      if (
+        ctx?.mode === "read" &&
+        ["transaction", "insert", "update", "delete"].includes(String(prop))
+      )
+        return () => {
+          ctx.assertActive();
+          throw new Error("A read snapshot cannot write or nest transactions");
+        };
 
       if (prop === "transaction") {
         const original = Reflect.get(source, prop, source) as unknown;
@@ -106,7 +125,11 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
             root.assertUsable();
             assertRegistryReady();
             const parentFrame = registryContext.getStore();
-            if (parentFrame && !parentFrame.active)
+            if (parentFrame?.mode === "read")
+              throw new Error(
+                "A read snapshot cannot nest a writer transaction",
+              );
+            if (parentFrame && (!parentFrame.active || parentFrame.sealed))
               throw new Error("Registry transaction context is closed");
             let frame: RegistryFrame | undefined;
             const previousCause = root.callbackCause;
@@ -123,18 +146,21 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
                     root.participant = structural.participant;
                   }
                   return registryContext.run(frame, () =>
-                    sqliteRequestContext.run({ tx: newTx }, async () => {
-                      try {
-                        const result = await callback(newTx);
-                        root.assertUsable();
-                        return result;
-                      } catch (error) {
-                        callbackState.failed = true;
-                        callbackState.error = error;
-                        root.callbackCause = error;
-                        throw error;
-                      }
-                    }),
+                    sqliteRequestContext.run(
+                      { mode: "write", tx: newTx },
+                      async () => {
+                        try {
+                          const result = await callback(newTx);
+                          root.assertUsable();
+                          return result;
+                        } catch (error) {
+                          callbackState.failed = true;
+                          callbackState.error = error;
+                          root.callbackCause = error;
+                          throw error;
+                        }
+                      },
+                    ),
                   );
                 },
                 ...rest,
@@ -148,7 +174,7 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
                   root.invalidate(
                     callbackState.failed ? callbackState.error : error,
                     "poisoned",
-                    "unknown",
+                    root.outcome === "rolled_back" ? "rolled_back" : "unknown",
                   );
                 if (callbackState.failed) root.diagnose(error);
               }
@@ -167,9 +193,65 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
       // the Proxy. Drizzle's query builders return chained objects whose
       // internal references would otherwise dangle.
       if (typeof value === "function") {
-        return (value as (...args: unknown[]) => unknown).bind(source);
+        return (...args: unknown[]) => {
+          if (ctx?.mode === "read") ctx.assertActive();
+          const invoke = () =>
+            (value as (...args: unknown[]) => unknown).apply(source, args);
+          return ctx?.mode === "read"
+            ? runWithReadContext(ctx, invoke)
+            : invoke();
+        };
       }
       return value;
+    },
+  });
+}
+
+function runWithReadContext<T>(scope: SqliteReadScope, fn: () => T): T {
+  scope.assertActive();
+  // Retained methods may be dispatched by another async context while this
+  // scope is open. Both SQL and registry selection must follow the capability.
+  return registryContext.run(scope, () => sqliteRequestContext.run(scope, fn));
+}
+
+export function guardStoreWithReadContext<T extends object>(store: T): T {
+  const methods = new WeakMap<
+    (...args: unknown[]) => unknown,
+    (...args: unknown[]) => unknown
+  >();
+  return new Proxy(store, {
+    get(target, prop) {
+      const captured = sqliteRequestContext.getStore();
+      if (captured?.mode === "read") captured.assertActive();
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      const method = value as (...args: unknown[]) => unknown;
+      if (captured?.mode !== "read") {
+        const existing = methods.get(method);
+        if (existing) return existing;
+      }
+      const wrapped = new Proxy(method, {
+        apply(fn, _thisArg, args) {
+          const scope =
+            captured?.mode === "read"
+              ? captured
+              : sqliteRequestContext.getStore();
+          if (scope?.mode === "read") scope.assertActive();
+          const invoke = () => Reflect.apply(fn, target, args);
+          const result: unknown =
+            scope?.mode === "read"
+              ? runWithReadContext(scope, invoke)
+              : invoke();
+          if (scope?.mode === "read" && result instanceof Promise)
+            return result.then((value: unknown) => {
+              scope.assertActive();
+              return value;
+            });
+          return result;
+        },
+      });
+      if (captured?.mode !== "read") methods.set(method, wrapped);
+      return wrapped;
     },
   });
 }

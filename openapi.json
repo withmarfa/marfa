@@ -630,10 +630,26 @@
             "$ref": "#/components/schemas/Item"
           },
           {
-            "$ref": "#/components/schemas/ItemWithMetadata"
+            "$ref": "#/components/schemas/ItemReadWithMetadata"
           }
         ],
-        "description": "An `Item`, or, when `include` names `metadata`, an `ItemWithMetadata`; every row of one page is the same shape."
+        "description": "An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape."
+      },
+      "ItemReadWithMetadata": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ItemWithMetadata"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "listed": {
+                "type": "boolean",
+                "description": "Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection."
+              }
+            }
+          }
+        ]
       },
       "MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -682,10 +698,14 @@
               "$ref": "#/components/schemas/EdgePage"
             }
           },
+          "listed": {
+            "type": "boolean",
+            "description": "Required on conditional copy reads; direct authority is independent of this item-set membership."
+          },
           "neighbors": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ItemWithMetadata"
+              "$ref": "#/components/schemas/ItemReadWithMetadata"
             }
           },
           "neighbors_truncated": {
@@ -5259,6 +5279,36 @@
           "error"
         ]
       },
+      "ReadViewChangedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "read_view_changed"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "IdempotencyKeyInFlightRefusal": {
         "type": "object",
         "properties": {
@@ -5358,6 +5408,15 @@
         "schema": {
           "type": "integer",
           "minimum": 0
+        }
+      },
+      "X-Marfa-Read-View": {
+        "description": "A matching opaque read-view certificate, supplied only after a conditional copy read and its snapshot have completed. Successful conditional reads and snapshot-attributed resource refusals carry it with Cache-Control: no-store. Ordinary reads and write receipts carry none.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "minLength": 64,
+          "maxLength": 64
         }
       },
       "X-Request-ID": {
@@ -6036,6 +6095,18 @@
             "description": "Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token.",
             "name": "include",
             "in": "query"
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
           }
         ],
         "responses": {
@@ -6063,6 +6134,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -6132,6 +6206,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -6593,6 +6700,18 @@
             "description": "Comma-separated extras to hydrate inline: backrefs, neighbors, versions.",
             "name": "include",
             "in": "query"
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
           }
         ],
         "responses": {
@@ -6620,6 +6739,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -6710,6 +6832,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -6719,6 +6844,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ItemNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -13648,6 +13806,18 @@
             "description": "Pagination cursor from a previous response.",
             "name": "cursor",
             "in": "query"
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
           }
         ],
         "responses": {
@@ -13675,6 +13845,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -13765,6 +13938,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -13774,6 +13950,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ItemNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -14202,6 +14411,18 @@
             "description": "Pagination cursor from a previous response.",
             "name": "cursor",
             "in": "query"
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
           }
         ],
         "responses": {
@@ -14229,6 +14450,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -14298,6 +14522,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -14832,6 +15089,18 @@
             "description": "Edge id.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
           }
         ],
         "responses": {
@@ -14859,6 +15128,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -14919,6 +15191,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -14928,6 +15203,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EdgeNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -16395,6 +16703,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -16404,6 +16715,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -16491,7 +16832,21 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
+          }
+        ]
       }
     },
     "/edge-types/{id}": {
@@ -16836,6 +17191,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -16845,6 +17203,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -16932,7 +17320,21 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
+          }
+        ]
       },
       "post": {
         "operationId": "registerType",
@@ -28014,6 +28416,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
               }
             }
           },
@@ -28053,6 +28458,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Read-View": {
+                "$ref": "#/components/headers/X-Marfa-Read-View"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
@@ -28140,7 +28578,21 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read."
+          }
+        ]
       }
     },
     "/keys/{id}": {
@@ -32654,13 +33106,37 @@
           "Events"
         ],
         "summary": "Stream change events",
-        "description": "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\nThe stream opens with a `stream_cursor` frame, carrying `{ \"type\": \"stream_cursor\", \"cursor\": \"<event id>\" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\nTreat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\nOnce the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ \"type\": \"stream_live\", \"cursor\": \"<event id>\" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.\n\nThe cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\nAn item frame carries `type` and `item`, and an edge frame `type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.\n\nA stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame — `{ \"type\": \"stream_incomplete\", \"reason\": \"…\", \"cursor\": \"<event id>\" | null }` — and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected) or `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.\n\nThe stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. A reconnect with a revoked key is refused `401`; an app reconnects with the token it refreshed to.\n\nA `Last-Event-ID` past the log's head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ \"type\": \"cursor_ahead\", \"requested\": \"<event id>\", \"head\": \"<event id>\" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.",
+        "description": "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\nFor a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{\"type\":\"read_view_changed\"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.\n\nThe stream opens with a `stream_cursor` frame, carrying `{ \"type\": \"stream_cursor\", \"cursor\": \"<event id>\" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\nFor an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\nOnce the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ \"type\": \"stream_live\", \"cursor\": \"<event id>\" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.\n\nThe cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\nAn item frame carries `type` and `item`, and an edge frame `type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.\n\nA stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame — `{ \"type\": \"stream_incomplete\", \"reason\": \"…\", \"cursor\": \"<event id>\" | null }` — and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected) or `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.\n\nThe stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. A reconnect with a revoked key is refused `401`; an app reconnects with the token it refreshed to.\n\nA `Last-Event-ID` past the log's head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ \"type\": \"cursor_ahead\", \"requested\": \"<event id>\", \"head\": \"<event id>\" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "parameters": [
+          {
+            "name": "copy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Select certified copy mode; requires explicit edges=all and forbids every other query key."
+          },
+          {
+            "name": "X-Marfa-Read-View",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "In copy mode, send one certificate together with Last-Event-ID to resume. Bootstrap omits both headers. This header is invalid on an ordinary stream."
+          },
           {
             "name": "type",
             "in": "query",
@@ -32691,7 +33167,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor."
+            "description": "Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor only for an ordinary stream; copy mode refuses it."
           }
         ],
         "responses": {
@@ -32788,6 +33264,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadViewChangedRefusal"
                 }
               }
             },
