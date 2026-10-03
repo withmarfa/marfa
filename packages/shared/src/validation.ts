@@ -18,18 +18,20 @@ const FLEXIBLE_TIMESTAMP =
 /** Returns true if `value` is a valid ISO 8601 timestamp (full datetime, date-only, or year-month). */
 export function isValidTimestamp(value: string): boolean {
   if (!FLEXIBLE_TIMESTAMP.test(value)) return false;
-  // Date constructor silently rolls over invalid dates (Feb 30 → Mar 2).
-  // For date-containing strings, compare parsed components to originals.
   const parts = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?/.exec(value);
   if (!parts) return false;
   const d = new Date(value);
   if (isNaN(d.getTime())) return false;
-  // Only validate day/month if present in the input
   if (parts[3] !== undefined) {
-    const utc = value.includes("T") || value.endsWith("Z");
-    const day = utc ? d.getUTCDate() : d.getDate();
-    const month = utc ? d.getUTCMonth() + 1 : d.getMonth() + 1;
-    if (day !== Number(parts[3]) || month !== Number(parts[2])) return false;
+    // Validate the written calendar date before its offset moves the instant
+    // onto another date. Date parsing alone rolls impossible days forward.
+    const calendar = new Date(value.slice(0, 10));
+    if (
+      calendar.getUTCFullYear() !== Number(parts[1]) ||
+      calendar.getUTCDate() !== Number(parts[3]) ||
+      calendar.getUTCMonth() + 1 !== Number(parts[2])
+    )
+      return false;
   }
   return true;
 }

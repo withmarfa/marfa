@@ -258,45 +258,13 @@ export interface SearchFilters {
 }
 
 // ---------------------------------------------------------------------------
-// Time-bound normalization
+// Timestamp normalization
 // ---------------------------------------------------------------------------
 
-/** A date and a time with no zone at all. Valid RFC 3339 is not, strictly,
- *  but `isValidTimestamp` accepts it and callers send it. */
 const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
 
-/**
- * Re-spell a caller's time bound in the exact shape the stored columns
- * carry, or refuse it.
- *
- * Every time column here is text, and every one the server stamps is
- * written as `new Date().toISOString()` emits: twenty-four characters,
- * always `.sssZ`. The bounds compile to a text comparison against that,
- * and text comparison is lexical — so a spelling that names the right
- * instant at a different width answers the wrong question. `Z` is 90, `.`
- * is 46 and `+` is 43, so `2026-03-01T12:00:00Z` excludes a row stamped
- * `2026-03-01T12:00:00.500Z` and `2026-03-01T12:00:00-01:00` includes
- * every row of the hour before the instant it names. Both return a 200
- * and a well-formed page, which is the silent loss the catch-up filter
- * exists to remove.
- *
- * Re-spelling rather than refusing, because second precision is valid
- * RFC 3339 and is the form a hand-written client reaches for first;
- * refusing it would be hostile. A value that is not a timestamp at all
- * is still refused.
- *
- * A date-time carrying no zone is read as UTC rather than handed to
- * `Date`, which reads it as the server's local time. The stamped text it
- * is compared against is UTC, so UTC preserves what the caller already
- * meant; local time would move the bound by whatever offset the deployment
- * happens to run in.
- *
- * One column is not server-stamped: the item listing's `occurred_*`
- * bounds read `COALESCE(occurred_at, created_at)`, and `occurred_at` is
- * whatever the caller wrote. So this makes the comparison exact against
- * every row the server stamped, and leaves it no worse than it already
- * was against one a caller spelled its own way.
- */
+/** Text comparisons require one UTC spelling at millisecond precision.
+ * Zone-less date-times use UTC so the host's zone cannot move the instant. */
 export function normalizeTimeBound(value: string, field: string): string;
 export function normalizeTimeBound(
   value: string | undefined,
@@ -307,14 +275,22 @@ export function normalizeTimeBound(
   field: string,
 ): string | undefined {
   if (value === undefined) return undefined;
-  if (!isValidTimestamp(value)) {
+  const spelling = ZONELESS_DATETIME.test(value) ? `${value}Z` : value;
+  if (!isValidTimestamp(spelling)) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       `Invalid ${field}: expected an RFC 3339 timestamp`,
       { field, value },
     );
   }
-  const instant = new Date(ZONELESS_DATETIME.test(value) ? `${value}Z` : value);
+  const instant = new Date(spelling);
+  if (instant.getUTCFullYear() < 0 || instant.getUTCFullYear() > 9999) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid ${field}: the UTC year must be between 0000 and 9999`,
+      { field, value },
+    );
+  }
   return instant.toISOString();
 }
 

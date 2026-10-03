@@ -22,7 +22,7 @@ describe("filterToRawSql", () => {
       const expr = parseFilter('occurred_at gt "2026-01-01"');
       const result = filterToRawSql(expr, "i");
       expect(result.clause).toBe("i.occurred_at > ?");
-      expect(result.params).toEqual(["2026-01-01"]);
+      expect(result.params).toEqual(["2026-01-01T00:00:00.000Z"]);
     });
 
     it("generates system field contains", () => {
