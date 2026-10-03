@@ -3,6 +3,7 @@ use clap::Parser;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::Instant;
 
@@ -16,7 +17,8 @@ fn credential_process_child() {
     assert!(std::env::var_os("MARFA_TEST_CREDENTIAL_STORE").is_some());
     let origin = std::env::var("MARFA_TEST_ORIGIN").unwrap();
     if let Some(ready) = std::env::var_os("MARFA_TEST_READY") {
-        std::fs::write(ready, "ready").unwrap();
+        std::fs::write(&ready, "ready")
+            .unwrap_or_else(|error| panic!("{operation} readiness at {ready:?}: {error}"));
     }
     match operation.as_str() {
         "seed" | "seed-no-revoke" | "seed-fresh" => credentials::keep(
@@ -166,15 +168,18 @@ struct Fixture {
 
 impl Fixture {
     fn new(origin: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let folder = std::env::temp_dir().join(format!(
-            "marfa-credential-process-{}-{}",
+            "marfa-credential-process-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(folder.join("store")).unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::create_dir(folder.join("store")).unwrap();
         let fixture = Self {
             folder,
             origin: origin.into(),
