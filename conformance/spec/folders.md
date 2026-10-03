@@ -109,11 +109,7 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 ## Local document field refusals
 
-53. When a document create or edit fails local item field validation, the folder MUST flag that document with the refusal, retain its bytes and continue scanning other files. When the document is corrected or its held type permits the same bytes, the folder MUST allow a later scan to retry admission. When a document edit fails because its type is absent from the held catalog, the folder MUST apply the same containment and retry rules.
-
-    **Reason:** One invalid document must not prevent other files from being saved, and admission refusal must not consume or overwrite the person's edit.
-
-    **Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`.
+53. When a document create or edit fails local item field validation, the folder MUST flag that document with the refusal, retain its bytes and continue scanning other files. When the document is corrected or its held type permits the same bytes, the folder MUST allow a later scan to retry admission. When a document edit fails because its type is absent from the held catalog, the folder MUST apply the same containment and retry rules. **Reason:** One invalid document must not prevent other files from being saved, and admission refusal must not consume or overwrite the person's edit. **Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `› retries unchanged document bytes after their destination type is registered`.
 
 ## What the real server cannot be made to produce
 
