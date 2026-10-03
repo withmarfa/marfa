@@ -2942,15 +2942,25 @@ impl Folder {
             edge_types: &edge_types,
             names: &names,
         };
+        let mut refused = HashSet::new();
         for entry in placing {
-            if self.write_placed(&entry, &rendering, &withheld, Some(&leaving), &mut report)? {
-                waiting.push(entry);
+            match self.write_placed(&entry, &rendering, &withheld, Some(&leaving), &mut report)? {
+                PlacementWrite::Waiting => waiting.push(entry),
+                PlacementWrite::Refused => {
+                    refused.insert(names::folded(&entry.want));
+                }
+                PlacementWrite::Done => {}
             }
         }
         for entry in waiting {
-            self.write_placed(&entry, &rendering, &withheld, None, &mut report)?;
+            if matches!(
+                self.write_placed(&entry, &rendering, &withheld, None, &mut report)?,
+                PlacementWrite::Refused
+            ) {
+                refused.insert(names::folded(&entry.want));
+            }
         }
-        self.remove_departed(&members, &settings, &lists, &mut report)?;
+        self.remove_departed(&members, &settings, &lists, &refused, &mut report)?;
         report.flagged = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -3006,7 +3016,8 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.root.join(STATE_DIR)))
     }
 
-    /// Answers whether it waits for the file at that path to move away first.
+    /// Refusal protects the destination through this pull, including from
+    /// removal under an older binding restored by a failed landing.
     fn write_placed(
         &self,
         entry: &Placing<'_>,
@@ -3014,7 +3025,7 @@ impl Folder {
         withheld: &placement::Withheld,
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
-    ) -> Result<bool> {
+    ) -> Result<PlacementWrite> {
         let Placing {
             item,
             bound,
@@ -3024,10 +3035,15 @@ impl Folder {
         } = entry;
         let (item, want) = (*item, want.clone());
         let catalog = rendering.catalog;
-        if let Some((from, theirs)) = taken
-            && self.take_in(item, &want, from, theirs, withheld, report)?
-        {
-            return Ok(false);
+        if let Some((from, theirs)) = taken {
+            match self.take_in(item, &want, from, theirs, withheld, report)? {
+                TakeIn::Taken => return Ok(PlacementWrite::Done),
+                TakeIn::Refused => {
+                    report.unwritten += 1;
+                    return Ok(PlacementWrite::Refused);
+                }
+                TakeIn::Inapplicable => {}
+            }
         }
         let path = self.root.join(&want);
         let (bytes, wrote, lines) = match bytes_of(item, catalog) {
@@ -3053,7 +3069,7 @@ impl Folder {
                         // A held copy that cannot be read is one file's failure too.
                         Ok(Err(_)) | Err(_) => {
                             report.absent += 1;
-                            return Ok(false);
+                            return Ok(PlacementWrite::Done);
                         }
                     },
                 }
@@ -3101,7 +3117,7 @@ impl Folder {
             && bytes_of(item, catalog).is_none()
             && self.deleted_as_agreed(item, bound, rendering)?
         {
-            return Ok(false);
+            return Ok(PlacementWrite::Done);
         }
 
         // The bytes on the disk, not the mapping's memory of them: a file
@@ -3123,7 +3139,7 @@ impl Folder {
             Some(bound) if ours && bound.content_hash == hash => true,
             Some(bound) if changed(bound) => {
                 report.unwritten += 1;
-                return Ok(false);
+                return Ok(PlacementWrite::Done);
             }
             Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
             _ => false,
@@ -3135,10 +3151,10 @@ impl Folder {
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
         if occupied && !rebound {
             if leaving.is_some_and(|leaving| leaving.contains(&names::folded(&want))) {
-                return Ok(true);
+                return Ok(PlacementWrite::Waiting);
             }
             report.unwritten += 1;
-            return Ok(false);
+            return Ok(PlacementWrite::Done);
         }
         if rebound {
             let conn = self.core.conn()?;
@@ -3159,9 +3175,9 @@ impl Folder {
                     writes: state::Writes::default(),
                 },
             )?;
-            state::journal_clear(&conn, &want)?;
+            state::journal_clear_for(&conn, &want, &item.id)?;
             report.unchanged += 1;
-            return Ok(false);
+            return Ok(PlacementWrite::Done);
         }
         if in_place {
             if bytes_of(item, catalog).is_some() {
@@ -3169,7 +3185,7 @@ impl Folder {
             }
             report.placed += usize::from(self.place(&item.id, &want, withheld)?);
             report.unchanged += 1;
-            return Ok(false);
+            return Ok(PlacementWrite::Done);
         }
 
         // Written over an edit still waiting, the line it writes is spent
@@ -3278,7 +3294,7 @@ impl Folder {
                 None => state::unbind(&conn, &want)?,
             }
             report.unwritten += 1;
-            return Ok(false);
+            return Ok(PlacementWrite::Refused);
         }
         // Landed: the old bytes are no longer the folder's own.
         state::bind(&*self.core.conn()?, &binding(None))?;
@@ -3324,10 +3340,11 @@ impl Folder {
         } else {
             report.rewritten += 1;
         }
-        Ok(false)
+        Ok(PlacementWrite::Done)
     }
 
-    /// Bound before it lands. Answers whether it did.
+    /// A failed move has already decided against this destination. It must not
+    /// fall through to writing or adopting a byte-identical competing file.
     fn take_in(
         &self,
         item: &Item,
@@ -3336,15 +3353,15 @@ impl Folder {
         theirs: &state::Bound,
         withheld: &placement::Withheld,
         report: &mut PullReport,
-    ) -> Result<bool> {
+    ) -> Result<TakeIn> {
         let path = self.root.join(want);
         if path.exists() {
-            return Ok(false);
+            return Ok(TakeIn::Inapplicable);
         }
         // Read again, since fetching other files' bytes since the pull chose
         // it leaves time for an edit its folder has yet to send.
         if !std::fs::read(from).is_ok_and(|bytes| state::hash(&bytes) == theirs.content_hash) {
-            return Ok(false);
+            return Ok(TakeIn::Inapplicable);
         }
         let binding = |identity: Option<String>| state::Bound {
             path: want.to_string(),
@@ -3407,10 +3424,10 @@ impl Folder {
                 Some(before) => state::bind(&conn, before)?,
                 None => state::unbind(&conn, want)?,
             }
-            return Ok(false);
+            return Ok(TakeIn::Refused);
         }
         state::bind(&*self.core.conn()?, &binding(None))?;
-        state::journal_clear(&*self.core.conn()?, want)?;
+        state::journal_clear_for(&*self.core.conn()?, want, &item.id)?;
         if let Ok(metadata) = std::fs::symlink_metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
@@ -3418,7 +3435,7 @@ impl Folder {
         }
         report.placed += usize::from(self.place(&item.id, want, withheld)?);
         report.taken += 1;
-        Ok(true)
+        Ok(TakeIn::Taken)
     }
 
     /// Trashes nothing. Answers whether it did.
@@ -3485,6 +3502,7 @@ impl Folder {
         members: &HashSet<String>,
         settings: &Settings,
         lists: &Lists,
+        refused: &HashSet<String>,
         report: &mut PullReport,
     ) -> Result<()> {
         let (bound, of) = {
@@ -3493,6 +3511,9 @@ impl Folder {
         };
         let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
+            if refused.contains(&names::folded(&row.path)) {
+                continue;
+            }
             match self.departing(&row, members, settings, lists)? {
                 Departing::No => {}
                 Departing::Kept => report.kept += 1,
@@ -4043,6 +4064,18 @@ enum Departing {
     Kept,
     Unread,
     Yes,
+}
+
+enum PlacementWrite {
+    Done,
+    Waiting,
+    Refused,
+}
+
+enum TakeIn {
+    Inapplicable,
+    Taken,
+    Refused,
 }
 
 struct Placing<'a> {
