@@ -828,10 +828,7 @@ async function put(
   let existing: Item | null = null;
   let matchedBy: "source_id" | "id" | null = null;
   if (source !== undefined && write.source_id !== undefined) {
-    existing = await storage.items.findBySourceIdIncludingTrashed(
-      source,
-      write.source_id,
-    );
+    existing = await storage.items.findBySourceId(source, write.source_id);
     if (existing) matchedBy = "source_id";
   }
   if (!existing && write.id !== undefined) {

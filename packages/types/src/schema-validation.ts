@@ -1313,6 +1313,35 @@ function validateVersionPolicy(
       );
     }
   }
+  // Windows are ages counted back from now, so a later window with a
+  // smaller bound is empty.
+  const windows = [
+    "recent_days",
+    "daily_snapshot_days",
+    "weekly_snapshot_days",
+  ] as const;
+  let ahead: (typeof windows)[number] | undefined;
+  let longest = 0;
+  for (const key of windows) {
+    const value = vp[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+      continue;
+    }
+    if (ahead !== undefined && value < longest) {
+      errors.push(
+        issue({
+          field: `version_policy.${key}`,
+          expected: `at least ${ahead} (${String(longest)})`,
+          actual: describe(value),
+          hint: "The windows run recent_days, then daily_snapshot_days, then weekly_snapshot_days, each counted back from now.",
+        }),
+      );
+    }
+    if (value >= longest) {
+      longest = value;
+      ahead = key;
+    }
+  }
 }
 
 function validateMergePolicy(
