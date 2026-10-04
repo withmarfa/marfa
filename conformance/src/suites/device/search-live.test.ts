@@ -16,8 +16,11 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A device matches a query as the server does (`search-and-filters.md` 42 to
- * 48): the same corpus, the same queries, and the same hits in the same order,
- * with the same excerpt, against the real server and the real binary.
+ * 49): the same corpus and the same queries against the real server and the
+ * real binary, with the same hits and the same excerpt. The order is held
+ * to the server's for a corpus whose ranking does not turn on rows the device
+ * does not hold, which is the only order a device holding a slice can promise
+ * (48).
  */
 
 let client: MarfaClient;

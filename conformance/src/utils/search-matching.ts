@@ -42,6 +42,13 @@ export const MATCHING_ROWS: MatchingRow[] = [
     tags: ["balloon"],
   },
   { key: "blimp", properties: { summary: "Blimp airship" } },
+  // Written in the order a phrase would not match them in, so that the order
+  // the index joins them in is what the cases below read.
+  {
+    key: "ordered",
+    properties: { zeta: "zetaword", alpha: "alphaword" },
+    tags: ["zulutag", "alphatag"],
+  },
   { key: "k1", properties: { body: "kiwi kiwi kiwi" } },
   { key: "k2", properties: { body: "kiwi kiwi pear" } },
   { key: "k3", properties: { body: "kiwi pear pear" } },
@@ -67,6 +74,8 @@ export const MATCHING_FIELDS = {
   name: { type: "string" },
   summary: { type: "string" },
   secret: { type: "string", searchable: false },
+  zeta: { type: "string" },
+  alpha: { type: "string" },
 } as const;
 
 export interface MatchingCase {
@@ -165,6 +174,26 @@ export const MATCHING_CASES: MatchingCase[] = [
     name: "a property the type does not declare is not, though the word is findable elsewhere",
     query: "airship",
     hits: set("blimp"),
+  },
+  {
+    name: "fields are joined in name order for a phrase across them",
+    query: '"alphaword zetaword"',
+    hits: set("ordered"),
+  },
+  {
+    name: "fields are not joined in the order they were declared or written",
+    query: '"zetaword alphaword"',
+    hits: [],
+  },
+  {
+    name: "tags are joined in byte order for a phrase across them",
+    query: '"alphatag zulutag"',
+    hits: set("ordered"),
+  },
+  {
+    name: "tags are not joined in the order they were written",
+    query: '"zulutag alphatag"',
+    hits: [],
   },
   {
     name: "more matches of a word rank higher, and equal rows tie by identifier",

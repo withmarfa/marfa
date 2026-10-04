@@ -313,8 +313,8 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
     })
 }
 
-/// The four properties search reads whatever a type declares, as the
-/// server's index does. A thumbnail may not take one of these names.
+/// The four properties search reads whether or not a type declares them,
+/// as the server's index does. A thumbnail may not take one of these names.
 pub const CORE_TEXT_FIELDS: [&str; 4] = ["title", "body", "description", "name"];
 
 /// What the local index reads from an item's properties: the server's rule,
@@ -325,7 +325,7 @@ pub struct Indexing {
     /// `searchable: false`.
     pub opted_out: Vec<String>,
     /// The string properties the type declares or inherits beyond the core
-    /// four, not marked `searchable: false`, parents' first.
+    /// four, not marked `searchable: false`, in name order.
     pub extra: Vec<String>,
 }
 
@@ -565,6 +565,9 @@ impl Catalog {
                 indexing.extra.push(name.clone());
             }
         }
+        // In name order, the server's: a phrase that crosses two fields
+        // then matches on both or on neither.
+        indexing.extra.sort();
         indexing
     }
 
@@ -808,7 +811,7 @@ mod tests {
             catalog.indexing("acme.leaf"),
             Indexing {
                 opted_out: vec!["title".into(), "body".into()],
-                extra: vec!["secret".into(), "note".into()],
+                extra: vec!["note".into(), "secret".into()],
             }
         );
         assert_eq!(
