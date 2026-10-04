@@ -4,3 +4,13 @@
 # which no listing of the disk shows and which grows until the disk is full.
 [profile.default]
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+# The live tests share one server, and `live` asserts that a catch-up at the
+# head of the log applies nothing. Another test's write in its slice would
+# fail it, so the binaries that name a live server run one test at a time.
+[test-groups.live-server]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(~live)'
+test-group = 'live-server'
