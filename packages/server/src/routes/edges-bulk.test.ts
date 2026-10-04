@@ -487,8 +487,8 @@ describe("POST /edges/bulk", () => {
       index: 1,
     });
 
-    // The stale entry alone is what the page would answer without the
-    // permission pass: the witness that the order above is the pass's doing.
+    // Alone, the stale entry is refused as a `409`, so the `403` above is
+    // the forbidden entry answering ahead of it.
     const stale = await request(ctx.app, "POST", "/edges/bulk", {
       key: rawKey,
       body: {
