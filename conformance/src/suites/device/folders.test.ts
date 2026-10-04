@@ -19450,3 +19450,218 @@ describe("a folder that cannot reach the server", () => {
     expect(sentTitles(harness)).toEqual(["Refused"]);
   });
 });
+
+describe("a folder's first sync", () => {
+  const remoteA = "01a00000-0000-7000-8000-0000000005a1";
+  const remoteB = "01a00000-0000-7000-8000-0000000005a2";
+  const remote = {
+    "core.note": [
+      { item: { id: remoteA, properties: { title: "Remote A", body: "a\n" } } },
+      { item: { id: remoteB, properties: { title: "Remote B", body: "b\n" } } },
+    ],
+  };
+  const typed = (title: string): string =>
+    `---\ntitle: ${title}\n---\nwritten by hand\n`;
+
+  /** Every request that is not a read, so a quiet folder shows an empty list. */
+  function writesSent(made: FolderHarness): string[] {
+    return made.server.requests
+      .filter((request) => request.method !== "GET")
+      .map((request) => `${request.method} ${request.pathname}`);
+  }
+
+  /** A folder that waits, holding two items on the server and what `files` names on disk. */
+  async function waiting(
+    label: string,
+    files: Record<string, string> = {},
+    rows: typeof remote | null = remote,
+  ): Promise<FolderHarness> {
+    // The add reads the folder for its plan, which hydrates the copy.
+    const made = await folderHarness(label, {
+      confirm: false,
+      hydrate: false,
+      files,
+      ...(rows === null ? {} : { rows }),
+    });
+    scriptFolderWrites(made);
+    return made;
+  }
+
+  it("says what it will do when the folder is added, and sends and writes nothing", async () => {
+    harness = await waiting("first-sync-add", {
+      "mine one.md": typed("Mine one"),
+      "mine two.md": typed("Mine two"),
+      "mine three.md": typed("Mine three"),
+    });
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 2,
+      send: 3,
+      kept: 0,
+      unread: null,
+    });
+    expect(
+      writesSent(harness),
+      "a folder waiting for its first sync sent a write",
+    ).toEqual([]);
+    expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
+    expect(read(harness, "mine one.md")).toBe(typed("Mine one"));
+
+    const said = await harness.folder.pushWaiting();
+    expect(said.ok && said.value.first_sync).toEqual(harness.added.first_sync);
+    expect(writesSent(harness)).toEqual([]);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.first_sync).toEqual({
+      plan: { write: 2, send: 3, kept: 0 },
+    });
+  });
+
+  it("goes once it is confirmed, and does not ask again", async () => {
+    harness = await waiting("first-sync-confirm", {
+      "mine.md": typed("Mine"),
+    });
+    const refused = await harness.folder.pull();
+    expect(
+      !refused.ok && refused.refusal.raw,
+      "a pull wrote into a folder waiting for its first sync",
+    ).toContain("first_sync_waiting");
+    expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
+
+    const confirmed = await harness.folder.confirm();
+    expect(confirmed.ok && confirmed.value.first_sync).toBe(true);
+    // The witness: the same folder, once confirmed, sends and writes.
+    const pushed = await harness.folder.push();
+    expect(pushed.ok && pushed.value.drain.answered).toBeGreaterThan(0);
+    expect(sentTitles(harness)).toEqual(["Mine"]);
+    expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(true);
+    expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
+
+    const again = await harness.folder.push();
+    // A sync, not the first sync's plan.
+    expect(again.ok && again.value.scan).toBeDefined();
+    expect(sentTitles(harness)).toEqual(["Mine"]);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.first_sync).toBeUndefined();
+    // Added again over its own state, the folder keeps the answer it had.
+    const readded = await harness.folder.add(harness.settings.id, {
+      confirm: false,
+    });
+    expect(readded.ok && readded.value.first_sync.waiting).toBe(false);
+  });
+
+  it("refuses a watch while it waits, and a script confirms it with --yes", async () => {
+    harness = await waiting("first-sync-watch", { "mine.md": typed("Mine") });
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(() => expect(watching.running()).toBe(false), {
+        timeout: 20_000,
+        interval: 100,
+      });
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.exitCode()).not.toBe(0);
+    expect(watching.stderr).toContain("first sync waits for confirmation");
+    expect(writesSent(harness)).toEqual([]);
+    expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
+
+    second = await folderHarness("first-sync-yes", { rows: remote });
+    scriptFolderWrites(second);
+    expect(second.added.first_sync.waiting).toBe(false);
+    const pushed = await second.folder.push();
+    expect(pushed.ok).toBe(true);
+    expect(existsSync(join(second.dir, "Remote A.md"))).toBe(true);
+  });
+
+  it("leaves a file already where an item's file would go, and says so", async () => {
+    harness = await waiting("first-sync-kept", {
+      "Remote A.md": typed("Remote A"),
+    });
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 1,
+      send: 1,
+      kept: 1,
+      unread: null,
+    });
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    // Its words stay, with the id line a sent file is given; the item's
+    // body is not written over them.
+    const kept = read(harness, "Remote A.md");
+    expect(kept).toContain("written by hand");
+    expect(kept, "the item's file was written over the person's").not.toMatch(
+      /^a$/m,
+    );
+    expect(sentTitles(harness)).toEqual(["Remote A"]);
+    expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
+  });
+
+  it("confirms itself where there is nothing to write, send or keep", async () => {
+    harness = await waiting("first-sync-empty", {}, null);
+    expect(harness.added.first_sync).toEqual({
+      waiting: false,
+      write: null,
+      send: null,
+      kept: null,
+      unread: null,
+    });
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.first_sync).toBeUndefined();
+    put(harness, "later.md", typed("Later"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok && pushed.value.scan.created).toBe(1);
+    expect(sentTitles(harness)).toEqual(["Later"]);
+  });
+
+  it("is cancelled by removing the folder, which leaves its files", async () => {
+    harness = await waiting("first-sync-cancel", { "mine.md": typed("Mine") });
+    // The scan has queued the file's create, which is not yet sent.
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok && queued.value.length).toBeGreaterThan(0);
+    expect((await harness.folder.remove()).ok).toBe(true);
+    expect(existsSync(join(harness.dir, ".marfa"))).toBe(false);
+    expect(read(harness, "mine.md")).toBe(typed("Mine"));
+    expect(writesSent(harness)).toEqual([]);
+
+    // The witness: once confirmed and queued, the same removal is refused.
+    second = await folderHarness("first-sync-cancel-witness");
+    scriptFolderWrites(second);
+    put(second, "mine.md", typed("Mine"));
+    expect((await second.folder.scan()).ok).toBe(true);
+    const refused = await second.folder.remove();
+    expect(refused.ok).toBe(false);
+  });
+
+  it("reads the copy it already holds when the server is out of reach", async () => {
+    harness = await waiting("first-sync-offline", { "mine.md": typed("Mine") });
+    await harness.server.stop();
+    const said = await harness.folder.pushWaiting();
+    expect(said.ok && said.value.first_sync).toEqual({
+      waiting: true,
+      write: 2,
+      send: 1,
+      kept: 0,
+      unread: null,
+    });
+    expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
+  });
+
+  it("asks of each machine's folder for itself", async () => {
+    harness = await waiting("first-sync-machine-one");
+    second = await folderHarness("first-sync-machine-two", {
+      confirm: false,
+      hydrate: false,
+      sharing: { server: harness.server, key: KEY },
+      folder: harness.settings,
+    });
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    const status = await second.folder.status();
+    expect(
+      status.ok && status.value.first_sync,
+      "one machine's confirmation let another machine's folder go",
+    ).toEqual({ plan: { write: 2, send: 0, kept: 0 } });
+    const first = await harness.folder.status();
+    expect(first.ok && first.value.first_sync).toBeUndefined();
+  });
+});

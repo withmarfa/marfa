@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clap::Subcommand;
 use marfa_core::folder::Registry;
-use marfa_core::{CoreError, Folder, SyncReport};
+use marfa_core::{CoreError, FirstSync, Folder, SyncReport, Synced};
 
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
@@ -22,12 +22,17 @@ pub enum FoldersCommand {
         /// The folder's `system.folder` id.
         #[arg(long, value_name = "ID")]
         folder: String,
+        /// Confirm the first sync without asking, for scripts. Without it,
+        /// the add says what the first sync will do and waits for a go-ahead.
+        #[arg(long)]
+        yes: bool,
     },
     /// List the folders on this machine, as its registry holds them. The
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
     List,
     /// Take a folder off this machine: its own state under `.marfa` goes,
-    /// and its files stay as plain files. Refused while writes wait. A
+    /// and its files stay as plain files. Refused while writes wait, except
+    /// for a first sync still waiting to be confirmed, which this cancels. A
     /// folder whose directory is gone is taken off the list.
     Remove {
         /// The folder.
@@ -39,8 +44,8 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Let a paused large removal go: its deletes are queued, and files
-    /// whose items left elsewhere are taken away.
+    /// Let a folder's first sync go, or a paused large removal: its deletes
+    /// are queued, and files whose items left elsewhere are taken away.
     Confirm {
         /// The folder.
         dir: PathBuf,
@@ -95,22 +100,55 @@ pub enum FoldersCommand {
 
 pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), CliError> {
     match command {
-        FoldersCommand::Add { dir, folder } => {
+        FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server)).map_err(held(&dir))?;
             renewing(folder.core(), session.renew);
+            // Told what the first sync will do before it can, unless the
+            // person said to go ahead.
+            let (mut plan, mut confirmed, mut unread) = (None, true, None);
+            if yes {
+                folder.confirm_first_sync()?;
+            } else if folder.awaiting_confirmation()? {
+                // The folder is added whether or not it could be read now.
+                match folder.plan_first_sync() {
+                    Ok(planned) => {
+                        plan = planned.plan;
+                        confirmed = plan.is_none();
+                    }
+                    Err(error) => {
+                        confirmed = false;
+                        unread = Some(error.to_string());
+                    }
+                }
+                if let Some(plan) = &plan
+                    && !json
+                    && asks_to_go_ahead(&dir, plan)?
+                {
+                    folder.confirm_first_sync()?;
+                    confirmed = true;
+                }
+            }
             output::report(
                 &serde_json::json!({
                     "dir": folder.root(),
                     "folder": folder.folder_id(),
+                    "first_sync": first_sync_json(plan.as_ref(), confirmed, unread.as_deref()),
                 }),
                 json,
                 || {
-                    format!(
+                    let mut lines = vec![format!(
                         "{} follows the folder {}",
                         folder.root().display(),
                         folder.folder_id()
-                    )
+                    )];
+                    lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
+                    if let Some(error) = &unread {
+                        lines.push(format!(
+                            "the first sync waits for confirmation, but the folder could not be read for it now: {error}; `folders push` tries again"
+                        ));
+                    }
+                    lines.join("\n")
                 },
             )
         }
@@ -151,6 +189,10 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Confirm { dir } => {
             let confirmed = Folder::open(&dir, None).map_err(held(&dir))?.confirm()?;
             output::report(&confirmed, json, || {
+                if confirmed.first_sync {
+                    return "the first sync is confirmed; `folders push` or `folders watch` runs it"
+                        .into();
+                }
                 format!(
                     "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
                     confirmed.deleted,
@@ -197,7 +239,16 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 drain: drained,
                 catch_up,
                 pull: pulled,
-            } = opened(&dir, Some(named.session()?))?.sync()?;
+            } = match opened(&dir, Some(named.session()?))?.sync()? {
+                Synced::Done(report) => *report,
+                Synced::Waiting(plan) => {
+                    return output::report(
+                        &serde_json::json!({ "first_sync": first_sync_json(Some(&plan), false, None) }),
+                        json,
+                        || first_sync_lines(&dir, Some(&plan), false).join("\n"),
+                    );
+                }
+            };
             let (caught, failed) = match catch_up {
                 Ok(caught) => (serde_json::to_value(caught)?, None),
                 Err(error) => (
@@ -530,7 +581,85 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
             report.paused.disk, report.paused.pull
         ));
     }
+    if let Some(waiting) = &report.first_sync {
+        lines.push(match &waiting.plan {
+            Some(plan) => format!("the first sync waits for confirmation: {}", plan_line(plan)),
+            None => {
+                "the first sync waits for confirmation; `folders push` says what it will do".into()
+            }
+        });
+    }
     lines.join("\n")
+}
+
+fn plan_line(plan: &FirstSync) -> String {
+    let mut line = format!(
+        "{} file(s) to write into the directory, {} to send to the server",
+        plan.write, plan.send
+    );
+    if plan.kept > 0 {
+        line.push_str(&format!(
+            ", and {} already there where a file would go, which stay as they are and are not written over",
+            plan.kept
+        ));
+    }
+    line
+}
+
+/// What the person is told while the first sync waits, and after.
+fn first_sync_lines(dir: &Path, plan: Option<&FirstSync>, confirmed: bool) -> Vec<String> {
+    match (plan, confirmed) {
+        (Some(plan), false) => vec![
+            format!(
+                "the first sync will write and send nothing until you confirm it: {}",
+                plan_line(plan)
+            ),
+            format!(
+                "`marfa folders confirm {0}` lets it go; `marfa folders remove {0}` drops the folder and leaves the files",
+                dir.display()
+            ),
+        ],
+        (Some(plan), true) => vec![format!(
+            "the first sync is confirmed: {}; `folders push` or `folders watch` runs it",
+            plan_line(plan)
+        )],
+        (None, _) => Vec::new(),
+    }
+}
+
+fn first_sync_json(
+    plan: Option<&FirstSync>,
+    confirmed: bool,
+    unread: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "waiting": !confirmed,
+        "write": plan.map(|plan| plan.write),
+        "send": plan.map(|plan| plan.send),
+        "kept": plan.map(|plan| plan.kept),
+        "unread": unread,
+    })
+}
+
+/// Asks at a terminal, and says no anywhere else: a script that has not said
+/// `--yes` has not agreed.
+fn asks_to_go_ahead(dir: &Path, plan: &FirstSync) -> Result<bool, CliError> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Ok(false);
+    }
+    let mut question = std::io::stderr();
+    writeln!(
+        question,
+        "the first sync of {} will write and send nothing until you agree: {}",
+        dir.display(),
+        plan_line(plan)
+    )?;
+    write!(question, "Go ahead? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 pub(crate) fn secret_lines(secrets: &[String]) -> Vec<String> {

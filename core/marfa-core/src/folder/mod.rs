@@ -5,6 +5,7 @@ mod embeds;
 mod executable;
 mod fault;
 pub mod fields;
+mod first;
 pub mod identity;
 mod landing;
 mod lines;
@@ -13,6 +14,7 @@ mod names;
 pub(crate) mod placement;
 mod preserve;
 mod removal;
+pub use first::{FirstSync, Planned, Synced};
 pub use removal::{Confirmed, Restored};
 pub mod registry;
 pub mod settings;
@@ -21,7 +23,7 @@ mod status;
 mod sync;
 mod transfer;
 mod watch;
-pub use status::{FileStatus, Paused, StatusReport};
+pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use sync::SyncReport;
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
@@ -210,6 +212,7 @@ impl Folder {
     fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
+        let fresh = settings_file::bound(&core)?.is_none();
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
         {
@@ -248,6 +251,11 @@ impl Folder {
             });
         }
         settings_file::bind(&added.core, folder)?;
+        // Only a store made now has never synced: one added again over its
+        // own state keeps what it was asked.
+        if fresh {
+            added.wait_for_confirmation()?;
+        }
         if let settings_file::Wrote::Failed(reason) =
             added.write_settings_file(&row.item.properties, row.item.version, None)?
         {
@@ -341,12 +349,19 @@ impl Folder {
 
     /// Leaves the folder's files; refused while writes wait.
     pub fn remove(self) -> Result<()> {
-        let waiting = self
-            .core
-            .queue()?
-            .iter()
-            .filter(|write| matches!(write.verdict, None | Some(crate::model::Verdict::Blocked)))
-            .count();
+        // A first sync still waiting has sent nothing, so its queue holds
+        // only what the scan read from files that stay.
+        let waiting = if self.awaiting_confirmation()? {
+            0
+        } else {
+            self.core
+                .queue()?
+                .iter()
+                .filter(|write| {
+                    matches!(write.verdict, None | Some(crate::model::Verdict::Blocked))
+                })
+                .count()
+        };
         if waiting > 0 {
             return Err(CoreError::Invalid(format!(
                 "{} has {waiting} write(s) not yet sent; push it first, or they are lost with the folder",
@@ -2537,6 +2552,7 @@ pub struct Drained {
 impl Folder {
     /// Its passes are one drain: another on the store waits for all of them.
     pub fn drain(&self) -> Result<Drained> {
+        self.refuse_while_waiting()?;
         let one = self.core.one_drain();
         let mut report = self.core.drain_held(&one)?;
         let mut rebased = 0;
@@ -2761,6 +2777,13 @@ impl Folder {
     /// Each file is bound before its bytes land, so the scan never reads it
     /// back.
     pub fn pull(&self) -> Result<PullReport> {
+        self.refuse_while_waiting()?;
+        self.pull_as(None)
+    }
+
+    /// With `planning`, stops where each file's path is chosen and counts the
+    /// files it would write, leaving the directory as it is.
+    fn pull_as(&self, planning: Option<&mut PullPlan>) -> Result<PullReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(PullReport {
                 root_gone: Some(gone),
@@ -2812,7 +2835,9 @@ impl Folder {
         let peers = Peers::of(self, None);
         let mut retained = Vec::new();
         for item in held {
-            if !settings.holds_state(item.state) {
+            // A folder that has never synced writes no file, so what a pass
+            // would let go of is not its to count.
+            if !settings.holds_state(item.state) || planning.is_some() {
                 continue;
             }
             context.same_copy(&*self.core.conn()?)?;
@@ -2991,6 +3016,16 @@ impl Folder {
                 report.beside += 1;
             }
             taken.insert(names::folded(&entry.want));
+        }
+        if let Some(plan) = planning {
+            for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
+                if self.root.join(&entry.want).exists() {
+                    plan.kept += 1;
+                } else {
+                    plan.write += 1;
+                }
+            }
+            return Ok(report);
         }
         // Paths whose file moves away in this pass: an item wanting one waits
         // until it has.
@@ -4361,6 +4396,13 @@ fn version_named(line: &Value) -> Option<i64> {
 pub struct CaughtUp {
     pub caught_up: Option<crate::model::CatchUpReport>,
     pub hydrated: Option<crate::model::HydrateReport>,
+}
+
+/// What a pull would write, counted without writing it.
+#[derive(Debug, Default)]
+struct PullPlan {
+    write: usize,
+    kept: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

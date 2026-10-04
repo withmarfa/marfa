@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use super::{CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport};
+use super::{
+    CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport, Synced,
+};
 use crate::Result;
 use crate::error::CoreError;
 use crate::model::HydrateReport;
@@ -23,8 +25,20 @@ pub struct SyncReport {
 
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
-    /// an edit of the settings file, scans, drains, catches up and pulls.
-    pub fn sync(&self) -> Result<SyncReport> {
+    /// an edit of the settings file, scans, drains, catches up and pulls. A
+    /// folder whose first sync waits to be confirmed is only read, and says
+    /// what the sync will do.
+    pub fn sync(&self) -> Result<Synced> {
+        if self.awaiting_confirmation()?
+            && let Some(plan) = self.plan_first_sync()?.plan
+        {
+            return Ok(Synced::Waiting(plan));
+        }
+        self.sync_confirmed()
+            .map(|report| Synced::Done(Box::new(report)))
+    }
+
+    fn sync_confirmed(&self) -> Result<SyncReport> {
         let hydrated = self.resume()?;
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
