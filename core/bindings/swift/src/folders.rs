@@ -429,6 +429,10 @@ impl Folders {
         listener: Arc<dyn FolderListener>,
     ) -> Result<Arc<Subscription>, MarfaError> {
         let folder = marfa_core::Folder::open(&dir, self.server.clone())?;
+        // Refused here rather than ended later, so the caller is told at once.
+        if folder.awaiting_confirmation()? {
+            return Err(marfa_core::CoreError::FirstSyncWaiting.into());
+        }
         let origin = self.server.as_ref().map(|server| server.url.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
