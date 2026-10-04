@@ -36,7 +36,7 @@ pub use blob::{file_type_for, mime_type_for};
 pub use catalog::{EdgeType, End, ItemType, TypeField};
 pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
-pub use error::{CODES as ERROR_CODES, CoreError};
+pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
     Confirmed, Drained, FOLDER_TYPE, FileStatus, Folder, Paused, PullReport, Restored, ScanReport,
     Settings, SettingsFileReport, StatusReport,

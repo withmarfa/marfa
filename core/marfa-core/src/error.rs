@@ -110,54 +110,73 @@ pub enum CoreError {
 /// `CoreError` fails to compile until it has a code, and the code then joins
 /// `CODES`, which the command line's help is held to list.
 macro_rules! codes {
-    ($($pattern:pat => $code:literal,)*) => {
+    ($($kind:ident: $pattern:pat => $code:literal,)*) => {
         /// Every code `CoreError::code` answers, each once.
         pub const CODES: &[&str] = &[$($code),*];
 
+        /// The classification a binding retains when it carries different
+        /// fields from `CoreError`. Its code comes from the core's one list.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum CoreErrorKind {
+            $($kind,)*
+        }
+
+        impl CoreErrorKind {
+            pub fn code(self) -> &'static str {
+                match self {
+                    $(Self::$kind => $code,)*
+                }
+            }
+        }
+
         impl CoreError {
+            pub fn kind(&self) -> CoreErrorKind {
+                match self {
+                    CoreError::RenewalFailed(cause) => cause.kind(),
+                    $($pattern => CoreErrorKind::$kind,)*
+                }
+            }
+
             /// What a surface names the error by: the same word in the command
             /// line's envelope, in a Node error and anywhere else one is named.
             /// A failed renewal answers the code of its cause, as it carries
             /// the cause's refusal.
             pub fn code(&self) -> &'static str {
-                match self {
-                    CoreError::RenewalFailed(cause) => cause.code(),
-                    $($pattern => $code,)*
-                }
+                self.kind().code()
             }
         }
     };
 }
 
 codes! {
-    CoreError::NotFound { .. } => "not_found",
-    CoreError::Unauthorized { .. } => "unauthorized",
-    CoreError::Forbidden { .. } => "forbidden",
-    CoreError::Validation { .. } => "validation",
-    CoreError::UnknownType { .. } => "unknown_type",
-    CoreError::RateLimited { .. } => "rate_limited",
-    CoreError::Server { .. } => "server",
-    CoreError::Io(_) => "io",
-    CoreError::Network(_) => "network",
-    CoreError::Unnamed { .. } => "unnamed_answer",
-    CoreError::Decoding(_) => "decoding",
-    CoreError::Store(_) => "store",
-    CoreError::StorageFull(_) => "storage_full",
-    CoreError::SignedOut { .. } => "signed_out",
-    CoreError::NoKeychain(_) => "no_keychain",
-    CoreError::Redirected { .. } => "redirect",
-    CoreError::NoServer => "no_server",
-    CoreError::NoCursor => "no_cursor",
-    CoreError::HydrationIncomplete => "hydration_incomplete",
-    CoreError::NoCatalog => "no_catalog",
-    CoreError::ReadingHandle => "reading_handle",
-    CoreError::WrongSchema { .. } => "wrong_schema",
-    CoreError::CopyExpired { .. } => "copy_expired",
-    CoreError::StreamIncomplete { .. } => "stream_incomplete",
-    CoreError::WrongServer { .. } => "wrong_server",
-    CoreError::BytesAbsent { .. } => "bytes_absent",
-    CoreError::ContractMismatch { .. } => "contract_mismatch",
-    CoreError::Invalid(_) => "invalid",
+    NotFound: CoreError::NotFound { .. } => "not_found",
+    Unauthorized: CoreError::Unauthorized { .. } => "unauthorized",
+    Forbidden: CoreError::Forbidden { .. } => "forbidden",
+    Validation: CoreError::Validation { .. } => "validation",
+    UnknownType: CoreError::UnknownType { .. } => "unknown_type",
+    RateLimited: CoreError::RateLimited { .. } => "rate_limited",
+    Server: CoreError::Server { .. } => "server",
+    Io: CoreError::Io(_) => "io",
+    Network: CoreError::Network(_) => "network",
+    Unnamed: CoreError::Unnamed { .. } => "unnamed_answer",
+    Decoding: CoreError::Decoding(_) => "decoding",
+    Store: CoreError::Store(_) => "store",
+    StorageFull: CoreError::StorageFull(_) => "storage_full",
+    SignedOut: CoreError::SignedOut { .. } => "signed_out",
+    NoKeychain: CoreError::NoKeychain(_) => "no_keychain",
+    Redirected: CoreError::Redirected { .. } => "redirect",
+    NoServer: CoreError::NoServer => "no_server",
+    NoCursor: CoreError::NoCursor => "no_cursor",
+    HydrationIncomplete: CoreError::HydrationIncomplete => "hydration_incomplete",
+    NoCatalog: CoreError::NoCatalog => "no_catalog",
+    ReadingHandle: CoreError::ReadingHandle => "reading_handle",
+    WrongSchema: CoreError::WrongSchema { .. } => "wrong_schema",
+    CopyExpired: CoreError::CopyExpired { .. } => "copy_expired",
+    StreamIncomplete: CoreError::StreamIncomplete { .. } => "stream_incomplete",
+    WrongServer: CoreError::WrongServer { .. } => "wrong_server",
+    BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
+    ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
+    Invalid: CoreError::Invalid(_) => "invalid",
 }
 
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {

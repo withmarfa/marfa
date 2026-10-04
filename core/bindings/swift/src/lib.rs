@@ -742,37 +742,39 @@ impl MarfaError {
     /// The error classification used by the command line and Node binding.
     /// A variant's `code` field carries the server's more specific error code.
     pub fn code(&self) -> String {
-        match self {
-            MarfaError::NotFound { .. } => "not_found",
-            MarfaError::Unauthorized { .. } => "unauthorized",
-            MarfaError::Forbidden { .. } => "forbidden",
-            MarfaError::Validation { .. } => "validation",
-            MarfaError::UnknownType { .. } => "unknown_type",
-            MarfaError::RateLimited { .. } => "rate_limited",
-            MarfaError::Server { .. } => "server",
-            MarfaError::Io { .. } => "io",
-            MarfaError::Network { .. } => "network",
-            MarfaError::Unnamed { .. } => "unnamed_answer",
-            MarfaError::Decoding { .. } => "decoding",
-            MarfaError::Store { .. } => "store",
-            MarfaError::StorageFull { .. } => "storage_full",
-            MarfaError::SignedOut { .. } => "signed_out",
-            MarfaError::NoKeychain { .. } => "no_keychain",
-            MarfaError::Redirected { .. } => "redirect",
-            MarfaError::NoServer { .. } => "no_server",
-            MarfaError::NoCursor { .. } => "no_cursor",
-            MarfaError::HydrationIncomplete { .. } => "hydration_incomplete",
-            MarfaError::NoCatalog { .. } => "no_catalog",
-            MarfaError::ReadingHandle { .. } => "reading_handle",
-            MarfaError::WrongSchema { .. } => "wrong_schema",
-            MarfaError::CopyExpired { .. } => "copy_expired",
-            MarfaError::StreamIncomplete { .. } => "stream_incomplete",
-            MarfaError::WrongServer { .. } => "wrong_server",
-            MarfaError::BytesAbsent { .. } => "bytes_absent",
-            MarfaError::ContractMismatch { .. } => "contract_mismatch",
-            MarfaError::Invalid { .. } => "invalid",
-        }
-        .to_string()
+        let kind = match self {
+            MarfaError::NotFound { .. } => marfa_core::CoreErrorKind::NotFound,
+            MarfaError::Unauthorized { .. } => marfa_core::CoreErrorKind::Unauthorized,
+            MarfaError::Forbidden { .. } => marfa_core::CoreErrorKind::Forbidden,
+            MarfaError::Validation { .. } => marfa_core::CoreErrorKind::Validation,
+            MarfaError::UnknownType { .. } => marfa_core::CoreErrorKind::UnknownType,
+            MarfaError::RateLimited { .. } => marfa_core::CoreErrorKind::RateLimited,
+            MarfaError::Server { .. } => marfa_core::CoreErrorKind::Server,
+            MarfaError::Io { .. } => marfa_core::CoreErrorKind::Io,
+            MarfaError::Network { .. } => marfa_core::CoreErrorKind::Network,
+            MarfaError::Unnamed { .. } => marfa_core::CoreErrorKind::Unnamed,
+            MarfaError::Decoding { .. } => marfa_core::CoreErrorKind::Decoding,
+            MarfaError::Store { .. } => marfa_core::CoreErrorKind::Store,
+            MarfaError::StorageFull { .. } => marfa_core::CoreErrorKind::StorageFull,
+            MarfaError::SignedOut { .. } => marfa_core::CoreErrorKind::SignedOut,
+            MarfaError::NoKeychain { .. } => marfa_core::CoreErrorKind::NoKeychain,
+            MarfaError::Redirected { .. } => marfa_core::CoreErrorKind::Redirected,
+            MarfaError::NoServer { .. } => marfa_core::CoreErrorKind::NoServer,
+            MarfaError::NoCursor { .. } => marfa_core::CoreErrorKind::NoCursor,
+            MarfaError::HydrationIncomplete { .. } => {
+                marfa_core::CoreErrorKind::HydrationIncomplete
+            }
+            MarfaError::NoCatalog { .. } => marfa_core::CoreErrorKind::NoCatalog,
+            MarfaError::ReadingHandle { .. } => marfa_core::CoreErrorKind::ReadingHandle,
+            MarfaError::WrongSchema { .. } => marfa_core::CoreErrorKind::WrongSchema,
+            MarfaError::CopyExpired { .. } => marfa_core::CoreErrorKind::CopyExpired,
+            MarfaError::StreamIncomplete { .. } => marfa_core::CoreErrorKind::StreamIncomplete,
+            MarfaError::WrongServer { .. } => marfa_core::CoreErrorKind::WrongServer,
+            MarfaError::BytesAbsent { .. } => marfa_core::CoreErrorKind::BytesAbsent,
+            MarfaError::ContractMismatch { .. } => marfa_core::CoreErrorKind::ContractMismatch,
+            MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
+        };
+        kind.code().to_string()
     }
 }
 
