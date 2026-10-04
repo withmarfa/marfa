@@ -22,6 +22,11 @@ pub enum KeysCommand {
         secret: Option<String>,
     },
     /// Mint a key. Needs `keys.mint`, or the operator key.
+    ///
+    /// The key holds exactly what the flags name. A permission, a map entry
+    /// or a claim each names a part of what it holds, and a part left
+    /// unnamed is held as nothing. With none named, the key takes the
+    /// caller's whole set.
     Create(KeyCreateArgs),
     /// Every key, without plaintext. Needs `keys.mint`, or the operator key.
     List,
@@ -76,10 +81,10 @@ impl Permission {
     }
 }
 
-/// The maps a key's reach is made of, and its permissions. Naming a map is
-/// naming exactly what the key holds, its permissions included; naming
-/// only permissions narrows those and takes the creator's maps; naming
-/// nothing takes the creator's whole set.
+/// The maps a key's reach is made of, and its permissions. On a mint,
+/// naming any of them, or a claim, makes the key hold exactly what is
+/// named and nothing else; naming none takes the creator's whole set. On an
+/// update, only what is named changes.
 #[derive(Debug, Default, Args)]
 pub struct PermissionMapArgs {
     /// A permission, repeatable.
@@ -218,7 +223,8 @@ pub struct KeyUpdateArgs {
     pub no_permissions: bool,
 }
 
-/// Every family is named, empty: a mint naming no map takes the creator's.
+/// Every family is named, empty: a mint naming none takes the creator's
+/// whole set.
 fn hold_nothing(body: &mut Map<String, Value>) {
     body.insert("permissions".into(), json!([]));
     for map in [
@@ -233,8 +239,8 @@ fn hold_nothing(body: &mut Map<String, Value>) {
 }
 
 /// The sources a key may name on a write besides its own. Named, they are
-/// all it claims; left unnamed on a mint that names no map either, the key
-/// takes the caller's claims, as it takes the caller's maps.
+/// all it claims; left unnamed on a mint that names no permission or map
+/// either, the key takes the caller's claims, as it takes the caller's maps.
 #[derive(Debug, Default, Args)]
 pub struct ClaimArgs {
     /// A source a write under the key may name, so its rows are keyed by it.
@@ -242,8 +248,8 @@ pub struct ClaimArgs {
     #[arg(long = "claim", value_name = "SOURCE")]
     pub claims: Vec<String>,
     /// Claim no source besides the key's own, asked for out loud. On a mint
-    /// naming no map, naming the claims is naming what the key holds: it
-    /// holds no map and no permission either.
+    /// naming no permission or map, naming the claims is naming what the
+    /// key holds: it holds no map and no permission either.
     #[arg(long, conflicts_with = "claims")]
     pub no_claims: bool,
 }
