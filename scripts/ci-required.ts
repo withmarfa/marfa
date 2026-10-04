@@ -1,12 +1,18 @@
 /**
- * Which CI jobs a pull request's changes can affect.
+ * Which CI jobs a change can affect.
  *
  * Each job in `ci.yml` and `core.yml` runs when this answers `true` for it
  * and is skipped otherwise, and a skipped job satisfies a required check
- * where a workflow filtered out by `paths` would leave it pending. A push to
- * `main`, the nightly and a dispatch answer `true` for every job, and so does
- * a change that could not be read, so a skip only ever comes from a diff
- * that was read and classified.
+ * where a workflow filtered out by `paths` would leave it pending. The
+ * nightly and a dispatch answer `true` for every job, and so does a change
+ * that could not be read, so a skip only ever comes from a diff that was
+ * read and classified.
+ *
+ * A push to `main` runs every job too, unless `forPush` finds that it
+ * changes only what no job but the format check reads and that this
+ * workflow passed on the commit before it. `release.yml` releases a commit
+ * only once `ci.yml` passed on it, so a skipped run may pass only when the
+ * code it vouches for is code that passed.
  *
  * A draft pull request runs only the quick jobs, `DRAFT_JOBS`, and `full`
  * says whether the rest runs: it is `false` only for a draft. Marking the
@@ -92,7 +98,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `ci/` tests read every workflow.
   [/^\.github\/workflows\/core\.yml$/, ["workspace", "core"]],
   [/^\.github\/workflows\//, ["workspace"]],
-  [/^\.github\//, []],
+  // Read by GitHub alone. Anything else under `.github/`, such as an action
+  // a workflow uses, runs everything until a rule names it.
+  [/^\.github\/(ISSUE_TEMPLATE\/|dependabot\.yml$)/, []],
   // Checkout applies it to every file every job reads.
   [/^\.gitattributes$/, ALL],
 
@@ -105,8 +113,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
-  [/^(LICENSE|\.env\.example|\.infisical\.json)$/, []],
-  [/^\.claude\//, []],
+  // The settings census test holds it to the settings schema.
+  [/^\.env\.example$/, ["workspace"]],
+  [/^(LICENSE|\.infisical\.json)$/, []],
+  // Agent instructions, settings and Git hooks. No job runs or reads them.
+  [/^\.(agents|claude|codex|githooks)\//, []],
 
   // The drill installs the image's Litestream and runs its configuration,
   // which the offline lane's own test reads too.
@@ -157,7 +168,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/Cargo\.lock$/, RUST],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
   [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
-  [/^core\/\.gitignore$/, []],
+  // It can hide a file the client generator writes from the freshness
+  // check's `git status`.
+  [/^core\/\.gitignore$/, ["clients-freshness"]],
   [/^core\/scripts\/test-limits\.sh$/, ["core-checks", "core", "workspace"]],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
@@ -293,6 +306,14 @@ export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
   ) as Record<Job, boolean>;
 }
 
+/**
+ * Whether an answer runs nothing but `CI (SQLite)`'s format check and this
+ * classifier's test, as a change to documentation or agent instructions does.
+ */
+export function documentationOnly(answer: Record<Job, boolean>): boolean {
+  return JOBS.every((job) => job === "ci-sqlite" || !answer[job]);
+}
+
 interface PullRequestEvent {
   pull_request: {
     draft?: boolean;
@@ -301,40 +322,118 @@ interface PullRequestEvent {
   };
 }
 
-/** The event of a pull request run, or `undefined` for any other event. */
-function pullRequestEvent(): PullRequestEvent | undefined {
-  if (process.env.GITHUB_EVENT_NAME !== "pull_request") return undefined;
-  return JSON.parse(
-    readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"),
-  ) as PullRequestEvent;
+interface PushEvent {
+  before: string;
+  after: string;
+  forced?: boolean;
 }
 
-/** The pull request's changed paths. */
-function changedPaths(event: PullRequestEvent): string[] {
-  const base = event.pull_request.base.sha;
-  const head = event.pull_request.head.sha;
-  if (!/^[a-f0-9]{40}$/.test(base) || !/^[a-f0-9]{40}$/.test(head)) {
+interface WorkflowRun {
+  event: string;
+  head_branch: string | null;
+  head_sha: string;
+  conclusion: string | null;
+}
+
+const COMMIT = /^[a-f0-9]{40}$/;
+
+function readEvent(): unknown {
+  return JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+}
+
+/**
+ * The paths that differ between two commits. No rename detection, so moving
+ * code into a documentation path still counts the deletion of its original
+ * path. NULs keep unusual names whole.
+ */
+function changedPaths(from: string, to: string, range: "..." | ".."): string[] {
+  if (!COMMIT.test(from) || !COMMIT.test(to)) {
     throw new Error("Missing commit IDs");
   }
-  // No rename detection, so moving code into a documentation path still
-  // counts the deletion of its original path. NULs keep unusual names whole.
   return execFileSync(
     "git",
-    ["diff", "--name-only", "--no-renames", "-z", `${base}...${head}`, "--"],
+    ["diff", "--name-only", "--no-renames", "-z", `${from}${range}${to}`, "--"],
     { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
   )
     .split("\0")
     .filter(Boolean);
 }
 
+/**
+ * Whether this workflow passed on a commit in a run `release.yml` accepts: a
+ * push to `main` or a dispatch, never a pull request's head.
+ */
+function passed(commit: string): boolean {
+  const workflow = /\.github\/workflows\/([^/@]+)@/.exec(
+    process.env.GITHUB_WORKFLOW_REF ?? "",
+  )?.[1];
+  const repository = process.env.GITHUB_REPOSITORY ?? "";
+  if (workflow === undefined || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    throw new Error("Missing workflow or repository");
+  }
+  const { workflow_runs: runs } = JSON.parse(
+    execFileSync(
+      "gh",
+      [
+        "api",
+        `repos/${repository}/actions/workflows/${workflow}/runs?head_sha=${commit}&status=success&per_page=100`,
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+    ),
+  ) as { workflow_runs: WorkflowRun[] };
+  return runs.some(
+    (run) =>
+      run.head_sha === commit &&
+      run.conclusion === "success" &&
+      ((run.event === "push" && run.head_branch === "main") ||
+        run.event === "workflow_dispatch"),
+  );
+}
+
+/**
+ * A push's answer. A run that skips is green only when the run before it
+ * was, and that one either ran every job or skipped on these same terms, so
+ * a chain of skipped runs always ends at a run of every job on code no
+ * commit since has changed. Every job runs for a first or forced push, for
+ * a change that reaches any job but the format check, and when this
+ * workflow failed, is still running or never ran on the commit before.
+ */
+function forPush(event: PushEvent): Record<Job, boolean> {
+  const all = classify([]);
+  if (event.forced === true || /^0+$/.test(event.before)) {
+    console.log("A first or forced push; running every job.");
+    return all;
+  }
+  const answer = classify(changedPaths(event.before, event.after, ".."));
+  if (!documentationOnly(answer)) return all;
+  if (!passed(event.before)) {
+    console.log(
+      `This workflow has not passed on ${event.before}; running every job.`,
+    );
+    return all;
+  }
+  console.log(
+    `Only documentation changed since ${event.before}, which passed.`,
+  );
+  return answer;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let answer = classify([]);
   let draft = false;
   try {
-    const event = pullRequestEvent();
-    if (event !== undefined) {
+    if (process.env.GITHUB_EVENT_NAME === "pull_request") {
+      const event = readEvent() as PullRequestEvent;
       draft = event.pull_request.draft === true;
-      answer = classify(changedPaths(event));
+      answer = classify(
+        changedPaths(
+          event.pull_request.base.sha,
+          event.pull_request.head.sha,
+          "...",
+        ),
+      );
+    } else if (process.env.GITHUB_EVENT_NAME === "push") {
+      answer = forPush(readEvent() as PushEvent);
     }
   } catch {
     // An unreadable diff must never turn a code change into a skipped job.
