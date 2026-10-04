@@ -13,7 +13,7 @@ import { expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../..");
 const READS: Record<string, string> = {
   ItemStore:
-    "get getMany getIncludingTrashed list findBySourceId findBySourceIdIncludingTrashed findByLinks findBySourceIds tombstones cascadeMarks countByType stats listInactiveAppGrants",
+    "get getMany getIncludingTrashed list findBySourceId findByLinks findBySourceIds tombstones cascadeMarks countByType stats listInactiveAppGrants",
   MetadataStore: "get getMany listTags getExtensions getExtensionsForItems",
   VersionStore: "list all getByVersion scanProperties listThinningCandidates",
   TypeStore:
