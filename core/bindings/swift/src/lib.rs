@@ -2511,8 +2511,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core =
-            Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let reader = Core::open_reader(path).unwrap();
@@ -2559,8 +2558,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core =
-            Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
