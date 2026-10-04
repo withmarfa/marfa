@@ -69,6 +69,7 @@ describe("a folder round trip", () => {
         folder,
         "--folder",
         settings.item.id,
+        "--yes",
       ]);
       await c.cli.json(["folders", "hydrate", folder]);
       const path = join(folder, "authored.md");
@@ -249,7 +250,14 @@ describe("a folder round trip", () => {
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
-    await c.cli.json(["folders", "add", folder, "--folder", settings.item.id]);
+    await c.cli.json([
+      "folders",
+      "add",
+      folder,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
     await c.cli.json(["folders", "hydrate", folder]);
     const path = join(folder, "authored.md");
     const title = unique("authored-yaml");
@@ -328,6 +336,44 @@ describe("a folder round trip", () => {
     expect(afterCollections.updated).toBe(0);
   });
 
+  it("waits at a first sync until it is confirmed, then sends the dropped note", async () => {
+    const folder = join(dir, "asks-first");
+    mkdirSync(folder);
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("asks-first"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    const path = join(folder, "dropped.md");
+    writeFileSync(path, `---\ntitle: '${unique("asks-first")}'\n---\nBody\n`);
+    const added = await c.cli.json<{
+      first_sync: { waiting: boolean; send: number };
+    }>(["folders", "add", folder, "--folder", settings.item.id]);
+    expect(added.first_sync).toMatchObject({ waiting: true, send: 1 });
+    const waiting = await c.cli.json<{ first_sync: { waiting: boolean } }>([
+      "folders",
+      "push",
+      folder,
+    ]);
+    expect(waiting.first_sync.waiting).toBe(true);
+    // Nothing was sent: a sent file is given its id.
+    expect(readFileSync(path, "utf8")).not.toContain("marfa_id");
+
+    const confirmed = await c.cli.json<{ first_sync: boolean }>([
+      "folders",
+      "confirm",
+      folder,
+    ]);
+    expect(confirmed.first_sync).toBe(true);
+    const pushed = await c.cli.json<PushReport>(["folders", "push", folder]);
+    expect(pushed.drain.answered).toBeGreaterThan(0);
+    expect(readFileSync(path, "utf8")).toContain("marfa_id");
+  });
+
   it("pushes a dropped note, takes an agent's change back into the file, and keeps the item's id", async () => {
     // A seed, so the folder hydrates something and the log is not empty.
     const seed = await c.cli.json<ItemEnvelope>([
@@ -351,7 +397,14 @@ describe("a folder round trip", () => {
       JSON.stringify({ types: ["core.note"] }),
     ]);
     trackFolder(c.ctx, settings.item.id);
-    await c.cli.json(["folders", "add", dir, "--folder", settings.item.id]);
+    await c.cli.json([
+      "folders",
+      "add",
+      dir,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
     const hydrated = await c.cli.json<{ items: number }>([
       "folders",
       "hydrate",

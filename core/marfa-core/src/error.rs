@@ -107,6 +107,10 @@ pub enum CoreError {
     /// it reached, and a drain leaves what it had not sent queued.
     #[error("the operation was stopped before it finished")]
     Canceled,
+    #[error(
+        "this folder's first sync waits for confirmation, and nothing is written or sent until it is given: `folders push` says what it will do, `folders confirm` lets it go, and `folders remove` drops it"
+    )]
+    FirstSyncWaiting,
     #[error("{0}")]
     Invalid(String),
 }
@@ -182,6 +186,7 @@ codes! {
     BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
     ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
     Canceled: CoreError::Canceled => "canceled",
+    FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
     Invalid: CoreError::Invalid(_) => "invalid",
 }
 

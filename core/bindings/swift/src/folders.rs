@@ -55,10 +55,44 @@ pub struct PausedRemoval {
     pub pull: u64,
 }
 
+/// What a folder's first sync will do, read from the folder as it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FirstSyncPlan {
+    /// Files it will write into the directory.
+    pub write: u64,
+    /// Files in the directory it will send, as new items or as the edits of
+    /// the items they name.
+    pub send: u64,
+    /// Of the files it will write, those whose path a file already in the
+    /// directory has. Both end up in the folder, and one of the two takes a
+    /// number in its name; none is written over.
+    pub beside: u64,
+}
+
+impl From<marfa_core::FirstSync> for FirstSyncPlan {
+    fn from(plan: marfa_core::FirstSync) -> Self {
+        FirstSyncPlan {
+            write: plan.write as u64,
+            send: plan.send as u64,
+            beside: plan.beside as u64,
+        }
+    }
+}
+
+/// A first sync that waits for `confirm_first_sync`, and what the last read of the
+/// folder said it will do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct WaitingFirstSync {
+    /// `None` until `sync` has read the folder.
+    pub plan: Option<FirstSyncPlan>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FolderStatus {
     pub files: Vec<FileStatus>,
     pub paused: PausedRemoval,
+    /// Set while the folder's first sync waits to be confirmed.
+    pub first_sync: Option<WaitingFirstSync>,
 }
 
 /// A file a pass held or warned about, with why.
@@ -146,6 +180,19 @@ pub struct FolderPass {
     pub flagged: Vec<FlaggedFile>,
 }
 
+/// What a sync came to: it ran, or the folder's first sync waits to be
+/// confirmed and nothing was written or sent.
+// UniFFI carries a variant's fields by value, with no box to hold a sync in.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FolderSyncOutcome {
+    /// The sync ran.
+    Done { sync: FolderSync },
+    /// The first sync waits. `confirm_first_sync` lets it go, and `remove`
+    /// drops the folder, leaving its files.
+    Waiting { plan: FirstSyncPlan },
+}
+
 /// What a sync did.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FolderSync {
@@ -228,7 +275,7 @@ pub struct Folders {
 #[uniffi::export]
 impl Folders {
     /// `url` and `key` go together; without them only `list`, `status`,
-    /// `confirm`, `restore` and `remove` work.
+    /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
     #[uniffi::constructor]
     pub fn new(url: Option<String>, key: Option<String>) -> Result<Arc<Self>, MarfaError> {
         let server = match (url, key) {
@@ -245,7 +292,8 @@ impl Folders {
 
     /// Makes `dir` a folder that follows the `system.folder` `folder`, and
     /// lists it in the machine's registry. The directory is made if it is
-    /// not there. Its files are written at the first sync.
+    /// not there. Its first sync waits: `sync` says what it will do, and
+    /// `confirm_first_sync` lets it go.
     pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
         let added = marfa_core::Folder::add(&dir, &folder, self.server.clone())?;
         Ok(ListedFolder {
@@ -294,28 +342,47 @@ impl Folders {
                 disk: report.paused.disk as u64,
                 pull: report.paused.pull as u64,
             },
+            first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
+                plan: waiting.plan.map(Into::into),
+            }),
         })
     }
 
     /// Everything a folder does, once: sends what changed on disk, catches
-    /// up with the server and writes out what its search matches.
-    pub fn sync(&self, dir: String) -> Result<FolderSync, MarfaError> {
-        let synced = marfa_core::Folder::open(&dir, self.server.clone())?.sync()?;
-        Ok(FolderSync {
-            hydrated: synced.hydrated.map(Into::into),
-            catch_up_error: synced.catch_up.err().map(Into::into),
-            pass: pass_of(
-                synced.settings,
-                synced.scan,
-                synced.drain,
-                synced.pull,
-                None,
-            )?,
+    /// up with the server and writes out what its search matches. A folder
+    /// whose first sync waits to be confirmed is only read, and `Waiting`
+    /// says what the sync will do.
+    pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
+        let synced = match marfa_core::Folder::open(&dir, self.server.clone())?.sync()? {
+            marfa_core::Synced::Done(synced) => *synced,
+            marfa_core::Synced::Waiting(plan) => {
+                return Ok(FolderSyncOutcome::Waiting { plan: plan.into() });
+            }
+        };
+        Ok(FolderSyncOutcome::Done {
+            sync: FolderSync {
+                hydrated: synced.hydrated.map(Into::into),
+                catch_up_error: synced.catch_up.err().map(Into::into),
+                pass: pass_of(
+                    synced.settings,
+                    synced.scan,
+                    synced.drain,
+                    synced.pull,
+                    None,
+                )?,
+            },
         })
     }
 
+    /// Lets a folder's first sync go, at the next sync or watch. Answers
+    /// whether it was waiting. A paused removal is not touched.
+    pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
+        Ok(marfa_core::Folder::open(&dir, None)?.confirm_first_sync()?)
+    }
+
     /// Lets a paused large removal go: its deletes are queued, and files
-    /// whose items left elsewhere are taken away.
+    /// whose items left elsewhere are taken away. Refused while the first
+    /// sync waits.
     pub fn confirm(&self, dir: String) -> Result<ConfirmedRemoval, MarfaError> {
         let confirmed = marfa_core::Folder::open(&dir, None)?.confirm()?;
         Ok(ConfirmedRemoval {
@@ -345,8 +412,9 @@ impl Folders {
     }
 
     /// Takes the folder off this machine: its state under `.marfa` goes and
-    /// its files stay. Refused while writes wait. A folder whose directory is
-    /// gone is only taken off the registry.
+    /// its files stay. Refused while writes wait, except for a first sync
+    /// still waiting to be confirmed, which this cancels. A folder whose
+    /// directory is gone is only taken off the registry.
     pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
         Ok(marfa_core::Folder::remove_at(&dir)?)
     }
@@ -361,6 +429,10 @@ impl Folders {
         listener: Arc<dyn FolderListener>,
     ) -> Result<Arc<Subscription>, MarfaError> {
         let folder = marfa_core::Folder::open(&dir, self.server.clone())?;
+        // Refused here rather than ended later, so the caller is told at once.
+        if folder.awaiting_confirmation()? {
+            return Err(marfa_core::CoreError::FirstSyncWaiting.into());
+        }
         let origin = self.server.as_ref().map(|server| server.url.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
@@ -613,6 +685,7 @@ mod tests {
         let path = dir.path().display().to_string();
         let folders = Folders::new(Some(url), Some(key)).unwrap();
         folders.add(path.clone(), id).unwrap();
+        folders.confirm_first_sync(path.clone()).unwrap();
         folders.sync(path.clone()).unwrap();
 
         let (sender, ended) = std::sync::mpsc::channel();

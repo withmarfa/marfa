@@ -944,6 +944,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::WrongServer { .. }
         | E::BytesAbsent { .. }
         | E::ContractMismatch { .. }
+        | E::FirstSyncWaiting
         | E::Canceled => error.to_string(),
     };
     let fields = match error {
@@ -1026,6 +1027,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::HydrationIncomplete
         | E::NoCatalog
         | E::ReadingHandle
+        | E::FirstSyncWaiting
         | E::Canceled
         | E::Invalid(_) => Vec::new(),
     };

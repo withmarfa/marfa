@@ -238,6 +238,7 @@ impl Folder {
     /// A refused edit, or a file that does not parse, is flagged in the report
     /// rather than returned as an error, and the settings in force stay.
     pub fn send_settings_edit(&self) -> Result<SettingsFileReport> {
+        self.refuse_while_waiting()?;
         // The scan says so; a file read from where the folder was is not its.
         if self.root_gone().is_some() {
             return Ok(SettingsFileReport::default());

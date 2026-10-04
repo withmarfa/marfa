@@ -1,19 +1,21 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { v7 as uuidv7 } from "uuid";
 import {
   CliDevice,
   CliFolder,
   newStore,
+  type AddedFolder,
   type FolderSettings,
 } from "../../device/cli-adapter.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
@@ -455,6 +457,8 @@ export interface FolderHarness {
   rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   /** The folder registry of the machine it is on (`folders.md` 41). */
   registry: string;
+  /** What the add reported, including what the first sync will do. */
+  added: AddedFolder;
   stop: () => Promise<void>;
 }
 
@@ -517,6 +521,13 @@ export async function folderHarness(
     key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
     hydrate?: boolean;
+    /**
+     * Confirm the first sync at the add, as a script does with `--yes`. False
+     * leaves it waiting, for the cases about the first sync itself.
+     */
+    confirm?: boolean;
+    /** Files already in the directory when the folder is added, by name. */
+    files?: Record<string, string>;
     /**
      * Another folder's registry, for two folders on one machine. Unnamed, a
      * folder has a registry of its own, as a machine of its own would.
@@ -584,7 +595,11 @@ export async function folderHarness(
       key: options.key,
     });
   }
-  const added = await folder.add(settings.id);
+  for (const [name, text] of Object.entries(options.files ?? {})) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), text);
+  }
+  const added = await folder.add(settings.id, { confirm: options.confirm });
   if (!added.ok) {
     await stop();
     throw new Error(
@@ -610,6 +625,7 @@ export async function folderHarness(
     settings,
     rows: options.rows ?? {},
     registry,
+    added: added.value,
     stop,
   };
 }

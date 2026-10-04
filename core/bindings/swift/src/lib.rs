@@ -747,6 +747,11 @@ pub enum MarfaError {
     Canceled {
         message: String,
     },
+    /// A folder's first sync waits for confirmation, so the call that would
+    /// write or send for it was refused.
+    FirstSyncWaiting {
+        message: String,
+    },
     Invalid {
         message: String,
     },
@@ -783,6 +788,7 @@ impl MarfaError {
             | MarfaError::BytesAbsent { message, .. }
             | MarfaError::ContractMismatch { message, .. }
             | MarfaError::Canceled { message }
+            | MarfaError::FirstSyncWaiting { message }
             | MarfaError::Invalid { message } => message,
         }
     }
@@ -824,6 +830,7 @@ impl MarfaError {
             MarfaError::BytesAbsent { .. } => marfa_core::CoreErrorKind::BytesAbsent,
             MarfaError::ContractMismatch { .. } => marfa_core::CoreErrorKind::ContractMismatch,
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
+            MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
         };
         kind.code().to_string()
@@ -920,6 +927,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 message,
             },
             E::Canceled => MarfaError::Canceled { message },
+            E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
             E::Invalid(_) => MarfaError::Invalid { message },
         }
     }
@@ -1845,6 +1853,7 @@ mod tests {
             E::HydrationIncomplete,
             E::NoCatalog,
             E::ReadingHandle,
+            E::FirstSyncWaiting,
             E::WrongSchema {
                 path: text(),
                 reason: text(),
