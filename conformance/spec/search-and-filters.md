@@ -193,7 +193,7 @@ The server and a device index the same text and read a query the same way, so a 
 
 43. If an archive's `manifest.json` or `types.ndjson`, or one line of its `items.ndjson` or `edges.ndjson`, is larger than 67,108,864 bytes (64 MiB), the server MUST refuse the whole archive with `400 validation_error`, naming the entry, before writing anything.
 
-    Reason: the restore parses each of these whole, so this limit and the one row it holds at a time (53) bound the memory a restore takes. The line files are otherwise read a line at a time, so an archive of any number of rows restores (33).
+    Reason: the restore parses each of these whole, so this limit and the one row it holds at a time (53) bound the memory a restore takes, beside the ids of the items and snapshots it has written, which it keeps so that edges resolve and snapshot ids stay unique. The line files are otherwise read a line at a time, so an archive of any number of rows restores (33).
 
     Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a line longer than the most it reads at once, and writes nothing`; `compliance/admin-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
 
