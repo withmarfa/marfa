@@ -332,6 +332,71 @@ describe("the key names one request in every dimension, not just the body", () =
     expect(b.status).toBe(422);
   });
 
+  it("distinguishes a body sent as JSON from the same text sent as another type", async () => {
+    const k = key();
+    const body = JSON.stringify({
+      type: "core.note",
+      properties: { body: "typed" },
+    });
+    const mark = await eventHighWater();
+
+    // The refusal of a body that is not JSON is the first attempt's answer,
+    // and the retry that fixes the header is a different request: replaying
+    // the refusal to it would tell the caller to do what it just did.
+    const refused = await ctx.app.request("/items", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Idempotency-Key": k,
+        "Content-Type": "text/plain",
+      },
+      body,
+    });
+    expect(refused.status).toBe(400);
+    expect(await eventsSince(mark)).toBe(0);
+
+    const retried = await ctx.app.request("/items", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Idempotency-Key": k,
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+    expect(retried.status).toBe(422);
+    expect(retried.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(await eventsSince(mark)).toBe(0);
+  });
+
+  it("replays to a retry that spells the JSON type another way", async () => {
+    const k = key();
+    const body = JSON.stringify({
+      type: "core.note",
+      properties: { body: "spelled" },
+    });
+    const send = (contentType: string) =>
+      ctx.app.request("/items", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.workingKey}`,
+          "Idempotency-Key": k,
+          "Content-Type": contentType,
+        },
+        body,
+      });
+
+    const first = await send("application/json; charset=utf-8");
+    expect(first.status).toBe(201);
+    const retried = await send("application/json");
+    expect(retried.status).toBe(201);
+    expect(retried.headers.get("Idempotency-Replayed")).toBe("true");
+    const [a, b] = (await Promise.all([first.json(), retried.json()])) as {
+      id: string;
+    }[];
+    expect(b!.id).toBe(a!.id);
+  });
+
   it("distinguishes two methods on one path", async () => {
     const k = key();
     const id = await seedItem();

@@ -15,6 +15,7 @@ import {
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
+import { isJsonContentType } from "./middleware/json-content-type.js";
 
 /**
  * Hang the credential gate off a route whose own `security` asks for one.
@@ -55,6 +56,56 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
   return {
     ...route,
     middleware: [requireDeclaredCredential, copyBoundary, ...rest],
+  };
+}
+
+const requireJsonContentType: MiddlewareHandler = async (c, next) => {
+  if (!isJsonContentType(c.req.header("content-type"))) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "The request body must be JSON: send it with Content-Type: application/json",
+    );
+  }
+  await next();
+};
+
+/**
+ * Make a route whose body is JSON refuse a request that is not sent as JSON.
+ *
+ * **Left to the library, such a request is read as an empty object.** It
+ * validates a JSON body only when the request's `Content-Type` is JSON or
+ * the body is marked `required`, and otherwise hands the handler `{}`; a
+ * request with no body and no `Content-Type` reaches that branch even though
+ * the library's own media-type check, which answers `415`, catches every
+ * request that carries a body. A door whose schema accepts `{}` then runs on
+ * it.
+ *
+ * Marking the body `required` runs the validator on every request, and the
+ * check added last in the route's middleware answers the refusal the contract
+ * names, after the credential and the door's own checks and before any
+ * validator reads the body.
+ */
+function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
+  const body = route.request?.body;
+  const types = Object.keys(body?.content ?? {});
+  if (
+    body === undefined ||
+    types.length === 0 ||
+    !types.every((type) => /^application\/([a-z-.]+\+)?json/i.test(type))
+  ) {
+    return route;
+  }
+  const declared = route.middleware;
+  const rest =
+    declared === undefined
+      ? []
+      : Array.isArray(declared)
+        ? declared
+        : [declared];
+  return {
+    ...route,
+    request: { ...route.request, body: { ...body, required: true } },
+    middleware: [...rest, requireJsonContentType],
   };
 }
 
@@ -100,14 +151,14 @@ export function createOpenAPIRouter<
       }
     },
   });
-  // Routes go in through `openapi()`, so wrapping it is what makes the gate
+  // Routes go in through `openapi()`, so wrapping it is what makes the gates
   // unforgettable. The two casts are the registrar's own generic signature,
   // which says nothing this wrapper needs: it reads one field off the route
   // and passes the rest of the call through untouched.
   type Registrar = (route: RouteConfig, ...rest: unknown[]) => unknown;
   const register = router.openapi as unknown as Registrar;
   const gated: Registrar = (route, ...rest) =>
-    register(withCredentialGate(route), ...rest);
+    register(withCredentialGate(withRequiredJsonBody(route)), ...rest);
   router.openapi = gated as unknown as typeof router.openapi;
   return router;
 }

@@ -103,7 +103,6 @@ const createOwnerRoute = createRoute({
   request: {
     body: {
       content: { "application/json": { schema: CreateOwnerBodySchema } },
-      required: true,
     },
   },
   responses: {
