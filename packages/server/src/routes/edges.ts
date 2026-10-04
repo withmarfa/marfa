@@ -55,6 +55,7 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+import { pageLimit, pageCursor } from "../page-limits.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -247,17 +248,8 @@ const listEdgesRoute = createRoute({
         .describe(
           "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone.",
         ),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(500)
-        .optional()
-        .describe("Maximum edges to return per page."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Pagination cursor from a previous response."),
+      limit: pageLimit({ max: 500 }),
+      cursor: pageCursor(),
     }),
   },
   responses: {
@@ -987,17 +979,8 @@ const listFromSourceRoute = createRoute({
         .string()
         .optional()
         .describe("Filter to a single edge type."),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(500)
-        .optional()
-        .describe("Maximum edges to return per page."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Pagination cursor from a previous response."),
+      limit: pageLimit({ max: 500 }),
+      cursor: pageCursor(),
     }),
   },
   responses: {
@@ -1060,17 +1043,8 @@ const listBackrefsRoute = createRoute({
         .string()
         .optional()
         .describe("Filter to a single edge type."),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(500)
-        .optional()
-        .describe("Maximum edges to return per page."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Pagination cursor from a previous response."),
+      limit: pageLimit({ max: 500 }),
+      cursor: pageCursor(),
     }),
   },
   responses: {

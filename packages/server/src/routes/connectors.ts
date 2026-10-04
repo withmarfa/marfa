@@ -21,7 +21,12 @@ import {
   makeErrorResponseSchema,
   OkResponseSchema,
 } from "../openapi.js";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  pageLimit,
+  pageCursor,
+} from "../page-limits.js";
 import { nullableRef, pageOf } from "./_schemas.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { connectorsForReader } from "./_connector-reach.js";
@@ -386,19 +391,8 @@ const listRunsRoute = createRoute({
   request: {
     params: IdParam,
     query: z.object({
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_PAGE_LIMIT)
-        .default(DEFAULT_PAGE_LIMIT)
-        .describe(
-          `How many runs, newest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
-        ),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Opaque cursor from a previous page's `next_cursor`."),
+      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      cursor: pageCursor(),
     }),
   },
   responses: {
@@ -538,19 +532,8 @@ const listDeliveriesRoute = createRoute({
         .string()
         .optional()
         .describe("Only the deliveries this endpoint received."),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_PAGE_LIMIT)
-        .default(DEFAULT_PAGE_LIMIT)
-        .describe(
-          `How many deliveries, oldest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
-        ),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Opaque cursor from a previous page's `next_cursor`."),
+      limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
+      cursor: pageCursor(),
     }),
   },
   responses: {

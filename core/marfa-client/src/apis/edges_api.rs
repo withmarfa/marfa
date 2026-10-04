@@ -1,7 +1,7 @@
 /*
  * Marfa API
  *
- * Typed data layer for structured personal data
+ * Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.  ## Authentication  Send a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.  ## Permissions  Your credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.  ## Pagination  A list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.  ## Query parameters  Many operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.  ## Errors  An error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.  ## Idempotency  A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.  ## Time  Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.  ## Every response  Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.
  *
  * The version of the OpenAPI document: 0
  *
@@ -22,7 +22,7 @@ pub struct BulkUpsertEdgesParams {
 /// struct for passing parameters to the method [`create_edge`]
 #[derive(Clone, Debug)]
 pub struct CreateEdgeParams {
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
+    /// A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it.
     pub idempotency_key: Option<String>,
     pub create_edge_request: Option<models::CreateEdgeRequest>,
 }
@@ -32,7 +32,7 @@ pub struct CreateEdgeParams {
 pub struct DeleteEdgeParams {
     /// Edge id.
     pub id: String,
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
+    /// A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it.
     pub idempotency_key: Option<String>,
 }
 
@@ -41,7 +41,7 @@ pub struct DeleteEdgeParams {
 pub struct GetEdgeParams {
     /// Edge id.
     pub id: String,
-    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    /// A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read.
     pub x_marfa_read_view: Option<String>,
 }
 
@@ -54,11 +54,11 @@ pub struct ListEdgesParams {
     pub updated_after: Option<String>,
     /// Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone.
     pub updated_before: Option<String>,
-    /// Maximum edges to return per page.
+    /// The maximum number of results to return.
     pub limit: Option<i32>,
-    /// Pagination cursor from a previous response.
+    /// The `next_cursor` from the previous page. Leave it out to get the first page.
     pub cursor: Option<String>,
-    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    /// A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read.
     pub x_marfa_read_view: Option<String>,
 }
 
@@ -69,9 +69,9 @@ pub struct ListItemBackrefsParams {
     pub id: String,
     /// Filter to a single edge type.
     pub edge_type: Option<String>,
-    /// Maximum edges to return per page.
+    /// The maximum number of results to return.
     pub limit: Option<i32>,
-    /// Pagination cursor from a previous response.
+    /// The `next_cursor` from the previous page. Leave it out to get the first page.
     pub cursor: Option<String>,
 }
 
@@ -82,11 +82,11 @@ pub struct ListItemEdgesParams {
     pub id: String,
     /// Filter to a single edge type.
     pub edge_type: Option<String>,
-    /// Maximum edges to return per page.
+    /// The maximum number of results to return.
     pub limit: Option<i32>,
-    /// Pagination cursor from a previous response.
+    /// The `next_cursor` from the previous page. Leave it out to get the first page.
     pub cursor: Option<String>,
-    /// One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read.
+    /// A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read.
     pub x_marfa_read_view: Option<String>,
 }
 
@@ -95,7 +95,7 @@ pub struct ListItemEdgesParams {
 pub struct UpdateEdgeParams {
     /// Edge id.
     pub id: String,
-    /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
+    /// A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it.
     pub idempotency_key: Option<String>,
     pub update_edge_request: Option<models::UpdateEdgeRequest>,
 }

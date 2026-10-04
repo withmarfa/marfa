@@ -1705,41 +1705,69 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         UnauthorizedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "unauthorized";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_permission_denied" | "forbidden" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_type_not_found" | "item_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1792,31 +1820,52 @@ export interface components {
             status: 409;
             message: string;
         };
+        /** @description An error response. */
         ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "conflict" | "id_reused" | "link_taken" | "type_mismatch";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         UnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgePermissionDeniedOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_permission_denied" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1833,11 +1882,18 @@ export interface components {
             /** @description Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection. */
             listed?: boolean;
         };
+        /** @description An error response. */
         MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1875,31 +1931,52 @@ export interface components {
             source_id: string | null;
             created_at: string;
         };
+        /** @description An error response. */
         InvalidIdRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         TypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "item_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1909,11 +1986,18 @@ export interface components {
             error: components["schemas"]["VersionConflictError"];
             current: components["schemas"]["ConflictSnapshot"];
         };
+        /** @description An error response. */
         LinkTakenOrSourceIdConflictOrTypeMismatchRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "link_taken" | "source_id_conflict" | "type_mismatch";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1928,41 +2012,69 @@ export interface components {
             /** @enum {boolean} */
             ok: true;
         };
+        /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_constraint_violation" | "invalid_id" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         InvalidIdOrInvalidTransitionOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "invalid_transition" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_constraint_violation" | "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         InvalidIdOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -1971,21 +2083,35 @@ export interface components {
         MetadataResponse: {
             metadata: components["schemas"]["Metadata"];
         };
+        /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "forbidden" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2006,7 +2132,11 @@ export interface components {
             outcome: components["schemas"]["BulkResultOutcome"];
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row. */
             id?: string;
-            reason?: string;
+            /**
+             * @description Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.
+             * @enum {string}
+             */
+            reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed";
             error?: components["schemas"]["BulkEntryError"];
         };
         /** @enum {string} */
@@ -2018,31 +2148,52 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description An error response. */
         BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_atomic_rollback" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_atomic_rollback" | "forbidden" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         BulkAtomicRollbackRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_atomic_rollback";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2081,11 +2232,18 @@ export interface components {
         };
         /** @enum {string} */
         BulkActionJobStatus: "queued" | "in_progress" | "completed" | "failed" | "canceled";
+        /** @description An error response. */
         BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_cap_exceeded" | "bulk_confirmation_required" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2103,21 +2261,35 @@ export interface components {
             occurred_before?: string;
             filter?: string;
         };
+        /** @description An error response. */
         ForbiddenRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "forbidden";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         BulkJobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_job_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2131,11 +2303,18 @@ export interface components {
             /** @description The purge time, or the later time of the vendor's own change a connector made in carrying the purge out, moved by `POST /items/tombstones`; a vendor change after it is a new row. */
             settled_at: string;
         };
+        /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2148,11 +2327,18 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
         ValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2161,41 +2347,69 @@ export interface components {
         EdgeResponse: {
             edge: components["schemas"]["Edge"];
         };
+        /** @description An error response. */
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         IdReusedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "id_reused";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2205,11 +2419,18 @@ export interface components {
             error: components["schemas"]["VersionConflictError"];
             current: components["schemas"]["Edge"];
         };
+        /** @description An error response. */
         BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "bulk_atomic_rollback" | "edge_permission_denied" | "forbidden" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2245,31 +2466,52 @@ export interface components {
             /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
             format?: string;
         };
+        /** @description An error response. */
         InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_schema" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgePermissionDeniedOrForbiddenRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_permission_denied" | "forbidden";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ConflictRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "conflict";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2301,21 +2543,35 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An error response. */
         EdgeTypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_type_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         EdgeTypeInUseRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "edge_type_in_use";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2378,21 +2634,35 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description An error response. */
         TypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "type_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         TypeChainUnresolvableRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "type_chain_unresolvable";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2401,31 +2671,52 @@ export interface components {
         TypeResponse: {
             type: components["schemas"]["TypeDefinition"];
         };
+        /** @description An error response. */
         InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "inheritance_violation" | "invalid_schema" | "missing_required_field" | "property_shadows_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         LinkTakenOrTypeAlreadyExistsRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "link_taken" | "type_already_exists";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         CompatibleWithViolationRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "compatible_with_violation";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2455,31 +2746,52 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description An error response. */
         InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "inheritance_violation" | "invalid_schema" | "property_shadows_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "core_type_immutable" | "forbidden" | "type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         LinkTakenRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "link_taken";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2508,11 +2820,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description An error response. */
         TypeHasSubtypesOrTypeInUseRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "type_has_subtypes" | "type_in_use";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2572,11 +2891,18 @@ export interface components {
             series_id?: string;
             replaces?: string;
         };
+        /** @description An error response. */
         MissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2617,21 +2943,35 @@ export interface components {
             attached_at: string;
             detached_at: string | null;
         };
+        /** @description An error response. */
         BlobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "blob_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         RangeNotSatisfiableRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "range_not_satisfiable";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2651,21 +2991,35 @@ export interface components {
             recorded_at: string;
             verified_at: string | null;
         };
+        /** @description An error response. */
         BlobLocationNotFoundOrBlobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "blob_location_not_found" | "blob_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         CopiesBelowMinimumRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "copies_below_minimum";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2700,21 +3054,35 @@ export interface components {
             result: components["schemas"]["HousekeepingReport"] | null;
             error: string | null;
         };
+        /** @description An error response. */
         HousekeepingJobNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "housekeeping_job_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         HousekeepingJobRunningRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "housekeeping_job_running";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2749,11 +3117,18 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An error response. */
         ConnectorNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "connector_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2780,11 +3155,18 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An error response. */
         ConnectorNotFoundOrEndpointNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "connector_not_found" | "endpoint_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2817,21 +3199,35 @@ export interface components {
             /** @enum {string|null} */
             outcome: "processed" | "duplicate" | "rejected" | null;
         };
+        /** @description An error response. */
         ConnectorNotFoundOrDeliveryNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "connector_not_found" | "delivery_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ConnectorHeldRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "connector_held";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2890,21 +3286,35 @@ export interface components {
             files?: number;
             fraction?: number;
         };
+        /** @description An error response. */
         InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "invalid_transition" | "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         InvalidIdOrInvalidTransitionRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_id" | "invalid_transition";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -2997,11 +3407,18 @@ export interface components {
             expires_at: string | null;
             last_used_at: string | null;
         };
+        /** @description An error response. */
         ApiKeyNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "api_key_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3027,21 +3444,35 @@ export interface components {
             types: string[];
             sources: string[];
         };
+        /** @description An error response. */
         InvalidPropertiesOrValidationErrorRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "invalid_properties" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ConflictOrLinkTakenRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "conflict" | "link_taken";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3058,11 +3489,18 @@ export interface components {
             child_types: string[];
             removable: boolean;
         };
+        /** @description An error response. */
         NotFoundOrTypeNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "not_found" | "type_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3075,21 +3513,35 @@ export interface components {
             /** @description ISO 8601 instant */
             created_at: string;
         };
+        /** @description An error response. */
         OwnerNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "owner_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         OwnerExistsRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "owner_exists";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3110,11 +3562,18 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An error response. */
         WebhookNotFoundRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "webhook_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3155,71 +3614,120 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description An error response. */
         RequestTooLargeRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "request_too_large";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         RateLimitedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "rate_limited";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         WriteContentionRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "write_contention";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         ReadViewChangedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "read_view_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         IdempotencyKeyInFlightRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "idempotency_key_in_flight";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "idempotency_key_reused" | "idempotency_result_not_retained";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
+        /** @description An error response. */
         StreamCapacityExhaustedRefusal: {
+            /** @description What went wrong. */
             error: {
-                /** @enum {string} */
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
                 code: "stream_capacity_exhausted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     [key: string]: unknown;
                 };
@@ -3280,15 +3788,15 @@ export interface operations {
                 updated_after?: string;
                 /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
                 updated_before?: string;
-                /** @description Page size, 1–200 (default 50) */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Pagination cursor from a prior response */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
                 /** @description Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. */
                 include?: string;
             };
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -3326,7 +3834,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3357,7 +3865,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3372,7 +3880,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3388,7 +3896,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3409,7 +3917,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -3487,7 +3995,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3549,7 +4057,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3577,7 +4085,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3594,7 +4102,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3677,7 +4185,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3707,7 +4215,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3723,7 +4231,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3747,7 +4255,7 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -3788,7 +4296,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3835,7 +4343,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3850,7 +4358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3866,7 +4374,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3890,7 +4398,7 @@ export interface operations {
                 version?: number;
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -3932,7 +4440,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3994,7 +4502,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4022,7 +4530,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4039,7 +4547,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4064,7 +4572,7 @@ export interface operations {
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4135,7 +4643,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4197,7 +4705,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemStaleVersion"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["LinkTakenOrSourceIdConflictOrTypeMismatchRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4225,7 +4733,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4242,7 +4750,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4264,7 +4772,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4306,7 +4814,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4368,7 +4876,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4396,7 +4904,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4413,7 +4921,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4435,7 +4943,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4484,7 +4992,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4546,7 +5054,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4574,7 +5082,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4591,7 +5099,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4612,9 +5120,9 @@ export interface operations {
     listItemVersions: {
         parameters: {
             query?: {
-                /** @description Page size, 1–200 (default 50) */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -4655,7 +5163,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4700,7 +5208,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4716,7 +5224,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4774,7 +5282,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4819,7 +5327,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4835,7 +5343,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4900,7 +5408,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4945,7 +5453,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4957,7 +5465,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4973,7 +5481,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5037,7 +5545,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5082,7 +5590,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5094,7 +5602,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5110,7 +5618,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5174,7 +5682,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5219,7 +5727,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5231,7 +5739,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5247,7 +5755,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5271,7 +5779,7 @@ export interface operations {
                 version?: number;
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -5313,7 +5821,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5375,7 +5883,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5403,7 +5911,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5420,7 +5928,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5481,7 +5989,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5526,7 +6034,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5538,7 +6046,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5554,7 +6062,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5643,7 +6151,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5703,7 +6211,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5715,7 +6223,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5731,7 +6239,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5752,7 +6260,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -5865,7 +6373,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5911,7 +6419,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5939,7 +6447,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5956,7 +6464,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6000,7 +6508,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6045,7 +6553,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkJobNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6061,7 +6569,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6104,7 +6612,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6149,7 +6657,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkJobNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6161,7 +6669,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6177,7 +6685,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6245,7 +6753,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6275,7 +6783,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6287,7 +6795,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6303,7 +6811,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6380,7 +6888,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6410,7 +6918,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6422,7 +6930,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6438,7 +6946,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6511,7 +7019,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6541,7 +7049,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6553,7 +7061,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6569,7 +7077,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6627,7 +7135,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6672,7 +7180,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6688,7 +7196,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6753,7 +7261,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6798,7 +7306,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6814,7 +7322,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6880,7 +7388,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6925,7 +7433,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6937,7 +7445,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6953,7 +7461,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7013,7 +7521,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7058,7 +7566,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7070,7 +7578,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7086,7 +7594,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7108,13 +7616,13 @@ export interface operations {
             query?: {
                 /** @description Filter to a single edge type. */
                 edge_type?: string;
-                /** @description Maximum edges to return per page. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Pagination cursor from a previous response. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -7155,7 +7663,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7202,7 +7710,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7217,7 +7725,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7233,7 +7741,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7255,9 +7763,9 @@ export interface operations {
             query?: {
                 /** @description Filter to a single edge type. */
                 edge_type?: string;
-                /** @description Maximum edges to return per page. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Pagination cursor from a previous response. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -7298,7 +7806,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7343,7 +7851,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7359,7 +7867,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7385,13 +7893,13 @@ export interface operations {
                 updated_after?: string;
                 /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone. */
                 updated_before?: string;
-                /** @description Maximum edges to return per page. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Pagination cursor from a previous response. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -7429,7 +7937,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7460,7 +7968,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7475,7 +7983,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7491,7 +7999,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7512,7 +8020,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -7582,7 +8090,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7644,7 +8152,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdReusedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7672,7 +8180,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7689,7 +8197,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7711,7 +8219,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -7737,7 +8245,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7784,7 +8292,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7799,7 +8307,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7815,7 +8323,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7836,7 +8344,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -7878,7 +8386,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7940,7 +8448,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7968,7 +8476,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7985,7 +8493,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8007,7 +8515,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -8064,7 +8572,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8126,7 +8634,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeVersionConflict"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8154,7 +8662,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8171,7 +8679,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8247,7 +8755,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8307,7 +8815,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8319,7 +8827,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8335,7 +8843,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8356,7 +8864,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -8379,7 +8887,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypePage"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8394,7 +8902,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8409,7 +8917,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8425,7 +8933,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8486,7 +8994,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8531,7 +9039,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8543,7 +9051,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8559,7 +9067,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8620,7 +9128,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8680,7 +9188,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeInUseRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8692,7 +9200,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8708,7 +9216,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8729,7 +9237,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -8752,7 +9260,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeDefinitionPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8767,7 +9275,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8782,7 +9290,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8798,7 +9306,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8857,7 +9365,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8902,7 +9410,7 @@ export interface operations {
                     "application/json": components["schemas"]["LinkTakenOrTypeAlreadyExistsRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8929,7 +9437,7 @@ export interface operations {
                     "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8945,7 +9453,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8988,7 +9496,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeDefinition"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9033,7 +9541,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeChainUnresolvableRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9049,7 +9557,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9111,7 +9619,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9171,7 +9679,7 @@ export interface operations {
                     "application/json": components["schemas"]["LinkTakenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9198,7 +9706,7 @@ export interface operations {
                     "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9214,7 +9722,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9260,7 +9768,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9320,7 +9828,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeHasSubtypesOrTypeInUseRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9332,7 +9840,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9348,7 +9856,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9380,9 +9888,9 @@ export interface operations {
                 include?: string;
                 /** @description Comma-separated tags; items must match all (AND). */
                 tags?: string;
-                /** @description Maximum results to return. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
                 /** @description Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
@@ -9426,7 +9934,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9456,7 +9964,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9472,7 +9980,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9534,7 +10042,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9564,7 +10072,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9580,7 +10088,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9620,7 +10128,7 @@ export interface operations {
                     "application/json": components["schemas"]["TagCountPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9650,7 +10158,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9666,7 +10174,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9729,7 +10237,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9759,7 +10267,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9775,7 +10283,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9815,7 +10323,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobOrphanPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9845,7 +10353,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9861,7 +10369,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9901,7 +10409,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobStorePage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9931,7 +10439,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9947,7 +10455,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10037,7 +10545,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10099,7 +10607,7 @@ export interface operations {
                     "application/json": components["schemas"]["RangeNotSatisfiableRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10115,7 +10623,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10179,7 +10687,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10224,7 +10732,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10240,7 +10748,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10298,7 +10806,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10343,7 +10851,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10359,7 +10867,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10419,7 +10927,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10479,7 +10987,7 @@ export interface operations {
                     "application/json": components["schemas"]["CopiesBelowMinimumRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10495,7 +11003,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10535,7 +11043,7 @@ export interface operations {
                     "application/json": components["schemas"]["HousekeepingJobPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10565,7 +11073,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10581,7 +11089,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10639,7 +11147,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10699,7 +11207,7 @@ export interface operations {
                     "application/json": components["schemas"]["HousekeepingJobRunningRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10711,7 +11219,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10727,7 +11235,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10767,7 +11275,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10782,7 +11290,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10798,7 +11306,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10874,7 +11382,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10904,7 +11412,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10916,7 +11424,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10932,7 +11440,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10975,7 +11483,7 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11005,7 +11513,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11021,7 +11529,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11064,7 +11572,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11109,7 +11617,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11121,7 +11629,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11137,7 +11645,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11182,7 +11690,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11227,7 +11735,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11239,7 +11747,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11255,7 +11763,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11275,9 +11783,9 @@ export interface operations {
     listConnectorRuns: {
         parameters: {
             query?: {
-                /** @description How many runs, newest first: at most 200, 50 unless given. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -11318,7 +11826,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11348,7 +11856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11364,7 +11872,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11433,7 +11941,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11478,7 +11986,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11490,7 +11998,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11506,7 +12014,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11549,7 +12057,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpointPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11594,7 +12102,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11610,7 +12118,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11676,7 +12184,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11736,7 +12244,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11748,7 +12256,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11764,7 +12272,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11809,7 +12317,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11854,7 +12362,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundOrEndpointNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11866,7 +12374,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11882,7 +12390,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11906,9 +12414,9 @@ export interface operations {
                 state?: "pending" | "handled" | "any";
                 /** @description Only the deliveries this endpoint received. */
                 endpoint_id?: string;
-                /** @description How many deliveries, oldest first: at most 200, 50 unless given. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -11949,7 +12457,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11994,7 +12502,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12010,7 +12518,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12055,7 +12563,7 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12100,7 +12608,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundOrDeliveryNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12116,7 +12624,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12184,7 +12692,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12229,7 +12737,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundOrDeliveryNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12241,7 +12749,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12257,7 +12765,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12329,7 +12837,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12389,7 +12897,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorHeldRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12401,7 +12909,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12417,7 +12925,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12478,7 +12986,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12523,7 +13031,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12535,7 +13043,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12551,7 +13059,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12594,7 +13102,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorState"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12639,7 +13147,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12655,7 +13163,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12730,7 +13238,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12790,7 +13298,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorHeldRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12802,7 +13310,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12818,7 +13326,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12861,7 +13369,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12906,7 +13414,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12918,7 +13426,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12934,7 +13442,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12956,9 +13464,9 @@ export interface operations {
             query?: {
                 /** @description Only the agreements waiting to be carried to the vendor, or only the others. */
                 waiting?: "true" | "false";
-                /** @description How many agreements: at most 200, 50 unless given. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -12999,7 +13507,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13044,7 +13552,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13060,7 +13568,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13140,7 +13648,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13200,7 +13708,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorHeldRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13212,7 +13720,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13228,7 +13736,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13294,7 +13802,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13339,7 +13847,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13351,7 +13859,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13367,7 +13875,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13388,7 +13896,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -13444,7 +13952,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13490,7 +13998,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13518,7 +14026,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13535,7 +14043,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13557,7 +14065,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -13618,7 +14126,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13680,7 +14188,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13708,7 +14216,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13725,7 +14233,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13747,7 +14255,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -13789,7 +14297,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13851,7 +14359,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13879,7 +14387,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13896,7 +14404,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13937,7 +14445,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKeyPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13967,7 +14475,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13983,7 +14491,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14066,7 +14574,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14111,7 +14619,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14123,7 +14631,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14139,7 +14647,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14160,7 +14668,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description One opaque certificate obtained from a copy stream. Conditional reads resolve current read authority and data in one snapshot; a changed view answers 409 read_view_changed. Conditional item pages require include=metadata. Omit this header for an ordinary uncertified read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -14183,7 +14691,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14214,7 +14722,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14229,7 +14737,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14245,7 +14753,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14303,7 +14811,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14348,7 +14856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKeyNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14360,7 +14868,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14376,7 +14884,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14463,7 +14971,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14508,7 +15016,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKeyNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14520,7 +15028,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14536,7 +15044,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14576,7 +15084,7 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14606,7 +15114,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14622,7 +15130,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14693,7 +15201,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14723,7 +15231,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14735,7 +15243,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14751,7 +15259,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14823,7 +15331,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidPropertiesOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14868,7 +15376,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14884,7 +15392,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14924,7 +15432,7 @@ export interface operations {
                     "application/json": components["schemas"]["DriftedPlatformTypePage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14954,7 +15462,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14970,7 +15478,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15016,7 +15524,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15076,7 +15584,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15088,7 +15596,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15104,7 +15612,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15144,7 +15652,7 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15189,7 +15697,7 @@ export interface operations {
                     "application/json": components["schemas"]["OwnerNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15205,7 +15713,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15270,7 +15778,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15315,7 +15823,7 @@ export interface operations {
                     "application/json": components["schemas"]["OwnerExistsRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15327,7 +15835,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15343,7 +15851,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15412,7 +15920,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15442,7 +15950,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15458,7 +15966,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15498,7 +16006,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15528,7 +16036,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15544,7 +16052,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15609,7 +16117,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15639,7 +16147,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15651,7 +16159,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15667,7 +16175,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15710,7 +16218,7 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15755,7 +16263,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15771,7 +16279,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15814,7 +16322,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15859,7 +16367,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15871,7 +16379,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15887,7 +16395,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15955,7 +16463,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16000,7 +16508,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16012,7 +16520,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16028,7 +16536,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16048,9 +16556,9 @@ export interface operations {
     listWebhookDeliveries: {
         parameters: {
             query?: {
-                /** @description Maximum number of delivery rows to return. */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -16076,7 +16584,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookDeliveryPage"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16121,7 +16629,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16137,7 +16645,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16180,7 +16688,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookDelivery"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16240,7 +16748,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictRefusal"];
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16252,7 +16760,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16268,7 +16776,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16298,9 +16806,9 @@ export interface operations {
                 created_after?: string;
                 /** @description Include entries written strictly before this instant. */
                 created_before?: string;
-                /** @description Maximum entries to return (1–200, default 50). */
+                /** @description The maximum number of results to return. */
                 limit?: number;
-                /** @description Opaque pagination cursor from a previous response. */
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -16338,7 +16846,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description Unauthorized */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16368,7 +16876,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16384,7 +16892,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16482,7 +16990,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16512,7 +17020,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description The read view changed. Rebuild the working copy. No resource details or replacement certificate are supplied. */
+            /** @description `read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16527,7 +17035,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReadViewChangedRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16654,7 +17162,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16666,7 +17174,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16682,7 +17190,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
