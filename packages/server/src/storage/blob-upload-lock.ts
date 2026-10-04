@@ -102,16 +102,3 @@ export async function holdBlobUploadLocks(
     for (const release of releases) release();
   };
 }
-
-/** Run `fn` holding the lock on every hash in `hashes`. */
-export async function withBlobUploadLocks<T>(
-  hashes: readonly string[],
-  fn: () => Promise<T>,
-): Promise<T> {
-  const release = await holdBlobUploadLocks(hashes);
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
-}
