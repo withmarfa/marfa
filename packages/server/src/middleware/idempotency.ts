@@ -9,6 +9,7 @@ import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { credentialHandle } from "./auth.js";
+import { isJsonContentType } from "./json-content-type.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
@@ -249,6 +250,10 @@ async function fingerprint(
     // order is part of the request, which is a wider question than the
     // path's.
     url.search,
+    // Whether a body is read as JSON decides whether the write happens at
+    // all, so the same text under another type is another request; two
+    // spellings of a JSON type are the same request.
+    isJsonContentType(c.req.header("content-type")) ? "json" : "other",
     body,
   ].join("\n");
   const digest = await crypto.subtle.digest(

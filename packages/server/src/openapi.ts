@@ -20,6 +20,7 @@ import {
   queryKeyFamilies,
   refuseUndeclaredQueryKeys,
 } from "./middleware/undeclared-query-keys.js";
+import { isJsonContentType } from "./middleware/json-content-type.js";
 
 /**
  * Put a route's guards ahead of everything it declares for itself.
@@ -77,6 +78,57 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
   };
 }
 
+const requireJsonContentType: MiddlewareHandler = async (c, next) => {
+  if (!isJsonContentType(c.req.header("content-type"))) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "The request body must be JSON: send it with Content-Type: application/json",
+    );
+  }
+  await next();
+};
+
+/**
+ * Make a route whose body is JSON refuse a request that is not sent as JSON.
+ *
+ * **Left to the library, such a request is read as an empty object.** It
+ * validates a JSON body only when the request's `Content-Type` is JSON or
+ * the body is marked `required`, and otherwise hands the handler `{}`; a
+ * request with no body and no `Content-Type` reaches that branch even though
+ * the library's own media-type check, which answers `415`, catches every
+ * request that carries a body. A door whose schema accepts `{}` then runs on
+ * it.
+ *
+ * Marking the body `required` runs the validator on every request, and the
+ * check added last in the route's middleware answers the refusal the contract
+ * names, after the credential, the door's own checks and the refusal of an
+ * undeclared query key (the query is the cheaper thing to judge), and before
+ * any validator reads the body.
+ */
+function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
+  const body = route.request?.body;
+  const types = Object.keys(body?.content ?? {});
+  if (
+    body === undefined ||
+    types.length === 0 ||
+    !types.every((type) => /^application\/([a-z-.]+\+)?json/i.test(type))
+  ) {
+    return route;
+  }
+  const declared = route.middleware;
+  const rest =
+    declared === undefined
+      ? []
+      : Array.isArray(declared)
+        ? declared
+        : [declared];
+  return {
+    ...route,
+    request: { ...route.request, body: { ...body, required: true } },
+    middleware: [...rest, requireJsonContentType],
+  };
+}
+
 /**
  * Create an OpenAPIHono router with the defaultHook configured to throw
  * MarfaError on validation failure, preserving the existing error response format.
@@ -126,7 +178,7 @@ export function createOpenAPIRouter<
   type Registrar = (route: RouteConfig, ...rest: unknown[]) => unknown;
   const register = router.openapi as unknown as Registrar;
   const gated: Registrar = (route, ...rest) =>
-    register(withRouteGuards(route), ...rest);
+    register(withRequiredJsonBody(withRouteGuards(route)), ...rest);
   router.openapi = gated as unknown as typeof router.openapi;
   return router;
 }
