@@ -321,6 +321,27 @@ describe("a concrete type selects its descendants, so one is refused only when n
   });
 });
 
+describe("a key whose map reaches no type", () => {
+  it("a key whose map reaches no type is refused a wildcard too", async () => {
+    const minted = await client.createKey({
+      label: "unreadable-type-filter-none",
+      source: `${ctx.source}-unreadable-type-filter-none`,
+      type_permissions: {},
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    for (const type of ["core.*", UNREADABLE]) {
+      const seen = await ask(minted.data.key, "GET", `/items?type=${type}`);
+      expect(seen.status, type).toBe(403);
+      expect(seen.code, type).toBe("type_not_permitted");
+    }
+    // The witness: the key that reads some type is answered the wildcard.
+    expect((await ask(key, "GET", "/items?type=core.*")).status).toBe(200);
+  });
+});
+
 describe("POST /items/lookup refuses a type the key may not read", () => {
   const lookup = (as: string, type: string) =>
     ask(as, "POST", "/items/lookup", { type, ids: [noteId] });
@@ -337,6 +358,47 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
     const served = await lookup(apiKey, UNREADABLE);
     expect(served.status).toBe(200);
     expect(served.ids).toContain(noteId);
+  });
+
+  it("answers no tombstones to a key that reads only a type under the one named", async () => {
+    // A purged `core.entity` row leaves a tombstone under `core.entity`. This
+    // key reads `core.entity.person`, which the filter selects, and not
+    // `core.entity`, so it is answered and the tombstone is withheld.
+    const sourceId = `unreadable-filter-tombstone-${ctx.runId}`;
+    const made = await client.createItem({
+      type: "core.entity",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { name: `unreadable-filter-${ctx.runId}` },
+    });
+    expect(made.status).toBe(201);
+    expect((await client.deleteItem(made.data.item.id)).ok).toBe(true);
+    expect((await client.purgeItem(made.data.item.id)).ok).toBe(true);
+    const body = {
+      type: "core.entity",
+      source: ctx.source,
+      source_ids: [sourceId],
+    };
+
+    const owner = await client.lookupItems(body);
+    expect(owner.ok, JSON.stringify(owner.error)).toBe(true);
+    expect(
+      owner.data.tombstones.map((t) => t.key),
+      "the owner is not answered the tombstone, so the empty list below says nothing",
+    ).toEqual([sourceId]);
+
+    const res = await fetch(`${apiUrl}/items/lookup`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${personKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+    expect(
+      ((await res.json()) as { tombstones: unknown[] }).tombstones,
+    ).toEqual([]);
   });
 });
 

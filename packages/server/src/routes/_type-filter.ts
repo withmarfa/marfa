@@ -39,9 +39,8 @@ import {
  *
  * **A registered concrete type the credential may not read is
  * `type_not_permitted`, unless it reads something under it.** The caller named
- * it, so the credential is told it lacks the grant, as it is on a write and on
- * the operator key. The empty
- * page it replaces said "nothing here" about a type that is plainly
+ * it, so the credential is told it lacks the grant, as it is on a write. The
+ * empty page it replaces said "nothing here" about a type that is plainly
  * registered, and hid nothing: the registry already tells a registered type
  * from an unregistered one, and `GET /types` lists every schema.
  *

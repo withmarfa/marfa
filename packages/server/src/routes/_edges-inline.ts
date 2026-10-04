@@ -101,12 +101,7 @@ export async function applyInlineEdges(
   // Validate the full proposed set against the post-delete state. Throws
   // on the first violation (cardinality, type constraint, duplicate,
   // cycle), aborting the caller's transaction before any edge is recreated.
-  await assertEdgesCanBeCreated(
-    storage.edges,
-    storage.items,
-    proposals,
-    mayReadTarget,
-  );
+  await assertEdgesCanBeCreated(storage, proposals, mayReadTarget);
 
   const created: Edge[] = [];
   for (const p of proposals) {

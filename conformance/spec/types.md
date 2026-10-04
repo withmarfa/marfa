@@ -81,11 +81,17 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 
 33. When a type declares `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` or `max_versions` in its `version_policy`, each declared value MUST be an integer of at least 1. When the policy declares more than one window, each later window MUST end no sooner than every earlier declared window, in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`. When either rule is violated, `POST /types` and `PUT /types/{id}` MUST refuse the policy with `400 invalid_schema` naming the field, without changing the registration. An omitted window MUST NOT participate in this comparison.
 
-    The thinning policy fills omitted windows from the instance defaults, which this comparison does not validate.
+    Thinning fills omitted windows from the type's ancestors and then from the instance defaults (34), which this comparison does not validate.
 
     Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field: %s`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
 
-34. The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
+34. When the version-thinning job thins an item's history, it MUST apply the effective `version_policy` of the item's type, read in the transaction that removes the snapshots. The effective policy is the one `GET /types/{id}` returns, in which a type inherits `version_policy` from its parent chain field by field and a field the type declares overrides the same field of every ancestor. Thinning MUST take each field that no type in the chain declares from the instance defaults.
+
+    A policy that thinning read from the type alone would delete history that the policy advertised for the type retains, and one read before the transaction would ignore a replacement landing meanwhile. A type with no policy anywhere, and an item whose type is no longer registered, are thinned by the instance defaults alone.
+
+    Tests: `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`, `› thins an item's history by the policy its type inherits`. The referee cannot age a snapshot, so the windows and a replacement landing mid-run are held by the server's own suite (`packages/server/src/storage/version-thinner.test.ts`).
+
+35. The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
 
     Reason: type existence is not secret, because an unregistered type and a registered one are already told apart (`search-and-filters.md` 1, 50); a schema holds no item data; and a device resolves an inherited field by walking `parent` through `GET /types` (`device.md` 47), so hiding an ancestor would silently drop the fields it declares. `keys-and-oauth.md` 16 already admits both registries to every credential. Narrowing them would not simplify the doors that name a type either, since each already refuses by the type's name.
 

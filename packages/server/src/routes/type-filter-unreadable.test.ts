@@ -434,6 +434,26 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
   });
 });
 
+describe("a key whose map reaches no type", () => {
+  it("is refused a wildcard too, where a key reading some type is answered", async () => {
+    const none = await mintWorkingKey(ctx, {
+      label: `none-${Math.random().toString(36).slice(2, 8)}`,
+      type_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      extension_permissions: {},
+      profile_permissions: {},
+    });
+    for (const door of DOORS.filter((d) => !d.name.startsWith("POST"))) {
+      const got = await answer(await door.ask("core.*", none));
+      expect(got.status, door.name).toBe(403);
+      expect(got.code, door.name).toBe("type_not_permitted");
+    }
+    const some = await answer(await DOORS[0]!.ask("core.*", acmeKey));
+    expect(some.status).toBe(200);
+  });
+});
+
 describe("the registries stay full", () => {
   it("GET /types, GET /types/{id} and GET /edge-types answer a key that reads one namespace in full", async () => {
     const list = await request(ctx.app, "GET", "/types", { key: acmeKey });

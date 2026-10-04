@@ -204,14 +204,16 @@ export interface ApiKeyRequest {
   extension_permissions?: Record<string, string>;
   metadata_permissions?: Record<string, string>;
   profile_permissions?: Record<string, string>;
-  /** The permissions the key holds; omitted takes the creator's when no
-   *  map and no source is named either, and none when one is. */
+  /** The permissions the key holds. A mint naming this, a map or `sources`
+   *  holds exactly what it names; one naming none of them takes the
+   *  creator's whole set. */
   permissions?: readonly string[];
   default_tier?: "library" | "feed";
   /** Only an operator key can mint another, and it holds no permissions. */
   is_operator?: boolean;
   /** The sources the key may name on a write besides its own; omitted
-   *  takes the creator's when no map is named either. */
+   *  claims none when a permission or a map is named, and takes the
+   *  creator's when none is. */
   sources?: readonly string[];
   /** `null` clears a key's levers on an update. */
   enforcement_override?: EnforcementOverride | null;

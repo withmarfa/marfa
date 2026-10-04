@@ -28,6 +28,7 @@ import type {
 import { normalizeTimeBound } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
+import { assertTypeReadable } from "./_type-filter.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { ItemSchema } from "./_schemas.js";
 
@@ -127,7 +128,7 @@ const lookupRoute = createRoute({
     "- `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.\n" +
     "- `source` and `source_ids`: the rows holding those natural keys, whatever their type, so a row retyped since it was written is found.\n" +
     "- `ids`: the rows with those ids, whatever their type.\n\n" +
-    "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids`. A credential that may not read `type` is refused `403 type_not_permitted`. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
+    "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids`. A credential that reads nothing under `type` is refused `403 type_not_permitted`, and one that reads only a type under it gets no tombstones. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -160,7 +161,7 @@ const lookupRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, or it may not read `type`. A credential that reaches some types is answered the rows it may read and the rest are left out.",
+        "The credential's type permissions reach no type, or it reads nothing under `type`. A credential that reaches some types is answered the rows it may read and the rest are left out.",
     },
   },
 });
@@ -346,9 +347,9 @@ export function itemsLookupRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, true);
-    // The type is named outright, so a credential that may not read it is told
-    // so rather than answered with nothing.
-    requireTypeAccess(c, type, "read");
+    // The type is named outright, so a credential that reads nothing under it
+    // is told so rather than answered with nothing.
+    assertTypeReadable(c, type);
     // Before the per-row filter: an empty answer to a key that may read
     // nothing would say the keys named nothing.
     getTypeFilter(c);
@@ -374,7 +375,7 @@ export function itemsLookupRoutes(storage: Storage) {
     const rows = await withCascadeMarks(storage, apiKey, readable);
 
     const tombstones =
-      selector.kind !== "ids"
+      selector.kind !== "ids" && mayRead(apiKey, type)
         ? inOrder(
             selector.values,
             await storage.items.tombstones(type, tombstoneSelector(selector)),
