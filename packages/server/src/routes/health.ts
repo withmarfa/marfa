@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { ErrorCode } from "@withmarfa/shared";
+import { shapedError } from "../middleware/error-handler.js";
 import { platformDrift } from "../storage/platform-drift.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
@@ -90,6 +92,11 @@ export function operatorCaller(
 /**
  * One probe under the budget. `down` is a refusal, `degraded` is no answer
  * in time, and latency rides both for the reason `database` gives above.
+ *
+ * A write refused because another write held the lock past the busy budget
+ * is no answer either: the lock is held, as it is for the whole of an archive
+ * restore, and the next write after it lands. The refusal arrives wrapped by
+ * the query layer.
  */
 async function timed(
   work: () => Promise<unknown>,
@@ -103,8 +110,9 @@ async function timed(
       ? { status: "degraded", latency_ms: latencyMs, error: heldMessage }
       : { status: "ok", latency_ms: latencyMs };
   } catch (err) {
+    const held = shapedError(err)?.code === ErrorCode.WRITE_CONTENTION;
     return {
-      status: "down",
+      status: held ? "degraded" : "down",
       latency_ms: Math.round(performance.now() - started),
       error: describe(err),
     };

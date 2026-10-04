@@ -67,11 +67,11 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
     Tests: `compliance/instance.test.ts › answers /health without a credential and names its components`. A `down` component cannot be produced against a server the referee booted, so the server's own suite drives each: `packages/server/src/routes/health.test.ts › GET /health failing status`, and with the real app and database, `packages/server/src/routes/health.app.test.ts`.
 
-12. The server SHALL probe each component, within two seconds, as follows: `database` reads a row; `database_write` commits one write; `blob_storage` asks the disk store for a blob; `disk` measures the bytes available on whichever of the database's volume and the disk store's volume has the least. A probe the database or the disk store refused is `down`. A probe that gave no answer within two seconds is `degraded`. A `disk` below 1 MiB available is `down`, below 64 MiB is `degraded`, and one whose space could not be read is `degraded`, never `down`.
+12. The server SHALL probe each component, within two seconds, as follows: `database` reads a row; `database_write` commits one write; `blob_storage` asks the disk store for a blob; `disk` measures the bytes available on whichever of the database's volume and the disk store's volume has the least. A probe the database or the disk store refused is `down`. A probe that gave no answer within two seconds is `degraded`, and so is a `database_write` refused `write_contention`, because another write held the lock past the busy budget. A `disk` below 1 MiB available is `down`, below 64 MiB is `degraded`, and one whose space could not be read is `degraded`, never `down`.
 
-    Reason: a refusal is known and a silence is not. A database that reads can still refuse every write, because the volume is read-only or full, and only a committed write shows it.
+    Reason: a refusal is known and a silence is not. A database that reads can still refuse every write, because the volume is read-only or full, and only a committed write shows it. A lock held past the budget is a busy instance rather than a broken one: an archive restore holds it until it commits (`search-and-filters.md` 47).
 
-    Tests: `packages/server/src/routes/health.test.ts › GET /health failing status`.
+    Tests: `packages/server/src/routes/health.test.ts › GET /health failing status`, `› answers 200 and degraded when another write held the lock past the busy budget`.
 
 13. The server SHALL commit the write of `database_write` at most once every ten seconds, and answer every call in between with the outcome of the last.
 
