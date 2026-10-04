@@ -786,10 +786,21 @@ describe("source_filter lever", () => {
     const concealed = await hidden.createItem({
       type: "core.note",
       properties: { body: `concealed ${marker}` },
-      tags: [marker],
+      tags: [marker, `${marker}-hidden-only`],
     });
     expect(concealed.ok).toBe(true);
     trackItem(ctx, concealed.data.item.id);
+
+    // The tag listing, a facet of the listing: before the lever it counts both
+    // notes and names the tag only the concealed one carries.
+    const tagCounts = async (): Promise<Record<string, number>> => {
+      const tags = await client.listTags();
+      expect(tags.ok).toBe(true);
+      return Object.fromEntries(tags.data.data.map((t) => [t.tag, t.count]));
+    };
+    const tagsBefore = await tagCounts();
+    expect(tagsBefore[marker]).toBe(2);
+    expect(tagsBefore[`${marker}-hidden-only`]).toBe(1);
 
     const statsBefore = await client.itemStats();
     expect(statsBefore.ok).toBe(true);
@@ -830,6 +841,12 @@ describe("source_filter lever", () => {
     const statsAfter = await client.itemStats();
     expect(statsAfter.ok).toBe(true);
     expect(statsAfter.data["active"] ?? 0).toBeLessThan(activeBefore);
+
+    // Tags: a tag counted over hidden rows would open to an empty listing, so
+    // the shared tag counts the one visible row and the other is not named.
+    const tagsAfter = await tagCounts();
+    expect(tagsAfter[marker]).toBe(1);
+    expect(tagsAfter[`${marker}-hidden-only`]).toBeUndefined();
   });
 
   /**

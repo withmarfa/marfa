@@ -882,6 +882,9 @@ export interface MetadataStore {
     /** Mirrors `ItemFilters.excluded_types`, and travels with
      *  `allowedTypes` for the same reason. */
     excludedTypes?: string[];
+    /** The instance's `source_filter` lever, decided per row from the
+     *  row's own type, as `ItemFilters.source_filter` is. */
+    source_filter?: SourceFilterSettings;
   }): Promise<{ tag: string; count: number }[]>;
   getExtensions(
     itemId: string,
