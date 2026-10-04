@@ -312,6 +312,8 @@ fn respond(
     gate: Arc<(Mutex<bool>, Condvar)>,
     sent: mpsc::Sender<(String, String)>,
 ) {
+    // On macOS, accepted sockets inherit the listener's nonblocking mode.
+    stream.set_nonblocking(false).unwrap();
     stream.set_read_timeout(Some(BUDGET)).unwrap();
     let mut request = Vec::new();
     let mut byte = [0];
