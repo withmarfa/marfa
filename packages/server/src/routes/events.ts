@@ -2,15 +2,9 @@ import { EVENT_LIMITS } from "./_event-limits.js";
 import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
 import { trackStream } from "./open-streams.js";
 import { invalidReadViewRequest } from "../middleware/read-view.js";
-import { Hono, type MiddlewareHandler } from "hono";
-import {
-  ErrorCode,
-  GLOBAL_TYPE_WILDCARD,
-  MarfaError,
-  isValidTypePattern,
-  matchesTypeFilter,
-  malformedTypeIdentifier,
-} from "@withmarfa/shared";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
+import { assertTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import {
@@ -394,20 +388,25 @@ export function itemFrameFor(
  * admitting nothing, so `?type=` and `?type=,` open an unfiltered stream
  * instead of a silent, permanent one.
  *
- * **Each entry is held to the grammar `/items`, `/search` and `/export`
- * hold this parameter to, and refused on the same terms.** A stream that
- * accepted any string and then matched nothing with it would give the
- * worst answer a filter can give: a 200 and an empty stream, which a
- * client cannot tell from a quiet instance. A spelling the list surfaces
- * reject reaches the caller as the rejection they already get there
- * rather than as silence.
+ * **Each entry is held to the rule `/items`, `/search` and `/export` hold
+ * this parameter to (`assertTypeFilter`), and refused on the same terms.** A
+ * stream that accepted any string and then matched nothing with it would give
+ * the worst answer a filter can give: a 200 and an empty stream, which a
+ * client cannot tell from a quiet instance. A spelling, an unregistered type
+ * or a type the credential may not read reaches the caller as the refusal
+ * the list surfaces give, rather than as silence. A pattern is the part
+ * that is never refused: it streams the types it matches that the credential
+ * may read.
  *
  * The global wildcard is refused for the reason it is refused on those
  * surfaces rather than because it is hard to honor: "everything" is this
  * stream with no `type` at all, and a filter matching every type would
  * slip past the per-type levers keyed off this parameter.
  */
-function parseTypeFilter(raw: string | undefined): string[] | undefined {
+function parseTypeFilter(
+  c: Context<AppEnv>,
+  raw: string | undefined,
+): string[] | undefined {
   if (raw === undefined) return undefined;
   const parts = raw
     .split(",")
@@ -420,11 +419,7 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
       `Too many types in filter (max ${String(MAX_TYPE_FILTER_ENTRIES)})`,
     );
   }
-  for (const part of parts) {
-    if (part === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(part)) {
-      throw malformedTypeIdentifier("type", `Invalid type identifier: ${part}`);
-    }
-  }
+  for (const part of parts) assertTypeFilter(c, part);
   return parts;
 }
 
@@ -521,7 +516,7 @@ export function eventRoutes(
 
   router.get("/", copyMode, readsSomeType, (c) => {
     const apiKey = requireAuth(c);
-    const typeParam = parseTypeFilter(c.req.query("type"));
+    const typeParam = parseTypeFilter(c, c.req.query("type"));
     const edgeMode = parseEdgeMode(c.req.query("edges"));
     const afterId = parseCursor(c.req.header("Last-Event-ID"));
     // The SSE stream is the one type filter with no query to hang a

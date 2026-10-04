@@ -716,7 +716,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
+            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
         },
         {
           name: "edges",
@@ -741,12 +741,12 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           content: { "text/event-stream": { schema: { type: "string" } } },
         },
         "400": chainRefusal(
-          ["validation_error"],
-          "The filter or the cursor cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, an `edges` value outside the enum, or a `Last-Event-ID` that is not a decimal event id.",
+          ["validation_error", "unknown_type"],
+          "The filter or the cursor cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or a concrete `type` entry nothing registers (`unknown_type`), an `edges` value outside the enum, or a `Last-Event-ID` that is not a decimal event id.",
         ).response,
         "403": chainRefusal(
           ["type_not_permitted"],
-          "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types opens a stream narrowed to them rather than being refused.",
+          "The credential reaches no type, or a `type` entry names a registered type it cannot read and none under it. Otherwise the stream is narrowed to the types it reads.",
         ).response,
         "503": chainRefusal(
           ["stream_capacity_exhausted"],

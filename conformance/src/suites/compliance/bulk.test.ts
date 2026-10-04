@@ -348,7 +348,15 @@ describe("bulk", () => {
 
     // The rollback is still a rollback. A status that changed and a page
     // that landed would be worse than either.
-    const listed = await denied.listItems({ type: "core.note", limit: 5 });
+    // Read as the owner, because the denied key may not read notes and is
+    // refused the listing itself.
+    const refused = await denied.listItems({ type: "core.note", limit: 5 });
+    expect(refused.status).toBe(403);
+    const listed = await client.listItems({
+      type: "core.note",
+      source: `${ctx.source}-bulk-denied`,
+      limit: 5,
+    });
     expect(listed.ok).toBe(true);
     expect(listed.data.data).toHaveLength(0);
   });

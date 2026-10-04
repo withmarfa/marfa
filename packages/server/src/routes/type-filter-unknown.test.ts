@@ -1,7 +1,6 @@
 /**
  * A concrete `type` filter naming a type this server does not know is
- * refused on every list surface, and the two cases that look like it are
- * not.
+ * refused on every list surface, and the case that looks like it is not.
  *
  * An empty page is the one answer a client cannot tell from a quiet instance:
  * a typo in a type name, a type registered under another handle, and a type
@@ -10,13 +9,10 @@
  * unknown concrete type is `400 unknown_type` on `GET /items`, `GET /search`
  * and `GET /export`. A wildcard over nothing is still an empty page, because
  * nothing is a correct answer to "everything under this root". A registered
- * type the credential cannot read keeps the answer each surface already
- * gave: an empty page on the listing and the export, because the scope list
- * on the token response is the client's signal for that and refusing would
- * tell a caller which types exist beyond its grant, and 403 on search, which
- * already asked `requireTypeAccess` about a type named outright. A type
- * removed by force is unknown from then on, and the rows it kept are
- * reached by id or under a wildcard.
+ * type the credential cannot read is a different refusal, `403`, pinned for
+ * every door in `type-filter-unreadable.test.ts`. A type removed by force is
+ * unknown from then on, and the rows it kept are reached by id or under a
+ * wildcard.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
@@ -82,7 +78,7 @@ describe("an unknown concrete type is refused on every list surface", () => {
   });
 });
 
-describe("the two cases that look like an unknown type are not refused", () => {
+describe("the case that looks like an unknown type is not refused", () => {
   it("a wildcard over a root nothing is registered under answers an empty page", async () => {
     const res = await request(ctx.app, "GET", "/items?type=acme.*", {
       key: ctx.workingKey,
@@ -94,29 +90,6 @@ describe("the two cases that look like an unknown type are not refused", () => {
     };
     expect(body.data).toEqual([]);
     expect(body.next_cursor).toBeNull();
-  });
-
-  it("a registered type the credential cannot read answers an empty page", async () => {
-    const res = await request(ctx.app, "GET", "/items?type=core.note", {
-      key: narrowKey,
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: unknown[] };
-    expect(body.data).toEqual([]);
-  });
-
-  it("search keeps answering 403 for a registered type the credential cannot read", async () => {
-    // Search asks `requireTypeAccess` about a type named outright and always
-    // has; the empty-page rule is the listing's and the export's. Pinned so
-    // the prose about the three surfaces stays true of each.
-    const res = await request(
-      ctx.app,
-      "GET",
-      "/search?q=anything&type=core.note",
-      { key: narrowKey },
-    );
-    expect(res.status).toBe(403);
-    expect(await errorCode(res)).toBe("type_not_permitted");
   });
 
   it("a type removed by force is unknown from then on, and its kept rows are reached under a wildcard", async () => {

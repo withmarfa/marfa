@@ -172,3 +172,9 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
     No credential can delete a platform-shipped type, and connectors subtype them.
 
     Tests: `compliance/type-evolution.test.ts › exempts platform-shipped parents`.
+
+48. The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
+
+    Reason: type existence is not secret, because an unregistered type and a registered one are already told apart (`search-and-filters.md` 1, 50); a schema holds no item data; and a device resolves an inherited field by walking `parent` through `GET /types` (`device.md` 47), so hiding an ancestor would silently drop the fields it declares. `keys-and-oauth.md` 16 already admits both registries to every credential. Narrowing them would not simplify the doors that name a type either, since each already refuses by the type's name.
+
+    Tests: `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.

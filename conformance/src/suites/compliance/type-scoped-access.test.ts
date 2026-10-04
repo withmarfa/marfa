@@ -64,10 +64,10 @@ describe("type-scoped access control (type_permissions)", () => {
     expect(bookmark.status).toBe(403);
     expect(bookmark.error?.error.code).toBe("type_not_permitted");
 
-    // A denied type is filtered out of a listing rather than refused.
+    // A denied type the listing names is refused, as the write was.
     const list = await scoped.listItems({ type: "core.bookmark" });
-    expect(list.ok).toBe(true);
-    expect(list.data.data).toHaveLength(0);
+    expect(list.status).toBe(403);
+    expect(list.error?.error.code).toBe("type_not_permitted");
   });
 
   it("mixed permissions: read notes, read+write bookmarks", async () => {
