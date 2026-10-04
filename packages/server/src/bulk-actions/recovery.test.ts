@@ -29,7 +29,7 @@ beforeEach(async () => {
   initEventLog(ctx.storage.eventLog);
 });
 afterEach(async () => {
-  for (const worker of workers.splice(0)) worker.stop();
+  await Promise.all(workers.splice(0).map((worker) => worker.stop()));
   vi.useRealTimers();
   __resetEventLogForTests();
   await ctx.cleanup();
@@ -249,12 +249,12 @@ describe("bulk transaction loss and durable recovery", () => {
       now = new Date(clockBase + 65000);
       await vi.advanceTimersByTimeAsync(100);
       live = await jobs.getById("recent-job");
-      first.stop();
+      await first.stop();
       const second = worker(() => now, "later-replacement-worker");
       await second.start();
       await vi.advanceTimersByTimeAsync(1);
       restarted = await jobs.getById("recent-job");
-      second.stop();
+      await second.stop();
     } finally {
       jobs.recoverStale = recover;
       jobs.claimNext = claim;
