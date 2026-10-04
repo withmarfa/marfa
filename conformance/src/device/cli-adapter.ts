@@ -1154,7 +1154,7 @@ export class CliFolder {
   }
 }
 
-/** What a folder's first sync will do, or that it is confirmed (`folders.md` 53). */
+/** What a folder's first sync will do, or that it is confirmed (`folders.md` 54). */
 export interface FirstSyncJson {
   waiting: boolean;
   write: number | null;

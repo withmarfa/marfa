@@ -19614,7 +19614,7 @@ describe("a folder's first sync", () => {
     expect(sentTitles(harness)).toEqual(["Later"]);
   });
 
-  it("is cancelled by removing the folder, which leaves its files", async () => {
+  it("is canceled by removing the folder, which leaves its files", async () => {
     harness = await waiting("first-sync-cancel", { "mine.md": typed("Mine") });
     // The scan has queued the file's create, which is not yet sent.
     const queued = await harness.folder.device().queue();
