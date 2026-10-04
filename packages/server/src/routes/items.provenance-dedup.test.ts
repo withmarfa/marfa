@@ -102,11 +102,10 @@ describe("the same upstream record", () => {
 
 describe("a mirror the user trashed", () => {
   it("accepts the next re-sync instead of refusing it forever", async () => {
-    // The wedge. `findBySourceId` hides a trashed row, so the upsert door
-    // saw "not found" and fell into create — whose own dedup pre-check
-    // does not filter state, found the same row, and refused with a 409.
-    // Nothing clears that: the row stays trashed, so every later sync
-    // fails identically and the connector is stuck on one item.
+    // The wedge: an upsert that does not see a trashed row falls into
+    // create, which finds the same row and refuses with a 409. Nothing
+    // clears that: the row stays trashed, so every later sync fails
+    // identically and the connector is stuck on one item.
     const k = await connectorKey("prov-trash", "feed-trash");
     const body = {
       type: "core.note",
@@ -142,7 +141,7 @@ describe("a mirror the user trashed", () => {
     // quietly write through a different path. Read through the store
     // rather than the API because a trashed row is deliberately a 404
     // there, which would not distinguish "untouched" from "hard deleted".
-    const stored = await ctx.storage.items.findBySourceIdIncludingTrashed(
+    const stored = await ctx.storage.items.findBySourceId(
       "feed-trash",
       "upstream-trashed",
     );
