@@ -77,6 +77,7 @@ it("sends what it saved with no server once it has joined, after registering the
   );
   const kept = value(await offline.get(saved.item_id ?? ""));
   expect([kept.type, kept.tier]).toEqual([type, "library"]);
+  expect(kept.source).toBe("device");
 
   // Joining: the first hydration registers the type the instance lacks.
   expect((await client.getType(type)).ok).toBe(false);
@@ -100,6 +101,10 @@ it("sends what it saved with no server once it has joined, after registering the
   expect(read.ok, JSON.stringify(read.error)).toBe(true);
   trackItem(ctx, saved.item_id ?? "");
   expect(read.data.item.properties).toEqual({ title: "Soup", servings: 4 });
+  expect(read.data.item.source).toBe(`${ctx.source}-registers`);
+  expect(value(await joined.get(saved.item_id ?? "")).source).toBe(
+    `${ctx.source}-registers`,
+  );
 });
 
 it("says which declared types the key could not register, and the server refuses the write that names one", async () => {
