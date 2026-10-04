@@ -1093,6 +1093,15 @@ export interface TypeStore {
    */
   deletePlatformType(id: string): Promise<boolean>;
   countRegistered(): Promise<number>;
+  /**
+   * Which of `names` some row of one of `types` holds a value under, in any
+   * lifecycle state. A property set to `null` counts as held, and so does one
+   * the type does not declare.
+   */
+  propertyNamesHeld(
+    types: readonly string[],
+    names: readonly string[],
+  ): Promise<string[]>;
 }
 
 /** Where a registered type came from, written alongside its schema. */

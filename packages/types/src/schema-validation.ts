@@ -828,6 +828,7 @@ export function validateTypeSchema(
   if (fields) {
     validateThumbnails(fields, ancestorFields, descendants, errors);
   }
+  validateDescendantMembers(obj.id, visibleFields, descendants, ctx, errors);
 
   for (const name of requiredNames) {
     if (!visibleFields.has(name)) {
@@ -1010,6 +1011,7 @@ function validateDescendantShapes(
       required: requiredNames.has(name),
     });
     for (const child of descendants) {
+      if (!Object.hasOwn(child.fields, name)) continue;
       const declared = child.fields[name];
       if (!declared) continue;
       const conflict = describeShapeConflict(declared, own);
@@ -1221,7 +1223,11 @@ function visibleDefinition(
   requiredNames: ReadonlySet<string>,
   ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
 ): FieldDefinition | undefined {
-  const own = asRecord(fields?.[name]);
+  const own = asRecord(
+    fields !== undefined && Object.hasOwn(fields, name)
+      ? fields[name]
+      : undefined,
+  );
   return own
     ? normalizeFieldDefinition(own, { required: requiredNames.has(name) })
     : ancestorFields.get(name)?.definition;
@@ -1258,6 +1264,43 @@ function validateDescendantLinks(
         hint: `Keep "${name}" a string field, or point the link_field of "${child.id}" elsewhere first.`,
       }),
     );
+  }
+}
+
+/**
+ * A change above a type is also the way its `display_hints` and
+ * `merge_policy` could come to name a field that is gone, which its own
+ * registration refuses and which leaves it refusing every later write.
+ */
+function validateDescendantMembers(
+  top: unknown,
+  visibleFields: ReadonlySet<string>,
+  descendants: readonly TypeSchema[],
+  ctx: SchemaValidationContext,
+  errors: SchemaValidationIssue[],
+): void {
+  for (const child of descendants) {
+    const named: [string, string][] = [];
+    for (const key of ["title_field", "body_field"] as const) {
+      const value = child.display_hints?.[key];
+      if (value !== undefined) named.push([value, `display_hints.${key}`]);
+    }
+    for (const field of Object.keys(child.merge_policy?.fields ?? {})) {
+      named.push([field, "merge_policy.fields"]);
+    }
+    for (const [name, member] of named) {
+      if (visibleFields.has(name) || declaredBetween(child, top, name, ctx)) {
+        continue;
+      }
+      errors.push(
+        issue({
+          field: `fields.${name}`,
+          expected: `a field "${name}", which "${child.id}" names in its ${member}`,
+          actual: `no field "${name}"`,
+          hint: `Keep "${name}", or change the ${member} of "${child.id}" first.`,
+        }),
+      );
+    }
   }
 }
 

@@ -605,7 +605,7 @@ export interface paths {
         put?: never;
         /**
          * Register a type
-         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. The operator key is no exception: this door reads the map like any other.
+         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.
          */
         post: operations["registerType"];
         delete?: never;
@@ -630,7 +630,7 @@ export interface paths {
         get: operations["getType"];
         /**
          * Replace a type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
          */
         put: operations["updateType"];
         post?: never;
@@ -1259,7 +1259,7 @@ export interface paths {
          * Create an API key
          * @description Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.
          *
-         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A body naming no map and no claimed source takes the creator's whole set, permissions and maps alike; a body naming any of them holds only what it names, so a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
+         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
          *
          *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.
          *
@@ -9380,7 +9380,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
+            /** @description `forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on the `parent` the type names (`details.grant` names it). */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9634,7 +9634,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
+            /** @description `forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only the second and the replacement needs `schema.write` (`details.changes` names what). `core_type_immutable`: the identifier names a platform-shipped type. `type_not_permitted`: the type map does not grant write on the identifier or on a new `parent` (`details.grant` names it). */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14520,7 +14520,7 @@ export interface operations {
                 "application/json": {
                     label: string;
                     source: string;
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     permissions?: components["schemas"]["Permission"][];
                     default_tier?: components["schemas"]["Tier"];
@@ -14916,7 +14916,7 @@ export interface operations {
                 "application/json": {
                     label?: string;
                     default_tier?: components["schemas"]["Tier"];
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];

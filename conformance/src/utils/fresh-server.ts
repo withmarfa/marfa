@@ -28,8 +28,9 @@ export interface FreshServer {
   apiUrl: string;
   /** The key the bootstrap mint answered with. */
   operatorKey: string;
-  /** A key the operator key minted naming no maps, so it holds every
-   *  content family and every permission (`keys-and-oauth.md` 2). */
+  /** A key the operator key minted naming no permissions, maps or claims,
+   *  so it holds every content family and every permission
+   *  (`keys-and-oauth.md` 2). */
   workingKey: string;
   /** The SQLite file this server writes to, so a fixture about the write
    *  lock can hold it from outside the process. */
