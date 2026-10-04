@@ -836,8 +836,7 @@ impl Http {
             ReplyBody::Text(
                 response
                     .into_body()
-                    // A page or export can exceed ureq's default 10 MiB;
-                    // the response budget still bounds a whole-body read.
+                    // A page or export can exceed ureq's default 10 MiB.
                     .into_with_config()
                     .limit(u64::MAX)
                     .lossy_utf8(true)
