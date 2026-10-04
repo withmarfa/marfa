@@ -739,9 +739,8 @@ impl MarfaError {
 
 #[uniffi::export]
 impl MarfaError {
-    /// The core's name for this error, the `code` the command line's envelope
-    /// and a Node error carry. `serverCode` on the variants is the server's
-    /// own word, which is not it.
+    /// The error classification used by the command line and Node binding.
+    /// A variant's `code` field carries the server's more specific error code.
     pub fn code(&self) -> String {
         match self {
             MarfaError::NotFound { .. } => "not_found",
