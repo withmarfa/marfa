@@ -1210,7 +1210,7 @@ fn object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, Marf
 /// A local copy of a slice of one server. Every method blocks; call from off
 /// the main thread.
 #[derive(uniffi::Object)]
-pub struct MarfaCore {
+pub struct Core {
     inner: marfa_core::Core,
 }
 
@@ -1281,12 +1281,12 @@ impl Drop for Subscription {
 }
 
 #[uniffi::export]
-impl MarfaCore {
+impl Core {
     /// Opens a store another process writes, to read it only: never the
     /// writer, never a write, and a path with no store is refused.
     #[uniffi::constructor]
     pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
-        Ok(Arc::new(MarfaCore {
+        Ok(Arc::new(Core {
             inner: marfa_core::Core::open_reader(path)?,
         }))
     }
@@ -1330,7 +1330,7 @@ impl MarfaCore {
                 });
             }
         };
-        Ok(Arc::new(MarfaCore {
+        Ok(Arc::new(Core {
             inner: marfa_core::Core::open(path, server)?,
         }))
     }
@@ -2193,7 +2193,7 @@ mod tests {
     fn a_copy_that_never_reached_a_server_holds_the_types_marfa_ships() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = MarfaCore::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None).unwrap();
         assert_eq!(core.status().unwrap().catalog_version, None);
         assert!(
             core.item_types()
@@ -2438,7 +2438,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
         let raised = || {
             let stop = Stop::new();
             stop.raise();
@@ -2465,7 +2465,7 @@ mod tests {
     fn a_copy_declares_types_and_hands_them_back() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = MarfaCore::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None).unwrap();
         core.declare_types(vec![
             r#"{"id":"app.recipe.entry","fields":{"title":{"type":"string","required":true}}}"#
                 .into(),
@@ -2485,7 +2485,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
@@ -2512,10 +2512,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core =
-            MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+            Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
-        let reader = MarfaCore::open_reader(path).unwrap();
+        let reader = Core::open_reader(path).unwrap();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
         server.expire.store(true, Ordering::SeqCst);
@@ -2549,7 +2549,7 @@ mod tests {
     impl ChangeListener for Reopens {
         fn changed(&self, _: Change) {}
         fn ended(&self, _: Option<MarfaError>) {
-            let reopened = MarfaCore::open(self.path.clone(), None, None).unwrap();
+            let reopened = Core::open(self.path.clone(), None, None).unwrap();
             let _ = self.handle.send(reopened.held_handle());
         }
     }
@@ -2560,7 +2560,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core =
-            MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+            Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
@@ -2588,7 +2588,7 @@ mod tests {
     fn a_store_opened_to_read_is_never_made_never_the_writer_and_hears_of_saves() {
         let dir = tempfile::tempdir().unwrap();
         let absent = dir.path().join("absent.sqlite");
-        assert!(MarfaCore::open_reader(absent.display().to_string()).is_err());
+        assert!(Core::open_reader(absent.display().to_string()).is_err());
         assert!(
             !absent.exists(),
             "a reading open made a store where there was none"
@@ -2596,11 +2596,11 @@ mod tests {
 
         let server = quiet();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let writer = MarfaCore::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
+        let writer = Core::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
         writer
             .hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
-        let reader = MarfaCore::open_reader(path).unwrap();
+        let reader = Core::open_reader(path).unwrap();
         assert!(matches!(reader.held_handle(), Handle::Reader));
         let before = reader.data_version().unwrap();
         writer
