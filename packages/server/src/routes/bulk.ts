@@ -75,6 +75,8 @@ import {
   ItemStateEnum,
   TierEnum,
   type BulkSkipReason,
+  TagSchema,
+  WrittenPropertiesSchema,
 } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
@@ -111,7 +113,7 @@ const MAX_BULK_ACTION_ITEMS_HARD = 50_000;
 const BulkInputItemSchema = z.object({
   id: z.string().optional(),
   type: z.string(),
-  properties: z.record(z.string(), z.unknown()).optional(),
+  properties: WrittenPropertiesSchema.optional(),
   properties_mode: z
     .enum(["merge", "replace"])
     .optional()
@@ -150,7 +152,7 @@ const BulkInputItemSchema = z.object({
     .describe(
       "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false.",
     ),
-  tags: z.array(z.string()).optional(),
+  tags: z.array(TagSchema).optional(),
   /** Inline edges (replace-all semantics per edge_type) applied after
    *  create/update in the same transaction. Absent means leave edges
    *  untouched. */

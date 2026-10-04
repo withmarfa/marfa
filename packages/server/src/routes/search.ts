@@ -101,6 +101,7 @@ const searchRoute = createRoute({
       q: z
         .string()
         .min(1, "Query parameter 'q' is required")
+        .refine((q) => !q.includes("\0"), "Query parameter 'q' holds a NUL")
         .describe("Full-text search query."),
       type: z
         .string()

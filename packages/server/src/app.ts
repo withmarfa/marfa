@@ -73,6 +73,7 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
+import { jsonDepthLimit } from "./middleware/json-depth.js";
 import { CONTRACT_VERSION } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
 import {
@@ -281,6 +282,7 @@ export function createApp(
       return requestBodyLimit(c, next);
     }),
   );
+  app.use("*", jsonDepthLimit);
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues.
   //

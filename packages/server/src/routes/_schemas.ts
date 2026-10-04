@@ -27,6 +27,7 @@ import {
   PERMISSIONS,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
+import { MAX_TAG_LENGTH } from "../tag-limits.js";
 
 /**
  * The lifecycle states an item can be in, as a Zod enum.
@@ -514,3 +515,15 @@ export const KeyResponseSchema = z
     last_used_at: z.string().nullable(),
   })
   .openapi("KeyResponse");
+
+/** A tag a write may carry: not empty, not blank, and short enough to name
+ *  in a URL path. */
+export const TagSchema = z
+  .string()
+  .min(1)
+  .max(MAX_TAG_LENGTH)
+  .refine((tag) => tag.trim().length > 0, "A tag must not be blank");
+
+/** An item's properties as a write sends them: every name at least one
+ *  character. */
+export const WrittenPropertiesSchema = z.record(z.string().min(1), z.unknown());
