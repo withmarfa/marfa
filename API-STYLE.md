@@ -18,7 +18,8 @@ So each operation, parameter, field and response says what it needs to on its ow
 ## Voice
 
 - **"You" is the credential that sends the request**: an API key, or the token of an app someone signed in to. **Marfa** is the actor: "Marfa creates an ID", not "the server stamps an id".
-- Present tense and active voice. Short sentences, one idea each.
+- Present tense and active voice. Short sentences, one idea each. Every word earns its place: the reader should get what they need in one pass.
+- No em dashes. Use a colon, a comma, parentheses or a new sentence. **(checked)**
 - Use the words in `GLOSSARY.md`, and none of its banned words. Write "ID" in prose and `id` only for the field.
 - Say what you can do and what you get back. Don't describe how the server is built: no tables, handlers, middleware, history, issue numbers or reasons a design was chosen. Those belong in the contract or in code comments.
 - Use code formatting only for text you would type: field and parameter names, values, error codes, headers, type identifiers, paths.
@@ -29,7 +30,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 
 ### Summary
 
-- An imperative verb and its object, in sentence case, with no final period: "Create an item", "List an item's versions". **(checked: at most 50 characters)**
+- An imperative verb and its object, in sentence case, with no final period: "Create an item", "Get a blob URL". About four words: the summary is a label, and anything more goes in the description. **(checked: at most 32 characters)**
 - Use one verb for one meaning:
 
   | Verb    | Use it for                                                  |
@@ -41,13 +42,13 @@ So each operation, parameter, field and response says what it needs to on its ow
   | Replace | A whole object (`PUT`).                                     |
   | Delete  | Removal. Say what happens to the object in the description. |
 
-  When none fits, use the plain verb for the act, such as Restore, Upload, Search or Revoke.
+  When none fits, use the plain verb for the act, such as Restore, Upload, Search, Revoke, Trash or Purge.
 
 ### Description
 
 - **The first sentence starts with the summary's verb in the third person** ("Creates"), or "Returns" for Get and List, and says what the operation does and what it returns. Where that verb would mislead, use the verb for what happens: "Moves the item to the trash".
-- **At most two more sentences**, only for what you need to call it correctly: a default you wouldn't expect, an effect beyond the obvious, or a common mistake.
-- **(checked: at most 400 characters)** If you need more, the detail belongs on a field, a parameter or a response, or in a general section.
+- **Often that sentence is enough.** Add at most two more, only for what you need to call it correctly: a default you wouldn't expect, an effect beyond the obvious, or a common mistake.
+- **(checked: at most 250 characters)** If you need more, the detail belongs on a field, a parameter or a response, in a general section, or in a guide in the docs.
 - Don't repeat the parameters, the response codes or a rule that applies everywhere.
 - Name another operation only when you need it next, by its method and path: `GET /items/{id}/versions`.
 
@@ -59,7 +60,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 - Anything else: what it is, then what it changes.
 - **Put fixed facts in the schema, not the text**: type, range, default and allowed values go in `minimum`, `maximum`, `default` and `enum`. The text gives a default only when it depends on something, such as "Defaults to your `default_tier`".
 - A comma-separated list says so and names its values.
-- **(checked: at most 350 characters)**
+- **(checked: at most 250 characters)**
 - **Take `limit` and `cursor` from `pageLimit` and `pageCursor` in `packages/server/src/page-limits.ts`.** `Idempotency-Key` and `X-Marfa-Read-View` come from `openapi-finalize.ts`. So each has one text everywhere. **(checked: one text per parameter name)** Share a parameter only where it means the same thing; where it means something else on one operation, define it there with its own text.
 
 ## Objects and fields
@@ -71,7 +72,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   - A time: "When the item was created, in UTC."
   - A boolean: "`true` if …", and, if it can be absent, what that means.
   - An optional field: when it is present.
-- **(checked: at most 350 characters)**
+- **(checked: at most 250 characters)**
 - An enum's own description says what each value means, one clause each. For a list of values, that description goes on `items`.
 - A schema used in several places has text that is true in all of them. A list that never pages says so on its own page schema: "Always `null`: Marfa returns every webhook in one page."
 - In a request body, the field says what happens when you leave it out.
@@ -86,7 +87,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   ```
 
 - **The shared responses, `401`, `413`, `429` and `503`, take their text from one definition in `openapi-finalize.ts`**, which adds them to each operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
-- **(checked: at most 600 characters)**
+- **(checked: at most 400 characters)**
 
 ## Streams and requests Marfa sends
 
@@ -99,6 +100,10 @@ So each operation, parameter, field and response says what it needs to on its ow
 - A field whose format is not obvious from its type carries an example: IDs, type identifiers, times, cursors.
 - Set an example with `.openapi({ example })` on a field, `.openapi("Name", { example })` on a named schema, or `example` beside `schema` in a response's content.
 - Invent plausible values. Never use a real person, account or machine. IDs are UUIDv7. Times are UTC with milliseconds: `2026-10-03T09:30:00.000Z`.
+
+## Groups
+
+Each operation has one tag, which is its group in the reference. The groups and their order are `PUBLIC_TAGS` in `packages/server/src/openapi-finalize.ts`, each with a one-sentence description. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
 
 ## General sections
 
@@ -114,7 +119,7 @@ The document's `info.description` holds the rules that apply everywhere, each un
 ## Before you open a pull request
 
 1. The summary uses a verb from the table.
-2. The description starts with a verb in the third person and is at most three sentences.
+2. The description starts with a verb in the third person, is at most three sentences, and has no word it doesn't need.
 3. Every parameter, field and response you added or changed is described.
 4. Every fact matches the contract in `conformance/spec/`. Where the server and the contract disagree, fix the one that is wrong; never describe around it.
 5. `pnpm generate` has run, and `pnpm --filter @withmarfa/server test` passes.

@@ -86,7 +86,7 @@ const bulkGetRoute = createRoute({
   path: "/bulk-get",
   operationId: "bulkGetItems",
   tags: ["Items"],
-  summary: "Bulk get items by id",
+  summary: "Get items in bulk",
   description:
     "Reads up to 100 items by id in one round-trip, permission-filtered " +
     "exactly like the single-item GET: ids the caller " +

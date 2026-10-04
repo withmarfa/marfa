@@ -93,7 +93,7 @@ const searchRoute = createRoute({
   path: "/",
   tags: ["Search"],
   summary: "Search items",
-  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as \`GET /items\` — including its two time bounds, which read the item's own time — and pages by cursor like every list: pass \`next_cursor\` back as \`cursor\`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers \`next_cursor: null\`. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as \`GET /items\` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass \`next_cursor\` back as \`cursor\`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers \`next_cursor: null\`. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -156,14 +156,14 @@ const searchRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.",
+          "Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.",
         ),
       occurred_before: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+          "Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive).",
         ),
     }),
   },

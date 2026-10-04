@@ -36,7 +36,7 @@ export const BulkActionFilterShape = z
     // what the caller is about to write to and a caller checks it against a
     // listing.
     state: ItemStateEnum.optional().describe(
-      "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts, and a write across states is one job per state.",
+      "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door: these four states are the whole structured vocabulary it accepts, and a write across states is one job per state.",
     ),
     source: z.string().optional(),
     tier: TierEnum.optional(),
@@ -45,7 +45,7 @@ export const BulkActionFilterShape = z
       .string()
       .optional()
       .describe(
-        "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is.",
+        "Lower bound on the item's own time (`occurred_at`, falling back to `created_at`) strictly after this. Exclusive, as every bound but `updated_after` is.",
       ),
     occurred_before: z
       .string()
