@@ -255,7 +255,7 @@ const createEdgeTypeRoute = createRoute({
   method: "post",
   path: "/",
   operationId: "createEdgeType",
-  tags: ["Edge Types"],
+  tags: ["Edge types"],
   summary: "Register an edge type",
   description:
     "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
@@ -316,10 +316,10 @@ const listEdgeTypesRoute = createRoute({
   method: "get",
   path: "/",
   operationId: "listEdgeTypes",
-  tags: ["Edge Types"],
+  tags: ["Edge types"],
   summary: "List edge types",
   description:
-    "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it. Every credential reads the whole list, whatever its edge map reaches: an edge type's existence is not secret, and a client resolves an edge's names from this list.",
+    "Returns every edge type this instance resolves (the shipped types plus any registered through `POST /edge-types`), each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it. Every credential reads the whole list, whatever its edge map reaches: an edge type's existence is not secret, and a client resolves an edge's names from this list.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -337,10 +337,10 @@ const deleteEdgeTypeRoute = createRoute({
   method: "delete",
   path: "/{id}",
   operationId: "deleteEdgeType",
-  tags: ["Edge Types"],
+  tags: ["Edge types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds \u2014 it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
+    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {

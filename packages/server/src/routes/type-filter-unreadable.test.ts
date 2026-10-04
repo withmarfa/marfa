@@ -24,6 +24,10 @@ let acmeId: string;
 let secretId: string;
 let noteId: string;
 let eventId: string;
+/** Reads and writes `core.entity.person` and nothing else. */
+let personKey: string;
+let personId: string;
+let placeId: string;
 
 const WINDOW = "from=2026-03-01T00:00:00Z&to=2026-03-08T00:00:00Z";
 
@@ -59,6 +63,13 @@ beforeAll(async () => {
     ends_at: "2026-03-03T10:00:00.000Z",
   });
 
+  personId = await create("core.entity.person", {
+    name: "unreadable-filter-person",
+  });
+  placeId = await create("core.entity.place", {
+    name: "unreadable-filter-place",
+  });
+
   const suffix = Math.random().toString(36).slice(2, 10);
   const narrow = {
     edge_permissions: {},
@@ -70,6 +81,12 @@ beforeAll(async () => {
     label: `acme-${suffix}`,
     source: `acme-${suffix}`,
     type_permissions: { "acme.*": "write", "acme.secret": "none" },
+    ...narrow,
+  });
+  personKey = await mintWorkingKey(ctx, {
+    label: `person-${suffix}`,
+    source: `person-${suffix}`,
+    type_permissions: { "core.entity.person": "write" },
     ...narrow,
   });
   eventKey = await mintWorkingKey(ctx, {
@@ -264,6 +281,14 @@ describe("a type nothing registered is still refused as unknown", () => {
     expect(got.status).toBe(200);
     expect(got.ids).toEqual([]);
   });
+
+  it("POST /items/bulk-actions refuses an unregistered type the key holds nothing on", async () => {
+    // Registration is not asked, the grant is: the same key is refused a name
+    // it holds nothing on, registered or not.
+    const got = await answer(await DOORS[6]!.ask("nope.thing", acmeKey));
+    expect(got.status).toBe(403);
+    expect(got.code).toBe("type_not_permitted");
+  });
 });
 
 describe("a pattern answers the readable types it matches", () => {
@@ -349,6 +374,63 @@ describe("a pattern answers the readable types it matches", () => {
     );
     expect(unknown.status).toBe(400);
     expect(unknown.code).toBe("unknown_type");
+  });
+});
+
+describe("a concrete type selects its descendants, so one is refused only when nothing under it is readable", () => {
+  // `core.entity` is registered and the key may not read it, but it reads
+  // `core.entity.person`, which a filter on `core.entity` selects.
+  it("answers the readable descendants on every door", async () => {
+    for (const door of [DOORS[0]!, DOORS[2]!, DOORS[3]!]) {
+      const got = await answer(await door.ask("core.entity", personKey));
+      expect(got.status, door.name).toBe(200);
+      expect(got.ids, door.name).toContain(personId);
+      expect(got.ids, door.name).not.toContain(placeId);
+    }
+    const stats = await DOORS[1]!.ask("core.entity", personKey);
+    expect(stats.status).toBe(200);
+    expect((await stats.json()) as Record<string, number>).toEqual({
+      active: 1,
+    });
+    const stream = await DOORS[5]!.ask("core.entity", personKey);
+    expect(stream.status).toBe(200);
+    const bulk = await answer(await DOORS[6]!.ask("core.entity", personKey));
+    expect(bulk.status).toBe(200);
+    expect(bulk.ids).toContain(personId);
+    expect(bulk.ids).not.toContain(placeId);
+  });
+
+  it("refuses the same type to a key that reads nothing under it", async () => {
+    for (const door of DOORS) {
+      const got = await answer(await door.ask("core.entity", acmeKey));
+      expect(got.status, door.name).toBe(403);
+      expect(got.code, door.name).toBe("type_not_permitted");
+    }
+  });
+});
+
+describe("POST /items/lookup refuses a type the key may not read", () => {
+  const lookup = (key: string, type: string, id: string) =>
+    request(ctx.app, "POST", "/items/lookup", {
+      key,
+      body: { type, ids: [id] },
+    });
+
+  it("answers 403 where it used to answer an empty 200", async () => {
+    const got = await answer(await lookup(acmeKey, "core.note", noteId));
+    expect(got.status).toBe(403);
+    expect(got.code).toBe("type_not_permitted");
+    expect(got.grant?.name).toBe("core.note");
+    // The witness: a key that reads the type is answered the row.
+    const read = await lookup(ctx.workingKey, "core.note", noteId);
+    expect(read.status).toBe(200);
+    expect(JSON.stringify(await read.json())).toContain(noteId);
+  });
+
+  it("still answers 400 for a type nothing registers", async () => {
+    const got = await answer(await lookup(acmeKey, "nope.thing", noteId));
+    expect(got.status).toBe(400);
+    expect(got.code).toBe("unknown_type");
   });
 });
 

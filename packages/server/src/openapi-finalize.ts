@@ -86,7 +86,7 @@ export const SERVERS = [
 ];
 
 /**
- * Ordered, described public tag list. Resources first; auth/realtime last.
+ * The reference's groups, in sidebar order.
  *
  * Every name here must be carried by at least one published operation. A tag
  * describing a surface no operation belongs to reads as a surface the server
@@ -94,88 +94,67 @@ export const SERVERS = [
  * with no door behind it.
  */
 const PUBLIC_TAGS = [
+  { name: "Items", description: "The records Marfa stores, each of a type." },
   {
-    name: "Instance",
+    name: "Bulk actions",
     description:
-      "What this instance is: its name, its build, the contract it serves and the surfaces it carries.",
+      "One change applied to every item a filter matches, run as a job you can follow and cancel.",
   },
+  { name: "Metadata", description: "An item's tags, and the tags in use." },
   {
-    name: "Items",
-    description:
-      "Create, read, update, and query items — the core typed records.",
-  },
-  {
-    name: "Metadata",
-    description:
-      "An item's metadata document and the instance's tag vocabulary.",
+    name: "Extensions",
+    description: "JSON objects attached to an item, one per namespace.",
   },
   {
     name: "Edges",
-    description:
-      "Typed relationships between items, and an item's inbound and outbound edges.",
+    description: "Typed, directed relationships between items.",
   },
-  {
-    name: "Edge Types",
-    description:
-      "The registry of edge types with their cardinality and cascade rules.",
-  },
-  {
-    name: "Extensions",
-    description: "App-namespaced extension documents attached to an item.",
-  },
-  { name: "Blobs", description: "Content-addressed binary storage." },
   {
     name: "Types",
     description:
-      "The type registry — the platform-shipped types plus the ones registered on this instance.",
+      "The types items can have: those Marfa ships and those registered on this instance.",
   },
   {
-    name: "Search",
-    description: "Full-text and filtered search across items.",
-  },
-  { name: "Keys", description: "API key management." },
-  {
-    name: "Config",
+    name: "Edge types",
     description:
-      "The instance configuration — the schema-enforcement levers and the cleanup-job retention overrides.",
+      "The types edges can have, each with its cardinality and cascade rule.",
   },
   {
-    name: "Webhooks",
-    description: "Outbound webhook subscriptions and their deliveries.",
-  },
-  {
-    name: "Export",
-    description:
-      "Bulk export of the instance's data, and the door that takes an archive back.",
-  },
-  { name: "Audit", description: "The instance's audit log." },
-  {
-    name: "Connectors",
-    description:
-      "A process outside the server, registered under its key: heartbeats and the runs it reports.",
+    name: "Blobs",
+    description: "Bytes stored by content hash, and the stores that hold them.",
   },
   {
     name: "Folders",
+    description: "A folder's settings, held as a `system.folder` item.",
+  },
+  { name: "Search", description: "Full-text search across items." },
+  {
+    name: "Event stream",
+    description: "Changes to items and edges, streamed as they happen.",
+  },
+  {
+    name: "Webhooks",
     description:
-      "A folder's settings, held as a `system.folder` item: created, changed at a version, and revoked.",
+      "Changes sent to a URL you choose, and each delivery's record.",
   },
   {
-    name: "Housekeeping",
+    name: "Connectors",
     description:
-      "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did.",
+      "Processes outside the server that read and write on your behalf, and what the instance keeps for them.",
   },
   {
-    name: "Events",
-    description: "The server-sent events stream of item and edge changes.",
-  },
-  {
-    name: "Owner",
+    name: "Access",
     description:
-      "The one account behind the instance's sign-in surface, and the door that creates it.",
+      "API keys, the instance's owner and OAuth client registration.",
   },
   {
-    name: "Auth",
-    description: "OAuth dynamic client registration.",
+    name: "Instance",
+    description:
+      "The instance itself: what it is, its configuration, its housekeeping jobs and its audit log.",
+  },
+  {
+    name: "Export and restore",
+    description: "Export the instance's data, and restore it from an archive.",
   },
 ];
 
@@ -268,7 +247,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   },
   "X-RateLimit-Limit": {
     description:
-      "How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged — so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio.",
+      "How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged, so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio.",
     schema: { type: "integer" },
   },
   "X-RateLimit-Remaining": {
@@ -288,7 +267,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   },
   "Idempotency-Replayed": {
     description:
-      "Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read — the header says where the answer came from, not that anything went wrong.",
+      "Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong.",
     schema: { type: "string", enum: ["true"] },
   },
 };
@@ -703,17 +682,17 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
   "/events": {
     get: {
       operationId: "streamEvents",
-      tags: ["Events"],
+      tags: ["Event stream"],
       summary: "Stream change events",
       description:
         "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
         'For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.\n\n' +
-        'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
+        'The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }`, the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
         "For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\n" +
         'Once the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ "type": "stream_live", "cursor": "<event id>" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.\n\n' +
         "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
         "An item frame carries `type` and `item`, and an edge frame `type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.\n\n" +
-        'A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame \u2014 `{ "type": "stream_incomplete", "reason": "\u2026", "cursor": "<event id>" | null }` \u2014 and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.\n\n' +
+        'A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame, `{ "type": "stream_incomplete", "reason": "\u2026", "cursor": "<event id>" | null }`, and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.\n\n' +
         "The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. A reconnect with a revoked key is refused `401`; an app reconnects with the token it refreshed to.\n\n" +
         'A `Last-Event-ID` past the log\'s head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ "type": "cursor_ahead", "requested": "<event id>", "head": "<event id>" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.',
       security: [{ bearerAuth: [] }],
@@ -737,7 +716,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces \u2014 to receive everything, omit the parameter \u2014 and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
+            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
         },
         {
           name: "edges",
@@ -767,7 +746,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         ).response,
         "403": chainRefusal(
           ["type_not_permitted"],
-          "The credential's type permissions reach no type, so there is nothing on the data plane it may read, or a `type` entry names a registered type it may not read. A credential that reaches some types opens a stream narrowed to them rather than being refused.",
+          "The credential reaches no type, or a `type` entry names a registered type it cannot read and none under it. Otherwise the stream is narrowed to the types it reads.",
         ).response,
         "503": chainRefusal(
           ["stream_capacity_exhausted"],
@@ -779,7 +758,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
   "/auth/oauth2/register": {
     post: {
       operationId: "registerOAuthClient",
-      tags: ["Auth"],
+      tags: ["Access"],
       summary: "Register an OAuth client",
       description:
         "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",

@@ -6,7 +6,13 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createEvent, createNote, createTask } from "../../generators/items.js";
+import {
+  createEvent,
+  createNote,
+  createPerson,
+  createPlace,
+  createTask,
+} from "../../generators/items.js";
 import type { MarfaClient } from "../../client/api.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -20,6 +26,10 @@ let key: string;
 let noteId: string;
 let taskId: string;
 let eventId: string;
+/** Reads and writes `core.entity.person` and nothing else. */
+let personKey: string;
+let personId: string;
+let placeId: string;
 
 /** A registered type this key may not read, and one nothing registers. */
 const UNREADABLE = "core.note";
@@ -104,6 +114,16 @@ beforeAll(async () => {
   expect(minted.ok).toBe(true);
   trackKey(ctx, minted.data.id);
   key = minted.data.key;
+  const personMinted = await client.createKey({
+    label: "unreadable-type-filter-person",
+    source: `${ctx.source}-unreadable-type-filter-person`,
+    type_permissions: { "core.entity.person": "write" },
+    edge_permissions: {},
+    extension_permissions: {},
+  });
+  expect(personMinted.ok).toBe(true);
+  trackKey(ctx, personMinted.data.id);
+  personKey = personMinted.data.key;
 
   const seed = async (input: Parameters<MarfaClient["createItem"]>[0]) => {
     const r = await client.createItem({ ...input, source: ctx.source });
@@ -126,6 +146,16 @@ beforeAll(async () => {
         status: "pending",
         priority: "medium",
       },
+    }),
+  );
+  personId = await seed(
+    createPerson({
+      properties: { name: `unreadable-filter-${ctx.runId}` },
+    }),
+  );
+  placeId = await seed(
+    createPlace({
+      properties: { name: `unreadable-filter-${ctx.runId}` },
     }),
   );
   eventId = await seed(
@@ -259,6 +289,55 @@ describe("a type nothing registers is refused as unknown", () => {
     expect(seen.status).toBe(200);
     expect(seen.ids).toEqual([]);
   });
+
+  it("POST /items/bulk-actions refuses an unregistered type the key holds nothing on", async () => {
+    const seen = await DOORS[6]!.ask(UNREGISTERED, key);
+    expect(seen.status).toBe(403);
+    expect(seen.code).toBe("type_not_permitted");
+  });
+});
+
+describe("a concrete type selects its descendants, so one is refused only when nothing under it is readable", () => {
+  // `core.entity` is registered and the key may not read it, but it reads
+  // `core.entity.person`, which a filter on `core.entity` selects.
+  it("answers the readable descendants on every door", async () => {
+    for (const door of [DOORS[0]!, DOORS[2]!, DOORS[3]!, DOORS[6]!]) {
+      const seen = await door.ask("core.entity", personKey);
+      expect(seen.status, door.name).toBe(200);
+      expect(seen.ids, door.name).toContain(personId);
+      expect(seen.ids, door.name).not.toContain(placeId);
+    }
+    for (const door of [DOORS[1]!, DOORS[5]!]) {
+      expect((await door.ask("core.entity", personKey)).status).toBe(200);
+    }
+  });
+
+  it("refuses the same type to a key that reads nothing under it", async () => {
+    for (const door of DOORS) {
+      const seen = await door.ask("core.entity", key);
+      expect(seen.status, door.name).toBe(403);
+      expect(seen.code, door.name).toBe("type_not_permitted");
+    }
+  });
+});
+
+describe("POST /items/lookup refuses a type the key may not read", () => {
+  const lookup = (as: string, type: string) =>
+    ask(as, "POST", "/items/lookup", { type, ids: [noteId] });
+
+  it("answers 403 where it used to answer an empty 200, and 400 for an unregistered type", async () => {
+    const refused = await lookup(key, UNREADABLE);
+    expect(refused.status).toBe(403);
+    expect(refused.code).toBe("type_not_permitted");
+    expect(refused.grant).toMatchObject({ kind: "type", name: UNREADABLE });
+    const unknown = await lookup(key, UNREGISTERED);
+    expect(unknown.status).toBe(400);
+    expect(unknown.code).toBe("unknown_type");
+    // The witness: a key that reads the type is answered the row.
+    const served = await lookup(apiKey, UNREADABLE);
+    expect(served.status).toBe(200);
+    expect(served.ids).toContain(noteId);
+  });
 });
 
 describe("a wildcard answers the types it matches that the key may read", () => {
@@ -288,9 +367,10 @@ describe("a wildcard answers the types it matches that the key may read", () => 
       const counts = (await res.json()) as Record<string, number>;
       return Object.values(counts).reduce((sum, n) => sum + n, 0);
     };
-    // The owner counts the note, the task and the event; the key, two.
-    expect(await total(apiKey)).toBeGreaterThanOrEqual(3);
-    expect(await total(key)).toBe((await total(apiKey)) - 1);
+    // The owner counts the note, the task, the event, the person and the
+    // place; the key, the task and the event.
+    expect(await total(apiKey)).toBe(5);
+    expect(await total(key)).toBe(2);
   });
 
   it("a wildcard over types the key reads none of is an empty page, not a refusal", async () => {

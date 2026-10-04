@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, Once, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use marfa_core::folder::{REGISTRY_ENV, Registry};
-use marfa_core::{CoreError, Folder, Server, WatchError, WatchEvent};
+use marfa_core::{CoreError, Folder, Server, SyncReport, Synced, WatchError, WatchEvent};
 
 fn server() -> Server {
     let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
@@ -131,7 +131,7 @@ fn registry() -> Registry {
 }
 
 /// A folder of the notes tagged with a tag of its own, so it holds only
-/// what the test writes.
+/// what the test writes, its first sync already confirmed.
 fn added(dir: &Path, through: Server) -> Folder {
     registry();
     let tag = nonce();
@@ -140,7 +140,17 @@ fn added(dir: &Path, through: Server) -> Folder {
         "defaults": { "tags": [tag] },
     });
     let id = seed(&["folder", &nonce(), &settings.to_string()]);
-    Folder::add(dir, &id, Some(through)).unwrap()
+    let folder = Folder::add(dir, &id, Some(through)).unwrap();
+    folder.confirm_first_sync().unwrap();
+    folder
+}
+
+/// A sync that ran, not one waiting to be confirmed.
+fn ran(folder: &Folder) -> SyncReport {
+    match folder.sync().unwrap() {
+        Synced::Done(report) => *report,
+        Synced::Waiting(plan) => panic!("the first sync waits for confirmation: {plan:?}"),
+    }
 }
 
 fn note(dir: &Path, name: &str) {
@@ -157,14 +167,14 @@ fn a_sync_sends_what_changed_and_writes_back_what_the_server_holds() {
     let dir = tempfile::tempdir().unwrap();
     let folder = added(dir.path(), server());
     note(dir.path(), "First");
-    let synced = folder.sync().unwrap();
+    let synced = ran(&folder);
     assert!(synced.hydrated.is_some(), "a new folder hydrates first");
     assert_eq!(synced.scan.created, 1, "{:?}", synced.scan);
     assert!(synced.drain.report.answered >= 1, "{:?}", synced.drain);
     assert!(synced.catch_up.is_ok(), "{:?}", synced.catch_up);
     assert!(synced.pull.is_some());
 
-    let again = folder.sync().unwrap();
+    let again = ran(&folder);
     assert!(again.hydrated.is_none());
     assert_eq!(
         (again.scan.created, again.scan.updated, again.scan.unchanged),
@@ -183,10 +193,10 @@ fn a_sync_with_the_server_out_of_reach_says_why_and_keeps_the_write() {
     let dir = tempfile::tempdir().unwrap();
     let door = Door::new();
     let folder = added(dir.path(), door.server());
-    folder.sync().unwrap();
+    ran(&folder);
     door.shut();
     note(dir.path(), "Offline");
-    let synced = folder.sync().unwrap();
+    let synced = ran(&folder);
     assert!(
         matches!(&synced.catch_up, Err(error) if error.is_environmental()),
         "{:?}",
@@ -213,7 +223,7 @@ fn a_sync_with_the_server_out_of_reach_says_why_and_keeps_the_write() {
 fn a_folder_with_writes_waiting_is_not_removed_and_one_sent_is() {
     let dir = tempfile::tempdir().unwrap();
     let folder = added(dir.path(), server());
-    folder.sync().unwrap();
+    ran(&folder);
     note(dir.path(), "Waiting");
     folder.scan().unwrap();
     drop(folder);
@@ -330,7 +340,7 @@ fn a_stop_raised_during_a_pass_ends_the_watch_once_that_pass_is_done() {
     let dir = tempfile::tempdir().unwrap();
     let door = Door::new();
     let folder = added(dir.path(), door.server());
-    folder.sync().unwrap();
+    ran(&folder);
     // Out of reach, so the write the pass queues stays queued.
     door.shut();
     note(dir.path(), "Mid");
@@ -375,7 +385,7 @@ fn a_watch_whose_tell_fails_ends_with_that_failure() {
 fn a_watch_whose_tell_panics_ends_and_lets_the_folder_go() {
     let dir = tempfile::tempdir().unwrap();
     let folder = added(dir.path(), server());
-    folder.sync().unwrap();
+    ran(&folder);
     let (done, ended) = mpsc::channel();
     std::thread::spawn(move || {
         let stop = AtomicBool::new(false);

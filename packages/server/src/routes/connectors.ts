@@ -220,7 +220,7 @@ const registerConnectorRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Connectors"],
-  summary: "Register the caller's key as a connector",
+  summary: "Register a connector",
   description:
     "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
   security: [{ bearerAuth: [] }],
@@ -264,7 +264,7 @@ const listConnectorsRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Connectors"],
-  summary: "List the registered connectors",
+  summary: "List connectors",
   description:
     "The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.",
   security: [{ bearerAuth: [] }],
@@ -286,7 +286,7 @@ const getConnectorRoute = createRoute({
   method: "get",
   path: "/{id}",
   tags: ["Connectors"],
-  summary: "Get one registered connector",
+  summary: "Get a connector",
   description:
     "The connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
   security: [{ bearerAuth: [] }],
@@ -306,7 +306,7 @@ const deleteConnectorRoute = createRoute({
   method: "delete",
   path: "/{id}",
   tags: ["Connectors"],
-  summary: "Remove a registration and its runs",
+  summary: "Delete a connector",
   description:
     "Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.",
   security: [{ bearerAuth: [] }],
@@ -327,7 +327,7 @@ const heartbeatRoute = createRoute({
   method: "post",
   path: "/{id}/heartbeat",
   tags: ["Connectors"],
-  summary: "Record that the connector is alive",
+  summary: "Send a heartbeat",
   description:
     "Stamps `last_heartbeat_at` with the server's clock. The connector's own key only. What a stale heartbeat means is the reader's to decide: nothing here supervises.",
   security: [{ bearerAuth: [] }],
@@ -350,7 +350,7 @@ const reportRunRoute = createRoute({
   method: "post",
   path: "/{id}/runs",
   tags: ["Connectors"],
-  summary: "Report a run and its outcome",
+  summary: "Report a run",
   description:
     "Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.",
   security: [{ bearerAuth: [] }],
@@ -384,7 +384,7 @@ const listRunsRoute = createRoute({
   method: "get",
   path: "/{id}/runs",
   tags: ["Connectors"],
-  summary: "List a connector's runs",
+  summary: "List connector runs",
   description:
     "Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
   security: [{ bearerAuth: [] }],
@@ -433,7 +433,7 @@ const createEndpointRoute = createRoute({
   method: "post",
   path: "/{id}/endpoints",
   tags: ["Connectors"],
-  summary: "Make an inbound webhook endpoint",
+  summary: "Create a webhook endpoint",
   description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints, and one more is refused \`409 conflict\`.`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -463,7 +463,7 @@ const listEndpointsRoute = createRoute({
   method: "get",
   path: "/{id}/endpoints",
   tags: ["Connectors"],
-  summary: "List a connector's inbound webhook endpoints",
+  summary: "List webhook endpoints",
   description:
     "Newest first, retired ones included, each address redacted. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
@@ -486,7 +486,7 @@ const retireEndpointRoute = createRoute({
   method: "delete",
   path: "/{id}/endpoints/{endpoint_id}",
   tags: ["Connectors"],
-  summary: "Retire an inbound webhook endpoint",
+  summary: "Retire a webhook endpoint",
   description:
     "Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
@@ -517,7 +517,7 @@ const listDeliveriesRoute = createRoute({
   method: "get",
   path: "/{id}/deliveries",
   tags: ["Connectors"],
-  summary: "List a connector's inbound deliveries",
+  summary: "List inbound deliveries",
   description:
     "Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.",
   security: [{ bearerAuth: [] }],
@@ -555,7 +555,7 @@ const deliveryBodyRoute = createRoute({
   method: "get",
   path: "/{id}/deliveries/{delivery_id}/body",
   tags: ["Connectors"],
-  summary: "Read an inbound delivery's body",
+  summary: "Get an inbound delivery's body",
   description:
     "The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.",
   security: [{ bearerAuth: [] }],

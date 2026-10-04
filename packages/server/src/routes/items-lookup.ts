@@ -88,7 +88,7 @@ const LookupResponseSchema = z.object({
   tombstones: z
     .array(TombstoneSchema)
     .describe(
-      "The tombstones under `type` for the keys named, in the order named. Empty by `ids`, and to a key that may not read `type`.",
+      "The tombstones under `type` for the keys named, in the order named. Empty by `ids`.",
     ),
 });
 
@@ -121,13 +121,13 @@ const lookupRoute = createRoute({
   path: "/lookup",
   operationId: "lookupItems",
   tags: ["Items"],
-  summary: "Look items up by link, natural key or id",
+  summary: "Look up items",
   description:
     "Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.\n\n" +
     "- `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.\n" +
     "- `source` and `source_ids`: the rows holding those natural keys, whatever their type, so a row retyped since it was written is found.\n" +
     "- `ids`: the rows with those ids, whatever their type.\n\n" +
-    "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids` and to a credential that may not read `type`. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
+    "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids`. A credential that may not read `type` is refused `403 type_not_permitted`. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -160,7 +160,7 @@ const lookupRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type. A credential that reaches some is answered the rows it may read and the rest are left out.",
+        "The credential's type permissions reach no type, or it may not read `type`. A credential that reaches some types is answered the rows it may read and the rest are left out.",
     },
   },
 });
@@ -170,7 +170,7 @@ const tombstonesRoute = createRoute({
   path: "/tombstones",
   operationId: "settleTombstones",
   tags: ["Items"],
-  summary: "Move tombstones' settled time later",
+  summary: "Move tombstones' settled time",
   description:
     "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.",
   security: [{ bearerAuth: [] }],
@@ -346,6 +346,9 @@ export function itemsLookupRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, true);
+    // The type is named outright, so a credential that may not read it is told
+    // so rather than answered with nothing.
+    requireTypeAccess(c, type, "read");
     // Before the per-row filter: an empty answer to a key that may read
     // nothing would say the keys named nothing.
     getTypeFilter(c);
@@ -371,7 +374,7 @@ export function itemsLookupRoutes(storage: Storage) {
     const rows = await withCascadeMarks(storage, apiKey, readable);
 
     const tombstones =
-      selector.kind !== "ids" && mayRead(apiKey, type)
+      selector.kind !== "ids"
         ? inOrder(
             selector.values,
             await storage.items.tombstones(type, tombstoneSelector(selector)),

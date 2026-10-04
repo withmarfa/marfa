@@ -65,7 +65,7 @@ const listExtensionsRoute = createRoute({
   method: "get",
   path: "/{id}/extensions",
   tags: ["Extensions"],
-  summary: "List extension namespaces for an item",
+  summary: "List extension namespaces",
   description:
     "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
   security: [{ bearerAuth: [] }],
@@ -259,7 +259,7 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
+    "Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent: deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

@@ -4,10 +4,17 @@ import {
   GLOBAL_TYPE_WILDCARD,
   MarfaError,
   getTypeSchema,
+  isSubtypeOf,
   isValidTypePattern,
+  listTypes,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import { requireTypeAccess, type AppEnv } from "../middleware/auth.js";
+import {
+  checkAuth,
+  mayReadType,
+  requireTypeAccess,
+  type AppEnv,
+} from "../middleware/auth.js";
 
 /**
  * Validate the `type` filter the list surfaces share: `GET /items`,
@@ -31,8 +38,9 @@ import { requireTypeAccess, type AppEnv } from "../middleware/auth.js";
  * may be nothing, and nothing is a correct answer to it.
  *
  * **A registered concrete type the credential may not read is
- * `type_not_permitted`.** The caller named it, so the credential is told it
- * lacks the grant, as it is on a write and on the operator key. The empty
+ * `type_not_permitted`, unless it reads something under it.** The caller named
+ * it, so the credential is told it lacks the grant, as it is on a write and on
+ * the operator key. The empty
  * page it replaces said "nothing here" about a type that is plainly
  * registered, and hid nothing: the registry already tells a registered type
  * from an unregistered one, and `GET /types` lists every schema.
@@ -63,5 +71,28 @@ export function assertTypeFilter(
   if (getTypeSchema(type) === undefined) {
     throw new MarfaError(ErrorCode.UNKNOWN_TYPE, `Unknown type: ${type}`);
   }
+  assertTypeReadable(c, type);
+}
+
+/**
+ * A concrete `type` filter selects the type and everything under it, so it is
+ * refused only when nothing it selects is readable. A credential that reads a
+ * descendant and not the named type gets the descendants, narrowed by the same
+ * map every listing applies to its rows; refusing it would withhold rows it
+ * is entitled to. Shared with the bulk-action filter, which selects the same
+ * subtree but does not ask the registry.
+ */
+export function assertTypeReadable(c: Context<AppEnv>, type: string): void {
+  const key = checkAuth(c.get("apiKey"));
+  const reachesReadable =
+    !mayReadType(key, type) &&
+    listTypes().some(
+      (candidate) =>
+        candidate.id !== type &&
+        (candidate.id.startsWith(`${type}.`) ||
+          isSubtypeOf(candidate.id, type)) &&
+        mayReadType(key, candidate.id),
+    );
+  if (reachesReadable) return;
   requireTypeAccess(c, type, "read");
 }

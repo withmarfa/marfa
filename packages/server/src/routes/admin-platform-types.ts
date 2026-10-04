@@ -58,11 +58,11 @@ const listDriftRoute = createRoute({
   // Both operations here published no tag at all, so they were the only two
   // in the reference that belonged to no heading.
   tags: ["Types"],
-  summary: "Shipped types this instance carries that the build does not",
+  summary: "List stale platform types",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
     200: {
       content: {
@@ -96,7 +96,7 @@ const removeDriftedTypeRoute = createRoute({
   method: "delete",
   path: "/platform-types/{id}",
   tags: ["Types"],
-  summary: "Remove one shipped type the build no longer carries",
+  summary: "Delete a stale platform type",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:

@@ -7,7 +7,7 @@ use crate::{Core, CoreError, Result, Server, Tier, store};
 
 const WAIT: Duration = Duration::from_secs(2);
 
-fn copy(server: &Scripted) -> Arc<Core> {
+pub(crate) fn copy(server: &Scripted) -> Arc<Core> {
     let core = Core::open_in_memory(Some(Server {
         url: server.url(),
         key: "k".into(),
