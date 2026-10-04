@@ -6,7 +6,6 @@ import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
-import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
 import { GrantInactivityRetirer } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
@@ -40,11 +39,38 @@ import { storageProbes } from "./health-probes.js";
  * bulk-action chunk on a laptop, so the bound is more than four times the
  * largest. A bulk action that does not hand the loop over spent 7 seconds at
  * this size on the same laptop, and spends more the larger the instance.
+ *
+ * The archive export and the archive restore pass without their explicit
+ * turns too, because the files and streams they write to hand the loop over
+ * by themselves, so these two tests measure the whole job and do not witness
+ * the turns; `export-archive-stream.test.ts` and `archive-restore-bounds.test.ts`
+ * do. Every other job here fails its test when its turn is removed, and the
+ * tighter bounds below are what make it fail. On the same laptop, in
+ * milliseconds of processor time between two turns of the loop, with the
+ * turns and without them: the NDJSON export 27 and 1,770; the blob orphan
+ * sweep 31 and 800; version thinning over 6,100 items 280 and 5,900; the
+ * retirement of 400 inactive grants 56 and 730.
+ *
+ * The enrichment sweep is not tested here: it reads one batch, at most
+ * `MARFA_ENRICHMENT_BATCH_SIZE` candidates (8 by default), which does not
+ * grow with the instance, and it took 15 ms with its turns and without them.
+ * The retirement of grants is capped at 500 a run, which is still 700 ms
+ * without its turns, so it is tested.
  */
 const CPU_BOUND_MS = 2_000;
 
+/**
+ * Jobs that walk the instance in pages, or retire grants one by one, are held
+ * to tighter bounds, each set between the stretch of one unit and the stretch
+ * of the whole run, so that the test fails when its job stops handing the
+ * loop over. Against the two seconds above they would pass without it.
+ */
+const PAGED_BOUND_MS = 300;
+const THINNING_BOUND_MS = 1_000;
+
 const ITEMS = 20_000;
 const BULK_TARGETS = 10_000;
+const THINNING_ITEMS = 6_000;
 const at = "2024-01-02T03:04:05.678Z";
 
 let source: TestContext;
@@ -309,7 +335,7 @@ describe("GET /health while a long job runs", () => {
       },
     );
     expect(result).toBe(ITEMS + 20 + ITEMS * 0.75);
-    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(worstCpuMs).toBeLessThan(PAGED_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
@@ -358,11 +384,32 @@ describe("GET /health while a long job runs", () => {
     // Every blob is named by a row, so the sweep walked the corpus to learn
     // that and reported none.
     expect(result).toEqual({ reported: 0, purged: 0 });
-    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(worstCpuMs).toBeLessThan(PAGED_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
   it("answers within the bound during version thinning", async () => {
+    // The thinner gives the loop a turn between pages of 100 items, so the
+    // shared seed's hundred long histories are one page and prove nothing;
+    // this many more are sixty.
+    await sql(
+      source,
+      `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < ?)
+       INSERT INTO items (id, type, properties, created_at, updated_at, occurred_at, version)
+       SELECT printf('01912350-0000-7000-8000-%012x', v), 'core.note',
+         jsonb(json_object('body', 'thin ' || v)), ?, ?, ?, 5 FROM n`,
+      [THINNING_ITEMS, at, at, at],
+    );
+    await sql(
+      source,
+      `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < ?)
+       INSERT INTO versions (id, item_id, version, properties, type, tier, occurred_at, source_id, created_at)
+       SELECT printf('01912351-0000-7000-8000-%012x', v * 10 + j),
+         printf('01912350-0000-7000-8000-%012x', v), j,
+         json_object('body', 'thin ' || v || ' v' || j), 'core.note', 'feed', ?, 'thin-' || v || '-' || j, ?
+       FROM n, (SELECT 1 AS j UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4)`,
+      [THINNING_ITEMS, at, at],
+    );
     const thinner = new VersionThinner(source.storage, {
       recentDays: 0,
       dailySnapshotDays: 0,
@@ -372,29 +419,9 @@ describe("GET /health while a long job runs", () => {
     const { worstCpuMs, asked, result } = await longestStretch(health, () =>
       thinner.runOnce(),
     );
-    expect(result.items).toBe(100);
-    expect(result.pruned).toBeGreaterThan(400);
-    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
-    expect(asked).toBeGreaterThan(0);
-  }, 120_000);
-
-  it("answers within the bound during the enrichment sweep", async () => {
-    const sweeper = new TextEnrichmentSweeper({
-      storage: source.storage,
-      blobs: source.blobs,
-      ocr: null,
-      batchSize: 20,
-      itemTimeoutMs: 60_000,
-      maxBlobBytes: 20 * 1024 * 1024,
-      maxTextChars: 100_000,
-      maxAttempts: 3,
-    });
-    const { worstCpuMs, asked, result } = await longestStretch(health, () =>
-      sweeper.runOnce(),
-    );
-    // Every file row was offered and settled one way or another.
-    expect(result.extracted + result.skipped + result.failed).toBe(20);
-    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(result.items).toBe(100 + THINNING_ITEMS);
+    expect(result.pruned).toBeGreaterThan(400 + THINNING_ITEMS * 3);
+    expect(worstCpuMs).toBeLessThan(THINNING_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
@@ -415,7 +442,7 @@ describe("GET /health while a long job runs", () => {
       retirer.runOnce(),
     );
     expect(result).toBe(400);
-    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(worstCpuMs).toBeLessThan(PAGED_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 });
