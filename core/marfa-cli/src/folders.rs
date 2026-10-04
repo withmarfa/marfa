@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clap::Subcommand;
 use marfa_core::folder::Registry;
-use marfa_core::{CoreError, Folder};
+use marfa_core::{CoreError, Folder, SyncReport};
 
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
@@ -137,9 +137,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Remove { dir } => {
-            if dir.join(marfa_core::folder::STATE_DIR).exists() || !Folder::forget(&dir)? {
-                Folder::open(&dir, None).map_err(held(&dir))?.remove()?;
-            }
+            Folder::remove_at(&dir).map_err(held(&dir))?;
             output::report(
                 &serde_json::json!({ "dir": dir, "removed": true }),
                 json,
@@ -192,27 +190,20 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push { dir } => {
-            let folder = opened(&dir, Some(named.session()?))?;
-            let hydrated = folder.resume()?;
-            // First, so the rest of the push works on the new settings.
-            let settings = folder.send_settings_edit()?;
-            let scanned = folder.scan()?;
-            let drained = folder.drain()?;
-            // A folder offline still writes out the copy it holds.
-            let (caught, failed) = match folder.catch_up() {
+            let SyncReport {
+                hydrated,
+                settings,
+                scan: scanned,
+                drain: drained,
+                catch_up,
+                pull: pulled,
+            } = opened(&dir, Some(named.session()?))?.sync()?;
+            let (caught, failed) = match catch_up {
                 Ok(caught) => (serde_json::to_value(caught)?, None),
-                Err(error) if error.is_environmental() => (
+                Err(error) => (
                     serde_json::json!({ "failed": error.to_string() }),
                     Some(error),
                 ),
-                Err(error) => return Err(error.into()),
-            };
-            // A failed hydration after an expired copy leaves nothing to
-            // pull from; the next push hydrates first.
-            let pulled = match folder.pull() {
-                Ok(pulled) => Some(pulled),
-                Err(CoreError::HydrationIncomplete) if failed.is_some() => None,
-                Err(error) => return Err(error.into()),
             };
             output::report(
                 &serde_json::json!({

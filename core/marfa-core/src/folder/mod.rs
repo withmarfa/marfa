@@ -18,13 +18,18 @@ pub mod registry;
 pub mod settings;
 mod settings_file;
 mod status;
+mod sync;
 mod transfer;
+mod watch;
 pub use status::{FileStatus, Paused, StatusReport};
+pub use sync::SyncReport;
+pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
 
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -429,6 +434,10 @@ impl Folder {
     }
 
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
+        self.hydrate_until(&crate::NEVER_STOPPED)
+    }
+
+    fn hydrate_until(&self, stop: &AtomicBool) -> Result<crate::model::HydrateReport> {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
         let fetched = self.core.http()?.catalog()?;
@@ -439,15 +448,20 @@ impl Folder {
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
         self.core
-            .hydrate_every_type_or(settings.types(), settings.tier(), &whole)
+            .hydrate_every_type_or(settings.types(), settings.tier(), &whole, stop)
     }
 
     /// `None` where the copy already answers for the slice the settings ask.
     pub fn resume(&self) -> Result<Option<crate::model::HydrateReport>> {
+        self.resume_until(&crate::NEVER_STOPPED)
+    }
+
+    /// `resume`, ended with `Canceled` soon after `stop` is raised.
+    fn resume_until(&self, stop: &AtomicBool) -> Result<Option<crate::model::HydrateReport>> {
         if crate::store::hydrated(&*self.core.conn()?)? && !self.slice_moved()? {
             return Ok(None);
         }
-        self.hydrate().map(Some)
+        self.hydrate_until(stop).map(Some)
     }
 
     /// Settings the copy cannot read count as moved, so the hydration that
