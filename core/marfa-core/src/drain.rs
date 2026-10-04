@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
 
@@ -492,10 +493,11 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
-pub fn drain(core: &Core) -> Result<DrainReport> {
+pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // The handle before the server, so a second opener with no server is
     // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
+    crate::catch_up::refuse_if_stopped(stop)?;
     let http = core.http()?;
     {
         let conn = core.conn()?;
@@ -564,6 +566,7 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
     let mut waiting: HashSet<String> = HashSet::new();
 
     for row in &all {
+        crate::catch_up::refuse_if_stopped(stop)?;
         if answers.get(&row.id).and_then(Option::as_ref).is_some() {
             continue;
         }
@@ -2347,6 +2350,30 @@ mod tests {
             core.delete_item(id).unwrap();
         }
         (dir, core)
+    }
+
+    #[test]
+    fn a_drain_stopped_before_it_sends_leaves_every_write_queued_and_unsent() {
+        use std::sync::atomic::AtomicBool;
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+            ],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let before = core.queue().unwrap();
+        assert_eq!(
+            core.drain_until(&AtomicBool::new(true)).unwrap_err(),
+            CoreError::Cancelled
+        );
+        assert!(server.seen("/items/a").is_empty());
+        assert_eq!(core.queue().unwrap(), before);
+        // The witness: not stopped, the same drain reaches the server.
+        core.drain_until(&AtomicBool::new(false)).unwrap();
+        assert!(!server.seen("/items/a").is_empty());
     }
 
     #[test]

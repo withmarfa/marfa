@@ -82,6 +82,9 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// For the calls that cannot be stopped.
+static NEVER_STOPPED: AtomicBool = AtomicBool::new(false);
+
 struct StreamClaim<'a>(&'a AtomicBool);
 
 impl Drop for StreamClaim<'_> {
@@ -270,6 +273,21 @@ impl Core {
         self.hydrate_with(types, tier, &[])
     }
 
+    /// `hydrate_with`, ended with `Cancelled` soon after `stop` is raised. The
+    /// copy is then unfinished and refuses reads, as after any hydration that
+    /// failed part way; the queue is untouched.
+    pub fn hydrate_until(
+        &self,
+        types: &[String],
+        tier: Tier,
+        edge_types: &[String],
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)
+    }
+
     /// Holds every edge of `edge_types` the key reads, whichever ends the
     /// copy holds.
     pub fn hydrate_with(
@@ -278,9 +296,7 @@ impl Core {
         tier: Tier,
         edge_types: &[String],
     ) -> Result<HydrateReport> {
-        self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false)
+        self.hydrate_until(types, tier, edge_types, &NEVER_STOPPED)
     }
 
     /// No types is every type the key reads, held as `store::EVERY_TYPE`.
@@ -292,7 +308,15 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, true)
+        hydrate::hydrate(
+            self,
+            self.http()?,
+            types,
+            tier,
+            edge_types,
+            true,
+            &NEVER_STOPPED,
+        )
     }
 
     /// Refused where neither the server nor the copy holds `id`. Answers
@@ -371,9 +395,15 @@ impl Core {
     }
 
     pub fn catch_up(&self) -> Result<CatchUpReport> {
+        self.catch_up_until(&NEVER_STOPPED)
+    }
+
+    /// Ended with `Cancelled` soon after `stop` is raised, keeping the cursor
+    /// of the last event applied.
+    pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        catch_up::catch_up(self, self.http()?, self.catch_up_idle)
+        catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)
     }
 
     /// `on_change` is called with no lock on the store held, so it may read
@@ -498,8 +528,16 @@ impl Core {
     /// cannot be reached. A drain called while another runs on this store
     /// waits for it to end, then sends only what is still unanswered.
     pub fn drain(&self) -> Result<DrainReport> {
-        let one = self.one_drain();
-        self.drain_held(&one)
+        self.drain_until(&NEVER_STOPPED)
+    }
+
+    /// Ended with `Cancelled` before the next write is sent once `stop` is
+    /// raised. A write already sent stays sent and unanswered, to be settled
+    /// by a later drain under the same key; what the pass had answered stays
+    /// answered in the queue.
+    pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
+        let _one = self.one_drain();
+        drain::drain(self, stop)
     }
 
     pub(crate) fn one_drain(&self) -> MutexGuard<'_, ()> {
@@ -511,7 +549,7 @@ impl Core {
     }
 
     pub(crate) fn drain_held(&self, _one: &MutexGuard<'_, ()>) -> Result<DrainReport> {
-        drain::drain(self)
+        drain::drain(self, &NEVER_STOPPED)
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
@@ -2034,10 +2072,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(note.kind, WriteKind::CreateItem);
-        assert_eq!(
-            note.outcome().unwrap(),
-            Some(Outcome::Waiting).filter(|_| false)
-        );
+        assert_eq!(note.outcome().unwrap(), None);
         // Held, read and found, at the tier an app reads unless it says.
         let id = note.item_id.clone().unwrap();
         let held = core.get(&id).unwrap().unwrap();
@@ -2164,7 +2199,7 @@ mod tests {
                 "neither a type Marfa ships nor one declared",
             ),
         ] {
-            match core.declare_types(&[declaration.clone()]) {
+            match core.declare_types(std::slice::from_ref(&declaration)) {
                 Err(CoreError::Invalid(message)) => {
                     assert!(message.contains(said), "{declaration}: {message}")
                 }
@@ -3047,6 +3082,29 @@ mod tests {
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),
+            (
+                "catch_up_until",
+                reader
+                    .catch_up_until(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap_err(),
+            ),
+            (
+                "hydrate_until",
+                reader
+                    .hydrate_until(
+                        &["core.note".into()],
+                        Tier::Library,
+                        &[],
+                        &std::sync::atomic::AtomicBool::new(false),
+                    )
+                    .unwrap_err(),
+            ),
+            (
+                "drain_until",
+                reader
+                    .drain_until(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap_err(),
+            ),
             ("declare_types", reader.declare_types(&[]).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
@@ -3072,7 +3130,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            34,
+            37,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

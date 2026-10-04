@@ -1,4 +1,5 @@
 use std::io::BufReader;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use crate::catalog::Catalog;
@@ -20,9 +21,10 @@ pub(crate) fn hydrate(
     tier: Tier,
     edge_types: &[String],
     every_type: bool,
+    stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let previous = crate::read_view::Context::capture_build(&*core.conn()?).ok();
-    let result = hydrate_inner(core, http, types, tier, edge_types, every_type);
+    let result = hydrate_inner(core, http, types, tier, edge_types, every_type, stop);
     result.map_err(|error| match previous {
         Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
         None => error,
@@ -36,6 +38,7 @@ fn hydrate_inner(
     tier: Tier,
     edge_types: &[String],
     every_type: bool,
+    stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let types = if every_type && types.is_empty() {
         vec![store::EVERY_TYPE.to_string()]
@@ -112,6 +115,7 @@ fn hydrate_inner(
             let mut page_cursor: Option<String> = None;
             let mut seen = std::collections::HashSet::new();
             loop {
+                crate::catch_up::refuse_if_stopped(stop)?;
                 let page = http.items_page(&ItemsQuery {
                     r#type: declared,
                     tier,
@@ -164,6 +168,7 @@ fn hydrate_inner(
             let mut page_cursor: Option<String> = None;
             let mut seen = std::collections::HashSet::new();
             loop {
+                crate::catch_up::refuse_if_stopped(stop)?;
                 let page = http.edges_page(edge_type, page_cursor.as_deref())?;
                 pages += 1;
                 let mut conn = core.conn()?;
@@ -186,6 +191,7 @@ fn hydrate_inner(
 
         let pinned = store::pins(&*core.conn()?)?;
         for id in pinned {
+            crate::catch_up::refuse_if_stopped(stop)?;
             if store::item_held(&*core.conn()?, &id)? {
                 continue;
             }
@@ -212,7 +218,7 @@ fn hydrate_inner(
             tx.commit()?;
         }
 
-        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle)?;
+        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle, stop)?;
         let cursor = replay.cursor;
         let (items, edges) = {
             let mut conn = core.conn()?;

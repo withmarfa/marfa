@@ -167,6 +167,7 @@ impl CliError {
                 CoreError::WrongServer { .. } => "wrong_server",
                 CoreError::BytesAbsent { .. } => "bytes_absent",
                 CoreError::ContractMismatch { .. } => "contract_mismatch",
+                CoreError::Cancelled => "cancelled",
                 CoreError::Invalid(_) => "invalid",
             },
             CliError::Io(_) => "io",
@@ -216,7 +217,8 @@ impl CliError {
                 | CoreError::Unnamed { .. }
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. }
-                | CoreError::BytesAbsent { .. } => Exit::Environment,
+                | CoreError::BytesAbsent { .. }
+                | CoreError::Cancelled => Exit::Environment,
                 CoreError::NoKeychain(_)
                 | CoreError::Store(_)
                 | CoreError::NoServer

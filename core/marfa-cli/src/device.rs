@@ -584,10 +584,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             tier,
             edge_types,
         } => {
-            let report =
-                store
-                    .open_with_server(named)?
-                    .hydrate_with(&types, tier.into(), &edge_types)?;
+            let core = store.open_with_server(named)?;
+            stop_on_interrupt();
+            let report = core.hydrate_until(&types, tier.into(), &edge_types, stop_after(None))?;
             output::report(&report, json, || {
                 let whole = if report.edge_types.is_empty() {
                     String::new()
@@ -727,7 +726,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             Ok(())
         }
         DeviceCommand::CatchUp => {
-            let report = store.open_with_server(named)?.catch_up()?;
+            let core = store.open_with_server(named)?;
+            stop_on_interrupt();
+            let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
                     "applied {} event(s), skipped {}; cursor {}{}",
@@ -991,7 +992,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Drain => {
-            let report = store.open_with_server(named)?.drain()?;
+            let core = store.open_with_server(named)?;
+            stop_on_interrupt();
+            let report = core.drain_until(stop_after(None))?;
             output::drained(&report, json)?;
             return Ok(output::drain_exit(&report));
         }

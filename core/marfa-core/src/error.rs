@@ -102,6 +102,11 @@ pub enum CoreError {
         /// another contract.
         write_sent: bool,
     },
+    /// The caller's stop was raised. What had been taken is consistent: a
+    /// hydration left unfinished refuses reads, a catch-up keeps the cursor
+    /// it reached, and a drain leaves what it had not sent queued.
+    #[error("the operation was stopped before it finished")]
+    Cancelled,
     #[error("{0}")]
     Invalid(String),
 }

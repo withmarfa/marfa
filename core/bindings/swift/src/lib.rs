@@ -146,6 +146,50 @@ pub struct HydrateReport {
     pub edges: u64,
     pub pages: u64,
     pub cursor: String,
+    /// Types the app declared that the instance did not hold and now does.
+    pub registered_types: Vec<String>,
+    /// Declared types the instance did not hold and would not take.
+    pub unregistered_types: Vec<UnregisteredType>,
+}
+
+/// A declared type the instance refused to register, and why.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct UnregisteredType {
+    pub id: String,
+    /// The server's code for the refusal.
+    pub code: String,
+    pub message: String,
+}
+
+/// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
+/// after, with `MarfaError.Cancelled`. What the call had taken is consistent:
+/// a hydration left unfinished refuses reads, a catch-up keeps the cursor it
+/// reached, and a drain leaves what it had not sent queued. A raised `Stop`
+/// stays raised, so a call given one afterwards ends at once.
+#[derive(uniffi::Object)]
+pub struct Stop {
+    flag: Arc<AtomicBool>,
+}
+
+#[uniffi::export]
+impl Stop {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Stop {
+            flag: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub fn raise(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+}
+
+fn flag_of(stop: Option<Arc<Stop>>) -> Arc<AtomicBool> {
+    stop.map_or_else(
+        || Arc::new(AtomicBool::new(false)),
+        |stop| Arc::clone(&stop.flag),
+    )
 }
 
 /// What a pin or an unpin answers.
@@ -697,6 +741,10 @@ pub enum MarfaError {
         write_sent: bool,
         message: String,
     },
+    /// The `Stop` the call was given was raised before it finished.
+    Cancelled {
+        message: String,
+    },
     Invalid {
         message: String,
     },
@@ -732,6 +780,7 @@ impl MarfaError {
             | MarfaError::WrongServer { message, .. }
             | MarfaError::BytesAbsent { message, .. }
             | MarfaError::ContractMismatch { message, .. }
+            | MarfaError::Cancelled { message }
             | MarfaError::Invalid { message } => message,
         }
     }
@@ -826,6 +875,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 write_sent,
                 message,
             },
+            E::Cancelled => MarfaError::Cancelled { message },
             E::Invalid(_) => MarfaError::Invalid { message },
         }
     }
@@ -1243,8 +1293,13 @@ impl MarfaCore {
         }))
     }
 
-    pub fn hydrate(&self, types: Vec<String>, tier: Tier) -> Result<HydrateReport, MarfaError> {
-        self.hydrate_with(types, tier, Vec::new())
+    pub fn hydrate(
+        &self,
+        types: Vec<String>,
+        tier: Tier,
+        stop: Option<Arc<Stop>>,
+    ) -> Result<HydrateReport, MarfaError> {
+        self.hydrate_with(types, tier, Vec::new(), stop)
     }
 
     /// A hydration that also holds every edge of `edge_types` the key reads,
@@ -1254,8 +1309,11 @@ impl MarfaCore {
         types: Vec<String>,
         tier: Tier,
         edge_types: Vec<String>,
+        stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
-        let report = self.inner.hydrate_with(&types, tier.into(), &edge_types)?;
+        let report = self
+            .inner
+            .hydrate_until(&types, tier.into(), &edge_types, &flag_of(stop))?;
         Ok(HydrateReport {
             types: report.types,
             tier: report.tier.into(),
@@ -1264,7 +1322,46 @@ impl MarfaCore {
             edges: report.edges,
             pages: report.pages,
             cursor: report.cursor,
+            registered_types: report.registered_types,
+            unregistered_types: report
+                .unregistered_types
+                .into_iter()
+                .map(|held| UnregisteredType {
+                    id: held.id,
+                    code: held.code,
+                    message: held.message,
+                })
+                .collect(),
         })
+    }
+
+    /// Declares the types this app saves, each a JSON object with its `id`,
+    /// its `fields` and whatever else a type carries. A copy that has never
+    /// reached a server checks what it queues against them and the types
+    /// Marfa ships, and the first hydration registers the ones the instance
+    /// lacks, where the key may. Declaring a type again replaces it.
+    pub fn declare_types(&self, types: Vec<String>) -> Result<(), MarfaError> {
+        let parsed = types
+            .iter()
+            .map(|text| {
+                serde_json::from_str::<serde_json::Value>(text).map_err(|error| {
+                    MarfaError::Invalid {
+                        message: format!("a type definition is not JSON: {error}"),
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.inner.declare_types(&parsed)?)
+    }
+
+    /// The declarations this copy holds, each as the JSON it was made with.
+    pub fn declared_types(&self) -> Result<Vec<String>, MarfaError> {
+        Ok(self
+            .inner
+            .declared_types()?
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect())
     }
 
     /// Holds one row by id whatever the slice says of it, read now.
@@ -1284,8 +1381,8 @@ impl MarfaCore {
         })
     }
 
-    pub fn catch_up(&self) -> Result<CatchUpReport, MarfaError> {
-        let report = self.inner.catch_up()?;
+    pub fn catch_up(&self, stop: Option<Arc<Stop>>) -> Result<CatchUpReport, MarfaError> {
+        let report = self.inner.catch_up_until(&flag_of(stop))?;
         Ok(CatchUpReport {
             applied: report.applied,
             skipped: report.skipped,
@@ -1600,8 +1697,8 @@ impl MarfaCore {
     }
 
     /// Sends what the queue holds and records what came back. One pass.
-    pub fn drain(&self) -> Result<DrainReport, MarfaError> {
-        drained(self.inner.drain()?)
+    pub fn drain(&self, stop: Option<Arc<Stop>>) -> Result<DrainReport, MarfaError> {
+        drained(self.inner.drain_until(&flag_of(stop))?)
     }
 
     /// Sends a blocked or dead write again, under a fresh idempotency key.
@@ -1955,19 +2052,18 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_with_no_catalog_refuses_a_read_of_it() {
+    fn a_copy_that_never_reached_a_server_holds_the_types_marfa_ships() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = MarfaCore::open(path, None, None).unwrap();
         assert_eq!(core.status().unwrap().catalog_version, None);
-        assert!(matches!(
-            core.item_types(),
-            Err(MarfaError::NoCatalog { .. })
-        ));
-        assert!(matches!(
-            core.edge_type("parent-of".into()),
-            Err(MarfaError::NoCatalog { .. })
-        ));
+        assert!(
+            core.item_types()
+                .unwrap()
+                .iter()
+                .any(|held| held.id == "core.note")
+        );
+        assert_eq!(core.edge_type("parent-of".into()).unwrap().id, "parent-of");
     }
 
     #[test]
@@ -2200,12 +2296,55 @@ mod tests {
     }
 
     #[test]
+    fn a_raised_stop_ends_each_long_call_with_cancelled() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let raised = || {
+            let stop = Stop::new();
+            stop.raise();
+            Some(stop)
+        };
+        let cancelled = |error: MarfaError| matches!(error, MarfaError::Cancelled { .. });
+        assert!(cancelled(
+            core.hydrate(vec!["core.note".into()], Tier::Library, raised())
+                .unwrap_err()
+        ));
+        assert!(cancelled(core.drain(raised()).unwrap_err()));
+        // The witness: given none, the same calls run to their end.
+        core.hydrate(vec!["core.note".into()], Tier::Library, Some(Stop::new()))
+            .unwrap();
+        assert!(cancelled(core.catch_up(raised()).unwrap_err()));
+        core.catch_up(None).unwrap();
+        core.drain(None).unwrap();
+    }
+
+    #[test]
+    fn a_copy_declares_types_and_hands_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, None, None).unwrap();
+        core.declare_types(vec![
+            r#"{"id":"app.recipe","fields":{"title":{"type":"string","required":true}}}"#.into(),
+        ])
+        .unwrap();
+        let held = core.declared_types().unwrap();
+        assert_eq!(held.len(), 1);
+        assert!(held[0].contains("app.recipe"));
+        assert!(matches!(
+            core.declare_types(vec!["not json".into()]),
+            Err(MarfaError::Invalid { .. })
+        ));
+    }
+
+    #[test]
     fn a_subscription_let_go_ends_its_follow() {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library)
+        core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
@@ -2232,7 +2371,7 @@ mod tests {
         let path = dir.path().join("core.sqlite").display().to_string();
         let core =
             MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library)
+        core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let reader = MarfaCore::open_reader(path).unwrap();
         let (told, ended) = std::sync::mpsc::channel();
@@ -2280,7 +2419,7 @@ mod tests {
         let path = dir.path().join("core.sqlite").display().to_string();
         let core =
             MarfaCore::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library)
+        core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(Arc::new(Reopens { path, handle }));
@@ -2317,7 +2456,7 @@ mod tests {
         let path = dir.path().join("core.sqlite").display().to_string();
         let writer = MarfaCore::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
         writer
-            .hydrate(vec!["core.note".into()], Tier::Library)
+            .hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let reader = MarfaCore::open_reader(path).unwrap();
         assert!(matches!(reader.held_handle(), Handle::Reader));

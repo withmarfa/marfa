@@ -617,6 +617,109 @@ mod tests {
     }
 
     #[test]
+    fn a_hydration_stopped_between_pages_leaves_an_unfinished_copy_that_refuses_reads() {
+        use crate::scripted::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        catalog(&server);
+        server.on(
+            "/keys/current",
+            vec![certified(json(
+                200,
+                r#"{"type_permissions":{"core.note":"read"}}"#,
+            ))],
+        );
+        server.on(
+            "/items",
+            vec![
+                Answer::Slow {
+                    after: std::time::Duration::from_millis(400),
+                    answer: Box::new(certified(json(200, r#"{"data":[],"next_cursor":"c1"}"#))),
+                },
+                certified(json(200, r#"{"data":[],"next_cursor":null}"#)),
+            ],
+        );
+        server.on(
+            "/events",
+            vec![
+                stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+                stream(
+                    vec![
+                        copy_marker("stream_cursor", "10"),
+                        copy_marker("stream_live", "11"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        let stop = AtomicBool::new(false);
+        let types = ["core.note".to_string()];
+        std::thread::scope(|scope| {
+            let hydrating =
+                scope.spawn(|| core.hydrate_until(&types, crate::Tier::Library, &[], &stop));
+            server.wait_for("/items", 1, std::time::Duration::from_secs(5));
+            stop.store(true, Ordering::Relaxed);
+            assert!(matches!(
+                hydrating.join().unwrap(),
+                Err(CoreError::Cancelled)
+            ));
+        });
+        assert_eq!(
+            server.seen("/items").len(),
+            1,
+            "a page was asked for after the stop"
+        );
+        assert!(!store::hydrated(&core.conn().unwrap()).unwrap());
+        assert!(matches!(core.get("x"), Err(CoreError::HydrationIncomplete)));
+        // The witness: the same copy hydrates whole when it is not stopped.
+        let report = core
+            .hydrate_until(&types, crate::Tier::Library, &[], &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(report.pages, 1);
+        assert!(store::hydrated(&core.conn().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn a_catch_up_waiting_on_a_stream_ends_soon_after_its_stop() {
+        use crate::scripted::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        catalog(&server);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected()],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            )],
+        );
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let catching = scope.spawn(|| core.catch_up_until(&stop));
+            server.wait_for("/events", 1, std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let raised = std::time::Instant::now();
+            stop.store(true, Ordering::Relaxed);
+            let ended = catching.join().unwrap();
+            assert!(matches!(ended, Err(CoreError::Cancelled)), "{ended:?}");
+            assert!(raised.elapsed() < std::time::Duration::from_secs(3));
+        });
+        // The cursor is where it was, and the copy is still whole.
+        assert!(store::hydrated(&core.conn().unwrap()).unwrap());
+        assert_eq!(
+            store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR)
+                .unwrap()
+                .as_deref(),
+            Some("10")
+        );
+    }
+
+    #[test]
     fn read_view_reader_refuses_missing_proof_without_mutating_writer_generation() {
         let server = crate::scripted::Scripted::start();
         let (dir, core) = core(&server);
