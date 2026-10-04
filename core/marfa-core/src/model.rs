@@ -282,6 +282,21 @@ pub struct HydrateReport {
     pub edges: u64,
     pub pages: u64,
     pub cursor: String,
+    /// Types the app declared that the instance did not hold and now does.
+    pub registered_types: Vec<String>,
+    /// Declared types the instance did not hold and would not take. Writes to
+    /// them wait for the server's verdict, which is a refusal until a key
+    /// that may registers them.
+    pub unregistered_types: Vec<UnregisteredType>,
+}
+
+/// A declared type the instance refused to register, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UnregisteredType {
+    pub id: String,
+    /// The server's code for the refusal.
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

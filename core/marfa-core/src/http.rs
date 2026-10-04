@@ -133,6 +133,14 @@ pub struct Reply<B = ReplyBody> {
     pub body: B,
 }
 
+/// What the instance answered to a type the app declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Registration {
+    Registered,
+    Held,
+    Refused { code: String, message: String },
+}
+
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 
 /// A refusal naming no contract is readable: a proxy in front of the server
@@ -538,6 +546,42 @@ impl Http {
             replayed,
             contract_named,
         })
+    }
+
+    /// Registers a type the app declared, as `POST /types` takes one. A type
+    /// the instance holds already is held, whatever its shape: the server's
+    /// is the one a copy reads. A refusal the server names is the answer,
+    /// where one that names no contract, or a failure to reach it, is an error
+    /// the caller can try again.
+    pub fn register_type(&self, definition: &str) -> Result<Registration, CoreError> {
+        let reply = self.call(Call {
+            method: Method::Post,
+            segments: &["types"],
+            params: &[],
+            headers: &[],
+            body: CallBody::Json(definition),
+            credential: true,
+            stream: false,
+        })?;
+        if (200..300).contains(&reply.status) {
+            return Ok(Registration::Registered);
+        }
+        match self.refused(
+            reply.status,
+            reply.contract.is_some(),
+            &reply.body,
+            reply.retry_after_seconds,
+        ) {
+            CoreError::Server {
+                status: 409, code, ..
+            } if code == "type_already_exists" => Ok(Registration::Held),
+            CoreError::Validation { code, message }
+            | CoreError::Forbidden { code, message }
+            | CoreError::Server { code, message, .. } => {
+                Ok(Registration::Refused { code, message })
+            }
+            other => Err(other),
+        }
     }
 
     pub fn open_events(

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Http, ItemsQuery};
-use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
+use crate::http::{Http, ItemsQuery, Registration};
+use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, UnregisteredType, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -68,7 +68,8 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
-    let catalog_rows = http.catalog()?;
+    let (catalog_rows, registered_types, unregistered_types) =
+        register_declared(core, http, http.catalog()?)?;
     refuse_unreadable(http, &types)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
     {
@@ -233,6 +234,8 @@ fn hydrate_inner(
             edges,
             pages,
             cursor,
+            registered_types: registered_types.clone(),
+            unregistered_types: unregistered_types.clone(),
         })
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
@@ -306,7 +309,54 @@ pub(crate) fn lay_queue_over(
 /// most 128 characters, or a root of one or more such segments under `.*`.
 /// The server's rules for each root go further, and a name that passes here
 /// and breaks them is one the catalog does not hold.
-fn type_pattern(name: &str) -> bool {
+/// Registers on the instance the types the app declared that it does not
+/// hold, parents before their children, and reads the catalog again where
+/// one was taken. A key that may not register is no reason to refuse the
+/// hydration: what it queued waits for the server's verdict like any write.
+fn register_declared(
+    core: &Core,
+    http: &Http,
+    mut catalog: WireCatalog,
+) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>)> {
+    let mut missing: Vec<(String, String)> = {
+        let conn = core.conn()?;
+        store::declared_type_rows(&conn)?
+    };
+    missing.retain(|(id, _)| !catalog.types.iter().any(|held| &held.id == id));
+    let mut registered = Vec::new();
+    let mut refused: Vec<UnregisteredType> = Vec::new();
+    let mut taken = false;
+    while !missing.is_empty() {
+        // A type whose parent is still to come waits for it; where none can
+        // go (a parent the instance refused), the rest go and are told.
+        let next = missing
+            .iter()
+            .position(|(_, json)| {
+                let parent = serde_json::from_str::<serde_json::Value>(json)
+                    .ok()
+                    .and_then(|row| row.get("parent")?.as_str().map(str::to_string));
+                parent.is_none_or(|parent| !missing.iter().any(|(id, _)| *id == parent))
+            })
+            .unwrap_or(0);
+        let (id, json) = missing.remove(next);
+        match http.register_type(&json)? {
+            Registration::Registered => {
+                registered.push(id);
+                taken = true;
+            }
+            Registration::Held => taken = true,
+            Registration::Refused { code, message } => {
+                refused.push(UnregisteredType { id, code, message })
+            }
+        }
+    }
+    if taken {
+        catalog = http.catalog()?;
+    }
+    Ok((catalog, registered, refused))
+}
+
+pub(crate) fn type_pattern(name: &str) -> bool {
     let segment = |part: &str| {
         let mut characters = part.chars();
         characters
