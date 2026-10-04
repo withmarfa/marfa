@@ -20,6 +20,7 @@ import {
   wireEventName,
 } from "../pubsub.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
+import { trackStream } from "./open-streams.js";
 import {
   itemListed,
   readViewAuthority,
@@ -57,7 +58,8 @@ type Incomplete =
   | "backlog_overflow"
   | "live_delivery_failed"
   | "credential_ended"
-  | "reader_behind";
+  | "reader_behind"
+  | "server_stopping";
 
 export function copyStreamRequest(c: Context<AppEnv>): {
   after: bigint | null;
@@ -182,9 +184,11 @@ export async function buildCopyStream(
   let openingAuthority: ReadViewAuthority | undefined;
   const encoder = new TextEncoder();
 
+  let untrack: () => void = () => undefined;
   const cleanup = (): void => {
     if (isClosed()) return;
     state.closed = true;
+    untrack();
     releaseViewer();
     if (keepAlive) clearInterval(keepAlive);
     abort.abort();
@@ -545,6 +549,9 @@ export async function buildCopyStream(
             heartbeatPending = false;
           });
         }, options.keepAliveMs ?? EVENT_LIMITS.keepAliveMs);
+        untrack = trackStream(() => {
+          if (!isClosed()) incomplete("server_stopping");
+        });
         void (async () => {
           if (
             after !== null &&

@@ -80,7 +80,8 @@ import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import { healthRoutes } from "./routes/health.js";
+import { healthRoutes, operatorCaller } from "./routes/health.js";
+import { storageProbes } from "./routes/health-probes.js";
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
@@ -331,7 +332,22 @@ export function createApp(
       features,
     }),
   );
-  app.route("/health", healthRoutes(storage, blobs, config));
+  // Ahead of the credential and the limiter, as the probe of a container
+  // must be. It looks the operator key up for itself, because that key is
+  // the one caller told what a failing component said.
+  app.route(
+    "/health",
+    healthRoutes(
+      storage,
+      blobs,
+      config,
+      storageProbes(storage, {
+        sqlitePath: config.sqlitePath,
+        blobPath: config.blobPath,
+      }),
+      operatorCaller(storage, config.apiKeySalt),
+    ),
+  );
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE

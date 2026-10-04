@@ -1,5 +1,6 @@
 import { EVENT_LIMITS } from "./_event-limits.js";
 import { buildCopyStream, copyStreamRequest } from "./events-copy.js";
+import { trackStream } from "./open-streams.js";
 import { invalidReadViewRequest } from "../middleware/read-view.js";
 import { Hono, type MiddlewareHandler } from "hono";
 import {
@@ -266,7 +267,11 @@ type StreamIncompleteReason =
   /** A live frame found {@link MAX_UNSENT_BYTES} of frames untaken, or the
    *  reader took no frame for {@link READER_STALL_MS} while the replay or
    *  the opening's release waited for room. */
-  | "reader_behind";
+  | "reader_behind"
+  /** The instance is stopping. Everything after the cursor is still in
+   *  the log, so the recovery is the same as for every other reason: connect
+   *  again with it, to the instance once it is back. */
+  | "server_stopping";
 
 /**
  * Most live frames one connection holds while its prologue runs.
@@ -644,9 +649,11 @@ export function eventRoutes(
             // Declared before the first send: send's catch calls cleanup,
             // and an arrow binding would still be in its temporal dead
             // zone on the very first write.
+            let untrack: () => void = () => undefined;
             const cleanup = () => {
               if (state.closed) return;
               state.closed = true;
+              untrack();
               liveViewers -= 1;
               clearInterval(keepAlive);
               subscriptionAbort.abort();
@@ -1675,6 +1682,11 @@ export function eventRoutes(
               if (!caughtUp) return;
               await releaseHold();
             })();
+
+            // Last, so everything the closing frame needs exists.
+            untrack = trackStream(() => {
+              if (!state.closed) failStream("server_stopping");
+            });
 
             c.req.raw.signal.addEventListener("abort", () => {
               cleanup();

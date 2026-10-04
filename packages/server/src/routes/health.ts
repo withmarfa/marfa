@@ -2,12 +2,19 @@ import { Hono } from "hono";
 import { platformDrift } from "../storage/platform-drift.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
-import type { AppEnv } from "../middleware/auth.js";
+import { hashApiKey, type AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import {
+  DISK_DEGRADED_BELOW_BYTES,
+  DISK_DOWN_BELOW_BYTES,
+  type HealthProbes,
+} from "./health-probes.js";
+
+type Status = "ok" | "degraded" | "down";
 
 interface ComponentStatus {
-  status: "ok" | "degraded" | "down";
+  status: Status;
   latency_ms?: number;
   error?: string;
 }
@@ -58,6 +65,96 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
 }
 
 /**
+ * Whether a request's credential is the operator key, read from the key
+ * table alone. It is not the credential middleware: that one stamps the
+ * key as used, which is a write, and this door is asked precisely when
+ * writes may be failing. A database that cannot look the key up says no.
+ */
+export function operatorCaller(
+  storage: Pick<Storage, "keys">,
+  salt: string,
+): (authorization: string | undefined) => Promise<boolean> {
+  return async (authorization) => {
+    if (!authorization?.startsWith("Bearer ")) return false;
+    try {
+      const key = await storage.keys.validate(
+        hashApiKey(authorization.slice(7), salt),
+      );
+      return key?.is_operator === true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/**
+ * One probe under the budget. `down` is a refusal, `degraded` is no answer
+ * in time, and latency rides both for the reason `database` gives above.
+ */
+async function timed(
+  work: () => Promise<unknown>,
+  heldMessage: string,
+): Promise<ComponentStatus> {
+  const started = performance.now();
+  try {
+    const outcome = await withBudget(work());
+    const latencyMs = Math.round(performance.now() - started);
+    return outcome === TIMED_OUT
+      ? { status: "degraded", latency_ms: latencyMs, error: heldMessage }
+      : { status: "ok", latency_ms: latencyMs };
+  } catch (err) {
+    return {
+      status: "down",
+      latency_ms: Math.round(performance.now() - started),
+      error: describe(err),
+    };
+  }
+}
+
+/** What went wrong, from the driver's own error when the query layer wrapped
+ *  it, since the wrapper's message is the statement and not the failure. */
+function describe(err: unknown): string {
+  if (!(err instanceof Error)) return "unknown";
+  return err.cause instanceof Error ? err.cause.message : err.message;
+}
+
+async function diskComponent(probes: HealthProbes): Promise<ComponentStatus> {
+  const started = performance.now();
+  const latency = () => Math.round(performance.now() - started);
+  try {
+    const available = await withBudget(probes.availableBytes());
+    if (available === TIMED_OUT) {
+      return {
+        status: "degraded",
+        latency_ms: latency(),
+        error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
+      };
+    }
+    if (available < DISK_DOWN_BELOW_BYTES) {
+      return {
+        status: "down",
+        latency_ms: latency(),
+        error: `${String(available)} bytes available, below ${String(DISK_DOWN_BELOW_BYTES)}`,
+      };
+    }
+    if (available < DISK_DEGRADED_BELOW_BYTES) {
+      return {
+        status: "degraded",
+        latency_ms: latency(),
+        error: `${String(available)} bytes available, below ${String(DISK_DEGRADED_BELOW_BYTES)}`,
+      };
+    }
+    return { status: "ok", latency_ms: latency() };
+  } catch (err) {
+    return {
+      status: "degraded",
+      latency_ms: latency(),
+      error: `free space unknown: ${describe(err)}`,
+    };
+  }
+}
+
+/**
  * Placement is stated per environment rather than read from a provider's
  * own variables, because nothing outside that provider sets those and a
  * check keyed on them goes quiet without ever failing. It is reported
@@ -70,13 +167,17 @@ export function healthRoutes(
   storage: Storage,
   blobs: BlobLayer,
   config: Pick<AppConfig, "versionFile" | "placement">,
+  probes: HealthProbes,
+  /** Whether a request's credential is the operator key. Left out, nobody
+   *  is, which tells nobody anything. */
+  isOperator: (authorization: string | undefined) => Promise<boolean> = () =>
+    Promise.resolve(false),
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const { versionFile: version, placement } = config;
 
   router.get("/", async (c) => {
     const components: Record<string, ComponentStatus> = {};
-    let overall: "ok" | "degraded" = "ok";
 
     // Database. `down` and `degraded` are different answers and the
     // difference is the useful part: `down` means the database refused,
@@ -89,56 +190,46 @@ export function healthRoutes(
     // number said most. On the timed-out branch it is the budget by
     // construction, which is worth publishing anyway: a watcher graphing this
     // sees the climb and then the cap rather than a gap.
-    const dbStart = performance.now();
-    try {
-      const outcome = await withBudget(storage.keys.count());
-      const latencyMs = Math.round(performance.now() - dbStart);
-      if (outcome === TIMED_OUT) {
-        components.database = {
-          status: "degraded",
-          latency_ms: latencyMs,
-          error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
-        };
-      } else {
-        // The probe answered, and that is the whole question this component
-        // asks.
-        components.database = { status: "ok", latency_ms: latencyMs };
-      }
-    } catch (err) {
-      components.database = {
-        status: "down",
-        latency_ms: Math.round(performance.now() - dbStart),
-        error: err instanceof Error ? err.message : "unknown",
-      };
-    }
-    if (components.database.status !== "ok") overall = "degraded";
+    components.database = await timed(
+      () => storage.keys.count(),
+      `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
+    );
+
+    // A committed write, because a database that reads can still refuse
+    // every write: a volume remounted read-only, a disk that is full, a log
+    // that cannot grow. Under the same budget, since a write queues behind
+    // the writes ahead of it.
+    components.database_write = await timed(
+      () => probes.write(),
+      `no write committed within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
+    );
+
+    // Room to write into. Unknown is not down: a volume the probe could not
+    // read says so as `degraded`, and only a measured shortage is `down`.
+    components.disk = await diskComponent(probes);
 
     // Blob storage. The disk store, which every upload lands on, under the
     // same budget: a held disk is a fault this door exists to report.
-    const blobStart = performance.now();
-    try {
-      const outcome = await withBudget(blobs.disk.has("sha256:healthcheck"));
-      // Latency on every branch, for the reason the database probe gives
-      // above: this is the other bounded probe, and a blob store that
-      // refused after most of its budget is a different fault from one that
-      // refused at once.
-      const blobLatencyMs = Math.round(performance.now() - blobStart);
-      components.blob_storage =
-        outcome === TIMED_OUT
-          ? {
-              status: "degraded",
-              latency_ms: blobLatencyMs,
-              error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
-            }
-          : { status: "ok", latency_ms: blobLatencyMs };
-    } catch (err) {
-      components.blob_storage = {
-        status: "down",
-        latency_ms: Math.round(performance.now() - blobStart),
-        error: err instanceof Error ? err.message : "unknown",
-      };
+    components.blob_storage = await timed(
+      () => blobs.disk.has("sha256:healthcheck"),
+      `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
+    );
+
+    const statuses = Object.values(components).map((one) => one.status);
+    const overall: Status = statuses.includes("down")
+      ? "down"
+      : statuses.includes("degraded")
+        ? "degraded"
+        : "ok";
+
+    // The text of an error is the database's or the operating system's own,
+    // and carries paths and driver detail. This door takes no credential,
+    // so only the operator key is told it.
+    if (!(await isOperator(c.req.header("Authorization")))) {
+      for (const component of Object.values(components)) {
+        delete component.error;
+      }
     }
-    if (components.blob_storage.status !== "ok") overall = "degraded";
 
     // Shipped types this instance still carries that the build no longer
     // names. Derived at boot from the build and the rows, so reading it
@@ -210,14 +301,20 @@ export function healthRoutes(
       scanned: scan.scanned,
     };
 
-    return c.json({
-      status: overall,
-      components,
-      platform_types: platformTypes,
-      unrecognized_stored_values: storedValues,
-      ...(placement && { placement }),
-      ...(version && { version }),
-    });
+    return c.json(
+      {
+        status: overall,
+        components,
+        platform_types: platformTypes,
+        unrecognized_stored_values: storedValues,
+        ...(placement && { placement }),
+        ...(version && { version }),
+      },
+      // A deploy gate and a container's health check read the status code.
+      // `degraded` is still serving, so it still answers 200; only `down`
+      // is a failure.
+      overall === "down" ? 503 : 200,
+    );
   });
 
   return router;
