@@ -49,7 +49,7 @@ pub struct ApiKey {
     pub enforcement_override: Option<Box<models::EnforcementOverride>>,
     #[serde(rename = "created_at")]
     pub created_at: String,
-    /// Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.
+    /// Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. The key listing omits it, and the change and revoke doors answer `404 api_key_not_found` for it.
     #[serde(rename = "expires_at", deserialize_with = "Option::deserialize")]
     pub expires_at: Option<String>,
     #[serde(rename = "last_used_at", deserialize_with = "Option::deserialize")]
