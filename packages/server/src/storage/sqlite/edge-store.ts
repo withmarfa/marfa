@@ -107,12 +107,12 @@ export class SqliteEdgeStore implements EdgeStore {
         await liftOrphanReports(tx, [row.properties]);
       } catch (err) {
         if (isPrimaryKeyViolation(err, "edges")) {
-          // The race the doors' own comparison cannot close: both read the
-          // id as free and one of them inserts first. Same code as that
-          // comparison gives, because it is the same mistake from the
-          // caller's side; no `differs`, because the row that won is not
-          // read here and naming a field without having compared it would
-          // be a guess.
+          // An id held by an edge the caller may not read, which the doors
+          // leave to this collision so the answer says nothing of that edge.
+          // Same code as their own comparison gives, because it is the same
+          // mistake from the caller's side; no `differs`, because the row
+          // holding the id is not read here and naming a field without
+          // having compared it would be a guess.
           throw new MarfaError(
             ErrorCode.ID_REUSED,
             `Edge id ${id} already names a different edge`,

@@ -427,7 +427,7 @@ const getEdgeRoute = createRoute({
         },
       },
       description:
-        "- `edge_not_found`: no edge you may read has this ID, including one another request deleted first. An edge whose edge type or source item you may not read answers the same.",
+        "- `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same.",
     },
   },
 });
@@ -544,7 +544,7 @@ const deleteEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Delete an edge",
   description:
-    "Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is. Of two deletes of one edge, the second answers `404 edge_not_found` and publishes nothing.",
+    "Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
@@ -572,7 +572,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike.",
+        "- `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same.",
     },
   },
 });

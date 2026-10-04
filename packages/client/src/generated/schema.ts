@@ -510,7 +510,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge
-         * @description Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is. Of two deletes of one edge, the second answers `404 edge_not_found` and publishes nothing.
+         * @description Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.
          */
         delete: operations["deleteEdge"];
         options?: never;
@@ -8276,7 +8276,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `edge_not_found`: no edge you may read has this ID, including one another request deleted first. An edge whose edge type or source item you may not read answers the same. */
+            /** @description - `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8416,7 +8416,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
+            /** @description - `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
