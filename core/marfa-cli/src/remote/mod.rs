@@ -445,7 +445,8 @@ impl Remote {
                 CallBody::Text(&form_text)
             }
         };
-        self.http
+        let reply = self
+            .http
             .fetch(
                 Call {
                     method: request.method,
@@ -458,7 +459,15 @@ impl Remote {
                 },
                 held,
             )
-            .map_err(CliError::direct)
+            .map_err(CliError::direct)?;
+        if !(200..300).contains(&reply.status) && reply.contract.is_none() {
+            return Err(CliError::Core(CoreError::Unnamed {
+                origin: self.origin.clone(),
+                status: reply.status,
+                retry_after_seconds: reply.retry_after_seconds,
+            }));
+        }
+        Ok(reply)
     }
 
     pub fn json(&self, request: &Request) -> Result<Value, CliError> {
@@ -667,6 +676,35 @@ mod tests {
         match key {
             Some(key) => Remote::keyed(&door.url, key).unwrap(),
             None => Remote::public_at(&door.url).unwrap(),
+        }
+    }
+
+    #[test]
+    fn an_unnamed_gateway_refusal_is_environmental_for_json_and_streams() {
+        for streamed in [false, true] {
+            let answer = || {
+                Answer::json(
+                    "404 Not Found",
+                    r#"{"error":{"code":"not_found","message":"gateway"}}"#,
+                )
+            };
+            let door = Door::open(vec![answer(), answer().on_contract(None)]);
+            let remote = remote_at(&door, Some("marfa_k1_x"));
+            let request = Request::get(&["items"]);
+            let refused = |request: &Request| {
+                if streamed {
+                    remote.stream(&request.clone().streamed()).err().unwrap()
+                } else {
+                    remote.json(request).unwrap_err()
+                }
+            };
+            assert_eq!(refused(&request).code(), "not_found");
+            let error = refused(&request);
+            assert_eq!(error.code(), "unnamed_answer");
+            assert_eq!(error.exit(), Exit::Environment);
+            assert_eq!(error.envelope()["error"]["server"]["status"], 404);
+            assert!(error.envelope()["error"]["server"]["code"].is_null());
+            door.received();
         }
     }
 
@@ -1211,13 +1249,14 @@ mod tests {
             )
             .on_contract(None),
         ]);
-        let statuses: Vec<u16> = (0..2)
-            .map(|_| match remote_at(&door, Some("marfa_k1_x")).root() {
-                Err(CliError::Refused { status, .. }) => status,
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(statuses, vec![404, 401]);
+        assert!(matches!(
+            remote_at(&door, Some("marfa_k1_x")).root(),
+            Err(CliError::Refused { status: 404, .. })
+        ));
+        assert!(matches!(
+            remote_at(&door, Some("marfa_k1_x")).root(),
+            Err(CliError::Core(CoreError::Unnamed { status: 401, .. }))
+        ));
         door.received();
     }
 
