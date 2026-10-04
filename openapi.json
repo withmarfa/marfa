@@ -27590,7 +27590,7 @@
                   "version": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "The version the caller read. A change to a setting changed since this version is refused."
+                    "description": "The version the caller read."
                   },
                   "title": {
                     "type": "string",
@@ -27676,7 +27676,7 @@
             }
           },
           "400": {
-            "description": "A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked.",
+            "description": "A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `validation_error` is also a query parameter, such as `conflict`, which this door does not take. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked.",
             "content": {
               "application/json": {
                 "schema": {

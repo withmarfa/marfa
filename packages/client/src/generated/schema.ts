@@ -14281,7 +14281,7 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description The version the caller read. A change to a setting changed since this version is refused. */
+                    /** @description The version the caller read. */
                     version: number;
                     title?: string;
                     search?: components["schemas"]["FolderSearch"];
@@ -14314,7 +14314,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
+            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `validation_error` is also a query parameter, such as `conflict`, which this door does not take. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
