@@ -11,7 +11,8 @@ import type { FieldDefinition, TypeSchema } from "@withmarfa/shared";
  * default.
  *
  * - `label`, `description` and `display_hints` are presentation.
- * - `version` is a number the server never reads.
+ * - `version` is stamped on each row written afterwards as its
+ *   `schema_version`, and the server decides nothing by it.
  * - `fields` is judged field by field in {@link changesNeedingSchemaWrite}.
  */
 const FREE_MEMBERS: ReadonlySet<string> = new Set([
