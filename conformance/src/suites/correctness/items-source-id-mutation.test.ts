@@ -64,6 +64,39 @@ describe("PATCH /items/:id source_id mutation", () => {
     expect(free.status).toBe(200);
   });
 
+  it("refuses a move onto the natural key of a row in the bin", async () => {
+    // The unique index counts a row in the bin, so its key is taken, and
+    // the move is a conflict rather than a failure at the index.
+    const heldSourceId = `binned-${generateId()}`;
+    const holder = await client.createItem(
+      createNote({ source: ctx.source, source_id: heldSourceId }),
+    );
+    expect(holder.ok).toBe(true);
+    trackItem(ctx, holder.data.item.id);
+    const moving = await client.createItem(
+      createNote({ source: ctx.source, source_id: `moving-${generateId()}` }),
+    );
+    expect(moving.ok).toBe(true);
+    trackItem(ctx, moving.data.item.id);
+
+    // The witness: the same move onto the live holder is the refusal this
+    // case expects, so the binned one is held to what a live row gets.
+    const live = await client.updateItem(moving.data.item.id, {
+      source_id: heldSourceId,
+      version: moving.data.item.version,
+    });
+    expect(live.status).toBe(409);
+
+    const binned = await client.deleteItem(holder.data.item.id);
+    expect(binned.ok).toBe(true);
+    const res = await client.updateItem(moving.data.item.id, {
+      source_id: heldSourceId,
+      version: moving.data.item.version,
+    });
+    expect(res.status).toBe(409);
+    expect(res.error?.error.code).toBe("source_id_conflict");
+  });
+
   it("mutates source_id, returns 200, and round-trips on subsequent GET", async () => {
     const originalSourceId = `original-${generateId()}`;
     const newSourceId = `mutated-${generateId()}`;
