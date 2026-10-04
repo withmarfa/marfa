@@ -3,6 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  trackItem,
   trackKey,
   trackType,
   cleanup,
@@ -113,8 +114,8 @@ function refusal(res: ApiResponse<unknown>) {
   return res.error?.error;
 }
 
-describe("a key that registers a type evolves it", () => {
-  it("adds a field, removes one it declares, and changes the label, with metadata.types:write alone", async () => {
+describe("a key whose type map reaches a type evolves it", () => {
+  it("adds an optional field and changes the label, description and display hints, with metadata.types:write alone", async () => {
     const ns = namespace("evolve");
     const id = `${ns}.issue`;
     const own = await connector(ns);
@@ -131,18 +132,18 @@ describe("a key that registers a type evolves it", () => {
     await expectMatchesSchema("PUT", "/types/{id}", 200, added.data);
     expect(await fieldsOf(id)).toContain("labels");
 
-    const { legacy: _legacy, ...kept } = fields;
-    const removed = await own.updateType(
+    const presentational = await own.updateType(
       id,
       replaced(id, {
         label: "Vendor issue",
         description: "An issue, as the vendor reports it.",
         display_hints: { title_field: "vendor_state" },
-        fields: { ...kept, labels: { type: "array", items_type: "string" } },
+        fields: { ...fields, labels: { type: "array", items_type: "string" } },
       }),
     );
-    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
-    expect(await fieldsOf(id)).not.toContain("legacy");
+    expect(presentational.status, JSON.stringify(presentational.error)).toBe(
+      200,
+    );
     const after = await client.getType(id);
     expect(after.data.label).toBe("Vendor issue");
     expect(after.data.display_hints).toEqual({ title_field: "vendor_state" });
@@ -176,6 +177,25 @@ describe("a key that registers a type evolves it", () => {
     ],
     ["the roles", (id) => replaced(id, { roles: [] }), "roles"],
     ["the parent", (id) => replaced(id, { parent: "core.note" }), "parent"],
+    [
+      "removing a field it declares",
+      (id) => {
+        const { legacy: _legacy, ...kept } = issue(id).fields as Definition;
+        return replaced(id, { fields: kept });
+      },
+      "fields.legacy",
+    ],
+    [
+      "adding a required field",
+      (id) =>
+        replaced(id, {
+          fields: {
+            ...(issue(id).fields as Definition),
+            severity: { type: "string", required: true },
+          },
+        }),
+      "fields.severity",
+    ],
     [
       "the shape of a field it keeps",
       (id) =>
@@ -212,6 +232,112 @@ describe("a key that registers a type evolves it", () => {
       expect((await client.getType(id)).data).not.toEqual(before);
     },
   );
+
+  it("refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write", async () => {
+    const ns = namespace("held");
+    const id = `${ns}.entry`;
+    const own = await connector(ns);
+    await register(own, { id, fields: { title: { type: "string" } } });
+    const states = [undefined, "archived", "trashed"] as const;
+    for (const [index, state] of states.entries()) {
+      const made = await client.createItem({
+        type: id,
+        properties: { title: "t", [`held_${String(index)}`]: "x" },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      if (state !== undefined) {
+        const moved =
+          state === "trashed"
+            ? await client.deleteItem(made.data.item.id)
+            : await client.transitionItem(made.data.item.id, state);
+        expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+      }
+    }
+    const withFields = (name: string) => ({
+      fields: { title: { type: "string" }, [name]: { type: "string" } },
+    });
+
+    for (const name of ["held_0", "held_1", "held_2"]) {
+      const refused = await own.updateType(id, withFields(name));
+      expect(refused.status, name).toBe(403);
+      expect(refusal(refused)?.code).toBe("forbidden");
+      expect(refusal(refused)?.details?.required_scope).toBe("schema.write");
+      expect(refusal(refused)?.details?.changes).toEqual([`fields.${name}`]);
+    }
+    expect(await fieldsOf(id)).not.toContain("held_0");
+
+    // The witnesses: a name no row holds lands, and a held one lands for a key
+    // with schema.write.
+    expect((await own.updateType(id, withFields("fresh"))).status).toBe(200);
+    const landed = await (
+      await curator(ns)
+    ).updateType(id, {
+      fields: { title: { type: "string" }, held_0: { type: "string" } },
+    });
+    expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+  });
+
+  it("refuses bringing a removed field back, which would reshape the values rows still hold", async () => {
+    const ns = namespace("readd");
+    const id = `${ns}.entry`;
+    const own = await connector(ns);
+    const shapes = {
+      title: { type: "string" },
+      secret: { type: "string", searchable: false },
+    };
+    await register(own, { id, fields: shapes });
+    const made = await client.createItem({
+      type: id,
+      properties: { title: "t", secret: "hidden" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const withoutSecret = { fields: { title: { type: "string" } } };
+    const removing = await own.updateType(id, withoutSecret);
+    expect(removing.status).toBe(403);
+    expect(refusal(removing)?.details?.changes).toEqual(["fields.secret"]);
+
+    expect(
+      (await (await curator(ns)).updateType(id, withoutSecret)).status,
+    ).toBe(200);
+    const bringingBack = await own.updateType(id, {
+      fields: { title: { type: "string" }, secret: { type: "string" } },
+    });
+    expect(bringingBack.status).toBe(403);
+    expect(refusal(bringingBack)?.details?.changes).toEqual(["fields.secret"]);
+    expect(await fieldsOf(id)).not.toContain("secret");
+  });
+
+  it("leaves a removed field's values readable and the row writable", async () => {
+    const ns = namespace("kept");
+    const id = `${ns}.entry`;
+    const curated = await curator(ns);
+    await register(curated, {
+      id,
+      fields: { title: { type: "string" }, rank: { type: "integer" } },
+    });
+    const made = await client.createItem({
+      type: id,
+      properties: { title: "t", rank: 5 },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    expect(
+      (await curated.updateType(id, { fields: { title: { type: "string" } } }))
+        .status,
+    ).toBe(200);
+
+    const read = await client.getItem(made.data.item.id);
+    expect(read.data.item.properties).toEqual({ title: "t", rank: 5 });
+    const patched = await client.updateItem(made.data.item.id, {
+      version: read.data.item.version,
+      properties: { title: "u" },
+    });
+    expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    expect(patched.data.item.properties).toEqual({ title: "u", rank: 5 });
+  });
 
   it("refuses the delete to a key without schema.write, force included", async () => {
     const ns = namespace("delete");

@@ -130,49 +130,23 @@ function replacement(id: string, change: Definition): Definition {
 }
 
 describe("a key holding metadata.types:write evolves the types it registered", () => {
-  it("registers a type under a platform parent, then adds a field, removes its own and relabels", async () => {
+  it("registers a type under a platform parent, then adds an optional field and changes presentation", async () => {
     const ns = namespace("evo");
     const key = await connectorKey(ns);
     const id = `${ns}.issue`;
     const created = await register(key, issueDefinition(id));
     expect(created.status, await created.clone().text()).toBe(201);
 
-    const base = replacement(id, {});
-    const fields = base.fields as Record<string, unknown>;
+    const fields = replacement(id, {}).fields as Record<string, unknown>;
+    const grown = {
+      ...fields,
+      labels: { type: "array", items_type: "string" },
+    };
 
-    // Adds a field, required or not.
-    const added = await replace(
-      key,
-      id,
-      replacement(id, {
-        fields: {
-          ...fields,
-          labels: { type: "array", items_type: "string" },
-          severity: { type: "string", required: true },
-        },
-      }),
-    );
+    const added = await replace(key, id, replacement(id, { fields: grown }));
     expect(added.status, await added.clone().text()).toBe(200);
     expect(Object.keys((await stored(id)).fields as object)).toContain(
-      "severity",
-    );
-
-    // Removes a field the type itself declares.
-    const kept = without(fields, "legacy");
-    const removed = await replace(
-      key,
-      id,
-      replacement(id, {
-        fields: {
-          ...kept,
-          labels: { type: "array", items_type: "string" },
-          severity: { type: "string", required: true },
-        },
-      }),
-    );
-    expect(removed.status, await removed.clone().text()).toBe(200);
-    expect(Object.keys((await stored(id)).fields as object)).not.toContain(
-      "legacy",
+      "labels",
     );
 
     // Changes the label, the description, a field's description, the display
@@ -186,10 +160,8 @@ describe("a key holding metadata.types:write evolves the types it registered", (
         version: 2,
         display_hints: { title_field: "vendor_state" },
         fields: {
-          ...kept,
+          ...grown,
           vendor_state: { type: "string", description: "Reworded." },
-          labels: { type: "array", items_type: "string" },
-          severity: { type: "string", required: true },
         },
       }),
     );
@@ -289,6 +261,25 @@ describe("a key holding metadata.types:write evolves the types it registered", (
           },
         }),
       "fields.rank",
+    ],
+    [
+      "removing a field it declares",
+      (id) =>
+        replacement(id, {
+          fields: without(issueDefinition(id).fields as Definition, "legacy"),
+        }),
+      "fields.legacy",
+    ],
+    [
+      "adding a required field",
+      (id) =>
+        replacement(id, {
+          fields: {
+            ...(issueDefinition(id).fields as object),
+            severity: { type: "string", required: true },
+          },
+        }),
+      "fields.severity",
     ],
     [
       "taking a field out of search",
@@ -431,6 +422,195 @@ describe("a key holding metadata.types:write evolves the types it registered", (
     );
     expect(refused.status).toBe(403);
     expect(refused.code).toBe("core_type_immutable");
+  });
+});
+
+async function createRow(
+  type: string,
+  properties: Definition,
+  state?: "archived" | "trashed",
+): Promise<string> {
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type, properties },
+  });
+  expect(res.status, await res.clone().text()).toBe(201);
+  const id = ((await res.json()) as { item: { id: string } }).item.id;
+  if (state !== undefined) {
+    const moved = await request(ctx.app, "POST", `/items/${id}/transition`, {
+      key: ctx.workingKey,
+      body: { state },
+    });
+    expect(moved.status, await moved.clone().text()).toBe(200);
+  }
+  return id;
+}
+
+async function readRow(id: string): Promise<Definition> {
+  const res = await request(ctx.app, "GET", `/items/${id}`, {
+    key: ctx.workingKey,
+  });
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { item: Definition }).item;
+}
+
+describe("a field is added without schema.write only where no stored row speaks for its name", () => {
+  it("refuses a field whose name a row of the type holds, in any lifecycle state, and lands it for schema.write", async () => {
+    const ns = namespace("held");
+    const id = `${ns}.entry`;
+    const key = await connectorKey(ns);
+    await register(key, { id, fields: { title: { type: "string" } } });
+    const states = [undefined, "archived", "trashed"] as const;
+    for (const [index, state] of states.entries()) {
+      await createRow(
+        id,
+        { title: "t", [`held_${String(index)}`]: "x" },
+        state,
+      );
+    }
+    await createRow(id, { title: "t", 'we"ird\\name': "x" });
+    const withFields = (...names: string[]) => ({
+      fields: {
+        title: { type: "string" },
+        ...Object.fromEntries(names.map((n) => [n, { type: "string" }])),
+      },
+    });
+
+    for (const name of ["held_0", "held_1", "held_2", 'we"ird\\name']) {
+      const refused = await refusal(await replace(key, id, withFields(name)));
+      expect(refused.status, name).toBe(403);
+      expect(refused.code).toBe("forbidden");
+      expect(refused.details?.required_scope).toBe("schema.write");
+      expect(refused.details?.changes).toEqual([`fields.${name}`]);
+    }
+    expect(Object.keys((await stored(id)).fields as object)).toEqual(["title"]);
+
+    // The witnesses: a name no row holds lands, and a held one lands for a
+    // key with schema.write.
+    expect((await replace(key, id, withFields("fresh"))).status).toBe(200);
+    const curated = await schemaKey(ns);
+    expect((await replace(curated, id, withFields("held_0"))).status).toBe(200);
+  });
+
+  it("counts the rows of a subtype, which inherit the field", async () => {
+    const ns = namespace("sub");
+    const key = await connectorKey(ns);
+    await register(key, {
+      id: `${ns}.base`,
+      fields: { title: { type: "string" } },
+    });
+    await register(key, {
+      id: `${ns}.leaf`,
+      parent: `${ns}.base`,
+      fields: { extra: { type: "string" } },
+    });
+    await createRow(`${ns}.leaf`, { title: "t", inherited: "x" });
+    const refused = await refusal(
+      await replace(key, `${ns}.base`, {
+        fields: { title: { type: "string" }, inherited: { type: "string" } },
+      }),
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.details?.changes).toEqual(["fields.inherited"]);
+  });
+
+  it("refuses removing a field and re-adding it, which would reshape the values rows still hold", async () => {
+    const ns = namespace("readd");
+    const id = `${ns}.entry`;
+    const own = await connectorKey(ns);
+    await register(own, {
+      id,
+      fields: {
+        title: { type: "string" },
+        secret: { type: "string", searchable: false },
+        rank: { type: "integer" },
+      },
+    });
+    await createRow(id, { title: "t", secret: "hidden", rank: 5 });
+
+    // A key with the types scope alone cannot remove either field.
+    for (const dropped of ["secret", "rank"]) {
+      const refused = await refusal(
+        await replace(own, id, {
+          fields: without(
+            {
+              title: { type: "string" },
+              secret: { type: "string", searchable: false },
+              rank: { type: "integer" },
+            },
+            dropped,
+          ),
+        }),
+      );
+      expect(refused.status, dropped).toBe(403);
+      expect(refused.details?.changes).toEqual([`fields.${dropped}`]);
+    }
+
+    // A key with schema.write removes both, and the rows keep what they hold.
+    const curated = await schemaKey(ns);
+    expect(
+      (await replace(curated, id, { fields: { title: { type: "string" } } }))
+        .status,
+    ).toBe(200);
+
+    // The types scope cannot bring either name back under another shape.
+    for (const [name, field] of [
+      ["secret", { type: "string" }],
+      ["rank", { type: "string" }],
+    ] as const) {
+      const refused = await refusal(
+        await replace(own, id, {
+          fields: { title: { type: "string" }, [name]: field },
+        }),
+      );
+      expect(refused.status, name).toBe(403);
+      expect(refused.details?.changes).toEqual([`fields.${name}`]);
+    }
+    expect(Object.keys((await stored(id)).fields as object)).toEqual(["title"]);
+  });
+
+  it("takes an optional field once no row holds its name, and a name nothing ever held", async () => {
+    const ns = namespace("free");
+    const id = `${ns}.entry`;
+    const own = await connectorKey(ns);
+    await register(own, { id, fields: { title: { type: "string" } } });
+    expect(
+      (
+        await replace(own, id, {
+          fields: {
+            title: { type: "string" },
+            a: { type: "string" },
+            b: { type: "integer" },
+          },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("leaves a removed field's values readable and the row writable", async () => {
+    const ns = namespace("kept");
+    const id = `${ns}.entry`;
+    const curated = await schemaKey(ns);
+    await register(curated, {
+      id,
+      fields: { title: { type: "string" }, rank: { type: "integer" } },
+    });
+    const row = await createRow(id, { title: "t", rank: 5 });
+    expect(
+      (await replace(curated, id, { fields: { title: { type: "string" } } }))
+        .status,
+    ).toBe(200);
+
+    expect((await readRow(row)).properties).toEqual({ title: "t", rank: 5 });
+    const patched = await request(ctx.app, "PATCH", `/items/${row}`, {
+      key: ctx.workingKey,
+      body: {
+        version: (await readRow(row)).version,
+        properties: { title: "u" },
+      },
+    });
+    expect(patched.status, await patched.clone().text()).toBe(200);
+    expect((await readRow(row)).properties).toEqual({ title: "u", rank: 5 });
   });
 });
 

@@ -323,7 +323,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.",
+    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -352,7 +352,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.\n\nA type whose stored inheritance chain cannot be resolved (circular, or deeper than any resolution walk follows) answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -509,9 +509,9 @@ const updateTypeRoute = createRoute({
     },
   ] as const,
   tags: ["Types"],
-  summary: "Update a registered type",
+  summary: "Replace a type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403 — and either `schema.write` or `metadata.types:write`. With `metadata.types:write` alone, the replacement may add fields, remove the type's own fields, and change `label`, `description`, `display_hints` and `version`; anything else, including a kept field's shape, needs `schema.write`. A new `parent` needs write on it in the same map, unless it is a platform-shipped type. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -567,7 +567,7 @@ const updateTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only `metadata.types:write` and the replacement changes something that needs `schema.write` (`details.changes` names it). `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on a new `parent` (`details.grant` names it).",
+        "`forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only the second and the replacement needs `schema.write` (`details.changes` names what). `core_type_immutable`: the identifier names a platform-shipped type. `type_not_permitted`: the type map does not grant write on the identifier or on a new `parent` (`details.grant` names it).",
     },
     404: {
       content: {
@@ -603,9 +603,9 @@ const deleteTypeRoute = createRoute({
   method: "delete",
   path: "/{id}",
   tags: ["Types"],
-  summary: "Delete a registered type",
+  summary: "Delete a type",
   description:
-    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).\n\nThe tombstones purges left under the type go with it.",
+    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included; platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).\n\nThe tombstones purges left under the type go with it.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {
@@ -818,7 +818,9 @@ export function typeRoutes(storage: Storage) {
           }
 
           const schema = result.data;
-          requireTypeReplacement(c, stored, schema);
+          await requireTypeReplacement(c, stored, schema, (types, names) =>
+            storage.types.propertyNamesHeld(types, names),
+          );
           if (schema.parent) {
             // Measured on the type as it stands, before the update lands, which
             // is the subtree that would move with it.

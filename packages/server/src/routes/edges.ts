@@ -218,7 +218,7 @@ const listEdgesRoute = createRoute({
   description:
     "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
     "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\n" +
-    "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
+    "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate: a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
@@ -239,7 +239,7 @@ const listEdgesRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
         ),
       updated_before: z
         .string()
@@ -327,7 +327,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+        "The supplied `id` already names this exact edge (same source, target and type), so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
     },
     201: {
       content: {
@@ -388,7 +388,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "`id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs` — any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together.",
+        "`id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs`: any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together.",
     },
   },
 });
@@ -441,7 +441,7 @@ const updateEdgeRoute = createRoute({
   description:
     "Updates an edge's properties, or moves one of its ends, under the version the caller read. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key. An edge's property set can therefore only grow.\n\n" +
     "**Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.\n\n" +
-    "`version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
+    "`version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties, so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -968,7 +968,7 @@ const listFromSourceRoute = createRoute({
   path: "/{id}/edges",
   operationId: "listItemEdges",
   tags: ["Edges"],
-  summary: "List outbound edges from an item",
+  summary: "List outbound edges",
   description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
@@ -1032,7 +1032,7 @@ const listBackrefsRoute = createRoute({
   path: "/{id}/backrefs",
   operationId: "listItemBackrefs",
   tags: ["Edges"],
-  summary: "List inbound edges to an item",
+  summary: "List inbound edges",
   description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,

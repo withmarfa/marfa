@@ -14,7 +14,7 @@ import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
-import { types } from "./schema.js";
+import { items, types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
@@ -128,6 +128,29 @@ export class SqliteTypeStore implements TypeStore {
       await forgetType(tx, id);
       await reindexChangedTypes(tx, id, shapes);
     });
+  }
+
+  async propertyNamesHeld(
+    owners: readonly string[],
+    names: readonly string[],
+  ): Promise<string[]> {
+    const held: string[] = [];
+    if (owners.length === 0) return held;
+    for (const name of names) {
+      const [row] = await this.db
+        .select({ id: items.id })
+        .from(items)
+        .where(
+          and(
+            inArray(items.type, [...owners]),
+            sql`EXISTS (SELECT 1 FROM json_each(${items.properties}) WHERE key = ${name})`,
+          ),
+        )
+        .limit(1)
+        .all();
+      if (row) held.push(name);
+    }
+    return held;
   }
 
   async listRegistered(): Promise<TypeSchema[]> {

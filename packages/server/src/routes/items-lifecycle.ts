@@ -27,7 +27,7 @@ const restoreItemRoute = createRoute({
   method: "post",
   path: "/{id}/restore",
   tags: ["Items"],
-  summary: "Restore a trashed item",
+  summary: "Restore an item",
   description:
     "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
   security: [{ bearerAuth: [] }],
@@ -87,9 +87,9 @@ const transitionItemRoute = createRoute({
   method: "post",
   path: "/{id}/transition",
   tags: ["Items"],
-  summary: "Transition item state",
+  summary: "Change an item's state",
   description:
-    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
+    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected; restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

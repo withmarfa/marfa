@@ -84,8 +84,8 @@ const listHousekeepingRoute = createRoute({
   operationId: "listHousekeeping",
   method: "get",
   path: "/",
-  tags: ["Housekeeping"],
-  summary: "List the instance's housekeeping jobs",
+  tags: ["Instance"],
+  summary: "List housekeeping jobs",
   description:
     "Every housekeeping job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
   security: [{ bearerAuth: [] }],
@@ -107,8 +107,8 @@ const runHousekeepingRoute = createRoute({
   operationId: "runHousekeeping",
   method: "post",
   path: "/{name}/run",
-  tags: ["Housekeeping"],
-  summary: "Run one housekeeping job now",
+  tags: ["Instance"],
+  summary: "Run a housekeeping job",
   description:
     "Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.",
   security: [{ bearerAuth: [] }],

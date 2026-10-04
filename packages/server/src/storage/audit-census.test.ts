@@ -17,7 +17,7 @@ const READS: Record<string, string> = {
   MetadataStore: "get getMany listTags getExtensions getExtensionsForItems",
   VersionStore: "list all getByVersion scanProperties listThinningCandidates",
   TypeStore:
-    "list get listRegistered listRegisteredWithProvenance loadAll countRegistered",
+    "list get listRegistered listRegisteredWithProvenance loadAll countRegistered propertyNamesHeld",
   EdgeTypeStore: "list get",
   SearchStore: "search",
   KeyStore: "list get validate count",

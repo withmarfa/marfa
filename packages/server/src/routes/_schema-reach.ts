@@ -14,11 +14,16 @@
  *
  * **A type's replacement is the one door two permissions open.** The key
  * that registered a type evolves it with `metadata.types:write`, within what
- * {@link changesNeedingSchemaWrite} allows, and `schema.write` still opens
+ * {@link evolutionOf} allows, and `schema.write` still opens
  * every replacement. Naming a parent is a reach of its own
  * ({@link requireParentReach}).
  */
-import { ErrorCode, MarfaError, TYPE_REGISTRY } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  TYPE_REGISTRY,
+  declaredDescendants,
+} from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
@@ -32,7 +37,7 @@ import {
   standingPermission,
   standingRule,
 } from "../middleware/auth.js";
-import { changesNeedingSchemaWrite } from "./_type-evolution.js";
+import { evolutionOf } from "./_type-evolution.js";
 
 /** Asked of every caller of a door that replaces or deletes a type or an
  *  edge type, before the request is read. */
@@ -113,24 +118,40 @@ export function requireTypeSchemaWrite(
  * Admit the replacement of the type `stored` for `next`, or refuse it `403`.
  *
  * A key holding `schema.write` may make any replacement. A key admitted on
- * `metadata.types:write` alone may make those
- * {@link changesNeedingSchemaWrite} leaves free, and is otherwise refused
- * `forbidden` naming the members that need `schema.write`. A parent the
- * replacement changes is held to the key's reach on top of that, whichever
- * permission admitted it.
+ * `metadata.types:write` alone may add optional fields whose names no stored
+ * row of the type or of a subtype holds, and change what
+ * {@link evolutionOf} leaves free. Any other change is refused `forbidden`
+ * naming the members that need `schema.write`. A parent the replacement
+ * changes is held to the key's reach on top of that, whichever permission
+ * admitted it.
+ *
+ * `heldBy` answers which of the names some row of the given types holds a
+ * value under, in any lifecycle state.
  */
-export function requireTypeReplacement(
+export async function requireTypeReplacement(
   c: Context<AppEnv>,
   stored: TypeSchema,
   next: TypeSchema,
-): void {
+  heldBy: (types: string[], names: string[]) => Promise<string[]>,
+): Promise<void> {
   admitTypeReplacement(c);
   if (!holdsPermission(c, "schema.write")) {
-    const changes = changesNeedingSchemaWrite(stored, next);
+    const { needsSchemaWrite, additions } = evolutionOf(stored, next);
+    const held =
+      additions.length === 0
+        ? []
+        : await heldBy(
+            [stored.id, ...declaredDescendants(stored.id)],
+            additions,
+          );
+    const changes = [
+      ...needsSchemaWrite,
+      ...held.map((name) => `fields.${name}`),
+    ].sort();
     if (changes.length > 0) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `Changing ${changes.join(", ")} requires schema.write. A credential holding metadata.types:write alone may add fields, remove the type's own fields, and change its label, description, display hints and version.`,
+        `Changing ${changes.join(", ")} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored row holds a value under, and change the label, description, display hints and version.`,
         { required_scope: "schema.write", changes },
       );
     }

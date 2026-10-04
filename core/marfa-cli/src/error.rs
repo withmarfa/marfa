@@ -250,6 +250,7 @@ impl CliError {
                 | CoreError::Validation { .. }
                 | CoreError::UnknownType { .. }
                 | CoreError::ContractMismatch { .. }
+                | CoreError::FirstSyncWaiting
                 | CoreError::Invalid(_) => Exit::Refused,
                 CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
                 CoreError::Io(_)

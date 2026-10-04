@@ -56,8 +56,8 @@ const exportRoute = createRoute({
   operationId: "exportData",
   method: "get",
   path: "/",
-  tags: ["Export"],
-  summary: "Export data",
+  tags: ["Export and restore"],
+  summary: "Export items and edges",
   description:
     "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
     UNKNOWN_PARAM_NOTE,
@@ -85,13 +85,13 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time.",
+          "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time.",
         ),
       occurred_before: z
         .string()
         .optional()
         .describe(
-          "Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this.",
+          "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this.",
         ),
       // Enforced, not merely documented, for the reason
       // `refuseUnknownQueryParams` is given below: a caller who asked for
