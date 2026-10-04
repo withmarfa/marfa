@@ -329,8 +329,10 @@ function emitLogged(row: {
   } satisfies ItemEventWithId);
 }
 
-/** Events read back from the log per page while they are announced. */
+/** Events read back from the log per page while they are announced, held
+ *  to a payload budget too, since one restored row can be large. */
 const ANNOUNCE_PAGE = 200;
+const ANNOUNCE_PAGE_BYTES = 8 * 1024 * 1024;
 
 /**
  * Once the transaction this is called in commits, tell this process's
@@ -349,7 +351,9 @@ export function announceFromLog(
     inAnnouncementOrder(async () => {
       let cursor = range.first - 1n;
       while (cursor < range.last) {
-        const rows = await store.getAfter(cursor, ANNOUNCE_PAGE);
+        const rows = await store.getAfter(cursor, ANNOUNCE_PAGE, {
+          maxBytes: ANNOUNCE_PAGE_BYTES,
+        });
         if (rows.length === 0)
           throw new Error("Logged events are missing from the log");
         for (const row of rows) {

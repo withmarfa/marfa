@@ -388,7 +388,7 @@ describe("POST /admin/restore-archive all or nothing", () => {
     expect(await observed).toBeLessThanOrEqual(100);
   });
 
-  it("holds no restored row's content in memory until it commits, and gives a large row a turn of its own", async () => {
+  it("holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own", async () => {
     const count = 8;
     const property = 30 * 1024 * 1024;
     const line = (i: number): Buffer =>
@@ -436,17 +436,46 @@ describe("POST /admin/restore-archive all or nothing", () => {
       if (entry.action === "admin.restore_archive") heapAtCommit = liveHeap();
       return log(entry, id);
     };
+    // Read back after the commit to tell subscribers, a page at a time.
+    const eventLog = ctx.storage.eventLog;
+    const getAfter = eventLog.getAfter.bind(eventLog);
+    let largestPage = 0;
+    eventLog.getAfter = async (after, limit, options) => {
+      const page = await getAfter(after, limit, options);
+      largestPage = Math.max(
+        largestPage,
+        page.reduce((sum, row) => sum + row.payload.length, 0),
+      );
+      return page;
+    };
+    const abort = new AbortController();
+    let announced = 0;
+    const listening = (async () => {
+      try {
+        for await (const batch of subscribeAll({ signal: abort.signal })) {
+          announced += batch.length;
+          if (announced >= count) return;
+        }
+      } catch {
+        // The abort ends the generator.
+      }
+    })();
     const before = liveHeap();
     let res: Response;
     try {
       res = await restore(archive);
+      await listening;
     } finally {
+      abort.abort();
       clearInterval(ticker);
       metadata.setExtensions = setExtensions;
       audit.log = log;
+      eventLog.getAfter = getAfter;
     }
     expect(res.status).toBe(200);
     expect(((await res.json()) as { imported: number }).imported).toBe(count);
+    expect(announced).toBe(count);
+    expect(largestPage).toBeLessThan(2 * (property + 1024));
     // Every row was written; their content, eight times 30 MiB, is not held.
     expect(heapAtCommit).toBeGreaterThan(0);
     expect(heapAtCommit - before).toBeLessThan(100 * 1024 * 1024);

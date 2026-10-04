@@ -219,7 +219,7 @@ The server and a device index the same text and read a query the same way, so a 
 
     Reason: a restore of a large archive takes long enough that a server answering nothing in the meantime fails its health checks, and a few large rows take as long as many small ones.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between batches inside its transaction`, `› gives the event loop a turn over lines it skips as well as rows it writes`, `› holds no restored row's content in memory until it commits, and gives a large row a turn of its own`.
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between batches inside its transaction`, `› gives the event loop a turn over lines it skips as well as rows it writes`, `› holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
 
 48. When the server refuses an archive whose body it cannot read, it MUST keep serving other requests.
 
@@ -251,11 +251,11 @@ The server and a device index the same text and read a query the same way, so a 
 
     Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
 
-53. While an archive restore writes, the server MUST NOT hold a restored row's content in memory past the line it was read from.
+53. While an archive restore writes or tells subscribers about its events, the server MUST NOT hold more than one restored row, or one page of at most 8 MiB of its events, in memory at once.
 
     Reason: an archive's rows together can be larger than the memory the server has.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds no restored row's content in memory until it commits, and gives a large row a turn of its own`.
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
 
 54. When an archive restore commits, the server MUST tell subscribers about its events in event-log order, ahead of the events of any write committed after it.
 
