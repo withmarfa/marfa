@@ -82,6 +82,8 @@ import {
   ALL_STATES,
   pageOf,
   resolveStateFilter,
+  TagSchema,
+  WrittenPropertiesSchema,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
@@ -241,7 +243,7 @@ const createItemRoute = createRoute({
         "application/json": {
           schema: z.object({
             type: z.string(),
-            properties: z.record(z.string(), z.unknown()).optional(),
+            properties: WrittenPropertiesSchema.optional(),
             id: z.string().optional(),
             state: z.string().optional(),
             occurred_at: z.string().optional(),
@@ -263,7 +265,7 @@ const createItemRoute = createRoute({
             tier: TierEnum.optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
-            tags: z.array(z.string()).optional(),
+            tags: z.array(TagSchema).optional(),
             // Atomic item + edges write: for each edge type, the listed
             // item ids become targets with the new item as source. Rejects
             // all-or-nothing if any constraint violation surfaces.
@@ -753,7 +755,7 @@ const updateItemRoute = createRoute({
            *  and `properties` is deliberately open: its keys are the
            *  type's, not this door's. */
           schema: z.strictObject({
-            properties: z.record(z.string(), z.unknown()).optional(),
+            properties: WrittenPropertiesSchema.optional(),
             /** The item's own type, and only that. This route does not
              *  re-type the row it addresses, so the field exists to be
              *  checked rather than applied: equal to the item's type it is
@@ -1057,7 +1059,7 @@ const putMetadataRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            tags: z.array(z.string()).optional().default([]),
+            tags: z.array(TagSchema).optional().default([]),
           }),
         },
       },
@@ -1120,7 +1122,7 @@ const patchMetadataRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            tags: z.array(z.string()).optional(),
+            tags: z.array(TagSchema).optional(),
           }),
         },
       },
@@ -1184,7 +1186,7 @@ const addTagsRoute = createRoute({
         "application/json": {
           schema: z.object({
             tags: z
-              .array(z.string())
+              .array(TagSchema)
               .min(1, "tags must be a non-empty array of strings"),
           }),
         },

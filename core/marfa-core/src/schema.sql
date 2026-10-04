@@ -90,11 +90,16 @@ CREATE TABLE IF NOT EXISTS pins (
 
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
+-- The columns and the tokenizer are the server's, so a query matches the same
+-- rows here as there (`search-and-filters.md`).
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
   title,
   body,
+  description,
+  name,
+  extra,
   tags,
-  tokenize = 'unicode61 remove_diacritics 2'
+  tokenize = 'porter unicode61'
 );
 
 -- Not a child of `items`: a hydration clears the copy and the queue survives

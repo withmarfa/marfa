@@ -414,7 +414,8 @@ export function unregisterTypeSchema(id: string): void {
   removeRegistryType(id);
 }
 
-function declaredDescendants(rootId: string): string[] {
+/** Every type that reaches `rootId` through declared parents, never `rootId`. */
+export function declaredDescendants(rootId: string): string[] {
   const byParent = new Map<string, string[]>();
   for (const schema of listTypes()) {
     if (!schema.parent) continue;

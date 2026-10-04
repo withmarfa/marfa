@@ -10,6 +10,7 @@ use crate::remote::request::Request;
 #[derive(Debug, Default, Args)]
 pub struct SearchArgs {
     /// What to look for.
+    #[arg(allow_hyphen_values = true)]
     pub query: String,
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]

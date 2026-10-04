@@ -18,6 +18,7 @@ import { types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
+import { indexShapes, reindexChangedTypes } from "./search-store.js";
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -36,6 +37,7 @@ export class SqliteTypeStore implements TypeStore {
   ): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.transaction(async (tx) => {
+      const shapes = indexShapes(schema.id);
       try {
         await tx.run(sql`
           INSERT INTO types (id, schema, origin, created_at, updated_at)
@@ -62,6 +64,7 @@ export class SqliteTypeStore implements TypeStore {
         for (const row of projectPlatformRows([{ schema, origin: "platform" }]))
           stagePlatformRegistryType(schema, row.family);
       } else registerTypeSchema(schema);
+      await reindexChangedTypes(tx, schema.id, shapes);
     });
     return schema;
   }
@@ -69,6 +72,7 @@ export class SqliteTypeStore implements TypeStore {
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.transaction(async (tx) => {
+      const shapes = indexShapes(id);
       const stored = await tx
         .select({
           origin: types.origin,
@@ -108,18 +112,21 @@ export class SqliteTypeStore implements TypeStore {
         ]))
           stagePlatformRegistryType(schema, row.family);
       } else registerTypeSchema(schema);
+      await reindexChangedTypes(tx, id, shapes);
     });
     return schema;
   }
 
   async delete(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const shapes = indexShapes(id);
       const deleted = await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
       if (deleted.rowsAffected > 0) {
         markStructuralReadChange();
         unregisterTypeSchema(id);
       }
       await forgetType(tx, id);
+      await reindexChangedTypes(tx, id, shapes);
     });
   }
 
@@ -170,6 +177,12 @@ export class SqliteTypeStore implements TypeStore {
   ): Promise<string[]> {
     const now = new Date().toISOString();
     return this.db.transaction(async (tx) => {
+      // What the rows were indexed under, so that a build shipping a changed
+      // schema for a type indexes its rows, and its subtypes', again.
+      const shapes = new Map<string, string>();
+      for (const { schema } of seeded)
+        for (const [type, shape] of indexShapes(schema.id))
+          shapes.set(type, shape);
       for (const { schema, family } of seeded) {
         const previous = await tx
           .select()
@@ -203,6 +216,8 @@ export class SqliteTypeStore implements TypeStore {
           stagePlatformRegistryType(schema, family);
         }
       }
+      for (const { schema } of seeded)
+        await reindexChangedTypes(tx, schema.id, shapes);
       const rows = await tx
         .select({ id: types.id })
         .from(types)
@@ -222,6 +237,7 @@ export class SqliteTypeStore implements TypeStore {
 
   async deletePlatformType(id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
+      const shapes = indexShapes(id);
       const deleted = await tx
         .delete(types)
         .where(and(eq(types.id, id), eq(types.origin, "platform")))
@@ -229,6 +245,7 @@ export class SqliteTypeStore implements TypeStore {
       if (deleted.length > 0) {
         markStructuralReadChange();
         removePlatformRegistryType(id);
+        await reindexChangedTypes(tx, id, shapes);
       }
       return deleted.length > 0;
     });

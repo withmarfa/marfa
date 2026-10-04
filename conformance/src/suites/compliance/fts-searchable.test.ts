@@ -136,4 +136,52 @@ describe("FTS — searchable:false honoring", () => {
     expect(fetched.ok).toBe(true);
     expect(fetched.data.item.properties.secret).toBe(phrase);
   });
+
+  it("rows already stored follow a change to what their type marks searchable", async () => {
+    const typeId = `user.searchable-flip-${ctx.runId}`;
+    const reg = await client.registerType({
+      id: typeId,
+      fields: { blurb: { type: "string" } },
+    });
+    expect(reg.ok, JSON.stringify(reg.error)).toBe(true);
+    const token = `flip-${ctx.runId}`;
+    const created = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { blurb: `holding ${token} before the change` },
+    });
+    expect(created.ok).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    const matches = async (): Promise<boolean> => {
+      const result = await client.search(token, { limit: 50 });
+      expect(result.ok).toBe(true);
+      return result.data.data.some((hit) => hit.item.id === id);
+    };
+    // The witness: the row matches before the change.
+    expect(await matches()).toBe(true);
+
+    const flip = async (searchable: boolean) => {
+      const updated = await client.updateType(typeId, {
+        id: typeId,
+        version: 1,
+        fields: { blurb: { type: "string", searchable } },
+      });
+      expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
+    };
+    await flip(false);
+    expect(await matches()).toBe(false);
+    await flip(true);
+    expect(await matches()).toBe(true);
+
+    const orphaned = await client.deleteType(typeId, true);
+    expect(orphaned.ok, JSON.stringify(orphaned.error)).toBe(true);
+    expect(await matches()).toBe(false);
+    const again = await client.registerType({
+      id: typeId,
+      fields: { blurb: { type: "string" } },
+    });
+    expect(again.ok).toBe(true);
+    expect(await matches()).toBe(true);
+  });
 });

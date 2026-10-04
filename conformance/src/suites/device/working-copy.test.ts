@@ -534,6 +534,7 @@ describe("the working copy holds one slice", () => {
             fields: {
               title: { type: "string" },
               body: { type: "string" },
+              icon: { type: "string" },
               ...(withCover ? { cover: { type: "thumbnail" } } : {}),
             },
           }),
@@ -541,8 +542,8 @@ describe("the working copy holds one slice", () => {
         next_cursor: null,
       },
     });
-    // An image under a property the type never declares, which sends the
-    // device to the catalog once and is then taken as the text it is.
+    // An image under a string property, which sends the device to the
+    // catalog once and is then taken as the text it is.
     const icon = pngOf("iconwordXYZ");
     const cover = pngOf("unicornsXYZ");
     const photo = (id: string, properties: Record<string, unknown>) =>

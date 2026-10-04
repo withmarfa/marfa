@@ -18,7 +18,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 ## Search
 
-12. `GET /search?q=` matches full text over searchable fields and tags. An item identifier alone is not searchable content and does not affect relevance; it matches only if it also appears in an indexed field or tag. `compliance/fts-searchable.test.ts › matches searchable content and tags without matching an item identifier alone`. Search ranks results with `relevance_score`, filters by `type`, takes the listing grammar's state default so a search never answers a row a listing hides, takes its `state=any` sentinel so a caller can read across states here too, and honors `limit` exactly when more rows match. It pages by `cursor` like every list: `next_cursor` continues the ranking, the walk to `null` delivers every hit once, and a cursor another listing or another search issued, or one that does not parse, is refused `400 validation_error`. The ranking is read at most 10,000 rows deep. The sentinel reaches every state the index holds, which is every state but `trashed`: a trashed row is removed from the index rather than narrowed out of the query, so it is unmatched under `any` and under `state=trashed` alike. `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`, `› type-filtered search only returns matching types`, `correctness/pagination.test.ts › search respects limit parameter`, `compliance/state-default.test.ts › a search that names no state answers the active state`, `› a search reads across states under the sentinel, except the bin`, `compliance/envelope.test.ts › walks to a null cursor, delivering every hit once`, `› refuses a cursor another listing issued, and one it cannot read`, `› refuses a cursor minted for another search`, `› refuses an offset query key`.
+12. `GET /search?q=` matches full text over searchable fields and tags, read, matched and ranked as 42 to 49 state. An item identifier alone is not searchable content and does not affect relevance; it matches only if it also appears in an indexed field or tag. `compliance/fts-searchable.test.ts › matches searchable content and tags without matching an item identifier alone`. Search ranks results with `relevance_score`, filters by `type`, takes the listing grammar's state default so a search never answers a row a listing hides, takes its `state=any` sentinel so a caller can read across states here too, and honors `limit` exactly when more rows match. It pages by `cursor` like every list: `next_cursor` continues the ranking, the walk to `null` delivers every hit once, and a cursor another listing or another search issued, or one that does not parse, is refused `400 validation_error`. The ranking is read at most 10,000 rows deep. The sentinel reaches every state the index holds, which is every state but `trashed`: a trashed row is removed from the index rather than narrowed out of the query, so it is unmatched under `any` and under `state=trashed` alike. `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`, `› type-filtered search only returns matching types`, `correctness/pagination.test.ts › search respects limit parameter`, `compliance/state-default.test.ts › a search that names no state answers the active state`, `› a search reads across states under the sentinel, except the bin`, `compliance/envelope.test.ts › walks to a null cursor, delivering every hit once`, `› refuses a cursor another listing issued, and one it cannot read`, `› refuses a cursor minted for another search`, `› refuses an offset query key`.
 13. A field declared `searchable: false` is not matched. `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`.
 14. Results are narrowed by the key's type permissions. `compliance/type-scoped-access.test.ts › search results filtered by scoped permissions`.
 15. `q` is required: `400 missing_required_field`. A query with quotes, ampersands and parentheses is accepted. `correctness/persistence.test.ts › refuses a search with no query`, `compliance/validation.test.ts › accepts quotes, ampersands and parentheses in a search query`.
@@ -130,3 +130,55 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
     Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › rolls back items, metadata, history and events when a later edge insert fails`, `› rolls back earlier snapshots and row writes when a native history insert fails`.
 
 Archive scope: keys, webhooks, configuration and tombstones are not carried. Trashed items are carried only when selected explicitly, such as with `state=any` (16). An archive remains format 0 and is supported only by the build that wrote it (27).
+
+## How a query matches
+
+The server and a device index the same text and read a query the same way, so a query finds a row a device holds offline exactly when it finds that row online, and orders the hits the same where both rank the same rows. The server's rules are the reference and the device's follow them.
+
+42. The server and a device MUST each reduce every word of the indexed text and of a query to its stem, folding case and diacritics and splitting words at anything that is not a letter or a digit, so that "run" followed by another word matches "running" and "runs" and not "runner".
+
+    Reason: a person searching with the word they remember expects its other forms, and a device that matched whole words only would lose a row the server finds.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`, `› excerpts a match in a long text, marked and cut`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+43. WHEN a query is not wholly inside double quotes, the server and a device MUST require every whitespace-separated word of it to match, in any order and in any column, MUST match the last word as the start of a word, and MUST match every other word as a whole stem.
+
+    Reason: the person is still typing the last word and has finished the earlier ones. A prefix on every word would match "marshland" for "marsh landscape", which the server does not.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+44. WHEN a query begins and ends with a double quote and holds at least one character between them, the server and a device MUST match the text between them as a phrase: its words adjacent and in order, the last one as a whole stem and not as a prefix. Any other double quote in a query MUST be text.
+
+    Reason: a phrase is how a person asks for words that belong together.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+45. The server and a device MUST read every character of a query as text to match: an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word are words, never search syntax. A query with no word in it MUST match nothing.
+
+    Reason: a query is typed by a person, and one that a search engine read as syntax would be refused or would answer a different question.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+46. For each row not in the bin, the index MUST hold its `title`, `body`, `description` and `name` where each is a string, every other string field its type declares or inherits, and its tags, each field's text in its own column, the extra fields joined by a space in field-name order and the tags in byte order. It MUST NOT hold a field its type declares as a string with `searchable: false`, a property its type does not declare, or a value that is not a string. Where a type redeclares an inherited field, the nearest declaration decides. A row whose type is not registered MUST be indexed by its four core properties and its tags alone.
+
+    Reason: the fields a person marked private stay unmatched, and a thumbnail's base64 or an undeclared property is not text a person wrote to be found.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`; `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`; `packages/server/src/storage/search-indexing.test.ts › what a change to a type does to rows already stored`.
+
+47. WHEN a type is registered, replaced or deleted with `force`, the server MUST index again, in the same transaction, every row not in the bin of that type and of each type that inherits from it, and a device MUST index again every row it holds when it takes a changed catalog.
+
+    Reason: what a row contributes to the index is decided when it is written, so without this a row keeps answering by the fields its type had until the row is next written, and a field marked `searchable: false` stays matched.
+
+    Tests: `compliance/fts-searchable.test.ts › rows already stored follow a change to what their type marks searchable`; `device/search-live.test.ts › holds a changed type's searchable fields against rows it already holds`; `packages/server/src/storage/search-indexing.test.ts › what a change to a type does to rows already stored`.
+
+48. The server and a device MUST order hits by BM25 over the title, body, description, name, extra and tags columns at equal weight, best first, and MUST order hits of equal rank by item identifier, ascending. `relevance_score` MUST be the absolute value of the BM25 score.
+
+    Reason: two indexes that hold the same rows then rank them alike. Weighting the title above the body would be a ranking the server does not have, and an unordered tie is two answers to one query. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores, and so can order, by that slice: its scores and its order equal the server's only where the rows they hold are the same, and which of the rows it holds it finds is the same either way.
+
+    Tests: `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+
+49. Each hit MUST carry an excerpt of at most 32 words from the column that matches it best, with each matched word wrapped in `<mark>` and `</mark>` and `...` where the text is cut.
+
+    Reason: an excerpt drawn from the title alone shows a title with nothing marked for a match in the body, which is most matches, and is empty where the title is.
+
+    Tests: `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`, `› marks the match in the column that holds it, not only in the title`; `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
