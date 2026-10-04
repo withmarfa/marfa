@@ -114,12 +114,13 @@ export { PERMISSION_FAMILY_ROOTS } from "./scope-roots.js";
  *   enumerate and revoke every other app the owner has authorized, which is
  *   the escalation this whole model exists to fence.
  * - **`schema.write` is not registration.** Registering a type is already
- *   fenced by `metadata.types:write` and `metadata.edge_types:write`. This
- *   covers only what that grammar does not — changing and removing
- *   definitions that already exist — so the two never describe the same act.
- *   A permission duplicating an existing scope would put two names on one
- *   authority and leave a consent screen unable to tell a reader which one it
- *   is showing.
+ *   fenced by `metadata.types:write` and `metadata.edge_types:write`, which
+ *   also let the key that registered a type add to it and trim its own
+ *   fields. This covers what that grammar does not — removing definitions
+ *   and every other replacement — and it admits that one evolution too,
+ *   because it admits every replacement. A permission duplicating an
+ *   existing scope would put two names on one authority and leave a consent
+ *   screen unable to tell a reader which one it is showing.
  * - **`config.manage` is not `config.write`.** The config door reads on the
  *   same permission it writes on, so a caller refused it cannot read the
  *   instance configuration either, and a name carrying a verb would promise

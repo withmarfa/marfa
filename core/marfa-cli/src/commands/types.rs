@@ -17,7 +17,9 @@ pub enum TypesCommand {
     },
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
-    /// Replace a registered type's definition. Needs `schema.write` and write on the type in the key's type map.
+    /// Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
+    ///
+    /// `metadata.types:write` alone covers adding fields, removing the type's own fields, and changing its label, description, display hints and version. Any other change needs `schema.write`.
     Update {
         /// The type id.
         id: String,

@@ -134,6 +134,29 @@ const CHANGING: Record<string, Driver> = {
     });
     expect(ok.status).toBe(200);
     expect(await typeFields(id, served)).toEqual(["replaced"]);
+
+    // The same replacement for a key admitted on `metadata.types:write`
+    // alone, which swaps one field for another: the map decides there too.
+    const second = `other.${name}-scope`;
+    await registerType(served, second);
+    const scopeOnly = (types: Record<string, "write">) =>
+      mintWorkingKey(ctx, {
+        permissions: [],
+        metadata_permissions: { types: "write" },
+        type_permissions: types,
+      });
+    const refusedByMap = await request(ctx.app, "PUT", `/types/${second}`, {
+      key: await scopeOnly({ "mine.*": "write" }),
+      body: replacement,
+    });
+    await expectRefused(refusedByMap, "type_not_permitted", second);
+    expect(await typeFields(second, served)).toEqual(["title"]);
+    const servedByMap = await request(ctx.app, "PUT", `/types/${second}`, {
+      key: await scopeOnly({ "mine.*": "write", "other.*": "write" }),
+      body: replacement,
+    });
+    expect(servedByMap.status).toBe(200);
+    expect(await typeFields(second, served)).toEqual(["replaced"]);
   },
 
   "DELETE /types/:id": async ({ refused, served, name }) => {

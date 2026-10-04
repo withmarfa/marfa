@@ -128,7 +128,7 @@ const STANDING: Record<string, string> = {
   "PATCH /keys/:id": "keys.mint or operator key",
   "DELETE /items/:id/purge": "items.purge",
   "POST /types": "metadata.types:write",
-  "PUT /types/:id": "schema.write",
+  "PUT /types/:id": "schema.write or metadata.types:write",
   "DELETE /types/:id": "schema.write",
   "POST /edge-types": "metadata.edge_types:write",
   "DELETE /edge-types/:id": "schema.write",
@@ -241,9 +241,9 @@ const PERMISSION_CALLS: Record<
   { asks: Record<string, number>; because: string }
 > = {
   "routes/_schema-reach.ts": {
-    asks: { "schema.write": 1 },
+    asks: { "schema.write": 2 },
     because:
-      "the whole schema guard, which asks schema.write again once it knows the names; the standing rule asks it first through standingPermission",
+      "the whole schema guard, which asks schema.write again once it knows the names, and the replacement door's admission, which asks it of a key holding the types scope without it so the refusal names the permission; the standing rules ask it first",
   },
   "routes/auth-pages.ts": {
     asks: { "grants.manage": 2 },

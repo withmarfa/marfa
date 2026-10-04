@@ -605,7 +605,7 @@ export interface paths {
         put?: never;
         /**
          * Register a type
-         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. The operator key is no exception: this door reads the map like any other.
+         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.
          */
         post: operations["registerType"];
         delete?: never;
@@ -630,7 +630,7 @@ export interface paths {
         get: operations["getType"];
         /**
          * Update a registered type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403 — and either `schema.write` or `metadata.types:write`. With `metadata.types:write` alone, the replacement may add fields, remove the type's own fields, and change `label`, `description`, `display_hints` and `version`; anything else, including a kept field's shape, needs `schema.write`. A new `parent` needs write on it in the same map, unless it is a platform-shipped type. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
          */
         put: operations["updateType"];
         post?: never;
@@ -9380,7 +9380,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
+            /** @description `forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on the `parent` the type names (`details.grant` names it). */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9634,7 +9634,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
+            /** @description `forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only `metadata.types:write` and the replacement changes something that needs `schema.write` (`details.changes` names it). `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on a new `parent` (`details.grant` names it). */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
