@@ -524,6 +524,4 @@ export const TagSchema = z
   .max(MAX_TAG_LENGTH)
   .refine((tag) => tag.trim().length > 0, "A tag must not be blank");
 
-/** An item's properties as a write sends them: every name at least one
- *  character. */
 export const WrittenPropertiesSchema = z.record(z.string().min(1), z.unknown());
