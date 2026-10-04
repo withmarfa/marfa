@@ -774,6 +774,77 @@ describe("POST /admin/restore-archive all or nothing", () => {
     }
   });
 
+  it("sends a copy stream resumed while the events are read back each event once", async () => {
+    const before = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "before the restore" } },
+    });
+    expect(before.status).toBe(201);
+    const cursor = String((await ctx.storage.eventLog.getMaxId()) ?? 0n);
+    // The view the copy holds; notes alone leave it unchanged.
+    const fenced = await readSse(
+      await request(ctx.app, "GET", "/events?edges=all&copy=1", {
+        key: ctx.workingKey,
+      }),
+      { until: (text) => text.includes("event: stream_live") },
+    );
+    const live = fenced.text
+      .split("\n")
+      .find(
+        (line) => line.startsWith("data: ") && line.includes("stream_live"),
+      );
+    const view = (JSON.parse(live?.slice(6) ?? "{}") as { read_view: string })
+      .read_view;
+    const { items } = rows(450, "core.note", false);
+    const archive = await buildArchive([MANIFEST, items]);
+
+    const eventLog = ctx.storage.eventLog;
+    const getAfter = eventLog.getAfter.bind(eventLog);
+    let readBack = 0;
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    eventLog.getAfter = async (after, limit, options) => {
+      if (options?.maxBytes !== undefined && ++readBack === 2) await opened;
+      return getAfter(after, limit, options);
+    };
+    try {
+      expect((await restore(archive)).status).toBe(200);
+      const stream = await request(ctx.app, "GET", "/events?edges=all&copy=1", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": cursor, "X-Marfa-Read-View": view },
+      });
+      expect(stream.status).toBe(200);
+      let wrote = false;
+      const { text } = await readSse(stream, {
+        onChunk: (seen) => {
+          if (wrote || !seen.includes("stream_live")) return;
+          wrote = true;
+          open();
+          void (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            await request(ctx.app, "POST", "/items", {
+              key: ctx.workingKey,
+              body: {
+                type: "core.note",
+                properties: { body: "after the read-back" },
+              },
+            });
+          })();
+        },
+        until: (seen) => seen.includes("after the read-back"),
+      });
+      const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => m[1]);
+      expect(readBack).toBeGreaterThan(2);
+      expect(ids).toHaveLength(450 + 1);
+      expect(new Set(ids).size).toBe(ids.length);
+    } finally {
+      eventLog.getAfter = getAfter;
+      open();
+    }
+  });
+
   it("holds other writers in the queue and keeps its rows and types from readers until it commits", async () => {
     const { ids, items, edges } = rows(250, TYPE);
     const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
