@@ -53,6 +53,7 @@ jobs:
       conformance: ${{ steps.classify.outputs.conformance }}
       cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
+      image: ${{ steps.classify.outputs.image }}
       types-freshness: ${{ steps.classify.outputs.types-freshness }}
       openapi-freshness: ${{ steps.classify.outputs.openapi-freshness }}
       version-fields: ${{ steps.classify.outputs.version-fields }}
@@ -441,6 +442,25 @@ jobs:
           name: restore-drill-report
           path: ${{ runner.temp }}/drill/reports/restore-drill.md
           if-no-files-found: ignore
+
+  # The shipped image, built from `deploy/Dockerfile` and booted through its
+  # entrypoint, which nothing else in CI runs. `scripts/check-image.sh` holds
+  # it to the deploy guide: it becomes healthy, reports the commit it was
+  # built from, stops with status 0 inside ten seconds, and on a database
+  # another build wrote stays up and unhealthy rather than ending. No bucket,
+  # so the Litestream half is the restore drill's.
+  image:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
+    name: Server image
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile --build-arg VERSION_SHA="$GITHUB_SHA" -t marfa-server .
+      - name: Boot it, ask it, stop it
+        run: scripts/check-image.sh marfa-server "$GITHUB_SHA"
 
   types-freshness:
     needs: changes

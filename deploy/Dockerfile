@@ -35,7 +35,8 @@ ENV PORT=8600
 ENV SQLITE_PATH=/data/marfa.db
 ENV BLOB_PATH=/data/blobs
 # The commit this image was built from, which the server reads from
-# `version.json` at boot and reports on `GET /`.
+# `version.json` at boot and reports on `GET /`, in `/health` and as the
+# version of every span it exports.
 ARG VERSION_SHA=dev
 WORKDIR /app
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
@@ -49,8 +50,8 @@ RUN printf '{"sha":"%s","deployed_at":"%s"}\n' "$VERSION_SHA" "$(date -u +%Y-%m-
 USER node
 VOLUME /data
 EXPOSE 8600
-# `/health` answers 200 with a status of ok or degraded; slim carries no
-# curl, so the probe is Node's own fetch.
+# `/health` answers 200 with a status of ok or degraded and 503 when a
+# component is down; slim carries no curl, so the probe is Node's own fetch.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8600)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/usr/local/bin/marfa-entrypoint"]

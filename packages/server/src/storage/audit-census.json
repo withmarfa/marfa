@@ -321,6 +321,12 @@
       "writeItem": 4
     }
   },
+  "routes/health-probes.ts": {
+    "boundary": "Operational liveness probe: one settings row, rewritten at most every ten seconds to show a write commits, not a resource mutation door; health.test.ts, health.app.test.ts.",
+    "calls": {
+      "SettingsStore.set": 1
+    }
+  },
   "routes/inbound.ts": {
     "boundary": "Existing operational exemption: ingress rate accounting and received delivery spool; endpoint configuration is audited in connectors.ts.",
     "calls": {

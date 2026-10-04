@@ -112,7 +112,7 @@ describe("BulkActionWorker idle-poll backoff", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(stub.ticks()).toBe(3); // 1000 → 2000; armed at 4000
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("caps the backoff at maxPollIntervalMs", async () => {
@@ -145,7 +145,7 @@ describe("BulkActionWorker idle-poll backoff", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(stub.ticks()).toBe(expectedTicks + 1);
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("resets the interval to the base when a job is claimed", async () => {
@@ -182,7 +182,7 @@ describe("BulkActionWorker idle-poll backoff", () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(stub.ticks()).toBe(6);
 
-    worker.stop();
+    await worker.stop();
   });
 });
 
@@ -240,7 +240,7 @@ describe("BulkActionWorker.wake", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(stub.ticks()).toBe(settled + 1);
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("resets the backoff, so the tick after a wake is at the base cadence", async () => {
@@ -271,7 +271,7 @@ describe("BulkActionWorker.wake", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(stub.ticks()).toBe(afterWake + 1);
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("collapses a burst of enqueues into one tick", async () => {
@@ -293,7 +293,7 @@ describe("BulkActionWorker.wake", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(stub.ticks()).toBe(before + 1);
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("does not arm a second timer when a tick is already running", async () => {
@@ -351,7 +351,7 @@ describe("BulkActionWorker.wake", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(claims).toBe(2);
 
-    worker.stop();
+    await worker.stop();
   });
 
   it("does nothing once stopped", async () => {
@@ -361,7 +361,7 @@ describe("BulkActionWorker.wake", () => {
     await vi.advanceTimersByTimeAsync(0);
     const before = stub.ticks();
 
-    worker.stop();
+    await worker.stop();
     worker.wake();
     await vi.advanceTimersByTimeAsync(1000);
     expect(stub.ticks()).toBe(before);

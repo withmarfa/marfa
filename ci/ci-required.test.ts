@@ -41,6 +41,7 @@ const SERVER: Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "openapi-freshness",
 ];
 const RUST: Job[] = ["core-checks", "conformance", "cli-scenarios", "core"];
@@ -136,14 +137,24 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "restore-drill"],
     ],
     [
-      "the image's Litestream",
+      "the image's Litestream, and the image itself",
       ["deploy/Dockerfile"],
-      ["ci-sqlite", "restore-drill"],
+      ["ci-sqlite", "restore-drill", "image"],
     ],
     [
       "the Litestream configuration, which the offline lane also reads",
       ["deploy/litestream.yml"],
-      ["ci-sqlite", "conformance", "restore-drill"],
+      ["ci-sqlite", "conformance", "restore-drill", "image"],
+    ],
+    [
+      "the entrypoint, which the image runs and a ci/ test runs",
+      ["deploy/entrypoint.sh"],
+      ["ci-sqlite", "workspace", "image"],
+    ],
+    [
+      "the script that boots the image",
+      ["scripts/check-image.sh"],
+      ["ci-sqlite", "workspace", "image"],
     ],
     [
       "JavaScript that ESLint reads",
@@ -170,6 +181,7 @@ describe("what a change runs", () => {
         "conformance",
         "cli-scenarios",
         "restore-drill",
+        "image",
         "types-freshness",
         "openapi-freshness",
         "version-fields",

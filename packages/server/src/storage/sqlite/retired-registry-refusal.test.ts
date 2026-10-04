@@ -89,18 +89,19 @@ describe("a retired registry table is refused on open", () => {
     );
   });
 
-  it("names a remedy it has not itself taken away", async () => {
-    // An export taken by the build that wrote such a database is a version 1
-    // archive, which the restore door refuses, so advising an export names
-    // a recovery that ends in a 400.
+  it("names the way forward, and says the restore it names can refuse", async () => {
+    // An archive is read only by the build that wrote it until the first
+    // public release (`search-and-filters.md` 27), so a message that sent
+    // an owner to restore one into this build without saying so would
+    // promise what the contract does not.
     const path = scratch();
     await seedTables(path, ["custom_types"]);
 
-    await expect(createConnection(path)).rejects.not.toThrow(
-      /load that export|into a fresh instance on this one/,
+    await expect(createConnection(path)).rejects.toThrow(
+      /export it with the build that wrote it.*start this build on a fresh file.*restore the archive there/,
     );
     await expect(createConnection(path)).rejects.toThrow(
-      /readable only by the build that wrote it/,
+      /that restore can refuse it/,
     );
   });
 
