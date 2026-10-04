@@ -237,10 +237,10 @@ export class GrantInactivityRetirer {
           itemId: grant.id,
           // The list was read before the yields: a grant used or approved
           // again since is asked about again, inside the lock and the
-          // transaction that revoke it.
+          // transaction that revokes it.
           stillApplies: async () => {
             const now = await this.storage.items.get(grant.id);
-            if (!now || now.state !== "active") return false;
+            if (now?.state !== "active") return false;
             const props = now.properties;
             if (props.status !== "active") return false;
             const seen = props.last_used_at ?? props.granted_at;
