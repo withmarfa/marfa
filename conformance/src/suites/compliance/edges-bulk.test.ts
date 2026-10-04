@@ -157,6 +157,50 @@ describe("edges.bulk", () => {
     expect(second.data.results[0]!.reason).toBe("duplicate_edge");
   });
 
+  it("matches an entry to the edge an earlier entry of the same request wrote", async () => {
+    for (const atomic of [true, false]) {
+      const { sourceId, targetId } = await makePair();
+      const triple = { source_id: sourceId, target_id: targetId };
+      const res = await client.bulkEdges({
+        atomic,
+        edges: [
+          { ...triple, edge_type: "about", properties: { weight: 1 } },
+          { ...triple, edge_type: "about", properties: { rank: 2 } },
+        ],
+      });
+      expect(res.ok, `atomic ${String(atomic)}`).toBe(true);
+      const [created, updated] = res.data.results;
+      expect(created?.outcome).toBe("created");
+      expect(updated?.outcome).toBe("updated");
+      expect(updated?.id).toBe(created?.id);
+      trackEdge(ctx, created!.id!);
+
+      const listed = await client.listItemEdges(sourceId, {
+        edge_type: "about",
+      });
+      expect(listed.ok).toBe(true);
+      expect(listed.data.data).toHaveLength(1);
+      expect(listed.data.data[0]?.properties).toEqual({ weight: 1, rank: 2 });
+
+      const skipped = await client.bulkEdges({
+        atomic,
+        mode: "create_only",
+        edges: [
+          { ...triple, edge_type: "references" },
+          { ...triple, edge_type: "references" },
+        ],
+      });
+      expect(skipped.ok).toBe(true);
+      expect(skipped.data.results[0]?.outcome).toBe("created");
+      trackEdge(ctx, skipped.data.results[0]!.id!);
+      expect(skipped.data.results[1]).toMatchObject({
+        outcome: "skipped",
+        reason: "duplicate_edge",
+        id: skipped.data.results[0]?.id,
+      });
+    }
+  });
+
   it("atomic=true rolls back the whole batch on validation error", async () => {
     const a = await makePair();
 
