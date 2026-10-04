@@ -377,7 +377,7 @@ References: `inbound-webhooks.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
 
 A refused request answers a JSON body of the shape `{ "error": { "code", "message" } }`, `message` a string, with an optional `details` object and no `status` inside `error`. The version envelopes are the exception: `409 version_conflict` and `409 ancestor_unavailable` carry `error.status` and `current` beside `error`. A stale write with properties to merge carries an ancestor, the fields that collided and the type's merge policy too; one with nothing to merge — a write naming only a version and edges, or an edge update — carries `current` and no more, because there is no ancestor to give. The OAuth doors answer their own shapes, an RFC 7591 error object at registration and `invalid_request` at the token door, and neither is the envelope.
 
-`code` is lowercase snake case from a closed vocabulary, and it is the thing to act on. A body that is not JSON, an empty body, a body of a door that takes JSON sent without a JSON `Content-Type`, and a JSON array where an object was expected are all `400 validation_error`, and none of them changes anything. A path the server does not serve is `404 not_found`.
+`code` is lowercase snake case from a closed vocabulary, and it is the thing to act on. A body that is not JSON, an empty body, a body of a door that takes JSON sent without a JSON `Content-Type`, and a JSON array where an object was expected are all `400 validation_error`, and none of them changes anything. OAuth client registration is the exception: it answers in its own shape. A path the server does not serve is `404 not_found`.
 
 The codes group by what they ask of you.
 
@@ -393,7 +393,7 @@ The codes group by what they ask of you.
 
 A code whose precondition cannot be arranged over the wire has no row in the code table, and `coverage.md` names the doors.
 
-References: `errors.md` 1, 2, 3, 4, 5, 6, 7 and the code table; `keys-and-oauth.md` 29, 31 for the two owner codes.
+References: `errors.md` 1, 2, 3, 4, 5, 6, 7, 13, 14 and the code table; `keys-and-oauth.md` 29, 31 for the two owner codes.
 
 ## What the specification does not fix
 
