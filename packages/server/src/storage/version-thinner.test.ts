@@ -145,8 +145,10 @@ async function versionNumbers(itemId: string): Promise<number[]> {
   return (await ctx.storage.versions.all(itemId)).map((v) => v.version);
 }
 
-/** Runs `change` as the first transaction the app opens after this is called,
- *  which is the thinner's: candidates are listed outside any transaction. */
+/** Runs `change` before the first transaction the app opens after this is
+ *  called. That is the thinner's first deleting transaction: it lists
+ *  candidates and first judges each one outside any transaction, so `change`
+ *  lands after that judgement and before the one that deletes. */
 function raceTheNextTransaction(change: () => Promise<void>): {
   fired: () => boolean;
   restore: () => void;

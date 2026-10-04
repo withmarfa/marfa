@@ -1,7 +1,7 @@
 /**
- * Read from the query plan, not reasoning. A sweep asks for one page after
- * another, so a plan that sorts or groups in a temporary tree reads everything
- * after the cursor for every page and makes the sweep quadratic.
+ * A sweep asks for one page after another, so a plan that sorts or groups in a
+ * temporary tree reads everything after the cursor for every page and makes
+ * the sweep quadratic.
  */
 import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
