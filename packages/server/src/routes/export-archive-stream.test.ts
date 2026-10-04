@@ -453,4 +453,58 @@ describe("GET /export?format=archive read across commits", () => {
       await target.cleanup();
     }
   });
+
+  it("carries an edge created while the items were read, and not one created once its edges were read", async () => {
+    await seedNotes(ctx, 300);
+    // 299 edges, which are two pages of edges.
+    await seedEdges(ctx, 300, 1);
+    const link = async (source: number, target: number) => {
+      const res = await request(ctx.app, "POST", "/edges", {
+        key: ctx.workingKey,
+        body: {
+          source_id: idAt(source),
+          target_id: idAt(target),
+          edge_type: "references",
+        },
+      });
+      expect(res.status, await res.clone().text()).toBe(201);
+      return ((await res.json()) as { edge: { id: string } }).edge.id;
+    };
+    const created: Record<string, string> = {};
+    const listItems = ctx.storage.items.list.bind(ctx.storage.items);
+    let itemPages = 0;
+    vi.spyOn(ctx.storage.items, "list").mockImplementation(async (filters) => {
+      const page = await listItems(filters);
+      itemPages++;
+      // Both ends are on the first page, which the export has carried.
+      if (itemPages === 2) created.duringItems = await link(300, 299);
+      return page;
+    });
+    const listEdges = ctx.storage.edges.list.bind(ctx.storage.edges);
+    let edgePages = 0;
+    vi.spyOn(ctx.storage.edges, "list").mockImplementation(async (filters) => {
+      const page = await listEdges(filters);
+      edgePages++;
+      if (edgePages === 1) created.afterFirstEdgePage = await link(300, 298);
+      return page;
+    });
+
+    const res = await exportArchive(ctx);
+    expect(res.status, await res.clone().text()).toBe(200);
+    const entries = await unpack(Buffer.from(await res.arrayBuffer()));
+    expect(edgePages).toBeGreaterThan(1);
+    const edgeIds = new Set(
+      entries
+        .find((e) => e.name === "edges.ndjson")!
+        .data.toString()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => (JSON.parse(line) as { edge: { id: string } }).edge.id),
+    );
+    // Both edges joined carried items and both exist, so the second one's
+    // absence is the export's doing.
+    expect(edgeIds.has(created.duringItems!)).toBe(true);
+    expect(edgeIds.has(created.afterFirstEdgePage!)).toBe(false);
+    expect(edgeIds.size).toBe(300);
+  });
 });

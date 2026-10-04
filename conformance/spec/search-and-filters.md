@@ -387,8 +387,26 @@ The server and a device index the same text and read a query the same way, so a 
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › fences exported history below the selected row's version during a concurrent patch`.
 
-83. A row that is written while `GET /export?format=archive` reads MUST be carried as it stood when the export read its page, and a row created after the export began MUST NOT be carried.
+83. WHEN a row is written after `GET /export?format=archive` has read the page that holds it, the server MUST carry the row as it stood when the export read that page.
 
-    Reason: the archive is a copy of the instance as it moved and not at one instant. A row created after the export began is dated after every page, and the export reads the newest rows first, so it never reaches it.
+    Reason: the archive is a copy of the instance as it moved and not at one instant.
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`.
+
+84. WHEN an item is created after `GET /export?format=archive` began, the server MUST NOT carry it.
+
+    Reason: the export reads items newest first, and an item created after it began is dated after every page, so the export never reaches it.
+
+    Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`.
+
+85. WHEN an edge is created before `GET /export?format=archive` has read its first page of edges, and both of its endpoints are items the archive carries, the server MUST carry the edge.
+
+    Reason: the export reads every page of items before its first page of edges, so an edge created while the items were read is among the newest edges and the export reaches it.
+
+    Tests: `packages/server/src/routes/export-archive-stream.test.ts › carries an edge created while the items were read, and not one created once its edges were read`.
+
+86. WHEN an edge is created after `GET /export?format=archive` has read its first page of edges, the server MUST NOT carry it.
+
+    Reason: the export reads edges newest first, and an edge created after it began reading them is dated after every page, so the export never reaches it.
+
+    Tests: `packages/server/src/routes/export-archive-stream.test.ts › carries an edge created while the items were read, and not one created once its edges were read`.
