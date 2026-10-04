@@ -1226,7 +1226,7 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
 
 const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// A static, because a signal handler can reach nothing else.
+/// Shared by the signal-waiting thread and the command it stops.
 static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {

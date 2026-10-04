@@ -532,11 +532,19 @@ impl Core {
     }
 
     /// Ended with `Canceled` before the next write is sent once `stop` is
-    /// raised. A write already sent stays sent and unanswered, to be settled
-    /// by a later drain under the same key; what the pass had answered stays
-    /// answered in the queue.
+    /// raised. A write already sent keeps its key and is settled by this or
+    /// a later drain; answers already recorded remain in the queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
-        let _one = self.one_drain();
+        let _one = loop {
+            catch_up::refuse_if_stopped(stop)?;
+            match self.draining.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        };
         drain::drain(self, stop)
     }
 

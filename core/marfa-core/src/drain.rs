@@ -526,7 +526,9 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         if confirmed {
             return Ok(true);
         }
-        match crate::catch_up::refuse_another_instance(core, http) {
+        let result = crate::catch_up::refuse_another_instance(core, http);
+        crate::catch_up::refuse_if_stopped(stop)?;
+        match result {
             Ok(()) => {
                 confirmed = true;
                 Ok(true)
@@ -699,6 +701,7 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         };
         // The connection is not held across the send, or `queue`, read while
         // a drain runs, would wait on the network.
+        crate::catch_up::refuse_if_stopped(stop)?;
         {
             // Before the send: one whose answer never arrives has still
             // reached the server, and treating it as unsent would write twice.
@@ -3140,5 +3143,62 @@ mod tests {
                 (Some("Bearer fresh".into()), b"hello".to_vec()),
             ]
         );
+    }
+    #[test]
+    fn stop_during_instance_confirmation_sends_nothing() {
+        use crate::scripted::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        let server = Scripted::start();
+        server.on(
+            "/",
+            vec![Answer::Slow {
+                after: Duration::from_millis(400),
+                answer: Box::new(root(INSTANCE)),
+            }],
+        );
+        server.on(
+            "/items/a",
+            vec![
+                json(200, r#"{"ok":true}"#),
+                certified(refusal(404, "item_not_found")),
+            ],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let call = scope.spawn(|| core.drain_until(&stop));
+            server.wait_for("/", 1, Duration::from_secs(5));
+            assert!(server.seen("/items/a").is_empty());
+            stop.store(true, Ordering::Relaxed);
+            let result = call.join().unwrap();
+            assert!(
+                server.seen("/items/a").is_empty(),
+                "sent after stop: {:?}; result: {result:?}",
+                server.seen("/items/a")
+            );
+            assert_eq!(result.unwrap_err(), CoreError::Canceled);
+        });
+    }
+
+    #[test]
+    fn stopped_drain_does_not_wait_for_another_drain() {
+        use std::sync::atomic::AtomicBool;
+        use std::time::Duration;
+        let core = Core::open_in_memory(None).unwrap();
+        let held = core.one_drain();
+        let stop = AtomicBool::new(true);
+        let (sent, received) = std::sync::mpsc::channel();
+        let immediate = std::thread::scope(|scope| {
+            scope.spawn(|| sent.send(core.drain_until(&stop)).unwrap());
+            let immediate = received.recv_timeout(Duration::from_millis(250));
+            drop(held);
+            immediate
+        });
+        assert!(
+            immediate.is_ok(),
+            "already-stopped call waited for other drain: {immediate:?}"
+        );
+        assert_eq!(immediate.unwrap().unwrap_err(), CoreError::Canceled);
     }
 }

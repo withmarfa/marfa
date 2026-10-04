@@ -291,8 +291,8 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
 }
 
 /// How long a link may send nothing before the fetch is given up on. A blob
-/// can be large and a link slow, so the whole body has no budget; one that
-/// has stopped sending would otherwise hold the call for good.
+/// can be large and a link slow, so silence has a shorter bound than the
+/// whole body. A stalled link must not hold the caller for the body's limit.
 const LINK_IDLE: Duration = Duration::from_secs(60);
 
 /// A bound on the whole body, far past any fetch that is going on. The reader
