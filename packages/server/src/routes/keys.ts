@@ -113,7 +113,7 @@ const SourcesSchema = z
     `a key claims at most ${String(MAX_CLAIMED_SOURCES)} sources`,
   )
   .describe(
-    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
+    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
   );
 
 /** A stored key as every door that returns one returns it, plaintext aside. */
@@ -188,16 +188,16 @@ const createKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A body naming no map and no claimed source takes the creator's whole set, permissions and maps alike; a body naming any of them holds only what it names, so a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it), and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it), and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {
     // Strict, and that is load-bearing rather than tidiness. A field this
-    // body does not declare is stripped by an ordinary object, and on a body
-    // naming no map `permissions` omitted does not mean "none": it means the
-    // creator's whole set, or every permission when the operator seeds. So a caller
-    // spelling the field wrong asks to narrow and is answered with a
+    // body does not declare is stripped by an ordinary object, and a body
+    // naming no family does not mean "none": it means the creator's whole
+    // set, or every permission when the operator seeds. So a caller spelling
+    // the one field it names wrong asks to narrow and is answered with a
     // credential wider than the one it asked for, which on a mint hands on
     // the power to mint again.
     body: {
@@ -976,7 +976,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     const seedsFromOperator =
       !isBootstrap && callerIsOperator && !mintsOperatorKey;
 
-    // **The creator is the ceiling.** A body naming no reach takes the whole
+    // **The creator is the ceiling.** A body naming no family takes the whole
     // of it, and anything named beyond it is refused — which together mean
     // a key can be narrowed at the moment of minting and can never be
     // widened by one.
@@ -1034,19 +1034,22 @@ export function keyRoutes(storage: Storage, salt: string) {
         );
       }
     }
-    // **A body naming no reach at all takes the creator's whole set; a body
-    // naming any family gets only what it named, holding no permission it did not name.** One
-    // rule, and the second half of it is deliberate: naming a narrow type map
-    // and receiving the creator's edges or its `keys.mint` for free would be a key wider than the request, which is
-    // a different failure from a key wider than the creator and just as
-    // unwanted. Asking all five families and the claims is what makes
-    // "named nothing" unambiguous.
+    // **A body naming no family at all takes the creator's whole set; a body
+    // naming any family gets only what it named, holding nothing in the
+    // families it left out.** One rule, and the second half of it is
+    // deliberate: naming a narrow type map and receiving the creator's edges
+    // or its `keys.mint` for free, or naming `audit.read` and receiving the
+    // creator's maps, would be a key wider than the request, which is a
+    // different failure from a key wider than the creator and just as
+    // unwanted. The families are `permissions`, the five maps and the claims,
+    // and asking all of them is what makes "named nothing" unambiguous.
     //
     // Deriving is what stops the other shape — a credential holding every
     // permission and unable to read a row, which is what an empty default
     // produced. The operator key holds nothing to derive from, so a working
     // key it mints with a body naming nothing takes everything instead.
-    const namesNoReach =
+    const namesNoFamily =
+      body.permissions === undefined &&
       body.type_permissions === undefined &&
       body.edge_permissions === undefined &&
       body.metadata_permissions === undefined &&
@@ -1061,7 +1064,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     const permissions = mintsOperatorKey
       ? []
       : (requestedPermissions ??
-        (!namesNoReach
+        (!namesNoFamily
           ? []
           : seedsFromOperator
             ? [...PERMISSIONS]
@@ -1087,8 +1090,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     refuseSourcesAboveCaller(callerKey, requestedSources);
     await refuseOwnSourceClaimedElsewhere(storage, callerKey, body.source);
 
-    const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
-    const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
+    const creator = !isBootstrap && namesNoFamily ? callerKey : undefined;
+    const seed = seedsFromOperator && namesNoFamily ? EVERY_TYPE : undefined;
     // **An operator mint takes nothing on any axis, the content maps
     // included.** The permissions are already forced empty above;
     // leaving the five maps to the body would let an unauthenticated first

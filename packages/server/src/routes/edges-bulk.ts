@@ -103,7 +103,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Upsert edges in bulk",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
+    "Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -211,11 +211,10 @@ interface BulkEdgeResult {
 
 /**
  * Process a single bulk-edge input. Caller owns the transaction envelope
- * (one-big-tx for atomic, per-call for best-effort).
- *
- * Duplicate detection is pre-computed by the caller and passed in via
- * `existingByTriple` so a 5000-edge batch hits the DB once per distinct
- * edge_type for existence, not N times.
+ * (one-big-tx for atomic, per-call for best-effort), and every read here,
+ * the existing triple included, runs inside it: an entry is judged against
+ * the graph its write lands on, edges written by earlier entries of the same
+ * page and by other requests among them.
  */
 async function processBulkEdge(
   storage: Storage,
@@ -223,7 +222,6 @@ async function processBulkEdge(
   index: number,
   options: {
     mode: "upsert" | "create_only";
-    existingByTriple: Map<string, Edge>;
     /**
      * Per-edge write authorization, mirroring single-edge `POST /edges`:
      * write on the source item's type AND write on the edge type. An
@@ -239,7 +237,7 @@ async function processBulkEdge(
     mayTell: (edge: Edge) => Promise<boolean>;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, existingByTriple, checkEdgeWrite, mayRead, mayTell } = options;
+  const { mode, checkEdgeWrite, mayRead, mayTell } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -337,10 +335,15 @@ async function processBulkEdge(
     }
   }
 
-  const tripleKey = `${raw.source_id}|${raw.target_id}|${raw.edge_type}`;
   // A hidden source has no edges a missing one could have, so its entry is
   // judged as a create, which answers it as missing.
-  const existing = sourceHidden ? undefined : existingByTriple.get(tripleKey);
+  const existing = sourceHidden
+    ? null
+    : await storage.edges.findByTriple(
+        raw.source_id,
+        raw.target_id,
+        raw.edge_type,
+      );
 
   if (existing) {
     // A matched edge would otherwise say, with its id, that the target is
@@ -377,10 +380,7 @@ async function processBulkEdge(
     // version to name, and one updating an edge it has read does.
     //
     // Wrapped for the same reason the authorization step above is: one
-    // entry's failure is that entry's result, not the batch's. The store
-    // refuses a row that has gone since the duplicate lookup read it,
-    // which a concurrent delete produces, and an unwrapped refusal would
-    // fail every other entry in the request along with it.
+    // entry's failure is that entry's result, not the batch's.
     let outcome;
     try {
       outcome = await storage.edges.updateProperties(
@@ -431,8 +431,7 @@ async function processBulkEdge(
 
   try {
     await assertEdgeCanBeCreated(
-      storage.edges,
-      storage.items,
+      storage,
       {
         source_id: raw.source_id,
         target_id: raw.target_id,
@@ -520,72 +519,49 @@ export function edgesBulkRoutes(storage: Storage) {
       );
     }
 
-    // In atomic mode, surface id-shape errors before any write so the
-    // caller sees a 400 bulk_atomic_rollback with the offending index,
-    // rather than a half-committed batch on SQLite (which can't roll back
-    // async transactions).
-    if (atomic) {
-      for (const [i, raw] of rawEdges.entries()) {
-        if (!isValidId(raw.source_id)) {
-          throw bulkAtomicRollback(
-            i,
-            {
-              code: ErrorCode.INVALID_ID,
-              message: `Invalid source_id: ${raw.source_id}`,
-            },
-            "edge",
-          );
-        }
-        if (!isValidId(raw.target_id)) {
-          throw bulkAtomicRollback(
-            i,
-            {
-              code: ErrorCode.INVALID_ID,
-              message: `Invalid target_id: ${raw.target_id}`,
-            },
-            "edge",
-          );
-        }
-        if (raw.id !== undefined && !isValidId(raw.id)) {
-          throw bulkAtomicRollback(
-            i,
-            { code: ErrorCode.INVALID_ID, message: `Invalid id: ${raw.id}` },
-            "edge",
-          );
-        }
-        // Authorize the write up-front so an unauthorized edge aborts the
-        // batch before any row lands (SQLite can't roll back async txns).
-        try {
-          const srcItem = await storage.items.getIncludingTrashed(
-            raw.source_id,
-          );
-          checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
-        } catch (err) {
-          if (isEntryVerdict(err)) {
+    const operationId = generateId();
+    const run = async (): Promise<BulkEdgeResult[]> => {
+      // In atomic mode, judge every entry's ids and write gates before any
+      // entry is looked up, as the item door does (`items.md` 31). The
+      // transaction is what undoes a refused page; this pass decides which
+      // refusal the page answers with. Left to the per-entry pass, a stale
+      // entry ahead of a forbidden one would answer first, as a `409`, and
+      // the caller would re-read the edge over a refusal whose cause is a
+      // permission it lacks.
+      if (atomic) {
+        for (const [i, raw] of rawEdges.entries()) {
+          const shape = !isValidId(raw.source_id)
+            ? `Invalid source_id: ${raw.source_id}`
+            : !isValidId(raw.target_id)
+              ? `Invalid target_id: ${raw.target_id}`
+              : raw.id !== undefined && !isValidId(raw.id)
+                ? `Invalid id: ${raw.id}`
+                : null;
+          if (shape !== null) {
             throw bulkAtomicRollback(
               i,
-              { code: err.code, message: err.message, details: err.details },
+              { code: ErrorCode.INVALID_ID, message: shape },
               "edge",
             );
           }
-          throw err;
+          try {
+            const srcItem = await storage.items.getIncludingTrashed(
+              raw.source_id,
+            );
+            checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
+          } catch (err) {
+            if (isEntryVerdict(err)) {
+              throw bulkAtomicRollback(
+                i,
+                { code: err.code, message: err.message, details: err.details },
+                "edge",
+              );
+            }
+            throw err;
+          }
         }
       }
-    }
 
-    // Pre-resolve duplicates in one batched pass. Edges with existing
-    // `(source_id, target_id, edge_type)` rows take the skipped/updated
-    // path; the rest go through full validation + create.
-    const existingByTriple = await storage.edges.findByTriplesBatch(
-      rawEdges.map((e) => ({
-        source_id: e.source_id,
-        target_id: e.target_id,
-        edge_type: e.edge_type,
-      })),
-    );
-
-    const operationId = generateId();
-    const run = async (): Promise<BulkEdgeResult[]> => {
       const results: BulkEdgeResult[] = [];
       for (const [i, raw] of rawEdges.entries()) {
         // Each entry's edge and its event commit together: inside the page's
@@ -596,7 +572,6 @@ export function edgesBulkRoutes(storage: Storage) {
         const entry = async () => {
           const processed = await processBulkEdge(storage, raw, i, {
             mode,
-            existingByTriple,
             checkEdgeWrite,
             mayRead,
             mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),

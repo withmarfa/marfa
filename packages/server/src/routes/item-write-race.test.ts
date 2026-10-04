@@ -10,7 +10,12 @@
  * the latest point a check made outside it could have run.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  raceTheNextTransaction,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 
@@ -31,34 +36,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await ctx.cleanup();
 });
-
-/**
- * Commit `change` the first time the app opens a transaction after this is
- * called, and report whether it fired.
- */
-function raceTheNextTransaction(change: () => Promise<void>): {
-  fired: () => boolean;
-  restore: () => void;
-} {
-  const storage = ctx.storage;
-  const original = storage.runInTransaction.bind(storage);
-  let fired = false;
-  storage.runInTransaction = async <T>(
-    fn: () => T | Promise<T>,
-  ): Promise<T> => {
-    if (!fired) {
-      fired = true;
-      await change();
-    }
-    return await original(fn);
-  };
-  return {
-    fired: () => fired,
-    restore: () => {
-      storage.runInTransaction = original;
-    },
-  };
-}
 
 async function seedNote(
   marker: string,
@@ -110,7 +87,7 @@ describe("a create raced by another on its natural key", () => {
         },
       });
     let first: Response | undefined;
-    const race = raceTheNextTransaction(async () => {
+    const race = raceTheNextTransaction(ctx.storage, async () => {
       first = await send("first");
     });
     let second: Response;
@@ -135,7 +112,7 @@ describe("a create raced by another on its natural key", () => {
 describe("a write raced against a retype is refused on every door", () => {
   it("PATCH /items/{id}", async () => {
     const { id, version } = await seedNote("patch");
-    const race = raceTheNextTransaction(retype(id));
+    const race = raceTheNextTransaction(ctx.storage, retype(id));
     try {
       const res = await request(ctx.app, "PATCH", `/items/${id}`, {
         key: narrowKey,
@@ -153,7 +130,7 @@ describe("a write raced against a retype is refused on every door", () => {
   it("POST /items on a natural key", async () => {
     const sourceId = "race-upsert";
     const { id } = await seedNote("upsert", sourceId);
-    const race = raceTheNextTransaction(retype(id));
+    const race = raceTheNextTransaction(ctx.storage, retype(id));
     try {
       const res = await request(ctx.app, "POST", "/items", {
         key: narrowKey,
@@ -176,7 +153,7 @@ describe("a write raced against a retype is refused on every door", () => {
     it(`POST /items/bulk, atomic: ${String(atomic)}`, async () => {
       const sourceId = `race-bulk-${String(atomic)}`;
       const { id } = await seedNote(`bulk-${String(atomic)}`, sourceId);
-      const race = raceTheNextTransaction(retype(id));
+      const race = raceTheNextTransaction(ctx.storage, retype(id));
       let res: Response;
       try {
         res = await request(ctx.app, "POST", "/items/bulk", {
@@ -227,7 +204,7 @@ describe("a write raced against a retype is refused on every door", () => {
     });
     expect(queued.status).toBe(202);
     const job = (await queued.json()) as { id: string };
-    const race = raceTheNextTransaction(retype(id));
+    const race = raceTheNextTransaction(ctx.storage, retype(id));
     try {
       const worker = new BulkActionWorker({
         storage: ctx.storage,
@@ -277,7 +254,7 @@ describe("a write raced against a retype is refused on every door", () => {
   ] as const) {
     it(door, async () => {
       const { id } = await seedNote("before");
-      const race = raceTheNextTransaction(retype(id));
+      const race = raceTheNextTransaction(ctx.storage, retype(id));
       let res: Response;
       try {
         res = await request(ctx.app, method, `/items/${id}/${path}`, {
@@ -305,7 +282,7 @@ describe("a write raced against a retype is refused on every door", () => {
       },
     });
     expect(queued.status).toBe(202);
-    const race = raceTheNextTransaction(retype(id));
+    const race = raceTheNextTransaction(ctx.storage, retype(id));
     try {
       const worker = new BulkActionWorker({
         storage: ctx.storage,
@@ -339,7 +316,7 @@ describe("a write raced against a retype is refused on every door", () => {
         });
         expect(trashed.status).toBe(200);
       }
-      const race = raceTheNextTransaction(retype(id));
+      const race = raceTheNextTransaction(ctx.storage, retype(id));
       let res: Response;
       try {
         res =

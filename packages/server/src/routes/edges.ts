@@ -427,7 +427,7 @@ const getEdgeRoute = createRoute({
         },
       },
       description:
-        "No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike.",
+        "- `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same.",
     },
   },
 });
@@ -544,7 +544,7 @@ const deleteEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Delete an edge",
   description:
-    "Deletes a single edge by id. The edge type's `cascade_on_delete` setting decides what happens to the connected items: `cascade` deletes them, `orphan` leaves them, and `block` rejects the delete while endpoints remain.",
+    "Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
@@ -572,7 +572,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike.",
+        "- `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same.",
     },
   },
 });
@@ -637,142 +637,116 @@ export function edgeRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid edge ID");
     }
 
-    // Dual gate: the source item's type permission and the edge type's, and
-    // nothing bypasses either. There is no rank left to bypass on, and the
-    // operator flag is not an exception — it is not consulted here at all, so
-    // a credential carrying it is refused on an ordinary edge exactly like
-    // any other credential whose maps do not cover it. The one carve-out
-    // either helper makes is for a reserved namespace, and that does not fire
-    // for an ordinary type.
-    const sourceItem = requireReadableRow(
-      c,
-      await storage.items.get(body.source_id),
-      () => edgeSourceNotFound(body.source_id),
-    );
-    requireTypeAccess(c, sourceItem, "write");
-    requireEdgePermission(c, body.edge_type, "write");
+    // Everything below reads, judges and writes inside one transaction, so
+    // the source's type, a repeat of the id and the graph the checker judges
+    // are the ones the write lands on.
+    const outcome = await runAuditedTransaction(
+      storage,
+      async () => {
+        // Dual gate: the source item's type permission and the edge type's,
+        // and nothing bypasses either. There is no rank left to bypass on,
+        // and the operator flag is not an exception — it is not consulted
+        // here at all, so a credential carrying it is refused on an ordinary
+        // edge exactly like any other credential whose maps do not cover it.
+        // The one carve-out either helper makes is for a reserved namespace,
+        // and that does not fire for an ordinary type.
+        const sourceItem = requireReadableRow(
+          c,
+          await storage.items.get(body.source_id),
+          () => edgeSourceNotFound(body.source_id),
+        );
+        requireTypeAccess(c, sourceItem, "write");
+        requireEdgePermission(c, body.edge_type, "write");
 
-    // A create arriving a second time under an id the caller minted.
-    //
-    // A synced client names a row before the server has seen it, so when
-    // the response to its create is lost it retries with the same id. The
-    // second arrival of an id the server already holds is that client's
-    // own write, so the contract answers success and returns the row
-    // rather than making every engine implement the lookup itself.
-    //
-    // **A pre-check and a catch, as the item door has.** The pre-check is
-    // load-bearing here rather than an optimization:
-    // `assertEdgeCanBeCreated` refuses an exact duplicate triple before
-    // any insert, so a client replaying its own create meets that 400 and
-    // never reaches the primary-key collision. The catch covers what the
-    // pre-check cannot — two sends of one id both finding nothing, where
-    // the loser of the insert still needs an answer other than 409.
-    //
-    // One comparison serves both.
-    //
-    // Gated above rather than here: the gates ran on the body's source
-    // type and edge type, and an acknowledgment is only ever returned
-    // when the row's triple equals the body's — so gating on the body is
-    // gating on the row.
-    const repeatedEdge = async (): Promise<Edge | null> => {
-      if (body.id === undefined) return null;
-      const existing = await storage.edges.get(body.id);
-      // An edge the caller may not read goes on to the insert's collision,
-      // which says the id is taken and nothing of the edge.
-      if (
-        !existing ||
-        !(await edgeReadable(storage, requireAuth(c), existing))
-      ) {
-        return null;
-      }
-      const sameEdge =
-        existing.source_id === body.source_id &&
-        existing.target_id === body.target_id &&
-        existing.edge_type === body.edge_type;
-      if (sameEdge) return existing;
-      // The id is this caller's to see and names something else. That is
-      // a genuine collision rather than a repeat, and the same one the
-      // item door answers for an id already used: `details.differs` says
-      // which part of the stored row disagrees, because a caller that
-      // minted the id knows what it sent and needs to know whether it has
-      // a duplicate id or a bug in how it derives one. Shared with the
-      // bulk door, so the code cannot depend on how many edges were sent.
-      refuseReusedEdgeId(existing, body);
-      /* v8 ignore next -- the helper always throws when the triple differs,
-         and `sameEdge` above is the only way here with one that does not */
-      return existing;
-    };
+        // A create arriving a second time under an id the caller minted.
+        //
+        // A synced client names a row before the server has seen it, so
+        // when the response to its create is lost it retries with the same
+        // id. The second arrival of an id the server already holds is that
+        // client's own write, so the contract answers success and returns
+        // the row rather than making every engine implement the lookup
+        // itself. Asked before the checker, which would refuse the repeated
+        // triple as a duplicate.
+        //
+        // Gated above rather than here: the gates ran on the body's source
+        // type and edge type, and an acknowledgment is only ever returned
+        // when the row's triple equals the body's — so gating on the body
+        // is gating on the row.
+        if (body.id !== undefined) {
+          const existing = await storage.edges.get(body.id);
+          // An edge the caller may not read goes on to the insert's
+          // collision, which says the id is taken and nothing of the edge.
+          if (
+            existing &&
+            (await edgeReadable(storage, requireAuth(c), existing))
+          ) {
+            // The id is this caller's to see and names something else: a
+            // genuine collision rather than a repeat, answered as the item
+            // door answers an id already used, with `details.differs`
+            // saying which part of the stored row disagrees. Shared with
+            // the bulk door, so the code cannot depend on how many edges
+            // were sent.
+            refuseReusedEdgeId(existing, body);
+            return {
+              edge: existing,
+              acknowledged: true,
+              sourceType: sourceItem.type,
+            };
+          }
+        }
 
-    const alreadyHeld = await repeatedEdge();
-    if (alreadyHeld) {
-      rememberEdgeSubject(alreadyHeld, "write", sourceItem.type);
-      return c.json({ edge: alreadyHeld, acknowledged: true }, 200);
-    }
-
-    let edge: Edge;
-    try {
-      edge = await runAuditedTransaction(
-        storage,
-        async () => {
-          await assertEdgeCanBeCreated(
-            storage.edges,
-            storage.items,
-            {
-              source_id: body.source_id,
-              target_id: body.target_id,
-              edge_type: body.edge_type,
-              properties: body.properties,
-            },
-            mayReadEdgeEnd(c),
-          );
-          const targetSubject = await storage.items.get(body.target_id);
-          if (targetSubject) rememberItemSubject(targetSubject, "read");
-          const created = await storage.edges.createRaw({
-            id: body.id,
+        await assertEdgeCanBeCreated(
+          storage,
+          {
             source_id: body.source_id,
             target_id: body.target_id,
             edge_type: body.edge_type,
             properties: body.properties,
-          });
-          // With the edge, so the two commit together or not at all.
-          await publishEdge({
-            type: "edge_created",
-            edge: created,
-            sourceType: sourceItem.type,
-          });
-          return created;
-        },
-        (edge) => ({
-          client_ip: c.get("clientIp") ?? null,
-          key_id: c.get("apiKey")?.id,
-          action: "edge.create",
-          resource_type: "edge",
-          resource_id: edge.id,
-          details: {
-            edge_type: edge.edge_type,
-            source_id: edge.source_id,
-            target_id: edge.target_id,
           },
-        }),
-      );
-    } catch (err) {
-      // The concurrency backstop. The row appeared between the pre-check
-      // and the insert, which is the one case the pre-check cannot cover.
-      const isOwnIdCollision =
-        body.id !== undefined &&
-        err instanceof MarfaError &&
-        err.code === ErrorCode.ID_REUSED &&
-        (err.details as { existing_id?: string } | undefined)?.existing_id ===
-          body.id;
-      if (!isOwnIdCollision) throw err;
-      const raced = await repeatedEdge();
-      if (!raced) throw err;
-      rememberEdgeSubject(raced, "write", sourceItem.type);
-      return c.json({ edge: raced, acknowledged: true }, 200);
-    }
+          mayReadEdgeEnd(c),
+        );
+        const targetSubject = await storage.items.get(body.target_id);
+        if (targetSubject) rememberItemSubject(targetSubject, "read");
+        const created = await storage.edges.createRaw({
+          id: body.id,
+          source_id: body.source_id,
+          target_id: body.target_id,
+          edge_type: body.edge_type,
+          properties: body.properties,
+        });
+        // With the edge, so the two commit together or not at all.
+        await publishEdge({
+          type: "edge_created",
+          edge: created,
+          sourceType: sourceItem.type,
+        });
+        return {
+          edge: created,
+          acknowledged: false,
+          sourceType: sourceItem.type,
+        };
+      },
+      ({ edge, acknowledged }) =>
+        acknowledged
+          ? null
+          : {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "edge.create",
+              resource_type: "edge",
+              resource_id: edge.id,
+              details: {
+                edge_type: edge.edge_type,
+                source_id: edge.source_id,
+                target_id: edge.target_id,
+              },
+            },
+    );
 
-    rememberEdgeSubject(edge, "write", sourceItem.type);
-    return c.json({ edge }, 201);
+    rememberEdgeSubject(outcome.edge, "write", outcome.sourceType);
+    return outcome.acknowledged
+      ? c.json({ edge: outcome.edge, acknowledged: true }, 200)
+      : c.json({ edge: outcome.edge }, 201);
   });
 
   router.openapi(getEdgeRoute, async (c) => {
@@ -786,110 +760,95 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const { edge: existing, source: srcItem } = await readableEdge(
-      c,
+    // The edge, its source's type and every end a move names are read and
+    // judged inside the write's transaction, so a change landing between a
+    // check and the write cannot pass the one and miss the other.
+    const result = await runAuditedTransaction(
       storage,
-      id,
-    );
-    if (srcItem) requireTypeAccess(c, srcItem, "write");
-    requireEdgePermission(c, existing.edge_type, "write");
-    rememberEdgeSubject(existing, "write", srcItem?.type);
-    // A stale write is refused for what it was based on, before anything it names is judged.
-    const stale = existing.version !== body.version;
-    const ends = stale ? null : await endsAfterMove(c, storage, existing, body);
-    if (!stale && ends === null && body.properties === undefined) {
-      throw new MarfaError(
-        ErrorCode.MISSING_REQUIRED_FIELD,
-        "properties is required where no end moves",
-        { field: "properties" },
-      );
-    }
-    const properties = body.properties ?? {};
-    const write = async () =>
-      ends === null
-        ? await storage.edges.updateProperties(id, properties, body.version)
-        : await storage.runInTransaction(async () => {
-            const current = await storage.edges.get(id);
-            if (!current) {
-              throw new MarfaError(
-                ErrorCode.EDGE_NOT_FOUND,
-                `Edge ${id} not found`,
-              );
-            }
-            // Asked again inside the write, for one that landed since the read above.
-            if (current.version !== body.version) {
-              return { ok: false as const, current };
-            }
-            await assertEdgesCanBeCreated(
-              storage.edges,
-              storage.items,
-              [
-                {
-                  ...ends,
-                  edge_type: current.edge_type,
-                  properties: mergeUpdateProperties(
-                    current.properties,
-                    properties,
-                  ),
-                },
-              ],
-              mayReadEdgeEnd(c),
-              { replacing: current },
-            );
-            return storage.edges.updateProperties(
-              id,
-              properties,
-              body.version,
-              ends,
-            );
-          });
-    // An edit is as observable as a create or a delete: without it a second
-    // device keeps the stale payload with nothing saying otherwise. Written
-    // with the edit, so the two commit together or not at all.
-    const result = stale
-      ? { ok: false as const, current: existing }
-      : await runAuditedTransaction(
+      async () => {
+        const { edge: existing, source: srcItem } = await readableEdge(
+          c,
           storage,
-          async () => {
-            const written = await write();
-            if (written.ok) {
-              // A move can change the source, so its type is read for the
-              // edge as it now stands.
-              const sourceTypes = await sourceTypesFor(storage, [
-                written.edge.source_id,
-              ]);
-              rememberEdgeSubject(
-                written.edge,
-                "write",
-                sourceTypes.get(written.edge.source_id),
-              );
-              await publishEdge({
-                type: "edge_updated",
-                edge: written.edge,
-                sourceType: sourceTypes.get(written.edge.source_id),
-              });
-            }
-            return written;
-          },
-          (written) =>
-            written.ok
-              ? {
-                  client_ip: c.get("clientIp") ?? null,
-                  key_id: c.get("apiKey")?.id,
-                  action: "edge.update",
-                  resource_type: "edge",
-                  resource_id: id,
-                  details:
-                    ends === null
-                      ? { edge_type: existing.edge_type }
-                      : {
-                          edge_type: existing.edge_type,
-                          source_id: written.edge.source_id,
-                          target_id: written.edge.target_id,
-                        },
-                }
-              : null,
+          id,
         );
+        if (srcItem) requireTypeAccess(c, srcItem, "write");
+        requireEdgePermission(c, existing.edge_type, "write");
+        rememberEdgeSubject(existing, "write", srcItem?.type);
+        // A stale write is refused for what it was based on, before anything
+        // it names is judged.
+        if (existing.version !== body.version) {
+          return { ok: false as const, current: existing, moved: false };
+        }
+        const ends = await endsAfterMove(c, storage, existing, body);
+        if (ends === null && body.properties === undefined) {
+          throw new MarfaError(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            "properties is required where no end moves",
+            { field: "properties" },
+          );
+        }
+        const properties = body.properties ?? {};
+        if (ends !== null) {
+          await assertEdgesCanBeCreated(
+            storage,
+            [
+              {
+                ...ends,
+                edge_type: existing.edge_type,
+                properties: mergeUpdateProperties(
+                  existing.properties,
+                  properties,
+                ),
+              },
+            ],
+            mayReadEdgeEnd(c),
+            { replacing: existing },
+          );
+        }
+        const written = await storage.edges.updateProperties(
+          id,
+          properties,
+          body.version,
+          ends ?? undefined,
+        );
+        if (!written.ok) return { ...written, moved: false };
+        // An edit is as observable as a create or a delete: without it a
+        // second device keeps the stale payload with nothing saying
+        // otherwise. A move can change the source, so its type is read for
+        // the edge as it now stands.
+        const sourceTypes = await sourceTypesFor(storage, [
+          written.edge.source_id,
+        ]);
+        rememberEdgeSubject(
+          written.edge,
+          "write",
+          sourceTypes.get(written.edge.source_id),
+        );
+        await publishEdge({
+          type: "edge_updated",
+          edge: written.edge,
+          sourceType: sourceTypes.get(written.edge.source_id),
+        });
+        return { ...written, moved: ends !== null };
+      },
+      (written) =>
+        written.ok
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: "edge.update",
+              resource_type: "edge",
+              resource_id: id,
+              details: written.moved
+                ? {
+                    edge_type: written.edge.edge_type,
+                    source_id: written.edge.source_id,
+                    target_id: written.edge.target_id,
+                  }
+                : { edge_type: written.edge.edge_type },
+            }
+          : null,
+    );
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
       // the whole current edge so the client can re-apply over it without
@@ -917,40 +876,46 @@ export function edgeRoutes(storage: Storage) {
         409,
       );
     }
-    const updated = result.edge;
 
-    return c.json({ edge: updated }, 200);
+    return c.json({ edge: result.edge }, 200);
   });
 
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const { edge: existing, source: srcItem } = await readableEdge(
-      c,
-      storage,
-      id,
-    );
-    if (srcItem) requireTypeAccess(c, srcItem, "write");
-    requireEdgePermission(c, existing.edge_type, "write");
-    rememberEdgeSubject(existing, "write", srcItem?.type);
     await runAuditedTransaction(
       storage,
       async () => {
-        await storage.edges.delete(id);
+        const { edge: existing, source: srcItem } = await readableEdge(
+          c,
+          storage,
+          id,
+        );
+        if (srcItem) requireTypeAccess(c, srcItem, "write");
+        requireEdgePermission(c, existing.edge_type, "write");
+        rememberEdgeSubject(existing, "write", srcItem?.type);
+        const removed = await storage.edges.delete(id);
+        if (!removed) {
+          throw new MarfaError(
+            ErrorCode.EDGE_NOT_FOUND,
+            `Edge ${id} not found`,
+          );
+        }
         await publishEdge({
           type: "edge_deleted",
-          edge: existing,
+          edge: removed,
           sourceType: srcItem?.type,
         });
+        return removed;
       },
-      {
+      (removed) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
         action: "edge.delete",
         resource_type: "edge",
         resource_id: id,
-        details: { edge_type: existing.edge_type },
-      },
+        details: { edge_type: removed.edge_type },
+      }),
     );
 
     return c.json({ ok: true as const }, 200);
