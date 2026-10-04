@@ -497,6 +497,13 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // The handle before the server, so a second opener with no server is
     // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
+    let result = drain_inner(core, stop);
+    // A write's answer must be settled before honoring a stop raised during
+    // its request, including when it is the last write in the queue.
+    crate::catch_up::unless_stopped(result, stop)
+}
+
+fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     crate::catch_up::refuse_if_stopped(stop)?;
     let http = core.http()?;
     {

@@ -19,6 +19,8 @@ mod read_view;
 mod scripted;
 mod search;
 mod sse;
+#[cfg(test)]
+mod stop_tests;
 mod store;
 mod time;
 mod validation;

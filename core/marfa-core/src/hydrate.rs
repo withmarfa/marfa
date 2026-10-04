@@ -25,10 +25,11 @@ pub(crate) fn hydrate(
 ) -> Result<HydrateReport> {
     let previous = crate::read_view::Context::capture_build(&*core.conn()?).ok();
     let result = hydrate_inner(core, http, types, tier, edge_types, every_type, stop);
-    result.map_err(|error| match previous {
+    let result = result.map_err(|error| match previous {
         Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
         None => error,
-    })
+    });
+    crate::catch_up::unless_stopped(result, stop)
 }
 
 fn hydrate_inner(
@@ -61,7 +62,7 @@ fn hydrate_inner(
     // Nothing is cleared until the copy is about to be replaced, so a stop
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
-    let (mut instance, mut cursor, mut fence) = read_head(http)?;
+    let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
     let mut view = http.for_view(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
@@ -69,7 +70,7 @@ fn hydrate_inner(
     if registered_any {
         // A registration changes what the instance's read view certifies, so
         // the head and the catalog read before it are of a view that has gone.
-        (instance, cursor, fence) = read_head(http)?;
+        (instance, cursor, fence) = read_head(http, stop)?;
         view = http.for_view(&fence);
         catalog_rows = view.catalog()?;
     }
@@ -561,12 +562,16 @@ pub(crate) fn fetch_overflow(
 
 /// Read before the first page so the snapshot has a resume point from before
 /// it.
-fn read_head(http: &Http) -> Result<(String, String, String)> {
+fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
+        crate::catch_up::refuse_if_stopped(stop)?;
         let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
-            match frames.next_frame() {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let frame = frames.next_frame();
+            crate::catch_up::refuse_if_stopped(stop)?;
+            match frame {
                 Ok(Some(Frame::Comment(_))) => continue,
                 Ok(Some(Frame::Event { id, name, data })) => {
                     let payload =

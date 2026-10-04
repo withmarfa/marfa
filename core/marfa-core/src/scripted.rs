@@ -33,11 +33,22 @@ pub enum Answer {
         after: Duration,
         answer: Box<Answer>,
     },
+    /// Release an answer only after the caller raises its signal.
+    WaitFor {
+        ready: Arc<AtomicBool>,
+        answer: Box<Answer>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum Then {
     End,
+    /// Tell the caller the frames were sent, then wait for its signal.
+    WaitFor {
+        entered: Arc<AtomicBool>,
+        ready: Arc<AtomicBool>,
+        then: Box<Then>,
+    },
     /// With no `lasting`, held until the server stops.
     Hold {
         keepalive: Option<Duration>,
@@ -233,13 +244,23 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         body: format!(r#"{{"error":{{"code":"not_found","message":"no answer for {path}"}}}}"#),
         headers: Vec::new(),
     });
-    while let Answer::Slow {
-        after,
-        answer: then,
-    } = answer
-    {
-        thread::sleep(after);
-        answer = *then;
+    loop {
+        answer = match answer {
+            Answer::Slow { after, answer } => {
+                thread::sleep(after);
+                *answer
+            }
+            Answer::WaitFor { ready, answer } => {
+                while !ready.load(Ordering::Relaxed) {
+                    if stopping.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                *answer
+            }
+            _ => break,
+        };
     }
     match answer {
         Answer::Json {
@@ -265,7 +286,11 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             let _ = write!(stream, "{head}\r\n{body}");
         }
         Answer::Stream { frames, then } => {
-            let chunked = matches!(then, Then::Break);
+            let mut ending = &then;
+            while let Then::WaitFor { then, .. } = ending {
+                ending = then;
+            }
+            let chunked = matches!(ending, Then::Break);
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\n{}\r\n",
@@ -277,13 +302,33 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             );
             let body: String = frames.concat();
             if chunked {
-                let _ = write!(stream, "{:x}\r\n{body}\r\n", body.len());
-                // A chunk that promises more than it carries.
-                let _ = write!(stream, "100\r\npartial");
+                if !body.is_empty() {
+                    let _ = write!(stream, "{:x}\r\n{body}\r\n", body.len());
+                }
             } else {
                 let _ = stream.write_all(body.as_bytes());
             }
             let _ = stream.flush();
+            let mut then = then;
+            while let Then::WaitFor {
+                entered,
+                ready,
+                then: next,
+            } = then
+            {
+                entered.store(true, Ordering::Relaxed);
+                while !ready.load(Ordering::Relaxed) {
+                    if stopping.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                then = *next;
+            }
+            if chunked {
+                // A chunk that promises more than it carries.
+                let _ = write!(stream, "100\r\npartial");
+            }
             if let Then::Later {
                 keepalive,
                 after,
@@ -331,7 +376,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
-        Answer::Slow { .. } => unreachable!("taken apart above"),
+        Answer::Slow { .. } | Answer::WaitFor { .. } => unreachable!("taken apart above"),
     }
     let _ = stream.shutdown(Shutdown::Both);
 }

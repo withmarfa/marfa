@@ -132,6 +132,12 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 57. **A hydration, a catch-up and a drain can be stopped, and each ends soon after.** The binary's stop is Ctrl-C, and a binding takes a stop of its own. A stopped call ends with `canceled`, the exit code of a call that did not finish, and leaves the store consistent. A stopped hydration leaves a copy that refuses reads, as one interrupted by a failure does (4), and a queue as it was. A stopped catch-up keeps the cursor of the last event it applied. A stopped drain sends no write after the stop: the write in flight is answered and recorded, and every write behind it stays queued and unsent for the next drain. A call that was not stopped ends as it always did, so the stop is the only thing that ended these. **A second Ctrl-C ends the process at once**, with status 130, for a call that has not reached a place to stop, such as one waiting on a server that never answers. `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`, `› ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
 
+58. When a stop is raised before an in-flight network read returns, a hydration, a catch-up or a drain MUST end with `canceled` after settling any in-flight drain answer (57).
+
+**Reason:** A failed response or an ended stream must not replace an explicit stop with a network or replay failure. A stopped head read must not start another attempt. An attributed credential ending still expires the copy before the call reports cancellation (53).
+
+**Tests:** Core `stop_tests::a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame`, `a_stopped_hydration_reports_canceled_after_a_failed_read`, `a_stopped_catch_up_reports_canceled_after_a_failed_read`, `a_stopped_drain_records_the_in_flight_answer_before_ending`, `a_stopped_read_still_expires_a_copy_when_the_credential_ended`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.
