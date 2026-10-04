@@ -413,27 +413,21 @@ impl Http {
     }
 
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
-        let mut types = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut seen = std::collections::HashSet::new();
-        loop {
-            let params: Vec<(&str, &str)> = cursor
-                .as_deref()
-                .map(|cursor| vec![("cursor", cursor)])
-                .unwrap_or_default();
-            let page: WirePage<WireType> = self.get_json(&["types"], &params)?;
-            types.extend(page.data);
-            match page.next_cursor {
-                None => return Ok(types),
-                Some(next) if !seen.insert(next.clone()) => {
-                    return Err(if self.view.is_some() {
-                        crate::read_view::invalid()
-                    } else {
-                        CoreError::Decoding("the server repeated a type page cursor".into())
-                    });
-                }
-                Some(next) => cursor = Some(next),
-            }
+        let page: WirePage<WireType> = self.get_json(&["types"], &[])?;
+        self.whole_catalog(page.next_cursor, "type")?;
+        Ok(page.data)
+    }
+
+    /// The catalogs answer whole: `GET /types` and `GET /edge-types` take no
+    /// `cursor`, so a page that names a next one is not this contract, and
+    /// reading on from it would drop the rest without saying so.
+    fn whole_catalog(&self, next_cursor: Option<String>, what: &str) -> Result<(), CoreError> {
+        match next_cursor {
+            None => Ok(()),
+            Some(_) if self.view.is_some() => Err(crate::read_view::invalid()),
+            Some(_) => Err(CoreError::Decoding(format!(
+                "the server paged the {what} catalog, which answers whole"
+            ))),
         }
     }
 
@@ -487,37 +481,18 @@ impl Http {
     }
 
     pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
-        let mut rows = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut seen = std::collections::HashSet::new();
-        loop {
-            let params: Vec<(&str, &str)> = cursor
-                .as_deref()
-                .map(|cursor| vec![("cursor", cursor)])
-                .unwrap_or_default();
-            let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &params)?;
-            for row in page.data {
-                serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
-                    if self.view.is_some() {
-                        crate::read_view::invalid()
-                    } else {
-                        CoreError::Decoding(format!("an edge type the server listed: {error}"))
-                    }
-                })?;
-                rows.push(row);
-            }
-            match page.next_cursor {
-                None => return Ok(rows),
-                Some(next) if !seen.insert(next.clone()) => {
-                    return Err(if self.view.is_some() {
-                        crate::read_view::invalid()
-                    } else {
-                        CoreError::Decoding("the server repeated an edge type page cursor".into())
-                    });
+        let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
+        for row in &page.data {
+            serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
+                if self.view.is_some() {
+                    crate::read_view::invalid()
+                } else {
+                    CoreError::Decoding(format!("an edge type the server listed: {error}"))
                 }
-                Some(next) => cursor = Some(next),
-            }
+            })?;
         }
+        self.whole_catalog(page.next_cursor, "edge type")?;
+        Ok(page.data)
     }
 
     /// The instance the server says it is, which its root answers to anyone.
@@ -1774,5 +1749,50 @@ mod tests {
         let seen = http.fetch(get(&[], false), false).unwrap();
         assert_eq!(seen.contract, Some((CONTRACT_VERSION + 1).to_string()));
         assert!(matches!(seen.body, ReplyBody::Text(text) if text.contains("marfa")));
+    }
+    #[test]
+    fn the_catalogs_are_read_whole_and_send_no_query() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/types",
+            vec![crate::scripted::types(&[("core.note", None)])],
+        );
+        server.on(
+            "/edge-types",
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            )],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        assert_eq!(http.types().unwrap().len(), 1);
+        assert!(http.edge_types().unwrap().is_empty());
+        assert_eq!(server.seen("/types")[0].query, "");
+        assert_eq!(server.seen("/edge-types")[0].query, "");
+    }
+
+    #[test]
+    fn a_catalog_that_names_a_next_page_is_refused_not_cut_short() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/types",
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[{"id":"core.note"}],"next_cursor":"more"}"#,
+            )],
+        );
+        server.on(
+            "/edge-types",
+            vec![crate::scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":"more"}"#,
+            )],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        assert!(matches!(http.types(), Err(CoreError::Decoding(_))));
+        assert!(matches!(http.edge_types(), Err(CoreError::Decoding(_))));
+        // Neither read went on to ask for a page the doors do not have.
+        assert_eq!(server.seen("/types").len(), 1);
+        assert_eq!(server.seen("/edge-types").len(), 1);
     }
 }
