@@ -345,32 +345,50 @@ The server and a device index the same text and read a query the same way, so a 
 
 ## Archive export bounds
 
-76. WHEN `GET /export?format=archive` is requested, the server MUST read the whole selection into the disk store's spool before it sends the manifest, and MUST write the archive from the spool, holding in memory no more than one page of rows and the chunk of a blob it is sending.
+76. WHEN `GET /export?format=archive` is requested, the server MUST read the whole selection into the disk store's spool before it sends the first byte of the archive.
 
-    Reason: a tar header carries each entry's size, so the line files and the manifest are complete before their first byte, and the manifest comes first so the whole selection is read before the body is sent (18). Kept in memory, the selection grew with the instance: 20,000 items took several hundred megabytes. The ids of the exported items and the digests of the blobs they name are kept in the spool too, so that the edges and the manifest need no set that grows with the instance.
+    Reason: a tar header carries each entry's size, so the line files and the manifest are complete before their first byte, and the manifest comes first so the whole selection is read before the body is sent (18).
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › writes the manifest first, then the line files, then the blobs, each as long as it said`, `› carries more blobs than a page, each once, in the manifest and the tar`, `› restores an archive of nothing`.
 
-77. While `GET /export?format=archive` reads its selection, the server MUST give other requests a turn between pages of at most 200 rows.
+77. While `GET /export?format=archive` reads and writes, the server MUST NOT hold in memory more than one page of rows and the chunk of a blob it is sending.
+
+    Reason: kept in memory, the selection grew with the instance, and 20,000 items took several hundred megabytes. The ids of the exported items and the digests of the blobs they name are kept in the spool too, so that the edges and the manifest need no set that grows with the instance.
+
+    Tests: `packages/server/src/routes/export-spool.test.ts › keeps sets of strings, answers which it holds and walks them in order`, `› holds more strings than one statement binds`; `packages/server/src/routes/export-archive-stream.test.ts › carries more blobs than a page, each once, in the manifest and the tar`.
+
+78. While `GET /export?format=archive` reads its selection, the server MUST give other requests a turn between pages of at most 200 rows.
 
     Reason: the pages are read from a driver that runs each statement synchronously, so an export that reads them in one go stops the server for as long as the selection is large (`instance.md` 19).
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › between pages of items and between pages of edges`; `packages/server/src/routes/long-jobs-health.test.ts › answers within the bound during an archive export of 20,000 items`.
 
-78. WHEN a `GET /export?format=archive` response ends, however it ends, the server MUST remove everything the export kept in the spool, and WHEN the client leaves before the body begins, the server MUST stop reading the selection.
+79. WHEN a `GET /export?format=archive` response ends, whether the archive is complete, the client has left or a read has failed, the server MUST remove everything the export kept in the spool.
 
-    Reason: the spool holds the instance's content, and a copy nobody will read is left behind otherwise.
+    Reason: the spool holds the instance's content, and a copy nobody will read is left behind otherwise. A server that is stopped during an export cannot remove it; it stays until the next start, which clears the spool.
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › holds the spool while it writes and removes it when the body ends`, `› with the spool removed when the client leaves while the tar is being written`, `› with the spool removed when the client leaves while the selection is read`, `› with an error and the spool removed when reading the selection fails`.
 
-79. IF a read fails after the body of `GET /export?format=archive` has begun, the server MUST end the response with an error and not with a clean end.
+80. WHEN the client of `GET /export?format=archive` leaves before the body begins, the server MUST stop reading the selection.
+
+    Reason: the selection is read before the first byte, which on a large instance takes long enough for a client to give up, and nobody is left to read what is read after.
+
+    Tests: `packages/server/src/routes/export-archive-stream.test.ts › with the spool removed when the client leaves while the selection is read`.
+
+81. IF a read fails after the body of `GET /export?format=archive` has begun, the server MUST end the response with an error and not with a clean end.
 
     Reason: the status and headers are sent before the first byte, so the failure can only show as a connection cut short and a gzip stream with no end, which is an archive no one mistakes for a complete one.
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › cut short, never complete-looking, when a blob cannot be read once the body has begun`.
 
-80. WHILE `GET /export?format=archive` reads, a write that lands between two of its pages MUST NOT make the archive unrestorable: each page of items is read together with its metadata, digests and history, the history of an item is the snapshots strictly below the version the export selected (35), and an edge is written only if both its endpoints are items the archive carries.
+82. WHILE `GET /export?format=archive` reads, a write that lands between two of its pages MUST NOT make the archive unrestorable.
 
-    Reason: the export no longer holds the server for the whole selection, so a write can land between pages, and the archive is a copy of the instance as it moved and not at one instant. A row written after its page was read is carried as it stood, and a row added after the walk began, being newer than every page, is not carried.
+    Reason: the export no longer holds the server for the whole selection, so a write can land between pages. Each page of items is read together with its metadata, digests and history; the history of an item is the snapshots strictly below the version the export selected (35); and an edge is written only if both its endpoints are items the archive carries.
 
     Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › fences exported history below the selected row's version during a concurrent patch`.
+
+83. A row that is written while `GET /export?format=archive` reads MUST be carried as it stood when the export read its page, and a row created after the export began MUST NOT be carried.
+
+    Reason: the archive is a copy of the instance as it moved and not at one instant. A row created after the export began is dated after every page, and the export reads the newest rows first, so it never reaches it.
+
+    Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`.

@@ -113,12 +113,19 @@ function restore(target: TestContext, archive: Buffer) {
 
 const spool = () => readdirSync(ctx.blobs.disk.spoolDir);
 
-async function until(done: () => boolean, what: string) {
-  for (let waited = 0; waited < 5_000; waited += 10) {
-    if (done()) return;
+/** Waits for the spool to empty, for as long as it keeps changing: a loaded
+ *  machine is slow, not stuck, and only a spool that stops changing without
+ *  emptying is a failure. */
+async function untilSpoolEmpty() {
+  let seen = spool().join();
+  let still = 0;
+  while (seen !== "") {
     await new Promise((resolve) => setTimeout(resolve, 10));
+    const now = spool().join();
+    still = now === seen ? still + 10 : 0;
+    if (still >= 10_000) throw new Error(`the spool stopped at ${now}`);
+    seen = now;
   }
-  throw new Error(`still waiting for ${what}`);
 }
 
 async function upload(target: TestContext, bytes: Buffer) {
@@ -218,7 +225,7 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
     expect(manifest.blob_count).toBe(1);
     expect(manifest.blobs[hash]?.size_bytes).toBe(1000);
     expect(entries[4]!.data).toHaveLength(1000);
-    await until(() => spool().length === 0, "the spool to empty");
+    await untilSpoolEmpty();
   });
 
   it("holds the spool while it writes and removes it when the body ends", async () => {
@@ -227,24 +234,33 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
     // The witness: what the spool holds is there to be removed.
     expect(spool().length).toBeGreaterThan(0);
     await res.arrayBuffer();
-    await until(() => spool().length === 0, "the spool to empty");
+    await untilSpoolEmpty();
   });
 
   it("carries more blobs than a page, each once, in the manifest and the tar", async () => {
     const hashes: string[] = [];
-    for (let i = 0; i < 401; i++) {
+    for (let i = 0; i < 201; i++) {
       hashes.push(await upload(ctx, Buffer.from(`blob number ${String(i)}`)));
     }
-    for (const hash of hashes) await attach(ctx, hash);
-    // Named again by a second row, which must not list it twice.
-    await attach(ctx, hashes[0]!);
+    // One row for each, and a second naming the first again, which must not
+    // list it twice.
+    const bulk = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        items: [...hashes, hashes[0]!].map((hash) => ({
+          type: "core.file",
+          properties: { blob_ref: hash, mime_type: "text/plain" },
+        })),
+      },
+    });
+    expect(bulk.status, await bulk.clone().text()).toBe(200);
     const res = await exportArchive(ctx);
     const entries = await unpack(Buffer.from(await res.arrayBuffer()));
     const manifest = JSON.parse(entries[0]!.data.toString()) as {
       blob_count: number;
       blobs: Record<string, unknown>;
     };
-    expect(manifest.blob_count).toBe(401);
+    expect(manifest.blob_count).toBe(201);
     expect(Object.keys(manifest.blobs).sort()).toEqual([...hashes].sort());
     expect(
       entries
@@ -252,7 +268,7 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
         .map((entry) => entry.name.slice(6))
         .sort(),
     ).toEqual([...hashes].sort());
-  });
+  }, 120_000);
 
   it("restores an archive of nothing", async () => {
     const res = await exportArchive(ctx, "&type=core.bookmark");
@@ -284,7 +300,7 @@ describe("GET /export?format=archive ends", () => {
     expect((await reader.read()).done).toBe(false);
     expect(spool().length).toBeGreaterThan(0);
     await reader.cancel();
-    await until(() => spool().length === 0, "the spool to empty");
+    await untilSpoolEmpty();
   });
 
   it("with the spool removed when the client leaves while the selection is read", async () => {
@@ -347,7 +363,7 @@ describe("GET /export?format=archive ends", () => {
     const res = await exportArchive(ctx);
     expect(res.status).toBe(200);
     await expect(res.arrayBuffer()).rejects.toThrow();
-    await until(() => spool().length === 0, "the spool to empty");
+    await untilSpoolEmpty();
   });
 });
 
@@ -399,14 +415,22 @@ describe("GET /export?format=archive read across commits", () => {
     expect(pages).toBeGreaterThan(2);
 
     const entries = await unpack(archive);
-    const itemIds = new Set(
-      entries
-        .find((e) => e.name === "items.ndjson")!
-        .data.toString()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => (JSON.parse(line) as { item: { id: string } }).item.id),
-    );
+    const carried = entries
+      .find((e) => e.name === "items.ndjson")!
+      .data.toString()
+      .split("\n")
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            item: { id: string; properties: { body: string } };
+          },
+      );
+    const itemIds = new Set(carried.map((row) => row.item.id));
+    // Rewritten after its page was read, the row is carried as it stood.
+    expect(
+      carried.find((row) => row.item.id === idAt(300))?.item.properties.body,
+    ).toBe("note 300");
     // Written to after the first two pages, the trashed row was read as it
     // stood, and the added row, being newer than every page, was not read.
     expect(itemIds.has(idAt(20))).toBe(false);

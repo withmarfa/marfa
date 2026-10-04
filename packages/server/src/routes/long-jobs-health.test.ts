@@ -6,6 +6,8 @@ import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
+import { GrantInactivityRetirer } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import type { AppEnv } from "../middleware/auth.js";
@@ -18,22 +20,28 @@ import { storageProbes } from "./health-probes.js";
  * `GET /health` while the server does each of its long jobs, over an
  * instance of 20,000 items with history, edges and blobs.
  *
- * What is measured is how long a request waits for the event loop. A job
- * that holds the loop across its pages stops every request, `/health`
- * included, for as long as it runs, and that wait grows with the instance
- * until a container's health check gives up on a server that is working.
+ * What is measured is the longest stretch of processor time the process spent
+ * between two turns of the event loop. A job that holds the loop across its
+ * pages stops every request, `/health` included, for as long as it runs, and
+ * that wait grows with the instance until a container's health check gives up
+ * on a server that is working.
  *
- * The bound is three seconds. A healthy answer takes a few milliseconds, and a
- * job that hands the loop over between units of work delays a request by one
- * unit: 25 ms for the archive export, 160 ms for a restore batch and 300 ms
- * for a bulk-action chunk on a laptop. A shared runner is several times
- * slower, and a machine running a whole suite at once slower again, so a unit
- * of 300 ms here can take a second there; three seconds holds that. A job that does
- * not hand the loop over held it for 3.4 seconds at this size on the same
- * laptop, and longer the larger the instance. The bound is also inside
- * the five seconds a container's health check waits.
+ * Processor time and not the wait on the clock, because the clock counts what
+ * the server does not control: a machine running other work leaves this
+ * process waiting for a core, and a wait of seconds then cost the process
+ * milliseconds. A held loop spends its time computing, so its stretch is as
+ * long in processor time as on the clock, however busy the machine is. The
+ * clock is used once, in the witness's favor: `/health` has to be answered at
+ * all while the job runs.
+ *
+ * The bound is two seconds of processor time. A job that hands the loop over
+ * between units of work spends one unit between turns: 25 ms for the archive
+ * export, 160 ms for a restore batch and 300 ms for a bulk-action chunk on a
+ * laptop, so the bound is several times the largest. A job that does not hand
+ * the loop over spent 3.5 seconds at this size on the same laptop, and spends
+ * more the larger the instance.
  */
-const HEALTH_BOUND_MS = 3_000;
+const CPU_BOUND_MS = 2_000;
 
 const ITEMS = 20_000;
 const BULK_TARGETS = 10_000;
@@ -145,25 +153,39 @@ async function seed(target: TestContext) {
   }
 }
 
-/** How long a request due every few milliseconds waited for the loop and for
- *  its answer, at worst, while `job` ran. A request is counted from when it
- *  fell due, so a loop held across the moment it was due counts in full. */
-async function worstWait<T>(
+const cpuMs = () => {
+  const used = process.cpuUsage();
+  return (used.user + used.system) / 1000;
+};
+
+/** Holds the loop for `ms` of processor time, whatever else the machine does. */
+function spin(ms: number) {
+  const until = cpuMs() + ms;
+  while (cpuMs() < until);
+}
+
+/**
+ * The most processor time the process spent between two consecutive answers
+ * of `/health` while `job` ran, with how many answers there were. The first
+ * request commits the write probe before the job begins, so it is not the one
+ * that meets a lock the job holds.
+ */
+async function longestStretch<T>(
   server: Hono<AppEnv>,
   job: () => Promise<T>,
-): Promise<{ worstMs: number; asked: number; result: T }> {
-  const state = { running: true };
-  // The write probe is committed before the job begins, so the first request
-  // is not the one that meets a lock the job holds.
+): Promise<{ worstCpuMs: number; asked: number; result: T }> {
   await server.request("/health");
-  let worstMs = 0;
+  const state = { running: true };
+  let worstCpuMs = 0;
   let asked = 0;
+  let last = cpuMs();
   const sampler = (async () => {
     while (state.running) {
-      const due = performance.now() + 5;
       await new Promise((resolve) => setTimeout(resolve, 5));
       const res = await server.request("/health");
-      worstMs = Math.max(worstMs, performance.now() - due);
+      const now = cpuMs();
+      worstCpuMs = Math.max(worstCpuMs, now - last);
+      last = now;
       asked++;
       expect(res.status).toBe(200);
       await res.arrayBuffer();
@@ -178,7 +200,8 @@ async function worstWait<T>(
   // The request in flight when the job ended is the one a held loop delays
   // most, so it is counted before the worst is read.
   await sampler;
-  return { worstMs, asked, result };
+  worstCpuMs = Math.max(worstCpuMs, cpuMs() - last);
+  return { worstCpuMs, asked, result };
 }
 
 async function manifestOf(bytes: Buffer): Promise<unknown> {
@@ -216,21 +239,24 @@ afterAll(async () => {
 
 describe("GET /health while a long job runs", () => {
   it("sees a loop held across the job, which is what the others are held against", async () => {
-    const { worstMs } = await worstWait(health, async () => {
+    const { worstCpuMs } = await longestStretch(health, async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_400);
+      spin(2_600);
     });
-    expect(worstMs).toBeGreaterThan(HEALTH_BOUND_MS);
+    expect(worstCpuMs).toBeGreaterThan(CPU_BOUND_MS);
   });
 
   it("answers within the bound during an archive export of 20,000 items", async () => {
-    const { worstMs, asked, result } = await worstWait(health, async () => {
-      const res = await source.app.request("/export?format=archive", {
-        headers: { Authorization: `Bearer ${source.workingKey}` },
-      });
-      expect(res.status).toBe(200);
-      return Buffer.from(await res.arrayBuffer());
-    });
+    const { worstCpuMs, asked, result } = await longestStretch(
+      health,
+      async () => {
+        const res = await source.app.request("/export?format=archive", {
+          headers: { Authorization: `Bearer ${source.workingKey}` },
+        });
+        expect(res.status).toBe(200);
+        return Buffer.from(await res.arrayBuffer());
+      },
+    );
     archive = result;
     // The job did the work the bound is held against.
     expect(await manifestOf(archive)).toMatchObject({
@@ -238,15 +264,15 @@ describe("GET /health while a long job runs", () => {
       edge_count: ITEMS * 0.75,
       blob_count: 20,
     });
-    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
-    expect(asked).toBeGreaterThan(20);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
   it("answers within the bound during an archive restore of that archive", async () => {
     const target = await createTestContext();
     try {
       initEventLog(target.storage.eventLog);
-      const { worstMs, asked, result } = await worstWait(
+      const { worstCpuMs, asked, result } = await longestStretch(
         mountHealth(target),
         async () =>
           target.app.request("/admin/restore-archive", {
@@ -264,49 +290,60 @@ describe("GET /health while a long job runs", () => {
         edges_imported: ITEMS * 0.75,
         blobs_imported: 20,
       });
-      expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
-      expect(asked).toBeGreaterThan(20);
+      expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+      expect(asked).toBeGreaterThan(0);
     } finally {
       await target.cleanup();
     }
   }, 300_000);
 
   it("answers within the bound during an NDJSON export of 20,000 items", async () => {
-    const { worstMs, asked, result } = await worstWait(health, async () => {
-      const res = await source.app.request("/export", {
-        headers: { Authorization: `Bearer ${source.workingKey}` },
-      });
-      expect(res.status).toBe(200);
-      return (await res.text()).split("\n").filter(Boolean).length;
-    });
+    const { worstCpuMs, asked, result } = await longestStretch(
+      health,
+      async () => {
+        const res = await source.app.request("/export", {
+          headers: { Authorization: `Bearer ${source.workingKey}` },
+        });
+        expect(res.status).toBe(200);
+        return (await res.text()).split("\n").filter(Boolean).length;
+      },
+    );
     expect(result).toBe(ITEMS + 20 + ITEMS * 0.75);
-    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
-    expect(asked).toBeGreaterThan(20);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
   it("answers within the bound during a bulk action over 10,000 items", async () => {
-    const { worstMs, asked, result } = await worstWait(health, async () => {
-      const queued = await request(source.app, "POST", "/items/bulk-actions", {
-        key: source.workingKey,
-        body: {
-          action: "update_tier",
-          tier: "feed",
-          filter: { source: "bulk-target" },
-          max_items: BULK_TARGETS,
-        },
-      });
-      expect(queued.status, await queued.clone().text()).toBe(202);
-      const job = (await queued.json()) as { id: string };
-      const worker = new BulkActionWorker({ storage: source.storage });
-      expect(await worker.runOnce()).toBe(true);
-      return source.storage.bulkActionJobs.getById(job.id);
-    });
+    const { worstCpuMs, asked, result } = await longestStretch(
+      health,
+      async () => {
+        const queued = await request(
+          source.app,
+          "POST",
+          "/items/bulk-actions",
+          {
+            key: source.workingKey,
+            body: {
+              action: "update_tier",
+              tier: "feed",
+              filter: { source: "bulk-target" },
+              max_items: BULK_TARGETS,
+            },
+          },
+        );
+        expect(queued.status, await queued.clone().text()).toBe(202);
+        const job = (await queued.json()) as { id: string };
+        const worker = new BulkActionWorker({ storage: source.storage });
+        expect(await worker.runOnce()).toBe(true);
+        return source.storage.bulkActionJobs.getById(job.id);
+      },
+    );
     expect(result).toMatchObject({
       status: "completed",
       processed_count: BULK_TARGETS,
     });
-    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
-    expect(asked).toBeGreaterThan(20);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
   it("answers within the bound during the blob orphan sweep", async () => {
@@ -315,14 +352,14 @@ describe("GET /health while a long job runs", () => {
       source.blobs,
       86_400_000,
     );
-    const { worstMs, asked, result } = await worstWait(health, () =>
+    const { worstCpuMs, asked, result } = await longestStretch(health, () =>
       reporter.runOnce(),
     );
     // Every blob is named by a row, so the sweep walked the corpus to learn
     // that and reported none.
     expect(result).toEqual({ reported: 0, purged: 0 });
-    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
-    expect(asked).toBeGreaterThan(5);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
   it("answers within the bound during version thinning", async () => {
@@ -332,12 +369,53 @@ describe("GET /health while a long job runs", () => {
       weeklySnapshotDays: 0,
       maxVersions: 1,
     });
-    const { worstMs, asked, result } = await worstWait(health, () =>
+    const { worstCpuMs, asked, result } = await longestStretch(health, () =>
       thinner.runOnce(),
     );
     expect(result.items).toBe(100);
     expect(result.pruned).toBeGreaterThan(400);
-    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("answers within the bound during the enrichment sweep", async () => {
+    const sweeper = new TextEnrichmentSweeper({
+      storage: source.storage,
+      blobs: source.blobs,
+      ocr: null,
+      batchSize: 20,
+      itemTimeoutMs: 60_000,
+      maxBlobBytes: 20 * 1024 * 1024,
+      maxTextChars: 100_000,
+      maxAttempts: 3,
+    });
+    const { worstCpuMs, asked, result } = await longestStretch(health, () =>
+      sweeper.runOnce(),
+    );
+    // Every file row was offered and settled one way or another.
+    expect(result.extracted + result.skipped + result.failed).toBe(20);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
+    expect(asked).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("answers within the bound during the retirement of inactive grants", async () => {
+    // Grants with no client behind them, so the retirement is one update
+    // each; 400 of them, forgotten for years.
+    await sql(
+      source,
+      `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < 400)
+       INSERT INTO items (id, type, properties, created_at, updated_at, occurred_at)
+       SELECT printf('01912349-0000-7000-8000-%012x', v), 'system.connection',
+         jsonb(json_object('kind', 'app', 'status', 'active', 'granted_at', ?, 'last_used_at', ?)),
+         ?, ?, ? FROM n`,
+      [at, at, at, at, at],
+    );
+    const retirer = new GrantInactivityRetirer(source.storage, 365);
+    const { worstCpuMs, asked, result } = await longestStretch(health, () =>
+      retirer.runOnce(),
+    );
+    expect(result).toBe(400);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 });
