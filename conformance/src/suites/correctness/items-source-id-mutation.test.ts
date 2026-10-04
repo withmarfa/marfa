@@ -65,8 +65,8 @@ describe("PATCH /items/:id source_id mutation", () => {
   });
 
   it("refuses a move onto the natural key of a row in the bin", async () => {
-    // The unique index counts a row in the bin, so its key is taken; a
-    // lookup that skipped it let the write reach the index and answer 500.
+    // The unique index counts a row in the bin, so its key is taken, and
+    // the move is a conflict rather than a failure at the index.
     const heldSourceId = `binned-${generateId()}`;
     const holder = await client.createItem(
       createNote({ source: ctx.source, source_id: heldSourceId }),

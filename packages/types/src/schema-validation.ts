@@ -1332,7 +1332,7 @@ function validateVersionPolicy(
       errors.push(
         issue({
           field: `version_policy.${key}`,
-          expected: `at least ${ahead}, ${String(before)}`,
+          expected: `at least ${ahead} (${String(before)})`,
           actual: describe(value),
           hint: "The windows run recent_days, then daily_snapshot_days, then weekly_snapshot_days, each counted back from now.",
         }),
