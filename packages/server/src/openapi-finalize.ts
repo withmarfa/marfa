@@ -150,7 +150,7 @@ const PUBLIC_TAGS = [
   {
     name: "Instance",
     description:
-      "The instance itself: what it is, its configuration, its background jobs and its audit log.",
+      "The instance itself: what it is, its configuration, its housekeeping jobs and its audit log.",
   },
   {
     name: "Export and restore",
