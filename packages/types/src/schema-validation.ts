@@ -1010,6 +1010,7 @@ function validateDescendantShapes(
       required: requiredNames.has(name),
     });
     for (const child of descendants) {
+      if (!Object.hasOwn(child.fields, name)) continue;
       const declared = child.fields[name];
       if (!declared) continue;
       const conflict = describeShapeConflict(declared, own);
@@ -1221,7 +1222,11 @@ function visibleDefinition(
   requiredNames: ReadonlySet<string>,
   ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
 ): FieldDefinition | undefined {
-  const own = asRecord(fields?.[name]);
+  const own = asRecord(
+    fields !== undefined && Object.hasOwn(fields, name)
+      ? fields[name]
+      : undefined,
+  );
   return own
     ? normalizeFieldDefinition(own, { required: requiredNames.has(name) })
     : ancestorFields.get(name)?.definition;
