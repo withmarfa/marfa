@@ -830,4 +830,19 @@ describe("a query key no door declares", () => {
     );
     expect(body.error.details?.unknown_parameters).toEqual(["typ"]);
   });
+
+  it("answers a copy stream request with a stray key 401, then 403 for a key that reads no type", async () => {
+    const path = "/events?copy=1&edges=all&x=1";
+    const bare = await fetch(`${apiUrl}${path}`);
+    expect(bare.status).toBe(401);
+    const operator = await fetch(`${apiUrl}${path}`, {
+      headers: { Authorization: `Bearer ${process.env.MARFA_OPERATOR_KEY}` },
+    });
+    expect(operator.status).toBe(403);
+    const reader = await fetch(`${apiUrl}${path}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (reader.status !== 400) await reader.body?.cancel();
+    expect(reader.status).toBe(400);
+  });
 });

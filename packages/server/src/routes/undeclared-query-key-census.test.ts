@@ -151,4 +151,16 @@ describe("a query key no door declares", () => {
     );
     expect(stale.sort()).toEqual([]);
   });
+
+  it("answers a copy stream request the way every door does: 401, then the standing rule, then the query", async () => {
+    const ask = (key?: string) =>
+      ctx.app.request("/events?copy=1&edges=all&x=1", {
+        headers: key === undefined ? {} : { Authorization: `Bearer ${key}` },
+      });
+    expect((await ask()).status).toBe(401);
+    // The operator key reads no type, so the door turns it away whatever the query holds.
+    expect((await ask(ctx.operatorKey)).status).toBe(403);
+    // A key that may use the door meets the copy stream's own refusal of the key.
+    expect((await ask(ctx.workingKey)).status).toBe(400);
+  });
 });

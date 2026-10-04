@@ -505,7 +505,13 @@ export function eventRoutes(
   const copyMode: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (c.req.query("copy") !== undefined) {
       requireAuth(c);
-      copyStreamRequest(c);
+      try {
+        copyStreamRequest(c);
+      } catch (refused) {
+        // A request this door turns away learns nothing about its query.
+        await readsSomeType(c, () => Promise.resolve());
+        throw refused;
+      }
       const cap = options.maxViewers ?? 0;
       if (cap > 0 && liveViewers >= cap)
         throw new MarfaError(
