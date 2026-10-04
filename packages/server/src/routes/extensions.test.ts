@@ -58,8 +58,18 @@ describe("GET /items/:id/extensions", () => {
 
     // Seed a namespace the scoped key can read ("friends") and one it
     // cannot ("other").
-    await ctx.storage.metadata.setExtension(itemId, "friends", { count: 3 });
-    await ctx.storage.metadata.setExtension(itemId, "other", { secret: true });
+    await ctx.storage.metadata.setExtension(
+      itemId,
+      "friends",
+      { count: 3 },
+      null,
+    );
+    await ctx.storage.metadata.setExtension(
+      itemId,
+      "other",
+      { secret: true },
+      null,
+    );
 
     // Admin sees everything.
     const adminRes = await request(
@@ -119,7 +129,7 @@ describe("GET /items/:id/extensions", () => {
 describe("GET /items/:id/extensions/:namespace", () => {
   it("returns 403 when the key has no read permission", async () => {
     const itemId = await createItem();
-    await ctx.storage.metadata.setExtension(itemId, "other", { foo: 1 });
+    await ctx.storage.metadata.setExtension(itemId, "other", { foo: 1 }, null);
 
     const res = await request(
       ctx.app,
@@ -134,9 +144,14 @@ describe("GET /items/:id/extensions/:namespace", () => {
 
   it("returns 200 with data when the key can read", async () => {
     const itemId = await createItem();
-    await ctx.storage.metadata.setExtension(itemId, "friends", {
-      count: 7,
-    });
+    await ctx.storage.metadata.setExtension(
+      itemId,
+      "friends",
+      {
+        count: 7,
+      },
+      null,
+    );
 
     const res = await request(
       ctx.app,
@@ -259,9 +274,14 @@ describe("DELETE /items/:id/extensions/:namespace", () => {
 
   it("deletes on happy path and records an audit entry", async () => {
     const itemId = await createItem();
-    await ctx.storage.metadata.setExtension(itemId, "noter", {
-      starred: true,
-    });
+    await ctx.storage.metadata.setExtension(
+      itemId,
+      "noter",
+      {
+        starred: true,
+      },
+      null,
+    );
 
     const res = await request(
       ctx.app,

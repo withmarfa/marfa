@@ -187,12 +187,22 @@ describe("an OAuth-derived subscriber", () => {
     });
     // Distinctive values, so an assertion that they are absent cannot be
     // satisfied — or defeated — by a substring of the item itself.
-    await ctx.storage.metadata.setExtension(item.id, "mine", {
-      marker: "ZZmineZZ",
-    });
-    await ctx.storage.metadata.setExtension(item.id, "theirs", {
-      marker: "ZZtheirsZZ",
-    });
+    await ctx.storage.metadata.setExtension(
+      item.id,
+      "mine",
+      {
+        marker: "ZZmineZZ",
+      },
+      null,
+    );
+    await ctx.storage.metadata.setExtension(
+      item.id,
+      "theirs",
+      {
+        marker: "ZZtheirsZZ",
+      },
+      null,
+    );
 
     const stream = await request(ctx.app, "GET", "/events", {
       key: token,

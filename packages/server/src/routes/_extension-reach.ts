@@ -16,7 +16,10 @@
  * OpenAPI document and drives each with a key holding one namespace.
  */
 import { extensionLabelOf } from "../auth/extension-label.js";
-import { filterExtensionsByPermission } from "@withmarfa/shared";
+import {
+  filterExtensionsByPermission,
+  resolveExtensionPermission,
+} from "@withmarfa/shared";
 import type { ApiKey, Metadata } from "@withmarfa/shared";
 
 /** The credential fields the rule reads. */
@@ -24,6 +27,21 @@ export type ExtensionReader = Pick<
   ApiKey,
   "extension_permissions" | "label" | "oauth_client_id"
 >;
+
+/** Whether `reader` may read this namespace, by the rule that decides
+ *  which namespaces of a map it is answered. */
+export function mayReadNamespace(
+  reader: ExtensionReader | undefined,
+  namespace: string,
+): boolean {
+  return (
+    resolveExtensionPermission(
+      namespace,
+      reader?.extension_permissions,
+      extensionLabelOf(reader),
+    ) !== "none"
+  );
+}
 
 /** The namespaces of `extensions` that `reader` may read. */
 export function readableExtensions(

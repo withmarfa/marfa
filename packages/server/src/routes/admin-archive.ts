@@ -247,7 +247,39 @@ interface ArchivedItemLine {
   item: Record<string, unknown>;
   metadata?: unknown;
   lending_blobs?: unknown;
+  lending_extensions?: unknown;
   versions?: unknown;
+}
+
+/** An `edges.ndjson` line. */
+interface ArchivedEdgeLine {
+  edge: Record<string, unknown>;
+  lending_blobs?: unknown;
+}
+
+/** The digests a line says lent, which are the strings of the list it
+ *  names. A line naming none, or a value that is no list, lends nothing. */
+function archivedLending(listed: unknown): ReadonlySet<string> {
+  return new Set(
+    Array.isArray(listed)
+      ? listed.filter((hash): hash is string => typeof hash === "string")
+      : [],
+  );
+}
+
+/** The proof a restore gives a write: a digest lends where the archive says
+ *  it lent in the instance it was taken from. */
+function archivedProof(listed: unknown): (hash: string) => Promise<boolean> {
+  const lending = archivedLending(listed);
+  return (hash) => Promise.resolve(lending.has(hash));
+}
+
+/** `archivedProof` for each namespace of an item's extensions. */
+function archivedExtensionProofs(
+  listed: unknown,
+): (namespace: string) => (hash: string) => Promise<boolean> {
+  const byNamespace = isRecord(listed) ? listed : {};
+  return (namespace) => archivedProof(byNamespace[namespace]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,11 +319,10 @@ function itemLines(path: string | undefined) {
   );
 }
 
-/** The `edge` of each `edges.ndjson` line. */
 function edgeLines(path: string | undefined) {
   return parsedLines(path, (parsed) =>
-    isRecord(parsed) && parsed.edge
-      ? (parsed.edge as Record<string, unknown>)
+    isRecord(parsed) && isRecord(parsed.edge)
+      ? (parsed as unknown as ArchivedEdgeLine)
       : null,
   );
 }
@@ -656,10 +687,7 @@ async function restoreRows(
               // A digest lends here exactly where it lent in the
               // instance the archive was taken from, and a line naming
               // none lends nothing.
-              blob_proof: (hash) =>
-                Promise.resolve(
-                  Array.isArray(lending) && lending.includes(hash),
-                ),
+              blob_proof: archivedProof(lending),
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes
               // back at its archived version too. Re-minting at 1 lets
@@ -709,6 +737,7 @@ async function restoreRows(
         const { extensions: stored } = await storage.metadata.setExtensions(
           created.id,
           archiveExtensions(meta),
+          archivedExtensionProofs(entry.lending_extensions),
         );
         // A history conflict escapes the create-only duplicate catch
         // above: an existing snapshot ID belongs to a different
@@ -752,9 +781,10 @@ async function restoreRows(
         resolvableIds.has(id) || (await storage.items.get(id)) !== null;
 
       let edgeIndex = 0;
-      const restoreEdge = async (
-        edge: Record<string, unknown>,
-      ): Promise<void> => {
+      const restoreEdge = async ({
+        edge,
+        lending_blobs: lending,
+      }: ArchivedEdgeLine): Promise<void> => {
         const dates = archiveDates("edge", edge, edgeIndex);
         edgeIndex++;
         const sourceId = edge.source_id;
@@ -833,6 +863,7 @@ async function restoreRows(
             target_id: targetId,
             edge_type: edgeType,
             properties: (edge.properties ?? {}) as Record<string, unknown>,
+            blob_proof: archivedProof(lending),
           }),
         );
         edgesImported++;
@@ -935,8 +966,9 @@ export function adminArchiveRoutes(
       }
       seenSnapshotIds.clear();
       let totalEdges = 0;
-      for await (const { value: edge } of edgeLines(paths["edges.ndjson"])) {
-        if (edge === null) continue;
+      for await (const { value: line } of edgeLines(paths["edges.ndjson"])) {
+        if (line === null) continue;
+        const { edge } = line;
         archiveDates("edge", edge, totalEdges);
         const refusal =
           archiveScalarRefusal("edge", edge, totalEdges) ??

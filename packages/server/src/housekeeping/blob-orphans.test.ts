@@ -229,9 +229,14 @@ describe("BlobOrphanReporter.runOnce", () => {
     });
     expect(created.status).toBe(201);
     const { item } = (await created.json()) as { item: { id: string } };
-    await ctx.storage.metadata.setExtension(item.id, "user.files", {
-      attachment: named,
-    });
+    await ctx.storage.metadata.setExtension(
+      item.id,
+      "user.files",
+      {
+        attachment: named,
+      },
+      null,
+    );
 
     await reportThenPurge(ctx);
 
@@ -748,6 +753,79 @@ describe("a reference added or removed between runs", () => {
   });
 });
 
+describe("a purge that takes the rows naming a blob restarts the grace", () => {
+  it("restarts the grace for a blob only an extension and an edge of a purged item named", async () => {
+    ctx = await createTestContext();
+    const viaExtension = await upload(
+      ctx,
+      "named by the extension of a purged item",
+    );
+    const viaEdge = await upload(ctx, "named by the edge of a purged item");
+    const ids: string[] = [];
+    for (const body of ["the purged one", "the survivor"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body } },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const put = await request(
+      ctx.app,
+      "PUT",
+      `/items/${String(ids[0])}/extensions/custom.cover`,
+      { key: ctx.workingKey, body: { cover: viaExtension } },
+    );
+    expect(put.status, await put.clone().text()).toBe(200);
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { caption: `see ${viaEdge}` },
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    // The witness: both are named now, so a run reports neither.
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 0 });
+
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${String(ids[0])}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const purged = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${String(ids[0])}/purge`,
+      {
+        key: ctx.workingKey,
+      },
+    );
+    expect(purged.status, await purged.clone().text()).toBe(200);
+
+    // Nothing names them now, and the grace counts from a report made after
+    // the purge: the first run reports, the second purges.
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 2, purged: 0 });
+    expect(await ctx.blobs.disk.has(viaExtension)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(viaEdge)).not.toBeNull();
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 2 });
+  });
+});
+
 describe("lifting a report costs a lookup, not a scan", () => {
   /** Raw SQL on the test's own database. */
   function raw(c: TestContext) {
@@ -757,13 +835,17 @@ describe("lifting a report costs a lookup, not a scan", () => {
     };
   }
 
-  it("puts no text-matching trigger on extensions, edges or versions", async () => {
+  it("puts a trigger on the reference indexes and none that matches text", async () => {
     ctx = await createTestContext();
     const triggers = await raw(ctx).__sqliteAll(
       "SELECT tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
     );
     expect(new Set(triggers.map((t) => t.tbl_name))).toEqual(
-      new Set(["item_blob_references"]),
+      new Set([
+        "item_blob_references",
+        "edge_blob_references",
+        "extension_blob_references",
+      ]),
     );
   });
 

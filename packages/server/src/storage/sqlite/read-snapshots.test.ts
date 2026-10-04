@@ -609,21 +609,39 @@ it("source movement bumps, target-only movement and ordinary edge writes do not"
     properties: {},
   });
   const held = await generation();
-  await storage.edges.updateProperties(edge.id, {}, undefined, {
-    source_id: first.id,
-    target_id: third.id,
-  });
+  await storage.edges.updateProperties(
+    edge.id,
+    {},
+    undefined,
+    {
+      source_id: first.id,
+      target_id: third.id,
+    },
+    null,
+  );
   expect(await generation()).toBe(held);
-  const refused = await storage.edges.updateProperties(edge.id, {}, 999, {
-    source_id: second.id,
-    target_id: third.id,
-  });
+  const refused = await storage.edges.updateProperties(
+    edge.id,
+    {},
+    999,
+    {
+      source_id: second.id,
+      target_id: third.id,
+    },
+    null,
+  );
   expect(refused.ok).toBe(false);
   expect(await generation()).toBe(held);
-  await storage.edges.updateProperties(edge.id, {}, undefined, {
-    source_id: second.id,
-    target_id: third.id,
-  });
+  await storage.edges.updateProperties(
+    edge.id,
+    {},
+    undefined,
+    {
+      source_id: second.id,
+      target_id: third.id,
+    },
+    null,
+  );
   expect(await generation()).toBe((BigInt(held!) + 1n).toString());
   const moved = await generation();
   await storage.edges.delete(edge.id);

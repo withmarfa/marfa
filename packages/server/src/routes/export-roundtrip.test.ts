@@ -114,10 +114,15 @@ describe("export → restore round trip", () => {
       source: "rt-seed",
       source_id: "n3",
     });
-    await source.storage.metadata.setExtension(note1.id, "roundtrip.test", {
-      checked: true,
-      label: "kept",
-    });
+    await source.storage.metadata.setExtension(
+      note1.id,
+      "roundtrip.test",
+      {
+        checked: true,
+        label: "kept",
+      },
+      null,
+    );
     const edge1 = await source.storage.edges.createRaw({
       source_id: note1.id,
       target_id: note2.id,

@@ -21,6 +21,7 @@ import {
 } from "@withmarfa/shared";
 import type { Edge, PaginatedResult } from "@withmarfa/shared";
 import type {
+  BlobProof,
   EdgeStore,
   EdgeListFilters,
   StoredCreateEdgeInput,
@@ -37,7 +38,7 @@ import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
 import { edges, edgeTypes } from "./schema.js";
-import { liftOrphanReports } from "./blob-references.js";
+import { syncEdgeBlobReferences } from "./blob-references.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 
@@ -104,7 +105,11 @@ export class SqliteEdgeStore implements EdgeStore {
       }
       try {
         await tx.insert(edges).values(row).run();
-        await liftOrphanReports(tx, [row.properties]);
+        await syncEdgeBlobReferences(
+          tx,
+          { id, properties },
+          input.blob_proof ?? null,
+        );
       } catch (err) {
         if (isPrimaryKeyViolation(err, "edges")) {
           // An id held by an edge the caller may not read, which the doors
@@ -286,8 +291,9 @@ export class SqliteEdgeStore implements EdgeStore {
   async updateProperties(
     id: string,
     properties: Record<string, unknown>,
-    expectedVersion?: number,
-    ends?: { source_id: string; target_id: string },
+    expectedVersion: number | undefined,
+    ends: { source_id: string; target_id: string } | undefined,
+    proof: BlobProof,
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }> {
     const identity = eq(edges.id, id);
     const where =
@@ -328,7 +334,7 @@ export class SqliteEdgeStore implements EdgeStore {
         .returning();
       if (written) {
         if (written.source_id !== row.source_id) markStructuralReadChange();
-        await liftOrphanReports(tx, [row.properties, written.properties]);
+        await syncEdgeBlobReferences(tx, { id, properties: merged }, proof);
         return { ok: true as const, edge: rowToEdge(written) };
       }
       // The write matched nothing while the read found the row, so the
@@ -355,17 +361,11 @@ export class SqliteEdgeStore implements EdgeStore {
     return this.removeWhere(and(...conditions));
   }
 
-  /** Every edge deletion: the rows go, and the blobs their properties
-   *  named have their orphan reports lifted, in one transaction. */
+  /** Every edge deletion. The rows' blob references go with them by the
+   *  foreign key's cascade, in the same statement. */
   private async removeWhere(where: SQL | undefined): Promise<Edge[]> {
-    return this.db.transaction(async (tx) => {
-      const removed = await tx.delete(edges).where(where).returning();
-      await liftOrphanReports(
-        tx,
-        removed.map((row) => row.properties),
-      );
-      return removed.map(rowToEdge);
-    });
+    const removed = await this.db.delete(edges).where(where).returning();
+    return removed.map(rowToEdge);
   }
 
   async countsBySourceBatch(

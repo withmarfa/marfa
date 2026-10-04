@@ -39,8 +39,8 @@ process.once(
         const metadata = storage.metadata;
         const setExtensions = metadata.setExtensions.bind(metadata);
         let written = 0;
-        metadata.setExtensions = async (id, extensions) => {
-          const result = await setExtensions(id, extensions);
+        metadata.setExtensions = async (id, extensions, proofFor) => {
+          const result = await setExtensions(id, extensions, proofFor);
           written += 1;
           if (written === stopAfter) {
             process.send?.({ kind: "stopped", written });

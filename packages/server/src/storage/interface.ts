@@ -613,8 +613,12 @@ export interface RestoredRowInput {
  * this answers true. Absent for a write the server makes for no credential,
  * whose digests never lend.
  */
+/** The proof a write carries, or null for one made for no credential, which
+ *  proves nothing. */
+export type BlobProof = ((hash: string) => Promise<boolean>) | null;
+
 export interface BlobProofInput {
-  blob_proof?: (hash: string) => Promise<boolean>;
+  blob_proof?: NonNullable<BlobProof>;
 }
 
 export type StoredCreateItemInput = CreateItemInput &
@@ -625,7 +629,8 @@ export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 
 export type StoredCreateEdgeInput = CreateEdgeInput &
   RestoredRowInput &
-  ArchivedDates;
+  ArchivedDates &
+  BlobProofInput;
 /**
  * The store's update input, which differs from the door's in one field.
  *
@@ -900,10 +905,16 @@ export interface MetadataStore {
   getExtensionsForItems(
     itemIds: string[],
   ): Promise<Map<string, Record<string, Record<string, unknown>>>>;
+  /**
+   * Replace one namespace. `proof` is what the write's credential has proved
+   * of the digests it sends (`BlobProofInput`); `null` for a write made for
+   * no credential, whose digests never lend.
+   */
   setExtension(
     itemId: string,
     namespace: string,
     data: Record<string, unknown>,
+    proof: BlobProof,
   ): Promise<Record<string, Record<string, unknown>>>;
   /**
    * `setExtension` for several namespaces of one item at once, replacing
@@ -923,9 +934,8 @@ export interface MetadataStore {
    * nothing at all rather than touching the row to store what it already
    * holds.
    *
-   * Unconditional replace, with `setExtension`'s hazard and not
-   * `mutateExtension`'s guarantee: a value derived from a previous read
-   * still belongs in `mutateExtension`.
+   * Unconditional replace, so a value derived from a previous read can
+   * overwrite a namespace another writer has since changed.
    *
    * Answers the post-write modification time alongside the map, because
    * the caller this exists for publishes the item it just wrote and would
@@ -934,24 +944,8 @@ export interface MetadataStore {
   setExtensions(
     itemId: string,
     entries: Record<string, Record<string, unknown>>,
+    proofFor: (namespace: string) => BlobProof,
   ): Promise<SetExtensionsResult>;
-  /**
-   * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
-   * namespace's current contents (an empty record when unset) exactly
-   * once and returns the replacement; the whole cycle runs inside a
-   * single row-locked transaction. Returns the persisted contents.
-   *
-   * `setExtension` is the unconditional-replace variant: it commits a
-   * value the caller computed from a snapshot taken earlier, so two
-   * writers on one item can each overwrite the other's namespace from
-   * stale state. Any write whose new value is derived from the old one
-   * must go through this method instead.
-   */
-  mutateExtension(
-    itemId: string,
-    namespace: string,
-    mutate: (current: Record<string, unknown>) => Record<string, unknown>,
-  ): Promise<Record<string, unknown>>;
   deleteExtension(
     itemId: string,
     namespace: string,
@@ -1252,6 +1246,20 @@ export interface BlobLocation {
 }
 
 /**
+ * What a credential may read, as the blob doors ask it of the references
+ * that lend.
+ */
+export interface BlobReach {
+  /** The item types it may read, as `computeTypeFilter` states them. */
+  allowedTypes: readonly string[];
+  excludedTypes: readonly string[];
+  /** Whether its edge map lets it read edges of this type. */
+  readsEdgeType: (edgeType: string) => boolean;
+  /** Whether its extension map lets it read this namespace. */
+  readsNamespace: (namespace: string) => boolean;
+}
+
+/**
  * The blob registry: one row per content hash, the stores this instance
  * has attached, and the location log that says which stores hold which
  * blob. The bytes themselves live behind `BlobStore`.
@@ -1265,17 +1273,24 @@ export interface BlobRegistry {
   /** Every registered hash. */
   listAll(): Promise<string[]>;
   /**
-   * Whether an item, in any lifecycle state and of a type the filter admits,
-   * references `hash` in its properties with a reference that lends. Asked
-   * as one indexed existence test that stops at the first match.
+   * Whether `reach` reads `hash` through a reference that lends: an item's
+   * properties, an edge's properties or an item's extension namespace, each
+   * in any lifecycle state of an item of a type `reach` admits. The item's
+   * test is one indexed existence test that stops at the first match; the
+   * other two read the edge types and namespaces the lending references
+   * sit in, and ask `reach` about each.
    */
-  readableThrough(
-    hash: string,
-    allowedTypes: readonly string[],
-    excludedTypes: readonly string[],
-  ): Promise<boolean>;
+  readableThrough(hash: string, reach: BlobReach): Promise<boolean>;
   /** The digests in this item's properties that lend its reach. */
   lendingHashesOf(itemId: string): Promise<string[]>;
+  /** The digests in each edge's properties that lend its reach, an empty
+   *  list for an edge that has none. */
+  lendingHashesOfEdges(
+    edgeIds: readonly string[],
+  ): Promise<Map<string, string[]>>;
+  /** The digests in each of this item's extension namespaces that lend its
+   *  reach, for the namespaces that have any. */
+  lendingHashesOfExtensions(itemId: string): Promise<Record<string, string[]>>;
   /** Whether `uploader` has sent this blob's bytes. */
   uploadedBy(hash: string, uploader: string): Promise<boolean>;
   /**
@@ -2376,12 +2391,17 @@ export interface EdgeStore {
    * Returns the written edge, or the current one when the precondition did
    * not hold. A discriminated result rather than a thrown error so a new
    * call site has to state an answer instead of inheriting one.
+   *
+   * `proof` is what the write's credential has proved of the digests it
+   * sends (`BlobProofInput`); `null` for a write made for no credential,
+   * whose digests never lend.
    */
   updateProperties(
     id: string,
     properties: Record<string, unknown>,
-    expectedVersion?: number,
-    ends?: { source_id: string; target_id: string },
+    expectedVersion: number | undefined,
+    ends: { source_id: string; target_id: string } | undefined,
+    proof: BlobProof,
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }>;
   /**
    * Delete an edge by id and return the row that went, or `null` where no
