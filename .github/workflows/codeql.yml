@@ -1,7 +1,8 @@
 name: CodeQL
 
 # A pull request or a push to `main` that changes only documentation, the
-# license or agent instructions, settings and hooks starts no run. CodeQL is
+# license, agent settings or issue templates starts no run. Code in the other
+# agent folders, which ESLint also reads, is analyzed. CodeQL is
 # not a required check, so a run that never starts leaves no check pending.
 # A draft pull request is analyzed once it is marked ready for review, and on
 # every push after that. The weekly run analyzes the whole tree.
@@ -11,10 +12,8 @@ on:
     paths-ignore:
       - "**/*.md"
       - LICENSE
-      - ".agents/**"
       - ".claude/**"
       - ".codex/**"
-      - ".githooks/**"
       - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches: [main]
@@ -22,10 +21,8 @@ on:
     paths-ignore:
       - "**/*.md"
       - LICENSE
-      - ".agents/**"
       - ".claude/**"
       - ".codex/**"
-      - ".githooks/**"
       - ".github/ISSUE_TEMPLATE/**"
   schedule:
     - cron: "41 4 * * 1"

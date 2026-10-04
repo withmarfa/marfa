@@ -40,9 +40,9 @@ jobs:
   # can affect it. A skipped job satisfies its required check, where a
   # `paths` filter on the workflow would leave the check pending. A draft
   # runs only the jobs `DRAFT_JOBS` names there, and `full` is `false` for it.
-  # A push to `main` that changes only documentation skips what a pull
-  # request would only once this workflow passed on the commit before it,
-  # which is what `actions: read` is for.
+  # A push to `main` skips them only when it changes nothing but
+  # documentation and this workflow passed on the commit before it, which
+  # `actions: read` lets the classifier ask.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest

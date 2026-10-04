@@ -72,7 +72,7 @@ describe("what a change runs", () => {
     ],
     ["the licence alone", ["LICENSE"], []],
     [
-      "agent instructions, settings and Git hooks, in any language",
+      "agent instructions, settings and Git hooks, in any language ESLint does not read",
       [
         "AGENTS.md",
         "CLAUDE.md",
@@ -85,6 +85,11 @@ describe("what a change runs", () => {
         ".github/ISSUE_TEMPLATE/bug.yml",
       ],
       ["ci-sqlite"],
+    ],
+    [
+      "JavaScript or TypeScript in an agent folder, which ESLint reads",
+      [".agents/skills/release/helper.ts", ".githooks/check.mjs"],
+      ["ci-sqlite", "workspace"],
     ],
     [
       "a path named like an agent folder that is not one",
@@ -104,6 +109,11 @@ describe("what a change runs", () => {
       "an action a workflow could use",
       [".github/actions/setup/action.yml"],
       [...JOBS],
+    ],
+    [
+      "the core's ignore file, which can hide a generated client file",
+      ["core/.gitignore"],
+      ["clients-freshness"],
     ],
     [
       "the settings example, which the settings census test reads",
@@ -608,10 +618,8 @@ describe("CodeQL", () => {
     const documentation = [
       "**/*.md",
       "LICENSE",
-      ".agents/**",
       ".claude/**",
       ".codex/**",
-      ".githooks/**",
       ".github/ISSUE_TEMPLATE/**",
     ];
     expect(on.push).toEqual({
@@ -635,10 +643,9 @@ describe("CodeQL", () => {
     for (const path of [
       "README.md",
       "LICENSE",
-      ".agents/skills/release/helper.py",
+      ".agents/skills/release/SKILL.md",
       ".claude/settings.json",
       ".codex/config.toml",
-      ".githooks/pre-push",
       ".github/ISSUE_TEMPLATE/bug.yml",
     ]) {
       expect(skips(path), path).toBe(true);
@@ -647,8 +654,16 @@ describe("CodeQL", () => {
       );
     }
     expect(skips("conformance/spec/items.md")).toBe(true);
+    // No tracked file it skips is in a language it analyzes.
+    expect(
+      tracked().filter(
+        (path) => skips(path) && /\.([cm]?[jt]sx?|rs)$/.test(path),
+      ),
+    ).toEqual([]);
     for (const path of [
       ".github/workflows/ci.yml",
+      ".agents/skills/release/helper.ts",
+      ".githooks/check.mjs",
       "packages/server/src/runtime.ts",
       "deploy/healthcheck.js",
       "core/marfa-core/src/lib.rs",
@@ -816,10 +831,14 @@ describe("the classifier as CI runs it", () => {
     });
     commit("workflow", { ".github/workflows/new.yml": "on: push\n" });
     commit("unknown", { "tools/new.ts": "export {};\n" });
-    commit("hook", { ".githooks/check.ts": "export {};\n" });
-    git("mv", ".githooks/check.ts", "packages/server/src/check.ts");
+    commit("helper", { ".agents/helper.py": "print('helper')\n" });
+    mkdirSync(join(directory, "scripts"));
+    git("mv", ".agents/helper.py", "scripts/helper.py");
     git("commit", "-qm", "moved");
     commits.moved = git("rev-parse", "HEAD");
+    git("mv", "scripts/helper.py", "NOTES.md");
+    git("commit", "-qm", "noted");
+    commits.noted = git("rev-parse", "HEAD");
     writeFileSync(
       join(fake, "gh"),
       '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$(dirname "$0")/calls"\ncat "$(dirname "$0")/response"\n',
@@ -1050,6 +1069,7 @@ describe("the classifier as CI runs it", () => {
         (before) => [green(before, "push", "next")],
       ],
       ["passed only on another commit", () => [green("f".repeat(40))]],
+      ["passed only on a nightly run", (before) => [green(before, "schedule")]],
       ["cannot be asked about", () => undefined],
       ["answers something that is not JSON", () => "not json"],
       ["answers JSON without runs", () => "{}"],
@@ -1077,8 +1097,8 @@ describe("the classifier as CI runs it", () => {
       ["code", "docs", "server"],
       ["a workflow", "instructions", "workflow"],
       ["a path no rule names", "workflow", "unknown"],
-      ["code renamed into documentation", "server", "rename"],
-      ["code renamed out of an agent folder", "hook", "moved"],
+      ["code renamed into documentation only Prettier reads", "moved", "noted"],
+      ["a file renamed out of an agent folder into code", "helper", "moved"],
       ["nothing", "docs", "docs"],
     ])(
       "runs every job, and never asks, when the push changes %s",

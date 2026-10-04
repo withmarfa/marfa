@@ -1,5 +1,5 @@
 /**
- * Which CI jobs a pull request's changes can affect.
+ * Which CI jobs a change can affect.
  *
  * Each job in `ci.yml` and `core.yml` runs when this answers `true` for it
  * and is skipped otherwise, and a skipped job satisfies a required check
@@ -172,7 +172,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/Cargo\.lock$/, [...RUST, "clients-freshness"]],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
   [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
-  [/^core\/\.gitignore$/, []],
+  // It can hide a file the client generator writes from the freshness
+  // check's `git status`.
+  [/^core\/\.gitignore$/, ["clients-freshness"]],
   [/^core\/scripts\/test-limits\.sh$/, ["core-checks", "core", "workspace"]],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
