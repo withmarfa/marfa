@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConnection, SCHEMA_SQL } from "./connection.js";
+import { RefusedDatabaseError } from "./refused-database.js";
 
 const dirs: string[] = [];
 
@@ -64,7 +65,10 @@ describe("a database whose schema is not this build's", () => {
     );
     await expect(createConnection(path)).rejects.toThrow(path);
     await expect(createConnection(path)).rejects.toThrow(
-      /point this server at a fresh file, or discard it/,
+      /export it with the build that wrote it.*start this build on a fresh file.*restore the archive there/,
+    );
+    await expect(createConnection(path)).rejects.toBeInstanceOf(
+      RefusedDatabaseError,
     );
     expect(digest(path)).toBe(before);
   });
