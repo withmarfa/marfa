@@ -430,6 +430,10 @@ jobs:
           name: release-${{ needs.build.outputs.version }}
           path: artifacts
 
+      # The notes open with what a build whose schema differs does to an
+      # existing database (`scripts/release/upgrade-note.md`), and the
+      # generated notes follow.
+      #
       # A draft, so it can be removed, and seen by nobody until it is made
       # public at the end. A release already there keeps every file it holds,
       # which are the ones a registry may already have: re-running the failed
@@ -456,6 +460,7 @@ jobs:
             gh release create "v$VERSION" artifacts/* \
               --draft \
               --title "v$VERSION" \
+              --notes-file scripts/release/upgrade-note.md \
               --generate-notes \
               --verify-tag
           else
