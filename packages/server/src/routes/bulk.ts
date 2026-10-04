@@ -95,7 +95,6 @@ import {
 import {
   refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
-  UNKNOWN_FILTER_FIELD_NOTE,
 } from "./_unknown-query-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 
@@ -112,14 +111,21 @@ const MAX_BULK_ACTION_ITEMS_HARD = 50_000;
 // ---------------------------------------------------------------------------
 
 const BulkInputItemSchema = z.object({
-  id: z.string().optional(),
-  type: z.string(),
-  properties: WrittenPropertiesSchema.optional(),
+  id: z
+    .string()
+    .optional()
+    .describe(
+      "A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read.",
+    ),
+  type: z.string().describe("The item's type identifier, such as `core.note`."),
+  properties: WrittenPropertiesSchema.optional().describe(
+    "The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`.",
+  ),
   properties_mode: z
     .enum(["merge", "replace"])
     .optional()
     .describe(
-      "How `properties` lands on a row this entry resolves, as on `PATCH /items/{id}`: `merge`, the default, lays them over the row's, and `replace` takes them as the row's whole properties, so a field left out is cleared. A stale `replace` clears a field nobody changed since and collides on one the other writer changed. An entry that creates a row writes its properties whole either way.",
+      "How `properties` applies to an existing item, as in `PATCH /items/{id}`. `merge` (the default) lays them over its properties. `replace` takes them as the whole set. A new item takes them whole either way.",
     ),
   /** Every state the platform has, not the three a non-system type can
    *  reach. Naming a state its type's lifecycle does not contain is
@@ -135,9 +141,14 @@ const BulkInputItemSchema = z.object({
     .string()
     .optional()
     .describe(
-      "The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`.",
+      "The source to key and stamp the entry's item with, as in `POST /items`. Defaults to your credential's own; it can also name one of your key's `sources`.",
     ),
-  source_id: z.string().optional(),
+  source_id: z
+    .string()
+    .optional()
+    .describe(
+      "The item's identifier at its source. With `source`, it is the natural key that matches an existing item.",
+    ),
   /** The version this entry was based on, where it resolves a row that
    *  already exists. Optional for the same reason it is optional on
    *  `POST /items`: an entry creating a row it has never read has no
@@ -151,13 +162,23 @@ const BulkInputItemSchema = z.object({
     .min(0)
     .optional()
     .describe(
-      "The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here: the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false.",
+      "The version you read, used when the entry matches an existing item: the update then applies only if the item is still at this version.",
     ),
-  tags: z.array(TagSchema).optional(),
+  tags: z
+    .array(TagSchema)
+    .optional()
+    .describe(
+      "Tags to put on the item: at most 100, each up to 128 characters.",
+    ),
   /** Inline edges (replace-all semantics per edge_type) applied after
    *  create/update in the same transaction. Absent means leave edges
    *  untouched. */
-  edges: z.record(z.string(), z.array(z.string())).optional(),
+  edges: z
+    .record(z.string(), z.array(z.string()))
+    .optional()
+    .describe(
+      "Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched.",
+    ),
 });
 
 // The request shape is `BulkActionInputSchema`, declared once in the
@@ -176,7 +197,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Upsert items in bulk",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. A key reaching no type at all is refused `403 type_not_permitted` before the list is read, an empty list included. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type: the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch`: a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways. An entry may carry `properties_mode` as `PATCH /items/{id}` does: `replace` takes its properties as the row's whole, so a field left out is cleared, and a stale one is merged against the version it names as a stale `PATCH` is.\n\nWhere the entry's type names a `link_field`, an entry that would give its row a value another item of the type holds, in any state, is refused `link_taken` with `details.existing_id` naming the holder, on a create and an update alike, and the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
+    "Creates or updates up to 5,000 items in one call, matching existing items on `(source, source_id)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -184,11 +205,33 @@ const bulkRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            items: z.array(BulkInputItemSchema),
-            mode: z.enum(["upsert", "create_only"]).optional(),
-            atomic: z.boolean().optional(),
-            enable_fanout: z.boolean().optional(),
-            retype: z.boolean().optional(),
+            items: z
+              .array(BulkInputItemSchema)
+              .describe("The entries to write, at most 5,000."),
+            mode: z
+              .enum(["upsert", "create_only"])
+              .optional()
+              .describe(
+                "`upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`.",
+              ),
+            atomic: z
+              .boolean()
+              .optional()
+              .describe(
+                "Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written.",
+              ),
+            enable_fanout: z
+              .boolean()
+              .optional()
+              .describe(
+                "Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way.",
+              ),
+            retype: z
+              .boolean()
+              .optional()
+              .describe(
+                "`true` moves an item to the entry's `type` when the entry resolves an existing item of another type. You need write on both types. Defaults to `false`.",
+              ),
           }),
         },
       },
@@ -199,7 +242,8 @@ const bulkRoute = createRoute({
       content: {
         "application/json": { schema: BulkResponseSchema },
       },
-      description: "Bulk upsert result",
+      description:
+        "Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`.",
     },
     400: {
       content: {
@@ -212,12 +256,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "Validation error, or an atomic rollback. `atomic` defaults to " +
-        "true, so a single refused entry aborts the whole page and the " +
-        "per-entry reason travels in `details.code`, at the status that " +
-        "refusal carries on its own: `400` here, `403`, `404` or `409` " +
-        "below. Send `atomic: false` to have each entry reported on its " +
-        "own instead.",
+        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
     },
     401: {
       content: {
@@ -238,7 +277,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type; `forbidden` for a source the credential does not claim, or for an entry landing by `id` that would move a row's natural key under a source the key neither writes under nor claims. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal, `type_not_permitted` or `forbidden`, in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+        "- `type_not_permitted`: you don't have write on an entry's type, or on the type its natural key matches, or your credential reaches no type.\n- `forbidden`: an entry names a source your key doesn't claim or the instance's source allow-list excludes, or moves a natural key under a source your key doesn't write under.\n- `bulk_atomic_rollback`: one of these under `atomic`.",
     },
     404: {
       content: {
@@ -247,7 +286,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "An atomic rollback for an entry naming a row that is not there, such as an inline edge's target, with `item_not_found` in `details.code`.",
+        "- `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`.",
     },
     409: {
       content: {
@@ -256,7 +295,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "An atomic rollback for an entry whose row moved or is taken, with `version_conflict`, `link_taken`, `type_mismatch` or `id_reused` in `details.code`. The last two turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing, the same code the single-item doors answer.",
+        "- `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` names the cause, such as `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe).",
     },
   },
 });
@@ -268,8 +307,7 @@ const bulkActionRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. A key reaching no type at all, the operator key among them, is refused `403 type_not_permitted` before the filter is read; any other key matches only what it may write. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.\n\n" +
-    UNKNOWN_FILTER_FIELD_NOTE,
+    "Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a job.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -286,12 +324,13 @@ const bulkActionRoute = createRoute({
       content: {
         "application/json": { schema: BulkActionResultSchema },
       },
-      description: "Dry-run result (synchronous; non-dry-run goes async)",
+      description:
+        "Dry run: returns `matched` and the matched `ids` without writing anything. A purge dry run also lists matches that aren't in the trash. The purge skips those.",
     },
     202: {
       content: { "application/json": { schema: BulkActionJobSchema } },
       description:
-        "Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). The envelope is exposed for explicit-control use cases.",
+        "Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands. If your key is revoked or expires, your app's access is revoked, or a purge loses `items.purge`, the job ends `failed` and keeps its `result`.",
     },
     400: {
       content: {
@@ -304,7 +343,8 @@ const bulkActionRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error, missing confirm, or cap exceeded",
+      description:
+        '- `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
     },
     401: {
       content: {
@@ -325,7 +365,7 @@ const bulkActionRoute = createRoute({
         },
       },
       description:
-        "`forbidden` where `items.purge` is missing (purge only); `type_not_permitted` where `filter.type` names a type the credential may not read; `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
+        "- `forbidden`: you don't have `items.purge` for a purge, or the instance's source filter changed while Marfa selected items. Repeat the request.\n- `type_not_permitted`: your credential reaches no type, or `filter.type` is a type you can't read.\n- `edge_permission_denied`: the filter names an edge type you can't read.",
     },
   },
 });
@@ -341,17 +381,18 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Get a bulk-action job",
   description:
-    "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no permission says \"read another credential's bulk jobs\". A job it did not create is refused `403`; the job's existence is not the secret, its contents are.",
+    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or an operator key, can read it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().describe("Bulk-action job id."),
+      id: z.string().describe("The ID of the bulk-action job."),
     }),
   },
   responses: {
     200: {
       content: { "application/json": { schema: BulkActionJobSchema } },
-      description: "Current job state",
+      description:
+        "Returns the job. Once it is terminal, `result.errors` lists each item left unchanged, with a code such as `invalid_transition` (a purge of an item not in the trash), `type_not_permitted` (a type you can no longer write), `item_not_found` (a type you can no longer read) or `invalid_properties`.",
     },
     401: {
       content: {
@@ -367,7 +408,8 @@ const bulkActionStatusRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Not the originating credential, and not the operator key",
+      description:
+        "- `forbidden`: another credential queued the job, and yours is not an operator key.",
     },
     404: {
       content: {
@@ -375,7 +417,7 @@ const bulkActionStatusRoute = createRoute({
           schema: makeErrorResponseSchema(["bulk_job_not_found"]),
         },
       },
-      description: "Job not found",
+      description: "- `bulk_job_not_found`: no job has this ID.",
     },
   },
 });
@@ -390,17 +432,18 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Cancel a bulk-action job",
   description:
-    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. A canceled job stays canceled, and rows already processed stay processed.",
+    "Cancels a bulk-action job and returns it. Items the job already processed stay processed. A job that has already finished is left as it is.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().describe("Bulk-action job id."),
+      id: z.string().describe("The ID of the bulk-action job."),
     }),
   },
   responses: {
     200: {
       content: { "application/json": { schema: BulkActionJobSchema } },
-      description: "Job state after the cancel signal",
+      description:
+        "Returns the job: `canceled` if it was queued or running, otherwise its final state unchanged.",
     },
     401: {
       content: {
@@ -416,7 +459,8 @@ const bulkActionCancelRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Not the originating credential, and not the operator key",
+      description:
+        "- `forbidden`: another credential queued the job, and yours is not an operator key.",
     },
     404: {
       content: {
@@ -424,7 +468,7 @@ const bulkActionCancelRoute = createRoute({
           schema: makeErrorResponseSchema(["bulk_job_not_found"]),
         },
       },
-      description: "Job not found",
+      description: "- `bulk_job_not_found`: no job has this ID.",
     },
   },
 });

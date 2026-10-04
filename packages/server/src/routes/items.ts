@@ -1,10 +1,4 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import {
-  ITEM_NOT_FOUND,
-  ITEM_NOT_FOUND_ON_WRITE,
-  READ_REFUSED,
-  WRITE_REFUSED,
-} from "./_item-refusals.js";
 import { itemListed } from "../storage/read-view.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -66,6 +60,7 @@ import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
+  IDEMPOTENCY_IN_FLIGHT,
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
@@ -79,7 +74,6 @@ import {
   MergeStrategyEnum,
   TierEnum,
   VersionConflictErrorSchema,
-  ALL_STATES,
   pageOf,
   resolveStateFilter,
   TagSchema,
@@ -88,11 +82,14 @@ import {
 import { readableMetadata } from "./_extension-reach.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
+import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
+import {
+  ITEM_NOT_FOUND_ON_READ,
+  ITEM_NOT_FOUND_ON_WRITE,
+  READ_REFUSED,
+  WRITE_REFUSED,
+} from "./_item-refusals.js";
 
 /**
  * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
@@ -202,15 +199,12 @@ const UpdatedItemSchema = ItemWithMetadataSchema.extend({
     })
     .optional()
     .describe(
-      "What the server did, present only when this write resolved a " +
-        "conflict. `conflicted_copy_id` names the sibling carrying the " +
-        "losing values. This is the only place it is reported, since no route " +
-        "says what a write created.",
+      "What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values.",
     ),
 });
 
 const IdParam = z.object({
-  id: z.string().describe("Item id"),
+  id: z.string().describe("The ID of the item."),
 });
 
 /**
@@ -234,7 +228,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version and `source`: the credential's own, or one the credential's key claims when the body names it, and a body naming any other source is refused `403 forbidden` with `details.source`. Passing a `source_id` that already exists under that source upserts the existing item and returns 200 instead of 201, whichever credential wrote it, so two keys claiming one source share its natural keys. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
+    "Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -242,34 +236,76 @@ const createItemRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            type: z.string(),
-            properties: WrittenPropertiesSchema.optional(),
-            id: z.string().optional(),
-            state: z.string().optional(),
-            occurred_at: z.string().optional(),
+            type: z
+              .string()
+              .describe("The item's type identifier, such as `core.note`."),
+            properties: WrittenPropertiesSchema.optional().describe(
+              "The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`.",
+            ),
+            id: z
+              .string()
+              .optional()
+              .describe(
+                "A UUIDv7 you choose for the item. Leave it out and Marfa creates one. Sending an ID you already created returns the stored item, marked `acknowledged`.",
+              ),
+            state: z
+              .string()
+              .optional()
+              .describe(
+                "The item's first lifecycle state, one the type's lifecycle can reach. Defaults to `active`.",
+              ),
+            occurred_at: z
+              .string()
+              .optional()
+              .describe(
+                "When the item occurred, as an ISO 8601 time. Defaults to the creation time.",
+              ),
             source: z
               .string()
               .optional()
               .describe(
-                "The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards.",
+                "The source to key and stamp the item with. Defaults to your credential's own; it can also name one of your key's `sources`. An item's source never changes.",
               ),
-            source_id: z.string().optional(),
+            source_id: z
+              .string()
+              .optional()
+              .describe(
+                "The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item.",
+              ),
             version: z
               .number()
               .int()
               .min(0)
               .optional()
               .describe(
-                "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten: a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
+                "The version you read. Used only when `source_id` matches a live item: the update then applies only if the item is still at this version. Ignored otherwise.",
               ),
-            tier: TierEnum.optional(),
-            capture_latitude: z.number().optional(),
-            capture_longitude: z.number().optional(),
-            tags: z.array(TagSchema).optional(),
+            tier: TierEnum.optional().describe(
+              "The item's tier. Defaults to your key's `default_tier`, else `library`. If `source_id` matches an existing item, leaving it out keeps that item's tier.",
+            ),
+            capture_latitude: z
+              .number()
+              .optional()
+              .describe("The latitude where the item was captured."),
+            capture_longitude: z
+              .number()
+              .optional()
+              .describe("The longitude where the item was captured."),
+            tags: z
+              .array(TagSchema)
+              .optional()
+              .describe(
+                "Tags to put on the item: at most 100, each up to 128 characters.",
+              ),
             // Atomic item + edges write: for each edge type, the listed
             // item ids become targets with the new item as source. Rejects
             // all-or-nothing if any constraint violation surfaces.
-            edges: z.record(z.string(), z.array(z.string())).optional(),
+            edges: z
+              .record(z.string(), z.array(z.string()))
+              .optional()
+              .describe(
+                "Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none.",
+              ),
           }),
         },
       },
@@ -281,29 +317,13 @@ const createItemRoute = createRoute({
         "application/json": { schema: ItemWithMetadataSchema },
       },
       description:
-        "The request resolved an item that already exists, by one of two " +
-        "keys, and there are three answers. **Natural-key upsert:** both " +
-        "`source` (the credential's own, or one its key claims that the " +
-        "body names) and request `source_id` " +
-        "resolve a live item, and it is updated in " +
-        "place, an idempotent re-sync of the upstream entry. " +
-        "**Acknowledged re-sync:** the same natural key resolves an item " +
-        "the user has trashed, so the response carries `acknowledged: true` " +
-        "and nothing is written; the deletion stands rather than the " +
-        "re-sync being refused forever. **Acknowledged repeat:** the " +
-        "request carries an `id` the caller already created, so the create " +
-        "is a second arrival of that client's own write; the stored row " +
-        "comes back with `acknowledged: true`, in whatever state it holds " +
-        "including trashed, and nothing is written or published. On every " +
-        "one of the three the resolved item's `type` decides the shape, so " +
-        "a request naming a different one is refused with 409 " +
-        "`type_mismatch` rather than reinterpreted.",
+        "Returns the existing item and its metadata:\n- `source_id` matched a live item: Marfa updated it.\n- `source_id` matched a trashed item: Marfa wrote nothing and set `acknowledged: true`.\n- `id` repeated a create you made: Marfa wrote nothing and set `acknowledged: true`, in any state.",
     },
     201: {
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
       },
-      description: "Item created",
+      description: "Returns the new item and its metadata.",
     },
     400: {
       content: {
@@ -319,7 +339,8 @@ const createItemRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {
@@ -340,7 +361,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the body named a `source` the credential's key does not claim, named in `details.source`, or a source allow-list excludes the source. `type_not_permitted` and `edge_permission_denied`: the credential holds no write on the item's type or on an inline edge's type, or on the type of the row the natural key resolves; where it may not read that type, the refusal names nothing of the row.",
+        "- `forbidden`: `source` is not your credential's own or one of your key's `sources` (`details.source` names it), or the source allow-list excludes it.\n- `type_not_permitted`: you don't have write on the item's type, or on the type `source_id` resolves to.\n- `edge_permission_denied`: you don't have write on an edge's type.",
     },
     404: {
       content: {
@@ -352,7 +373,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "An inline edge names an edge type that does not exist, or a target that does not exist or whose type the caller may not read; the two targets answer alike.",
+        "- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.",
     },
     409: {
       content: {
@@ -370,24 +391,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "`link_taken`: the type names a `link_field`, and another item of " +
-        "the type, in any state, holds the value this write gives the " +
-        "row; `details.existing_id` names it. " +
-        "`id_reused`: the `id` this request minted is taken by an item it " +
-        "is not describing, and `details.differs` names what disagrees. " +
-        "`POST /edges` answers the same code for an id naming a different " +
-        "triple. `type_mismatch`: the request resolved an existing item by " +
-        "the `(source, source_id)` natural key and declared a type that " +
-        "row is not: the id was never in question, the declaration was. " +
-        "Re-typing an item is a deliberate " +
-        "operation, not something a re-sync does in passing. `conflict`: " +
-        "the `id` is held by an item this caller cannot read, so the " +
-        "server cannot tell it is a repeat of this caller's own create " +
-        "and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are " +
-        "reachable only when the request carried a `version` and its " +
-        "`source_id` resolved a live row: that upsert is conditional and " +
-        "answers exactly what the update door answers. A repeated `id` is " +
-        "acknowledged rather than written, so it has no precondition to fail.",
+        "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
     },
   },
 });
@@ -402,40 +406,35 @@ const listingNarrowingKeys = {
     .string()
     .optional()
     .describe(
-      "Type identifier; matches subtypes. A concrete type nothing registers is refused `400 unknown_type`; one the credential cannot read, with nothing readable under it, `403 type_not_permitted`. A wildcard answers the readable types it matches.",
+      "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
     ),
   state: z
     .string()
     .optional()
     .describe(
-      `Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. \`${ALL_STATES}\` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.`,
+      "Only return items in this lifecycle state. Without it, you get `active` items. Send `any` to get every state.",
     ),
   source: z
     .string()
     .optional()
-    .describe("Narrow to rows stamped with this `source`."),
+    .describe("Only return items stamped with this source."),
   tier: z
     .enum(["library", "feed", "all"])
     .optional()
-    .describe("Tier slice; omit or `all` returns both"),
+    .describe(
+      "Only return items in this tier. Omit it or send `all` for both tiers.",
+    ),
   tags: z
     .string()
     .optional()
-    .describe("Comma-separated tags; items must carry all of them"),
+    .describe(
+      "Comma-separated tags. Only return items that carry all of them.",
+    ),
   filter: z
     .string()
     .optional()
     .describe(
-      "Filter expression in the query grammar. A term naming an edge " +
-        "type (`edge[<type>]` or `backref[<type>]`, in this " +
-        "parameter or as the `edge[<type>]=<id>` shorthand) asks " +
-        "about a relationship, so it is held to the edge read " +
-        "permission: one naming a type the credential may not read is " +
-        "refused `403 edge_permission_denied`. A `backref` term " +
-        "counts only edges whose source the credential may read, so " +
-        "one anchored on an item it may not read matches as one " +
-        "anchored on an id no row holds; an `edge` term matches every " +
-        "edge it may read, one to an item it may not read included.",
+      "A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. `edge[<type>]=<id>` also works as a query parameter of its own.",
     ),
 };
 
@@ -445,14 +444,14 @@ const listingBoundKeys = {
     .min(1)
     .optional()
     .describe(
-      "Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+      "Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`.",
     ),
   occurred_before: z
     .string()
     .min(1)
     .optional()
     .describe(
-      "Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive).",
+      "Only return items whose own time (`occurred_at`, else `created_at`) is before this time.",
     ),
   updated_after: z
     .string()
@@ -464,14 +463,14 @@ const listingBoundKeys = {
     .min(1)
     .optional()
     .describe(
-      "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+      "Only return items changed at or after this time. Send the latest `updated_at` you hold, and deduplicate by ID, as items can share an instant. Ordered by `updated_at`, then ID, ascending, so leave out `sort` and `direction`. Purges aren't reported.",
     ),
   updated_before: z
     .string()
     .min(1)
     .optional()
     .describe(
-      "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
+      "Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`.",
     ),
 };
 
@@ -488,7 +487,8 @@ const getItemStatsRoute = createRoute({
   path: "/stats",
   tags: ["Items"],
   summary: "Get item counts",
-  description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter \`GET /items\` takes, with the same meaning, and counts the rows that listing would walk: the \`edge[<type>]\` and \`backref[<type>]\` shorthands among them, and \`include=system\` to count \`system.*\` items, which are left out by default as they are from the listing. One default differs: naming no \`state\` counts every state, so the listing's own count for the same filters is the \`active\` bucket of \`by=state\`, or the bucket of the state it names. ${UNKNOWN_PARAM_NOTE}`,
+  description:
+    "Returns counts of the items you can read, grouped by state or by type. It takes the filters `GET /items` takes, but without `state` it counts every state, not only active items.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -502,7 +502,7 @@ const getItemStatsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          `Count only this lifecycle state. Omitting the parameter counts every state, as does \`${ALL_STATES}\`.`,
+          "Only count items in this lifecycle state. Without it, every state is counted, as with `any`.",
         ),
       ...listingBoundKeys,
       include: z
@@ -520,7 +520,8 @@ const getItemStatsRoute = createRoute({
           schema: z.record(z.string(), z.number()),
         },
       },
-      description: "Item counts on the chosen axis",
+      description:
+        "Returns an object that maps each state, or each type, to its count.",
     },
     400: {
       content: {
@@ -529,7 +530,7 @@ const getItemStatsRoute = createRoute({
         },
       },
       description:
-        "A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest.",
+        "- `validation_error`: a query parameter is unknown or invalid, or `by` is not `state` or `type`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -549,7 +550,7 @@ const getItemStatsRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read.",
+        "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
     },
   },
 });
@@ -560,7 +561,8 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default; use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
+  description:
+    "Returns a page of the items you can read that match the filters. System items are left out unless you ask for them with `include=system`. Use `include` to add edges, metadata or extensions to each item.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -574,7 +576,7 @@ const listItemsRoute = createRoute({
         )
         .optional()
         .describe(
-          "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here; their order is semantic, not lexical.",
+          "Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning.",
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
       ...listingBoundKeys,
@@ -584,12 +586,7 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate " +
-            "those extras inline on the rows already being returned. `system` is " +
-            "different in kind: it widens the row set, opting in `system.*` items, " +
-            "which are excluded by default. A `type` filter in the `system.` " +
-            "namespace, concrete or wildcard, opts in on its own without the " +
-            "token.",
+          "Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default; a `system.` type filter does the same.",
         ),
     }),
   },
@@ -612,7 +609,8 @@ const listItemsRoute = createRoute({
           ),
         },
       },
-      description: "Paginated list of items",
+      description:
+        "Returns a page of items. With `include=metadata`, each entry holds the item and its metadata.",
     },
     400: {
       content: {
@@ -624,7 +622,8 @@ const listItemsRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -644,7 +643,7 @@ const listItemsRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read.",
+        "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
     },
   },
 });
@@ -656,9 +655,7 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.\n\n" +
-    "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
+    "Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -668,7 +665,7 @@ const getItemRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Comma-separated extras to hydrate inline: backrefs, neighbors, versions.",
+          "Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first.",
         ),
     }),
   },
@@ -677,7 +674,8 @@ const getItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemDetailSchema },
       },
-      description: "Item with metadata, and any requested neighborhood blocks",
+      description:
+        "Returns the item and its metadata, plus any extras you asked for. If `neighbors` hits its cap of 100 items, `neighbors_truncated` is `true`; `neighbors_omitted` counts neighbors you can't read.",
     },
     400: {
       content: {
@@ -685,7 +683,7 @@ const getItemRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "The id is not a well-formed item id.",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -701,7 +699,7 @@ const getItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
     403: {
       content: {
@@ -721,27 +719,14 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+    "Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: IdParam,
     query: z.object({
       conflict: ConflictModeSchema.optional().describe(
-        "Who resolves a version conflict. `auto` resolves it here, in this " +
-          "write's transaction, by the type's merge policy: a " +
-          "`last_writer_wins` field takes this write's value, a " +
-          "`keep_both_copies` field leaves the server's value on the item " +
-          "and the losing value lands on a sibling tagged `conflicted-copy` " +
-          "beside the original's tags, with a copy of the edges that are the " +
-          "original's own, those its own file would write, that a second " +
-          "item may hold and the writer could have made. The sibling " +
-          "carries neither the item's natural key nor its link, so where " +
-          "the type requires its `link_field`, itself or through a parent, " +
-          "nothing is resolved and the " +
-          "write answers the 409 envelope. " +
-          "`manual` and `callback` return the 409 envelope for the caller to " +
-          "resolve. Omitted means `manual`.",
+        "Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`.",
       ),
     }),
     body: {
@@ -755,7 +740,9 @@ const updateItemRoute = createRoute({
            *  and `properties` is deliberately open: its keys are the
            *  type's, not this door's. */
           schema: z.strictObject({
-            properties: WrittenPropertiesSchema.optional(),
+            properties: WrittenPropertiesSchema.optional().describe(
+              "The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. Strict mode refuses an undeclared property, as in `POST /items`.",
+            ),
             /** The item's own type, and only that. This route does not
              *  re-type the row it addresses, so the field exists to be
              *  checked rather than applied: equal to the item's type it is
@@ -766,7 +753,12 @@ const updateItemRoute = createRoute({
              *  to either the create or the update call, so a type rides on
              *  nearly every reactive update. Stripped in silence, a re-type
              *  could be attempted, answered with a 200, and do nothing. */
-            type: z.string().optional(),
+            type: z
+              .string()
+              .optional()
+              .describe(
+                "The item's type. It must match the item's current type unless `retype` is `true`.",
+              ),
             /** Whether `properties` lays over the item's or becomes them.
              *  Defaults to `merge`, so a write that names no mode can never
              *  remove a property it did not mention. A `replace` says the
@@ -775,7 +767,12 @@ const updateItemRoute = createRoute({
              *  where nobody changed it since, and colliding where somebody
              *  did. The result is validated either way, so a replace
              *  dropping a required field is refused rather than written. */
-            properties_mode: z.enum(["merge", "replace"]).optional(),
+            properties_mode: z
+              .enum(["merge", "replace"])
+              .optional()
+              .describe(
+                "How `properties` applies. `merge` (the default) lays them over the item's properties. `replace` takes them as the whole set, so a property you leave out is cleared.",
+              ),
             /** Move the item to the `type` named above.
              *
              *  An explicit opt-in rather than an inference from `type`
@@ -790,21 +787,31 @@ const updateItemRoute = createRoute({
              *  onto the shape a person's mapping now names. Otherwise a
              *  mapping applies only to what arrives next and everything
              *  already there is stranded under the old type. */
-            retype: z.boolean().optional(),
+            retype: z
+              .boolean()
+              .optional()
+              .describe(
+                "`true` moves the item to `type`. You need write on both types, and the properties the item ends up with must fit the new type. Naming the item's current type changes nothing.",
+              ),
             version: z
               .number()
               .int()
               .min(0)
               .describe(
-                "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since.",
+                "The version of the item you read, which this update is based on.",
               ),
             /** Toggle the tier (`library` ↔ `feed`). Compared against the
              *  version named like a property, so a stale flip collides with
              *  one made since. */
-            tier: TierEnum.optional(),
+            tier: TierEnum.optional().describe(
+              "Moves the item between `library` and `feed`.",
+            ),
             /** Override the item's own time (ISO 8601). Compared against
              *  the version named like `tier`. */
-            occurred_at: z.string().optional(),
+            occurred_at: z
+              .string()
+              .optional()
+              .describe("When the item occurred, as an ISO 8601 time."),
             /** Repoint at a new natural-key identifier under the item's
              *  own `source`, which this door never moves. The
              *  `(source, source_id)` tuple is
@@ -813,13 +820,23 @@ const updateItemRoute = createRoute({
              *  no-op when the value matches the row's current source_id.
              *  Repointing the natural key is how renames preserve item
              *  continuity without creating a new row. */
-            source_id: z.string().optional(),
+            source_id: z
+              .string()
+              .optional()
+              .describe(
+                "The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes.",
+              ),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
             // this item, then creates new edges to each listed target.
             // Empty array for an edge_type deletes all of that type.
             // Unmentioned edge types are untouched.
-            edges: z.record(z.string(), z.array(z.string())).optional(),
+            edges: z
+              .record(z.string(), z.array(z.string()))
+              .optional()
+              .describe(
+                "Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched.",
+              ),
           }),
         },
       },
@@ -830,7 +847,8 @@ const updateItemRoute = createRoute({
       content: {
         "application/json": { schema: UpdatedItemSchema },
       },
-      description: "Item updated",
+      description:
+        "Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`.",
     },
     400: {
       content: {
@@ -846,7 +864,8 @@ const updateItemRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {
@@ -867,7 +886,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on; `forbidden` when the body changes `source_id` on a row whose source the key neither writes under nor claims, named in `details.source`.",
+        "- `type_not_permitted`: you can read the item's type but don't have write on it (or on the type `retype` enters), or your credential reaches no type.\n- `edge_permission_denied`: you don't have write on an edge type in `edges`.\n- `forbidden`: you changed `source_id` on an item whose source your key doesn't write under or claim. `details.source` names it.",
     },
     404: {
       content: {
@@ -878,7 +897,8 @@ const updateItemRoute = createRoute({
           ]),
         },
       },
-      description: `${ITEM_NOT_FOUND_ON_WRITE} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
+      description:
+        "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.",
     },
     409: {
       content: {
@@ -899,7 +919,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict: a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
     },
   },
 });
@@ -911,7 +931,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Trash an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Moves the item, and every item a cascading edge such as `parent-of` reaches, to the trash. You can restore them until the retention window ends. Marfa then purges them.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -923,7 +943,7 @@ const deleteItemRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is.",
+          "The version you read. If the item has changed since, nothing is trashed. Leave it out to trash the item as it is.",
         ),
     }),
   },
@@ -932,7 +952,8 @@ const deleteItemRoute = createRoute({
       content: {
         "application/json": { schema: OkResponseSchema },
       },
-      description: "Item trashed",
+      description:
+        'Returns `{ "ok": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type.',
     },
     400: {
       content: {
@@ -945,7 +966,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.\n- `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.",
     },
     401: {
       content: {
@@ -975,8 +996,7 @@ const deleteItemRoute = createRoute({
       content: {
         "application/json": { schema: StaleVersionSchema },
       },
-      description:
-        "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry.",
+      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is trashed.\n${IDEMPOTENCY_IN_FLIGHT}`,
     },
   },
 });
@@ -1000,7 +1020,7 @@ const getMetadataRoute = createRoute({
   tags: ["Metadata"],
   summary: "Get item metadata",
   description:
-    "Returns the metadata layer for one item without fetching the full item. For bulk reads, list items with the metadata include to hydrate it across a page instead.",
+    "Returns an item's metadata: its tags and the extension namespaces you can read. To read metadata for many items, use `include=metadata` on `GET /items`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1013,7 +1033,7 @@ const getMetadataRoute = createRoute({
           schema: MetadataResponseSchema,
         },
       },
-      description: "Item metadata",
+      description: "Returns the item's metadata.",
     },
     400: {
       content: {
@@ -1021,7 +1041,7 @@ const getMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "Invalid item ID",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1038,7 +1058,7 @@ const getMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -1050,7 +1070,7 @@ const putMetadataRoute = createRoute({
   tags: ["Metadata"],
   summary: "Replace an item's tags",
   description:
-    "Replaces the item's tag set with the supplied array, where an empty array clears all tags. Only tags are touched; tier and state are unaffected and change through their own endpoints.",
+    "Replaces the item's tags with the ones you send and returns its metadata. An empty list clears all tags.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1059,7 +1079,13 @@ const putMetadataRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            tags: z.array(TagSchema).optional().default([]),
+            tags: z
+              .array(TagSchema)
+              .optional()
+              .default([])
+              .describe(
+                "The tags the item will have: at most 100, each up to 128 characters. An empty list clears them.",
+              ),
           }),
         },
       },
@@ -1072,7 +1098,7 @@ const putMetadataRoute = createRoute({
           schema: MetadataResponseSchema,
         },
       },
-      description: "Metadata replaced",
+      description: "Returns the item's metadata with the new tags.",
     },
     400: {
       content: {
@@ -1084,7 +1110,8 @@ const putMetadataRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: `tags` is not a list of valid tags, or has more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1113,7 +1140,7 @@ const patchMetadataRoute = createRoute({
   tags: ["Metadata"],
   summary: "Merge tags into an item",
   description:
-    "Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.",
+    "Merges the tags you send into the item's tags as a set union, and returns its metadata. Existing tags stay. To replace them, use `PUT /items/{id}/metadata`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1122,7 +1149,12 @@ const patchMetadataRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            tags: z.array(TagSchema).optional(),
+            tags: z
+              .array(TagSchema)
+              .optional()
+              .describe(
+                "Tags to add: each up to 128 characters. The item can hold at most 100.",
+              ),
           }),
         },
       },
@@ -1135,7 +1167,7 @@ const patchMetadataRoute = createRoute({
           schema: MetadataResponseSchema,
         },
       },
-      description: "Metadata merged",
+      description: "Returns the item's metadata with the merged tags.",
     },
     400: {
       content: {
@@ -1147,7 +1179,8 @@ const patchMetadataRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: `tags` is not a list of valid tags, or the item would hold more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1176,7 +1209,7 @@ const addTagsRoute = createRoute({
   tags: ["Metadata"],
   summary: "Add tags to an item",
   description:
-    "Adds one or more tags to the item. Idempotent: tags already present are not duplicated.",
+    "Adds tags to the item and returns its metadata. A tag the item already has isn't added twice.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1187,7 +1220,10 @@ const addTagsRoute = createRoute({
           schema: z.object({
             tags: z
               .array(TagSchema)
-              .min(1, "tags must be a non-empty array of strings"),
+              .min(1, "tags must be a non-empty array of strings")
+              .describe(
+                "The tags to add: at least one, each up to 128 characters. The item can hold at most 100.",
+              ),
           }),
         },
       },
@@ -1200,7 +1236,7 @@ const addTagsRoute = createRoute({
           schema: MetadataResponseSchema,
         },
       },
-      description: "Tags added",
+      description: "Returns the item's metadata with the tags added.",
     },
     400: {
       content: {
@@ -1212,7 +1248,8 @@ const addTagsRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: `tags` is empty or not a list of valid tags, or the item would hold more than 100.\n- `missing_required_field`: `tags` is missing.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1241,13 +1278,13 @@ const removeTagRoute = createRoute({
   tags: ["Metadata"],
   summary: "Remove a tag from an item",
   description:
-    "Removes one tag from the item. Idempotent: removing a tag the item doesn't carry returns 200 with the unchanged metadata.",
+    "Removes one tag from the item and returns its metadata. Removing a tag the item doesn't have changes nothing and succeeds.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: z.object({
-      id: z.string().describe("Item id"),
-      tag: z.string().describe("Tag to remove (URL-encoded)"),
+      id: z.string().describe("The ID of the item."),
+      tag: z.string().describe("The tag to remove, URL-encoded."),
     }),
   },
   responses: {
@@ -1257,7 +1294,7 @@ const removeTagRoute = createRoute({
           schema: MetadataResponseSchema,
         },
       },
-      description: "Tag removed",
+      description: "Returns the item's metadata without the tag.",
     },
     400: {
       content: {
@@ -1265,7 +1302,7 @@ const removeTagRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "Invalid item ID",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1293,7 +1330,8 @@ const purgeItemRoute = createRoute({
   path: "/{id}/purge",
   tags: ["Items"],
   summary: "Purge an item",
-  description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references. It can't be undone. Requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
+  description:
+    "Permanently deletes a trashed item with its edges, metadata and extensions. Requires `items.purge` and write on the item's type. Marfa keeps a tombstone of the item's link and natural key, which `POST /items/lookup` reads.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("items.purge"),
   request: {
@@ -1305,7 +1343,7 @@ const purgeItemRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send.",
+          "The version you read. If the item has changed since, nothing is deleted. Trashing doesn't change the version, so send the one you read before the trash.",
         ),
     }),
   },
@@ -1314,7 +1352,8 @@ const purgeItemRoute = createRoute({
       content: {
         "application/json": { schema: OkResponseSchema },
       },
-      description: "Item permanently deleted",
+      description:
+        'Returns `{ "ok": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item.',
     },
     400: {
       content: {
@@ -1327,7 +1366,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` (revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner), or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.",
     },
     401: {
       content: {
@@ -1344,7 +1383,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`items.purge` is missing; the credential may read the item's type and not write it, asked whatever state the row is in, as restore asks, or reaches no type; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed.",
+        "- `forbidden`: you don't have `items.purge`, or the item is in a reserved namespace and is not in the trash.\n- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.",
     },
     404: {
       content: {
@@ -1353,14 +1392,13 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "No such item, including one this door has already purged. An item of a type the credential may not read answers alike.",
+        "- `item_not_found`: no item has this ID, including one already purged, or its type is one you can't read.",
     },
     409: {
       content: {
         "application/json": { schema: StaleVersionSchema },
       },
-      description:
-        "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was purged. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was purged, retry.",
+      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is purged.\n${IDEMPOTENCY_IN_FLIGHT}`,
     },
   },
 });

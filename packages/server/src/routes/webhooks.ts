@@ -273,7 +273,7 @@ const getWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Get a webhook",
   description:
-    "Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.",
+    "Returns one outbound webhook subscription by id, with its secret redacted.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -313,7 +313,7 @@ const getWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["webhook_not_found"]),
         },
       },
-      description: "Webhook not found",
+      description: "Webhook not found, or registered by another credential",
     },
   },
 });

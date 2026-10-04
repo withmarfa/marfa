@@ -35,15 +35,14 @@ const listTagsRoute = createRoute({
   tags: ["Metadata"],
   summary: "List tags",
   description:
-    "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.",
+    "Returns every tag in use on the active items you can read, with the number of items that carry it. Sorted by count, highest first, then by tag.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {},
   responses: {
     200: {
       content: { "application/json": { schema: TagListSchema } },
-      description:
-        "Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped, and counted over the active state, as the listing is.",
+      description: "Returns each tag and its count.",
     },
     401: {
       content: {
@@ -60,7 +59,7 @@ const listTagsRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "- `type_not_permitted`: your credential reaches no type. If it reaches some types, the list covers only those.",
     },
   },
 });

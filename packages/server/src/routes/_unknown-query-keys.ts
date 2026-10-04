@@ -66,21 +66,6 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 export const RESERVED_CLIENT_PREFIX = "_";
 
 /**
- * The sentence every refusing door adds to its published description.
- *
- * A client author cannot discover a refusal by trying it once and getting
- * a 200, so it has to be written down — and written down once, because six
- * doors each phrasing it their own way is how a reference stops being
- * checkable.
- */
-export const UNKNOWN_PARAM_NOTE =
-  "Refuses a query parameter it doesn't recognize, unless the name starts with `_`.";
-
-/** The same note for the door that takes its request in a body. */
-export const UNKNOWN_FILTER_FIELD_NOTE =
-  "Refuses a field it doesn't recognize, in the body or in `filter`, unless the name starts with `_`.";
-
-/**
  * What these refusals need from a schema: the names it declares.
  *
  * Structural rather than `z.ZodObject<z.ZodRawShape>` because a Zod object

@@ -103,7 +103,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Upsert edges in bulk",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
+    "Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -168,7 +168,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "An atomic rollback for an edge naming an end that is not there, with `item_not_found` in `details.code`.",
+        "An atomic rollback for an edge naming an end that is not there or whose type the credential may not read, with `item_not_found` in `details.code`.",
     },
     409: {
       content: {

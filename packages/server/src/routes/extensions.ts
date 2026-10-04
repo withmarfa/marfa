@@ -15,11 +15,6 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * the storage layer, which is also what writes a `system.*` row.
  */
 
-import {
-  ITEM_NOT_FOUND,
-  ITEM_NOT_FOUND_ON_WRITE,
-  READ_REFUSED,
-} from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { extensionLabelOf } from "../auth/extension-label.js";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
@@ -40,6 +35,12 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
+import {
+  ITEM_NOT_FOUND_ON_READ,
+  ITEM_NOT_FOUND_ON_WRITE,
+  READ_REFUSED,
+  WRITE_REFUSED,
+} from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -67,12 +68,12 @@ const listExtensionsRoute = createRoute({
   tags: ["Extensions"],
   summary: "List extension namespaces",
   description:
-    "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
+    "Returns the extension namespaces on the item that you can read, each with its data.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: z.object({
-      id: z.string().describe("Item ID."),
+      id: z.string().describe("The ID of the item."),
     }),
   },
   responses: {
@@ -82,7 +83,8 @@ const listExtensionsRoute = createRoute({
           schema: ExtensionsResponseSchema,
         },
       },
-      description: "Extension namespaces (filtered by permissions)",
+      description:
+        "Returns the namespaces you can read, keyed by name. Namespaces you can't read are left out.",
     },
     400: {
       content: {
@@ -90,7 +92,7 @@ const listExtensionsRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "Invalid item ID",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -114,7 +116,7 @@ const listExtensionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -126,13 +128,13 @@ const getExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Get an extension namespace",
   description:
-    "Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.",
+    "Returns the data in one extension namespace on the item, or `data: null` if the item has none there.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: z.object({
-      id: z.string().describe("Item ID."),
-      namespace: z.string().describe("Extension namespace to read."),
+      id: z.string().describe("The ID of the item."),
+      namespace: z.string().describe("The extension namespace to read."),
     }),
   },
   responses: {
@@ -142,7 +144,7 @@ const getExtensionRoute = createRoute({
           schema: SingleExtensionResponseSchema,
         },
       },
-      description: "Extension namespace data",
+      description: "Returns the namespace and its data.",
     },
     400: {
       content: {
@@ -150,7 +152,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "Invalid item ID",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -166,8 +168,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "`type_not_permitted` where the credential's type permissions reach no type; `forbidden` without read on the namespace",
+      description: `${READ_REFUSED}\n- \`forbidden\`: you don't have read on the namespace.`,
     },
     404: {
       content: {
@@ -175,7 +176,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -187,18 +188,20 @@ const setExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
   description:
-    "Replaces the JSON payload for one extension namespace on the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
+    "Replaces the data in one extension namespace on the item, and returns the namespaces you can read. Marfa announces `metadata.changed`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: z.object({
-      id: z.string().describe("Item ID."),
-      namespace: z.string().describe("Extension namespace to replace."),
+      id: z.string().describe("The ID of the item."),
+      namespace: z.string().describe("The extension namespace to replace."),
     }),
     body: {
       content: {
         "application/json": {
-          schema: z.record(z.string(), z.unknown()),
+          schema: z
+            .record(z.string(), z.unknown())
+            .describe("The namespace's new data, as a JSON object."),
         },
       },
     },
@@ -210,7 +213,7 @@ const setExtensionRoute = createRoute({
           schema: ExtensionsResponseSchema,
         },
       },
-      description: "The namespaces on the item the caller may read",
+      description: "Returns the namespaces on the item that you can read.",
     },
     400: {
       content: {
@@ -222,7 +225,8 @@ const setExtensionRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -238,8 +242,7 @@ const setExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "`type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace",
+      description: `${WRITE_REFUSED}\n- \`forbidden\`: you don't have write on the namespace, or it is reserved (\`core\`, \`marfa\` or \`system\`).`,
     },
     404: {
       content: {
@@ -259,13 +262,13 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent: deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
+    "Removes one extension namespace from the item, and returns the namespaces left that you can read. Deleting a namespace that isn't there still succeeds and announces `metadata.changed`.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: z.object({
-      id: z.string().describe("Item ID."),
-      namespace: z.string().describe("Extension namespace to delete."),
+      id: z.string().describe("The ID of the item."),
+      namespace: z.string().describe("The extension namespace to delete."),
     }),
   },
   responses: {
@@ -275,7 +278,7 @@ const deleteExtensionRoute = createRoute({
           schema: ExtensionsResponseSchema,
         },
       },
-      description: "The namespaces left on the item the caller may read",
+      description: "Returns the namespaces left on the item that you can read.",
     },
     400: {
       content: {
@@ -283,7 +286,7 @@ const deleteExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id"]),
         },
       },
-      description: "Invalid item ID",
+      description: "- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -299,8 +302,7 @@ const deleteExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "`type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace",
+      description: `${WRITE_REFUSED}\n- \`forbidden\`: you don't have write on the namespace, or it is reserved (\`core\`, \`marfa\` or \`system\`).`,
     },
     404: {
       content: {

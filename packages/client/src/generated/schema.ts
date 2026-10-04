@@ -13,13 +13,13 @@ export interface paths {
         };
         /**
          * List items
-         * @description Returns a paginated list of items, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default; use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes `system`, which is not a hydration: it widens the rows returned to include `system.*` items, which this listing omits by default. Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns a page of the items you can read that match the filters. System items are left out unless you ask for them with `include=system`. Use `include` to add edges, metadata or extensions to each item.
          */
         get: operations["listItems"];
         put?: never;
         /**
          * Create an item
-         * @description Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version and `source`: the credential's own, or one the credential's key claims when the body names it, and a body naming any other source is refused `403 forbidden` with `details.source`. Passing a `source_id` that already exists under that source upserts the existing item and returns 200 instead of 201, whichever credential wrote it, so two keys claiming one source share its natural keys. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.
+         * @description Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.
          */
         post: operations["createItem"];
         delete?: never;
@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns counts of the items you can read, grouped by state or by type. It takes the filters `GET /items` takes, but without `state` it counts every state, not only active items.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -57,25 +57,21 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.
-         *
-         *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.
-         *
-         *     Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
+         * @description Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call.
          */
         get: operations["getItem"];
         put?: never;
         post?: never;
         /**
          * Trash an item
-         * @description Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+         * @description Moves the item, and every item a cascading edge such as `parent-of` reaches, to the trash. You can restore them until the retention window ends. Marfa then purges them.
          */
         delete: operations["deleteItem"];
         options?: never;
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
+         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read: if the item changed since, Marfa merges your changes where nothing collides. To change its type, send `type` with `retype: true`.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -91,7 +87,7 @@ export interface paths {
         put?: never;
         /**
          * Restore an item
-         * @description Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
+         * @description Restores a trashed item to `active`, along with every item its trash took through a cascading edge such as `parent-of`. Items that were already in the trash before then stay there.
          */
         post: operations["restoreItem"];
         delete?: never;
@@ -111,7 +107,7 @@ export interface paths {
         put?: never;
         /**
          * Change an item's state
-         * @description Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected; restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
+         * @description Moves the item to `active`, `archived` or `trashed`. Moving to `trashed` deletes the item as `DELETE /items/{id}` does, and moving from `trashed` to `active` restores it as `POST /items/{id}/restore` does.
          */
         post: operations["transitionItem"];
         delete?: never;
@@ -129,7 +125,7 @@ export interface paths {
         };
         /**
          * List item versions
-         * @description Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the `type`, `tier`, `occurred_at` and `source_id` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns a page of the item's version snapshots, oldest first. Marfa thins older snapshots over time, so the history can have gaps.
          */
         get: operations["listItemVersions"];
         put?: never;
@@ -149,12 +145,12 @@ export interface paths {
         };
         /**
          * Get item metadata
-         * @description Returns the metadata layer for one item without fetching the full item. For bulk reads, list items with the metadata include to hydrate it across a page instead.
+         * @description Returns an item's metadata: its tags and the extension namespaces you can read. To read metadata for many items, use `include=metadata` on `GET /items`.
          */
         get: operations["getItemMetadata"];
         /**
          * Replace an item's tags
-         * @description Replaces the item's tag set with the supplied array, where an empty array clears all tags. Only tags are touched; tier and state are unaffected and change through their own endpoints.
+         * @description Replaces the item's tags with the ones you send and returns its metadata. An empty list clears all tags.
          */
         put: operations["replaceItemMetadata"];
         post?: never;
@@ -163,7 +159,7 @@ export interface paths {
         head?: never;
         /**
          * Merge tags into an item
-         * @description Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.
+         * @description Merges the tags you send into the item's tags as a set union, and returns its metadata. Existing tags stay. To replace them, use `PUT /items/{id}/metadata`.
          */
         patch: operations["mergeItemMetadata"];
         trace?: never;
@@ -179,7 +175,7 @@ export interface paths {
         put?: never;
         /**
          * Add tags to an item
-         * @description Adds one or more tags to the item. Idempotent: tags already present are not duplicated.
+         * @description Adds tags to the item and returns its metadata. A tag the item already has isn't added twice.
          */
         post: operations["addItemTags"];
         delete?: never;
@@ -200,11 +196,7 @@ export interface paths {
         post?: never;
         /**
          * Purge an item
-         * @description Hard-deletes the item and its edges, metadata, extensions, and attachment references. It can't be undone. Requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
-         *
-         *     The purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.
-         *
-         *     `version` makes the purge conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, and deletes nothing. Without it the purge applies to the row as it is. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Permanently deletes a trashed item with its edges, metadata and extensions. Requires `items.purge` and write on the item's type. Marfa keeps a tombstone of the item's link and natural key, which `POST /items/lookup` reads.
          */
         delete: operations["purgeItem"];
         options?: never;
@@ -224,7 +216,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a tag from an item
-         * @description Removes one tag from the item. Idempotent: removing a tag the item doesn't carry returns 200 with the unchanged metadata.
+         * @description Removes one tag from the item and returns its metadata. Removing a tag the item doesn't have changes nothing and succeeds.
          */
         delete: operations["removeItemTag"];
         options?: never;
@@ -243,15 +235,7 @@ export interface paths {
         put?: never;
         /**
          * Upsert items in bulk
-         * @description Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. A key reaching no type at all is refused `403 type_not_permitted` before the list is read, an empty list included. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type: the credential's own type permissions decide, and nothing bypasses them.
-         *
-         *     An entry that resolves a row of a different type is refused with `type_mismatch`: a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.
-         *
-         *     An ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways. An entry may carry `properties_mode` as `PATCH /items/{id}` does: `replace` takes its properties as the row's whole, so a field left out is cleared, and a stale one is merged against the version it names as a stale `PATCH` is.
-         *
-         *     Where the entry's type names a `link_field`, an entry that would give its row a value another item of the type holds, in any state, is refused `link_taken` with `details.existing_id` naming the holder, on a create and an update alike, and the same two ways.
-         *
-         *     Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.
+         * @description Creates or updates up to 5,000 items in one call, matching existing items on `(source, source_id)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.
          */
         post: operations["bulkUpsertItems"];
         delete?: never;
@@ -271,9 +255,7 @@ export interface paths {
         put?: never;
         /**
          * Apply a bulk action
-         * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. A key reaching no type at all, the operator key among them, is refused `403 type_not_permitted` before the filter is read; any other key matches only what it may write. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.
-         *
-         *     Refuses a field it doesn't recognize, in the body or in `filter`, unless the name starts with `_`.
+         * @description Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a job.
          */
         post: operations["applyBulkAction"];
         delete?: never;
@@ -291,14 +273,14 @@ export interface paths {
         };
         /**
          * Get a bulk-action job
-         * @description Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no permission says "read another credential's bulk jobs". A job it did not create is refused `403`; the job's existence is not the secret, its contents are.
+         * @description Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or an operator key, can read it.
          */
         get: operations["getBulkActionJob"];
         put?: never;
         post?: never;
         /**
          * Cancel a bulk-action job
-         * @description Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. A canceled job stays canceled, and rows already processed stay processed.
+         * @description Cancels a bulk-action job and returns it. Items the job already processed stay processed. A job that has already finished is left as it is.
          */
         delete: operations["cancelBulkActionJob"];
         options?: never;
@@ -317,9 +299,7 @@ export interface paths {
         put?: never;
         /**
          * Get items in bulk
-         * @description Reads up to 100 items by id in one round-trip, permission-filtered exactly like the single-item GET: ids the caller cannot read (type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request, and the rest come back in the order the request named them, each once. Optional `include` takes the same tokens as GET /items: `edges`, `metadata` and `extensions` hydrate an extra inline, while `system` widens the result to include `system.*` items, which are omitted by default.
-         *
-         *     Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
+         * @description Returns up to 100 items by ID in one call, in the order you named them, each once. Items you can't read, trashed items and IDs that name nothing are left out.
          */
         post: operations["bulkGetItems"];
         delete?: never;
@@ -339,13 +319,7 @@ export interface paths {
         put?: never;
         /**
          * Look up items
-         * @description Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.
-         *
-         *     - `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.
-         *     - `source` and `source_ids`: the rows holding those natural keys, whatever their type, so a row retyped since it was written is found.
-         *     - `ids`: the rows with those ids, whatever their type.
-         *
-         *     A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids`. A credential that reads nothing under `type` is refused `403 type_not_permitted`, and one that reads only a type under it gets no tombstones. A key held by a row again has no tombstone. A read: nothing is announced or audited.
+         * @description Finds items, in any state, by link, by natural key or by ID, and returns the tombstones that purges left for those keys. Name exactly one of `links`, `source` with `source_ids`, or `ids`, with at most 500 values.
          */
         post: operations["lookupItems"];
         delete?: never;
@@ -365,7 +339,7 @@ export interface paths {
         put?: never;
         /**
          * Move tombstones' settled time
-         * @description Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.
+         * @description Moves the `settled_at` of tombstones later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.
          */
         post: operations["settleTombstones"];
         delete?: never;
@@ -383,7 +357,7 @@ export interface paths {
         };
         /**
          * List extension namespaces
-         * @description Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
+         * @description Returns the extension namespaces on the item that you can read, each with its data.
          */
         get: operations["listItemExtensions"];
         put?: never;
@@ -403,18 +377,18 @@ export interface paths {
         };
         /**
          * Get an extension namespace
-         * @description Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
+         * @description Returns the data in one extension namespace on the item, or `data: null` if the item has none there.
          */
         get: operations["getItemExtension"];
         /**
          * Replace an extension namespace
-         * @description Replaces the JSON payload for one extension namespace on the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.
+         * @description Replaces the data in one extension namespace on the item, and returns the namespaces you can read. Marfa announces `metadata.changed`.
          */
         put: operations["replaceItemExtension"];
         post?: never;
         /**
          * Delete an extension namespace
-         * @description Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent: deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.
+         * @description Removes one extension namespace from the item, and returns the namespaces left that you can read. Deleting a namespace that isn't there still succeeds and announces `metadata.changed`.
          */
         delete: operations["deleteItemExtension"];
         options?: never;
@@ -431,7 +405,7 @@ export interface paths {
         };
         /**
          * List outbound edges
-         * @description Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page.
          */
         get: operations["listItemEdges"];
         put?: never;
@@ -451,7 +425,7 @@ export interface paths {
         };
         /**
          * List inbound edges
-         * @description Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page.
          */
         get: operations["listItemBackrefs"];
         put?: never;
@@ -473,19 +447,17 @@ export interface paths {
          * List edges
          * @description Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.
          *
-         *     Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.
+         *     Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.
          *
          *     Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate: a client reconciling its copy has to see those edges rather than watch them disappear.
          *
          *     Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.
-         *
-         *     Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listEdges"];
         put?: never;
         /**
          * Create an edge
-         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `id_reused`, and one naming an edge the caller may not read says the id is taken and nothing of that edge.
+         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -503,7 +475,7 @@ export interface paths {
         };
         /**
          * Get an edge
-         * @description Returns one edge by its id; an edge whose edge type or source item the caller may not read answers `404 edge_not_found`, exactly as a missing one. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.
+         * @description Returns one edge by its ID. Use it when you hold only an edge's ID, such as from an event.
          */
         get: operations["getEdge"];
         put?: never;
@@ -519,9 +491,9 @@ export interface paths {
          * Update an edge
          * @description Updates an edge's properties, or moves one of its ends, under the version the caller read. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key. An edge's property set can therefore only grow.
          *
-         *     **Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.
+         *     **Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. The edge type never changes.
          *
-         *     `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties, so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
+         *     `version` is required. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties, so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
          */
         patch: operations["updateEdge"];
         trace?: never;
@@ -537,7 +509,7 @@ export interface paths {
         put?: never;
         /**
          * Upsert edges in bulk
-         * @description Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
+         * @description Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -561,7 +533,7 @@ export interface paths {
         put?: never;
         /**
          * Register an edge type
-         * @description Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.
+         * @description Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. A registered edge type is flat with no inheritance.
          */
         post: operations["createEdgeType"];
         delete?: never;
@@ -582,7 +554,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge type
-         * @description Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
+         * @description Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included. `?force=true` deletes the registration even if edges of the type are stored, and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
          */
         delete: operations["deleteEdgeType"];
         options?: never;
@@ -605,7 +577,7 @@ export interface paths {
         put?: never;
         /**
          * Register a type
-         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.
+         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces. A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.
          */
         post: operations["registerType"];
         delete?: never;
@@ -624,23 +596,19 @@ export interface paths {
         /**
          * Get a type
          * @description Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike, for every credential and whatever its type map reaches.
-         *
-         *     A type whose stored inheritance chain cannot be resolved (circular, or deeper than any resolution walk follows) answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.
          */
         get: operations["getType"];
         /**
          * Replace a type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once. The old link's tombstones go with it, since they hold another field's values.
          */
         put: operations["updateType"];
         post?: never;
         /**
          * Delete a type
-         * @description Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included; platform-shipped types are immutable.
+         * @description Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included.
          *
-         *     Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.
-         *
-         *     Rejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).
+         *     `?force=true` orphans the items of the type that still exist in any lifecycle state, the bin included: they persist, but new writes against the type, and any write setting a field of one of those rows, answer `unknown_type` until the type is registered again.
          *
          *     The tombstones purges left under the type go with it.
          */
@@ -659,7 +627,7 @@ export interface paths {
         };
         /**
          * Search items
-         * @description Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`.
          */
         get: operations["searchItems"];
         put?: never;
@@ -679,7 +647,7 @@ export interface paths {
         };
         /**
          * List occurrences
-         * @description Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated. That is worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read, not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.
+         * @description Returns the events that overlap a time window, with each recurring event expanded into one entry per occurrence. Marfa computes occurrences when you read them and doesn't store them.
          */
         get: operations["listOccurrences"];
         put?: never;
@@ -699,7 +667,7 @@ export interface paths {
         };
         /**
          * List tags
-         * @description Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.
+         * @description Returns every tag in use on the active items you can read, with the number of items that carry it. Sorted by count, highest first, then by tag.
          */
         get: operations["listTags"];
         put?: never;
@@ -721,7 +689,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a blob
-         * @description Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.
+         * @description Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. Send the bytes themselves, not `multipart/form-data`. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.
          */
         post: operations["uploadBlob"];
         delete?: never;
@@ -759,7 +727,7 @@ export interface paths {
         };
         /**
          * List blob stores
-         * @description Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.
+         * @description Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least. Operator key only.
          */
         get: operations["listBlobStores"];
         put?: never;
@@ -779,7 +747,7 @@ export interface paths {
         };
         /**
          * Download a blob
-         * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
+         * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.
          */
         get: operations["downloadBlob"];
         put?: never;
@@ -799,7 +767,7 @@ export interface paths {
         };
         /**
          * Get a blob URL
-         * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
+         * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
          */
         get: operations["getBlobUrl"];
         put?: never;
@@ -819,7 +787,7 @@ export interface paths {
         };
         /**
          * List a blob's locations
-         * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
+         * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.
          */
         get: operations["listBlobLocations"];
         put?: never;
@@ -842,7 +810,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a blob's copy in a store
-         * @description Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.
+         * @description Removes the copy of the blob that one store holds, and its row in the location log. Operator key only.
          */
         delete: operations["dropBlobLocation"];
         options?: never;
@@ -881,7 +849,7 @@ export interface paths {
         put?: never;
         /**
          * Run a housekeeping job
-         * @description Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.
+         * @description Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. Operator key only.
          */
         post: operations["runHousekeeping"];
         delete?: never;
@@ -905,7 +873,7 @@ export interface paths {
         put?: never;
         /**
          * Register a connector
-         * @description Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.
+         * @description Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.
          */
         post: operations["registerConnector"];
         delete?: never;
@@ -923,14 +891,14 @@ export interface paths {
         };
         /**
          * Get a connector
-         * @description The connector's own key or the operator key. Another credential is answered as if the connector did not exist.
+         * @description The connector's own key or the operator key.
          */
         get: operations["getConnector"];
         put?: never;
         post?: never;
         /**
          * Delete a connector
-         * @description Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.
+         * @description Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key.
          */
         delete: operations["deleteConnector"];
         options?: never;
@@ -967,7 +935,7 @@ export interface paths {
         };
         /**
          * List connector runs
-         * @description Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.
+         * @description Newest first, to the connector's own key or the operator key.
          */
         get: operations["listConnectorRuns"];
         put?: never;
@@ -997,7 +965,7 @@ export interface paths {
         put?: never;
         /**
          * Create a webhook endpoint
-         * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
+         * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints.
          */
         post: operations["createInboundEndpoint"];
         delete?: never;
@@ -1018,7 +986,7 @@ export interface paths {
         post?: never;
         /**
          * Retire a webhook endpoint
-         * @description Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
+         * @description Its address stops accepting deliveries, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
          */
         delete: operations["retireInboundEndpoint"];
         options?: never;
@@ -1077,7 +1045,7 @@ export interface paths {
         put?: never;
         /**
          * Mark inbound deliveries handled
-         * @description Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. An id that is not this connector's refuses the whole request and marks nothing. The connector's own key only.
+         * @description Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. The connector's own key only.
          */
         post: operations["markInboundDeliveriesHandled"];
         delete?: never;
@@ -1097,7 +1065,7 @@ export interface paths {
         put?: never;
         /**
          * Take or renew a hold
-         * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.
+         * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.
          */
         post: operations["holdConnector"];
         /**
@@ -1124,7 +1092,7 @@ export interface paths {
         get: operations["getConnectorState"];
         /**
          * Replace the state document
-         * @description Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. A top-level field the body does not declare is refused. The connector's own key only.
+         * @description Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold. The connector's own key only.
          */
         put: operations["replaceConnectorState"];
         post?: never;
@@ -1153,7 +1121,7 @@ export interface paths {
         put?: never;
         /**
          * Write agreements
-         * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. The connector's own key only.
+         * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A record announces nothing and leaves the row, its `updated_at` and its version as they were. Taken only from the `process` holding a live hold. The connector's own key only.
          */
         post: operations["writeConnectorAgreements"];
         delete?: never;
@@ -1173,7 +1141,7 @@ export interface paths {
         put?: never;
         /**
          * Look up agreements
-         * @description The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. A top-level field the body does not declare is refused. The connector's own key only.
+         * @description The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. The connector's own key only.
          */
         post: operations["findConnectorAgreements"];
         delete?: never;
@@ -1193,7 +1161,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder
-         * @description Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map; the item doors refuse every `system.*` write whatever the credential holds. Each setting is validated before the write, and a refusal names it.
+         * @description Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map. Each setting is validated before the write.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -1217,7 +1185,7 @@ export interface paths {
         head?: never;
         /**
          * Update a folder
-         * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.
+         * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges.
          */
         patch: operations["updateFolder"];
         trace?: never;
@@ -1259,13 +1227,13 @@ export interface paths {
          * Create an API key
          * @description Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.
          *
-         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
+         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A signed-in app must hold `keys.mint` to reach this route at all.
          *
-         *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.
+         *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source.
          *
-         *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.
+         *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing.
          *
-         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it), and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
+         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it). The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
          */
         post: operations["createKey"];
         delete?: never;
@@ -1283,7 +1251,7 @@ export interface paths {
         };
         /**
          * Get the current key
-         * @description Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
+         * @description Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`.
          */
         get: operations["getCurrentKey"];
         put?: never;
@@ -1306,14 +1274,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key past its `expires_at` receives the same response, including when the caller is the operator key. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.
+         * @description Revokes the key immediately. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
          */
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body; revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
+         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable; revoke and recreate to change it. Requires `keys.mint`. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1332,7 +1300,7 @@ export interface paths {
         get: operations["getConfig"];
         /**
          * Replace the configuration
-         * @description Overwrites the instance config with the supplied object: full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.
+         * @description Overwrites the instance config with the supplied object: full replacement, not a merge. A cleanup-job retention override of `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing. Requires `config.manage`.
          */
         put: operations["replaceConfig"];
         post?: never;
@@ -1353,7 +1321,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit, but an item's properties, any of its earlier versions' or an edge's larger than the bulk write doors accept refuse the whole archive with `413 request_too_large`. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
+         * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Duplicate items retain their live metadata, dates and history. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
          */
         post: operations["adminRestoreArchive"];
         delete?: never;
@@ -1371,7 +1339,7 @@ export interface paths {
         };
         /**
          * List stale platform types
-         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
+         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
          */
         get: operations["adminListPlatformTypeDrift"];
         put?: never;
@@ -1394,7 +1362,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a stale platform type
-         * @description Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report, so an item of the type written meanwhile is either counted or refused. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.
+         * @description Removes exactly one platform type row this build does not ship. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.
          */
         delete: operations["adminRemovePlatformType"];
         options?: never;
@@ -1411,13 +1379,13 @@ export interface paths {
         };
         /**
          * Get the owner
-         * @description Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. `404 owner_not_found` on an instance that has none yet, which is the state every instance boots in; `POST /owner` is what changes it. Operator key only.
+         * @description Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. An instance boots with no owner, and `POST /owner` creates one. Operator key only.
          */
         get: operations["getOwner"];
         put?: never;
         /**
          * Create the owner
-         * @description Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, for any body the schema accepts; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.
+         * @description Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. The password is judged by the sign-in surface's own length rule. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.
          */
         post: operations["createOwner"];
         delete?: never;
@@ -1435,7 +1403,7 @@ export interface paths {
         };
         /**
          * Export items and edges
-         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.
          */
         get: operations["exportData"];
         put?: never;
@@ -1479,7 +1447,7 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.
+         * @description Returns one outbound webhook subscription by id, with its secret redacted.
          */
         get: operations["getWebhook"];
         put?: never;
@@ -1547,7 +1515,7 @@ export interface paths {
         };
         /**
          * List audit log entries
-         * @description Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`. The operator key holds no permission, so it is refused rather than shown the trail. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
+         * @description Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`.
          */
         get: operations["listAuditLog"];
         put?: never;
@@ -1589,7 +1557,7 @@ export interface paths {
          * Stream change events
          * @description Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.
          *
-         *     For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.
+         *     For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A view that changes after the stream opens sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.
          *
          *     The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }`, the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.
          *
@@ -1603,7 +1571,7 @@ export interface paths {
          *
          *     A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame, `{ "type": "stream_incomplete", "reason": "…", "cursor": "<event id>" | null }`, and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.
          *
-         *     The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. A reconnect with a revoked key is refused `401`; an app reconnects with the token it refreshed to.
+         *     The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. An app reconnects with the token it refreshed to.
          *
          *     A `Last-Event-ID` past the log's head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ "type": "cursor_ahead", "requested": "<event id>", "head": "<event id>" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.
          */
@@ -2004,7 +1972,7 @@ export interface components {
             };
         };
         /**
-         * @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field`, itself or through a parent, nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+         * @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`.
          * @enum {string}
          */
         ConflictMode: "auto" | "manual" | "callback";
@@ -2301,7 +2269,7 @@ export interface components {
             key: string;
             /** @description When the row holding the key was purged. */
             purged_at: string;
-            /** @description The purge time, or the later time of the vendor's own change a connector made in carrying the purge out, moved by `POST /items/tombstones`; a vendor change after it is a new row. */
+            /** @description When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item. */
             settled_at: string;
         };
         /** @description An error response. */
@@ -3765,39 +3733,39 @@ export interface operations {
     listItems: {
         parameters: {
             query?: {
-                /** @description Type identifier; matches subtypes. A concrete type nothing registers is refused `400 unknown_type`; one the credential cannot read, with nothing readable under it, `403 type_not_permitted`. A wildcard answers the readable types it matches. */
+                /** @description Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix. */
                 type?: string;
-                /** @description Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. `any` returns every state in one pass, which a resuming client needs in order to see a row leave the active state. */
+                /** @description Only return items in this lifecycle state. Without it, you get `active` items. Send `any` to get every state. */
                 state?: string;
-                /** @description Narrow to rows stamped with this `source`. */
+                /** @description Only return items stamped with this source. */
                 source?: string;
-                /** @description Tier slice; omit or `all` returns both */
+                /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated tags; items must carry all of them */
+                /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description Filter expression in the query grammar. A term naming an edge type (`edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand) asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. `edge[<type>]=<id>` also works as a query parameter of its own. */
                 filter?: string;
-                /** @description Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here; their order is semantic, not lexical. */
+                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Properties sort by stored value, so an enum property sorts alphabetically, not by meaning. */
                 sort?: string;
                 /** @description Sort direction */
                 direction?: "asc" | "desc";
-                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                /** @description Only return items changed at or after this time. Send the latest `updated_at` you hold, and deduplicate by ID, as items can share an instant. Ordered by `updated_at`, then ID, ascending, so leave out `sort` and `direction`. Purges aren't reported. */
                 updated_after?: string;
-                /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
+                /** @description Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`. */
                 updated_before?: string;
                 /** @description The maximum number of results to return. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
-                /** @description Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. */
+                /** @description Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default; a `system.` type filter does the same. */
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -3805,7 +3773,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Paginated list of items */
+            /** @description Returns a page of items. With `include=metadata`, each entry holds the item and its metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3820,7 +3788,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemPage"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.
+             *     - `unknown_type`: `type` is a concrete type that nothing registers.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3850,7 +3821,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read. */
+            /**
+             * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
+             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3927,22 +3901,32 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** @description The item's type identifier, such as `core.note`. */
                     type: string;
+                    /** @description The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`. */
                     properties?: {
                         [key: string]: unknown;
                     };
+                    /** @description A UUIDv7 you choose for the item. Leave it out and Marfa creates one. Sending an ID you already created returns the stored item, marked `acknowledged`. */
                     id?: string;
+                    /** @description The item's first lifecycle state, one the type's lifecycle can reach. Defaults to `active`. */
                     state?: string;
+                    /** @description When the item occurred, as an ISO 8601 time. Defaults to the creation time. */
                     occurred_at?: string;
-                    /** @description The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards. */
+                    /** @description The source to key and stamp the item with. Defaults to your credential's own; it can also name one of your key's `sources`. An item's source never changes. */
                     source?: string;
+                    /** @description The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
                     source_id?: string;
-                    /** @description Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten: a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written. */
+                    /** @description The version you read. Used only when `source_id` matches a live item: the update then applies only if the item is still at this version. Ignored otherwise. */
                     version?: number;
-                    tier?: components["schemas"]["Tier"];
+                    tier?: components["schemas"]["Tier"] & unknown;
+                    /** @description The latitude where the item was captured. */
                     capture_latitude?: number;
+                    /** @description The longitude where the item was captured. */
                     capture_longitude?: number;
+                    /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                     tags?: string[];
+                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -3950,7 +3934,12 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (the credential's own, or one its key claims that the body names) and request `source_id` resolve a live item, and it is updated in place, an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted. */
+            /**
+             * @description Returns the existing item and its metadata:
+             *     - `source_id` matched a live item: Marfa updated it.
+             *     - `source_id` matched a trashed item: Marfa wrote nothing and set `acknowledged: true`.
+             *     - `id` repeated a create you made: Marfa wrote nothing and set `acknowledged: true`, in any state.
+             */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3965,7 +3954,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description Item created */
+            /** @description Returns the new item and its metadata. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3980,7 +3969,14 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.
+             *     - `missing_required_field`: `type` is missing.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `invalid_id`: `id` or an edge target is not a valid ID.
+             *     - `invalid_properties`: the properties don't fit the type.
+             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4011,7 +4007,11 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the body named a `source` the credential's key does not claim, named in `details.source`, or a source allow-list excludes the source. `type_not_permitted` and `edge_permission_denied`: the credential holds no write on the item's type or on an inline edge's type, or on the type of the row the natural key resolves; where it may not read that type, the refusal names nothing of the row. */
+            /**
+             * @description - `forbidden`: `source` is not your credential's own or one of your key's `sources` (`details.source` names it), or the source allow-list excludes it.
+             *     - `type_not_permitted`: you don't have write on the item's type, or on the type `source_id` resolves to.
+             *     - `edge_permission_denied`: you don't have write on an edge's type.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4026,7 +4026,10 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description An inline edge names an edge type that does not exist, or a target that does not exist or whose type the caller may not read; the two targets answer alike. */
+            /**
+             * @description - `edge_type_not_found`: an edge names an edge type that doesn't exist.
+             *     - `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4042,7 +4045,13 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `link_taken`: the type names a `link_field`, and another item of the type, in any state, holds the value this write gives the row; `details.existing_id` names it. `id_reused`: the `id` this request minted is taken by an item it is not describing, and `details.differs` names what disagrees. `POST /edges` answers the same code for an id naming a different triple. `type_mismatch`: the request resolved an existing item by the `(source, source_id)` natural key and declared a type that row is not: the id was never in question, the declaration was. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item this caller cannot read, so the server cannot tell it is a repeat of this caller's own create and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail. */
+            /**
+             * @description - `id_reused`: `id` names an item of another type.
+             *     - `conflict`: `id` names an item you can't read.
+             *     - `link_taken`: another item of the type holds this link. `details.existing_id` names it.
+             *     - `type_mismatch`: `source_id` matches an item of another type.
+             *     - `version_conflict`, `ancestor_unavailable`: `version` is stale.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4070,7 +4079,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4126,25 +4138,25 @@ export interface operations {
             query?: {
                 /** @description Grouping axis. Defaults to `state`. */
                 by?: "state" | "type";
-                /** @description Type identifier; matches subtypes. A concrete type nothing registers is refused `400 unknown_type`; one the credential cannot read, with nothing readable under it, `403 type_not_permitted`. A wildcard answers the readable types it matches. */
+                /** @description Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix. */
                 type?: string;
-                /** @description Count only this lifecycle state. Omitting the parameter counts every state, as does `any`. */
+                /** @description Only count items in this lifecycle state. Without it, every state is counted, as with `any`. */
                 state?: string;
-                /** @description Narrow to rows stamped with this `source`. */
+                /** @description Only return items stamped with this source. */
                 source?: string;
-                /** @description Tier slice; omit or `all` returns both */
+                /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated tags; items must carry all of them */
+                /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
-                /** @description Filter expression in the query grammar. A term naming an edge type (`edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand) asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. `edge[<type>]=<id>` also works as a query parameter of its own. */
                 filter?: string;
-                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this time. For the modification time, use `updated_after`. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                /** @description Only return items changed at or after this time. Send the latest `updated_at` you hold, and deduplicate by ID, as items can share an instant. Ordered by `updated_at`, then ID, ascending, so leave out `sort` and `direction`. Purges aren't reported. */
                 updated_after?: string;
-                /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
+                /** @description Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`. */
                 updated_before?: string;
                 /** @description `system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own. */
                 include?: "system";
@@ -4155,7 +4167,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Item counts on the chosen axis */
+            /** @description Returns an object that maps each state, or each type, to its count. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4171,7 +4183,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest. */
+            /**
+             * @description - `validation_error`: a query parameter is unknown or invalid, or `by` is not `state` or `type`.
+             *     - `unknown_type`: `type` is a concrete type that nothing registers.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4201,7 +4216,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read. */
+            /**
+             * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
+             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4252,22 +4270,22 @@ export interface operations {
     getItem: {
         parameters: {
             query?: {
-                /** @description Comma-separated extras to hydrate inline: backrefs, neighbors, versions. */
+                /** @description Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first. */
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Item with metadata, and any requested neighborhood blocks */
+            /** @description Returns the item and its metadata, plus any extras you asked for. If `neighbors` hits its cap of 100 items, `neighbors_truncated` is `true`; `neighbors_omitted` counts neighbors you can't read. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4282,7 +4300,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemDetail"];
                 };
             };
-            /** @description The id is not a well-formed item id. */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4312,7 +4330,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4328,7 +4346,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4395,7 +4413,7 @@ export interface operations {
     deleteItem: {
         parameters: {
             query?: {
-                /** @description The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is. */
+                /** @description The version you read. If the item has changed since, nothing is trashed. Leave it out to trash the item as it is. */
                 version?: number;
             };
             header?: {
@@ -4403,14 +4421,14 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Item trashed */
+            /** @description Returns `{ "ok": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4425,7 +4443,11 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.
+             *     - `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4456,7 +4478,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4471,7 +4493,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4487,7 +4509,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry. */
+            /**
+             * @description - `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.
+             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4515,7 +4540,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4569,7 +4597,7 @@ export interface operations {
     updateItem: {
         parameters: {
             query?: {
-                /** @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field`, itself or through a parent, nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`. */
+                /** @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`. */
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
@@ -4577,7 +4605,7 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
@@ -4585,18 +4613,27 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** @description The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. Strict mode refuses an undeclared property, as in `POST /items`. */
                     properties?: {
                         [key: string]: unknown;
                     };
+                    /** @description The item's type. It must match the item's current type unless `retype` is `true`. */
                     type?: string;
-                    /** @enum {string} */
+                    /**
+                     * @description How `properties` applies. `merge` (the default) lays them over the item's properties. `replace` takes them as the whole set, so a property you leave out is cleared.
+                     * @enum {string}
+                     */
                     properties_mode?: "merge" | "replace";
+                    /** @description `true` moves the item to `type`. You need write on both types, and the properties the item ends up with must fit the new type. Naming the item's current type changes nothing. */
                     retype?: boolean;
-                    /** @description The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since. */
+                    /** @description The version of the item you read, which this update is based on. */
                     version: number;
-                    tier?: components["schemas"]["Tier"];
+                    tier?: components["schemas"]["Tier"] & unknown;
+                    /** @description When the item occurred, as an ISO 8601 time. */
                     occurred_at?: string;
+                    /** @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes. */
                     source_id?: string;
+                    /** @description Edge types to replace, each mapped to the item IDs it should now point to. An empty list removes every edge of that type. Types you don't name are untouched. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -4604,7 +4641,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Item updated */
+            /** @description Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4617,7 +4654,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemWithMetadata"] & {
-                        /** @description What the server did, present only when this write resolved a conflict. `conflicted_copy_id` names the sibling carrying the losing values. This is the only place it is reported, since no route says what a write created. */
+                        /** @description What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values. */
                         conflict_resolution?: {
                             fields: string[];
                             strategy: {
@@ -4628,7 +4665,14 @@ export interface operations {
                     };
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `missing_required_field`: `version` is missing.
+             *     - `validation_error`: the body is malformed, has an undeclared field, or changes nothing.
+             *     - `invalid_id`: the ID or an edge target is not a valid ID.
+             *     - `invalid_properties`: the resulting properties don't fit the type.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4659,7 +4703,11 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on; `forbidden` when the body changes `source_id` on a row whose source the key neither writes under nor claims, named in `details.source`. */
+            /**
+             * @description - `type_not_permitted`: you can read the item's type but don't have write on it (or on the type `retype` enters), or your credential reaches no type.
+             *     - `edge_permission_denied`: you don't have write on an edge type in `edges`.
+             *     - `forbidden`: you changed `source_id` on an item whose source your key doesn't write under or claim. `details.source` names it.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4674,7 +4722,10 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike. */
+            /**
+             * @description - `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.
+             *     - `edge_type_not_found`: an edge names an edge type that doesn't exist.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4690,7 +4741,13 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description Version conflict: a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's). */
+            /**
+             * @description - `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.
+             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.
+             *     - `source_id_conflict`: another item under the source holds this `source_id`.
+             *     - `link_taken`: another item of the type holds this link.
+             *     - `type_mismatch`: `type` differs and `retype` isn't `true`.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4718,7 +4775,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4777,14 +4837,14 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description Item id to act on */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Item restored */
+            /** @description Returns the restored item and its metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4799,7 +4859,11 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `invalid_transition`: the item is not in the trash.
+             *     - `validation_error`: `Idempotency-Key` is malformed.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4830,7 +4894,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4845,7 +4909,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4861,7 +4925,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4889,7 +4953,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4948,7 +5015,7 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description Item id to act on */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
@@ -4956,13 +5023,16 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @enum {string} */
+                    /**
+                     * @description The state to move the item to.
+                     * @enum {string}
+                     */
                     state: "active" | "archived" | "trashed";
                 };
             };
         };
         responses: {
-            /** @description Item state changed */
+            /** @description Returns the item in its new state, with its metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4977,7 +5047,13 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description `invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take. */
+            /**
+             * @description - `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.
+             *     - `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.
+             *     - `validation_error`: `state` is not a valid state.
+             *     - `missing_required_field`: `state` is missing.
+             *     - `invalid_id`: the ID is not valid.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5008,7 +5084,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5023,7 +5099,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5039,7 +5115,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5067,7 +5143,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5128,14 +5207,14 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Item id whose version history to return */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Version history */
+            /** @description Returns the snapshots you can read. Each holds the properties before the write that replaced them, and the `type`, `tier`, `occurred_at` and `source_id` the item had at that version. Snapshots written under a type you can't read are left out, and a page fills past them. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5149,7 +5228,10 @@ export interface operations {
                     "application/json": components["schemas"]["VersionPage"];
                 };
             };
-            /** @description The id is not a well-formed item id, or a query parameter is unknown or out of range, or the cursor is malformed or was issued by another listing. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown or out of range, or `cursor` is malformed or came from another listing.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5179,7 +5261,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5194,7 +5276,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5247,14 +5329,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Item metadata */
+            /** @description Returns the item's metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5268,7 +5350,7 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description Invalid item ID */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5298,7 +5380,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5313,7 +5395,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5366,7 +5448,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
@@ -5374,13 +5456,16 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @default [] */
+                    /**
+                     * @description The tags the item will have: at most 100, each up to 128 characters. An empty list clears them.
+                     * @default []
+                     */
                     tags?: string[];
                 };
             };
         };
         responses: {
-            /** @description Metadata replaced */
+            /** @description Returns the item's metadata with the new tags. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5394,7 +5479,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: `tags` is not a list of valid tags, or has more than 100.
+             *     - `invalid_id`: the ID is not a valid item ID.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5424,7 +5512,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5439,7 +5527,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5504,7 +5592,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
@@ -5512,12 +5600,13 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** @description Tags to add: each up to 128 characters. The item can hold at most 100. */
                     tags?: string[];
                 };
             };
         };
         responses: {
-            /** @description Metadata merged */
+            /** @description Returns the item's metadata with the merged tags. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5531,7 +5620,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: `tags` is not a list of valid tags, or the item would hold more than 100.
+             *     - `invalid_id`: the ID is not a valid item ID.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5561,7 +5653,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5576,7 +5668,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5641,7 +5733,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
@@ -5649,12 +5741,13 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** @description The tags to add: at least one, each up to 128 characters. The item can hold at most 100. */
                     tags: string[];
                 };
             };
         };
         responses: {
-            /** @description Tags added */
+            /** @description Returns the item's metadata with the tags added. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5668,7 +5761,11 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: `tags` is empty or not a list of valid tags, or the item would hold more than 100.
+             *     - `missing_required_field`: `tags` is missing.
+             *     - `invalid_id`: the ID is not a valid item ID.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5698,7 +5795,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5713,7 +5810,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5776,7 +5873,7 @@ export interface operations {
     purgeItem: {
         parameters: {
             query?: {
-                /** @description The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send. */
+                /** @description The version you read. If the item has changed since, nothing is deleted. Trashing doesn't change the version, so send the one you read before the trash. */
                 version?: number;
             };
             header?: {
@@ -5784,14 +5881,14 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Item permanently deleted */
+            /** @description Returns `{ "ok": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5806,7 +5903,11 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` (revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner), or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `invalid_transition`: the item is not in the trash.
+             *     - `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5837,7 +5938,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `items.purge` is missing; the credential may read the item's type and not write it, asked whatever state the row is in, as restore asks, or reaches no type; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed. */
+            /**
+             * @description - `forbidden`: you don't have `items.purge`, or the item is in a reserved namespace and is not in the trash.
+             *     - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5852,7 +5956,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No such item, including one this door has already purged. An item of a type the credential may not read answers alike. */
+            /** @description - `item_not_found`: no item has this ID, including one already purged, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5868,7 +5972,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was purged. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was purged, retry. */
+            /**
+             * @description - `version_conflict`: `version` is stale. `current` is the item now, and nothing is purged.
+             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5896,7 +6003,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5952,16 +6062,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item id */
+                /** @description The ID of the item. */
                 id: string;
-                /** @description Tag to remove (URL-encoded) */
+                /** @description The tag to remove, URL-encoded. */
                 tag: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Tag removed */
+            /** @description Returns the item's metadata without the tag. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5975,7 +6085,7 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description Invalid item ID */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6005,7 +6115,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6020,7 +6130,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6090,40 +6200,53 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** @description The entries to write, at most 5,000. */
                     items: {
+                        /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
                         id?: string;
+                        /** @description The item's type identifier, such as `core.note`. */
                         type: string;
+                        /** @description The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`. */
                         properties?: {
                             [key: string]: unknown;
                         };
                         /**
-                         * @description How `properties` lands on a row this entry resolves, as on `PATCH /items/{id}`: `merge`, the default, lays them over the row's, and `replace` takes them as the row's whole properties, so a field left out is cleared. A stale `replace` clears a field nobody changed since and collides on one the other writer changed. An entry that creates a row writes its properties whole either way.
+                         * @description How `properties` applies to an existing item, as in `PATCH /items/{id}`. `merge` (the default) lays them over its properties. `replace` takes them as the whole set. A new item takes them whole either way.
                          * @enum {string}
                          */
                         properties_mode?: "merge" | "replace";
                         state?: components["schemas"]["ItemState"];
                         tier?: components["schemas"]["Tier"];
                         occurred_at?: string;
-                        /** @description The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`. */
+                        /** @description The source to key and stamp the entry's item with, as in `POST /items`. Defaults to your credential's own; it can also name one of your key's `sources`. */
                         source?: string;
+                        /** @description The item's identifier at its source. With `source`, it is the natural key that matches an existing item. */
                         source_id?: string;
-                        /** @description The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here: the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false. */
+                        /** @description The version you read, used when the entry matches an existing item: the update then applies only if the item is still at this version. */
                         version?: number;
+                        /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                         tags?: string[];
+                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. Types you don't name are untouched. */
                         edges?: {
                             [key: string]: string[];
                         };
                     }[];
-                    /** @enum {string} */
+                    /**
+                     * @description `upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`.
+                     * @enum {string}
+                     */
                     mode?: "upsert" | "create_only";
+                    /** @description Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written. */
                     atomic?: boolean;
+                    /** @description Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way. */
                     enable_fanout?: boolean;
+                    /** @description `true` moves an item to the entry's `type` when the entry resolves an existing item of another type. You need write on both types. Defaults to `false`. */
                     retype?: boolean;
                 };
             };
         };
         responses: {
-            /** @description Bulk upsert result */
+            /** @description Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6137,7 +6260,11 @@ export interface operations {
                     "application/json": components["schemas"]["BulkResponse"];
                 };
             };
-            /** @description Validation error, or an atomic rollback. `atomic` defaults to true, so a single refused entry aborts the whole page and the per-entry reason travels in `details.code`, at the status that refusal carries on its own: `400` here, `403`, `404` or `409` below. Send `atomic: false` to have each entry reported on its own instead. */
+            /**
+             * @description - `validation_error`: the body is malformed, or has more than 5,000 entries.
+             *     - `missing_required_field`: a required field is missing.
+             *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6167,7 +6294,11 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type; `forbidden` for a source the credential does not claim, or for an entry landing by `id` that would move a row's natural key under a source the key neither writes under nor claims. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal, `type_not_permitted` or `forbidden`, in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix. */
+            /**
+             * @description - `type_not_permitted`: you don't have write on an entry's type, or on the type its natural key matches, or your credential reaches no type.
+             *     - `forbidden`: an entry names a source your key doesn't claim or the instance's source allow-list excludes, or moves a natural key under a source your key doesn't write under.
+             *     - `bulk_atomic_rollback`: one of these under `atomic`.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6182,7 +6313,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description An atomic rollback for an entry naming a row that is not there, such as an inline edge's target, with `item_not_found` in `details.code`. */
+            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6197,7 +6328,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackRefusal"];
                 };
             };
-            /** @description An atomic rollback for an entry whose row moved or is taken, with `version_conflict`, `link_taken`, `type_mismatch` or `id_reused` in `details.code`. The last two turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing, the same code the single-item doors answer. */
+            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` names the cause, such as `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe). */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6272,6 +6403,7 @@ export interface operations {
                 "application/json": {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6281,6 +6413,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6292,6 +6425,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6301,6 +6435,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6309,6 +6444,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6319,6 +6455,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6328,7 +6465,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Dry-run result (synchronous; non-dry-run goes async) */
+            /** @description Dry run: returns `matched` and the matched `ids` without writing anything. A purge dry run also lists matches that aren't in the trash. The purge skips those. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6343,7 +6480,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionResult"];
                 };
             };
-            /** @description Job queued. Poll GET /items/bulk-actions/jobs/{id} until status is terminal (completed / failed / canceled). The envelope is exposed for explicit-control use cases. */
+            /** @description Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands. If your key is revoked or expires, your app's access is revoked, or a purge loses `items.purge`, the job ends `failed` and keeps its `result`. */
             202: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6358,7 +6495,12 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
-            /** @description Validation error, missing confirm, or cap exceeded */
+            /**
+             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
+             *     - `missing_required_field`: a field the action needs is missing.
+             *     - `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.
+             *     - `bulk_cap_exceeded`: more items match than `max_items` allows.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6389,7 +6531,11 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden` where `items.purge` is missing (purge only); `type_not_permitted` where `filter.type` names a type the credential may not read; `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it. */
+            /**
+             * @description - `forbidden`: you don't have `items.purge` for a purge, or the instance's source filter changed while Marfa selected items. Repeat the request.
+             *     - `type_not_permitted`: your credential reaches no type, or `filter.type` is a type you can't read.
+             *     - `edge_permission_denied`: the filter names an edge type you can't read.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6404,7 +6550,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6432,7 +6578,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6488,14 +6637,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Bulk-action job id. */
+                /** @description The ID of the bulk-action job. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Current job state */
+            /** @description Returns the job. Once it is terminal, `result.errors` lists each item left unchanged, with a code such as `invalid_transition` (a purge of an item not in the trash), `type_not_permitted` (a type you can no longer write), `item_not_found` (a type you can no longer read) or `invalid_properties`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6524,7 +6673,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Not the originating credential, and not the operator key */
+            /** @description - `forbidden`: another credential queued the job, and yours is not an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6539,7 +6688,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Job not found */
+            /** @description - `bulk_job_not_found`: no job has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6592,14 +6741,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Bulk-action job id. */
+                /** @description The ID of the bulk-action job. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Job state after the cancel signal */
+            /** @description Returns the job: `canceled` if it was queued or running, otherwise its final state unchanged. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6628,7 +6777,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Not the originating credential, and not the operator key */
+            /** @description - `forbidden`: another credential queued the job, and yours is not an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6643,7 +6792,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Job not found */
+            /** @description - `bulk_job_not_found`: no job has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6713,15 +6862,15 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description Item ids to fetch (max 100). */
+                    /** @description The IDs of the items to read, at most 100. */
                     ids: string[];
-                    /** @description `edges`, `metadata` and `extensions` hydrate those extras inline on the items already being returned. `system` is different in kind: it widens the result to include `system.*` items, which are omitted by default. Mirrors the GET /items `include` tokens. */
+                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default. */
                     include?: ("edges" | "metadata" | "extensions" | "system")[];
                 };
             };
         };
         responses: {
-            /** @description The readable subset of the requested items */
+            /** @description Returns the items you can read, and `metadata` if you asked for it. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6733,13 +6882,18 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description The items the caller may read, in the order `ids` named them, an id named twice answered once. Ids that do not resolve, or name a trashed item or one whose type the caller may not read, are left out. */
+                        /** @description The items you can read, in the order `ids` named them, each once. IDs that name nothing, a trashed item or an item whose type you can't read are left out. */
                         items: components["schemas"]["Item"][];
+                        /** @description The metadata of each item returned, in the same order. Present only when `include` has `metadata`. */
                         metadata?: components["schemas"]["Metadata"][];
                     };
                 };
             };
-            /** @description Validation error: `ids` absent (`missing_required_field`), too many ids, or a malformed id */
+            /**
+             * @description - `missing_required_field`: `ids` is missing.
+             *     - `validation_error`: `ids` is not a list, or has more than 100 IDs.
+             *     - `invalid_id`: an ID in `ids` is not a valid item ID.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6769,7 +6923,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types is served the ids it may read and the rest are omitted rather than refused. */
+            /** @description - `type_not_permitted`: your credential reaches no type. If it reaches some types, items of the others are left out instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6841,21 +6995,21 @@ export interface operations {
                 "application/json": {
                     /** @description The type the links are held in and the tombstones are kept under. */
                     type: string;
-                    /** @description Link values, which `type` must name a `link_field` for. */
+                    /** @description Link values to name. `type` must name a `link_field`. Links held by a subtype's items aren't included. */
                     links?: string[];
                     /** @description The source the `source_ids` are natural keys under. */
                     source?: string;
-                    /** @description Natural-key identifiers under `source`. */
+                    /** @description The `source_id` values to name under `source`. */
                     source_ids?: string[];
-                    /** @description Item ids. */
+                    /** @description Item IDs to look up, whatever their types. */
                     ids?: string[];
-                    /** @description `edges` hydrates each row's outbound edges as `GET /items?include=edges` does, held to the same two read permissions. */
+                    /** @description `edges` adds each item's outbound edges, as `GET /items?include=edges` does. */
                     include?: "edges"[];
                 };
             };
         };
         responses: {
-            /** @description The rows found and the tombstones for the keys named */
+            /** @description Returns the items found and the tombstones purges left for the keys named. A key that an item holds again has no tombstone. You get no tombstones if you can read only subtypes of `type`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6867,14 +7021,19 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description The rows found, in any state, in the order the request named their keys, each once. */
+                        /** @description The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` items, are left out. */
                         data: components["schemas"]["Item"][];
-                        /** @description The tombstones under `type` for the keys named, in the order named. Empty by `ids`. */
+                        /** @description The tombstones under `type` for the keys named, in the order named. Empty when you look up by `ids`. */
                         tombstones: components["schemas"]["Tombstone"][];
                     };
                 };
             };
-            /** @description `missing_required_field` for a body naming no `type`; `validation_error` for a malformed `type`, a body naming no selector or more than one, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered; `invalid_id` for a malformed id. */
+            /**
+             * @description - `missing_required_field`: `type` is missing.
+             *     - `validation_error`: `type` is malformed, or the body doesn't name exactly one selector, or has more than 500 values, an empty value, an undeclared key, or `links` for a type with no `link_field`.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `invalid_id`: an ID in `ids` is malformed.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6904,7 +7063,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or it reads nothing under `type`. A credential that reaches some types is answered the rows it may read and the rest are left out. */
+            /** @description - `type_not_permitted`: your credential reaches no type, or reads nothing under `type`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6976,19 +7135,19 @@ export interface operations {
                 "application/json": {
                     /** @description The type the links are held in and the tombstones are kept under. */
                     type: string;
-                    /** @description Link values, which `type` must name a `link_field` for. */
+                    /** @description Link values to name. `type` must name a `link_field`. Links held by a subtype's items aren't included. */
                     links?: string[];
                     /** @description The source the `source_ids` are natural keys under. */
                     source?: string;
-                    /** @description Natural-key identifiers under `source`. */
+                    /** @description The `source_id` values to name under `source`. */
                     source_ids?: string[];
-                    /** @description An RFC 3339 instant: the time of the vendor's own change the connector made in carrying the purge out. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise. */
+                    /** @description The time of the vendor's own change that carried out the purge, as an RFC 3339 time. A tombstone takes it only if it is later than the tombstone's current `settled_at`. */
                     settled_at: string;
                 };
             };
         };
         responses: {
-            /** @description The named tombstones as they now stand */
+            /** @description Returns the named tombstones as they now stand. A key with no tombstone under `type` is left out. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7005,7 +7164,11 @@ export interface operations {
                     };
                 };
             };
-            /** @description `missing_required_field` for a body naming no `type` or `settled_at`; `validation_error` for a malformed `type` or `settled_at`, a body naming neither selector or both, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered. */
+            /**
+             * @description - `missing_required_field`: `type` or `settled_at` is missing.
+             *     - `validation_error`: `type` or `settled_at` is malformed, the body doesn't name exactly one of `links` or `source` with `source_ids`, or has more than 500 values, an empty value, an undeclared key, or `links` for a type with no `link_field`.
+             *     - `unknown_type`: `type` isn't registered.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7035,7 +7198,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted`: the credential does not hold write on `type`. `forbidden`: `source` is neither the credential's own nor one its key claims, named in `details.source`. */
+            /**
+             * @description - `type_not_permitted`: you don't have write on `type`.
+             *     - `forbidden`: `source` is not your credential's own or one of your key's `sources`. `details.source` names it.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7100,14 +7266,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item ID. */
+                /** @description The ID of the item. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Extension namespaces (filtered by permissions) */
+            /** @description Returns the namespaces you can read, keyed by name. Namespaces you can't read are left out. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7121,7 +7287,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description Invalid item ID */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7151,7 +7317,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7166,7 +7332,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7219,16 +7385,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item ID. */
+                /** @description The ID of the item. */
                 id: string;
-                /** @description Extension namespace to read. */
+                /** @description The extension namespace to read. */
                 namespace: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Extension namespace data */
+            /** @description Returns the namespace and its data. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7247,7 +7413,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Invalid item ID */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7277,7 +7443,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` where the credential's type permissions reach no type; `forbidden` without read on the namespace */
+            /**
+             * @description - `type_not_permitted`: your credential reaches no type.
+             *     - `forbidden`: you don't have read on the namespace.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7292,7 +7461,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7345,9 +7514,9 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item ID. */
+                /** @description The ID of the item. */
                 id: string;
-                /** @description Extension namespace to replace. */
+                /** @description The extension namespace to replace. */
                 namespace: string;
             };
             cookie?: never;
@@ -7360,7 +7529,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The namespaces on the item the caller may read */
+            /** @description Returns the namespaces on the item that you can read. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7374,7 +7543,10 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.
+             *     - `invalid_id`: the ID is not a valid item ID.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7404,7 +7576,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace */
+            /**
+             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
+             *     - `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7419,7 +7594,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7484,16 +7659,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Item ID. */
+                /** @description The ID of the item. */
                 id: string;
-                /** @description Extension namespace to delete. */
+                /** @description The extension namespace to delete. */
                 namespace: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The namespaces left on the item the caller may read */
+            /** @description Returns the namespaces left on the item that you can read. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7507,7 +7682,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description Invalid item ID */
+            /** @description - `invalid_id`: the ID is not a valid item ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7537,7 +7712,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace */
+            /**
+             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
+             *     - `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7552,7 +7730,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. If the item is in the trash and you can read its type, `details.trashed` is `true`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7623,7 +7801,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -7679,7 +7857,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7695,7 +7873,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7822,7 +8000,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7837,7 +8015,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7900,7 +8078,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -8137,7 +8315,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs`: any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together. */
+            /** @description `id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs`: any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together. An `id` held by an edge you may not read answers the same code, and the response says only that the ID is taken. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8165,7 +8343,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8220,7 +8401,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -8433,7 +8614,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8461,7 +8642,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8647,7 +8831,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8786,7 +8973,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description An atomic rollback for an edge naming an end that is not there, with `item_not_found` in `details.code`. */
+            /** @description An atomic rollback for an edge naming an end that is not there or whose type the credential may not read, with `item_not_found` in `details.code`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8865,7 +9052,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -9025,7 +9212,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
-            /** @description Edge type already exists, or a name it claims is held */
+            /** @description `conflict`: the ID is a shipped edge-type name, or the ID or `reverse_name` is already held by another edge type as either. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9238,7 +9425,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -9351,7 +9538,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeResponse"];
                 };
             };
-            /** @description `missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits. */
+            /** @description `missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses, such as a `link_field` that is not a string field the type declares or inherits, or whose name holds a double quote or a backslash; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9527,7 +9714,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description Stored inheritance chain cannot be resolved */
+            /** @description `type_chain_unresolvable`: the stored inheritance chain cannot be resolved, because it is circular or deeper than any resolution walk follows. `PUT /types/{id}` can still correct it. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9605,7 +9792,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeResponse"];
                 };
             };
-            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses. */
+            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses, such as one that leaves a subtype linking by a field it no longer declares or inherits, or by a field that is no longer a string. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9814,7 +10001,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description Type still has subtypes, or items */
+            /**
+             * @description - `type_has_subtypes`: another type names this one as its parent (`details.subtype_ids` names them). `?force=true` does not cover this: delete each subtype first, or give it another parent with `PUT /types/{id}`.
+             *     - `type_in_use`: an item of the type exists in any lifecycle state, the bin included, and `?force` is not `true`.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10001,11 +10191,11 @@ export interface operations {
     listOccurrences: {
         parameters: {
             query: {
-                /** @description Window start, ISO 8601. An event ending at or before it is outside the window; one with no length starting at it is inside. */
+                /** @description Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. An event's end is its `ends_at`, else its start plus `duration`, else, for a whole-day event, the next day. */
                 from: string;
-                /** @description Window end, ISO 8601. An event starting at or after it is outside the window. */
+                /** @description Window end, ISO 8601. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
-                /** @description Restrict to one event type, or to the event types a wildcard matches. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. */
+                /** @description Only return events of this type, or of the event types a wildcard matches. */
                 type?: string;
             };
             header?: never;
@@ -10014,7 +10204,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Occurrences overlapping the window, ordered by start time */
+            /** @description Returns occurrences ordered by start time. A recurring event gives an entry per occurrence, with `series_id`. A stored exception replaces its occurrence and carries `replaces`. A rule Marfa can't read or fully apply is listed in `series_errors`, and `expansion_incomplete` is `true` if an expansion didn't finish. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10028,7 +10218,11 @@ export interface operations {
                     "application/json": components["schemas"]["OccurrencePage"];
                 };
             };
-            /** @description `missing_required_field` when `from` or `to` is absent; `unknown_type` when `type` names nothing registered; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
+            /**
+             * @description - `missing_required_field`: `from` or `to` is missing.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10058,7 +10252,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads. */
+            /** @description - `type_not_permitted`: your credential reaches no type, or `type` is a registered type you can't read with none readable under it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10115,7 +10309,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Distinct tags with usage counts, sorted by count descending then tag ascending. Type-permission scoped, and counted over the active state, as the listing is. */
+            /** @description Returns each tag and its count. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10144,7 +10338,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description - `type_not_permitted`: your credential reaches no type. If it reaches some types, the list covers only those. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10253,7 +10447,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10561,7 +10755,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10703,7 +10897,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10822,7 +11016,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10958,7 +11152,10 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such blob, or no such copy */
+            /**
+             * @description - `blob_not_found`: no such blob.
+             *     - `blob_location_not_found`: the store holds no copy of the blob, or is not attached.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11398,7 +11595,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description A session token, which is not a key, or the operator key */
+            /** @description - `forbidden`: the request carries an app's session token, which is not a key, or the operator key, which runs the instance and never acts as a connector. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11499,7 +11696,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description No such connector, or one registered by another key */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11842,7 +12039,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description No such connector, or one registered by another key */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12723,7 +12920,10 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector, or a delivery it does not hold */
+            /**
+             * @description - `connector_not_found`: no such connector.
+             *     - `delivery_not_found`: an ID is not one of this connector's deliveries. Nothing is marked.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12823,7 +13023,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description A field missing, or one of the wrong shape or past its bound */
+            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13224,7 +13424,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description A field missing, or one of the wrong shape or past its bound */
+            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13634,7 +13834,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description A field missing, or one of the wrong shape or past its bound */
+            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13788,7 +13988,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description A field missing, or one of the wrong shape or past its bound */
+            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13983,7 +14183,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14011,7 +14211,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14173,7 +14376,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: a setting this change names was changed since `version`. `ancestor_unavailable`: no snapshot of `version` is held. */
+            /** @description `version_conflict`: a setting this change names was changed since `version`, whatever the query says. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14201,7 +14404,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14344,7 +14550,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14372,7 +14578,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14590,7 +14799,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`, and a claimed source the caller may not grant in `details.source`. */
+            /** @description `forbidden`: you don't hold `keys.mint`, you asked for reach your credential doesn't cover (a working key may grant only its own `source` and what it claims), you gave reach to an operator key, or you minted an operator key without being one. `details.required_scope` names a missing permission and `details.source` a source you may not grant. A refused bootstrap mint leaves the secret unused. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14669,7 +14878,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -14783,7 +14992,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Key revoked */
+            /** @description Key revoked. The next request bearing it answers `401 unauthorized`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14842,7 +15051,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No key was revoked: unknown, already revoked, or beyond the caller's reach */
+            /** @description `api_key_not_found`: no key was revoked. The ID is unknown, the key is already revoked or past its `expires_at`, or it is beyond your reach. The answer does not say which, so it does not reveal whether a key exists. Only the operator key is told whether an ID was unknown or the key already revoked. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14957,7 +15166,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /** @description Invalid update (e.g. attempt to mutate an immutable field) */
+            /** @description `validation_error`: the update is invalid, for example it carries `source`, which can't change. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14987,7 +15196,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `keys.mint` required, unless the caller is the operator key; or the edit reaches past what the caller holds, or past what a key an app made already holds. A missing permission is named in `details.required_scope`, and a claimed source that may not be granted in `details.source`. */
+            /** @description `forbidden`: you don't hold `keys.mint` (the operator key needn't), or the edit widens a permission map past what you hold, or `sources` past your own `source` and what you claim. The operator key is no ceiling, but no map on an operator key can be widened by anyone. A key an app created can only be narrowed. `details.required_scope` and `details.source` name what is missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15187,7 +15396,7 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
-            /** @description Validation error */
+            /** @description - `validation_error`: the body names a key Marfa does not recognize, a cleanup-job retention override below `0`, or an `instance_id` that names a different instance. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15592,7 +15801,7 @@ export interface operations {
                     "application/json": components["schemas"]["NotFoundOrTypeNotFoundRefusal"];
                 };
             };
-            /** @description A row carries the identifier and it cannot be removed here: the build still ships this type, items still carry it, or another registered type inherits from it. An identifier no row carries is absent rather than in the way, and answers `404 type_not_found`. */
+            /** @description A row carries the identifier and it cannot be removed here: the build still ships this type, items still carry it, or another registered type inherits from it (`details.child_types` names them). An identifier no row carries is absent rather than in the way, and answers `404 type_not_found`. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15786,7 +15995,7 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /** @description The body is malformed, or the password is outside the sign-in surface's length rule */
+            /** @description - `validation_error`: the body is malformed, or the password is outside the sign-in surface's length rule. For the password, the error names `password` and the bound. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15831,7 +16040,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description This instance already has an owner */
+            /** @description - `owner_exists`: this instance already has an owner, whatever the body. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16271,7 +16480,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found */
+            /** @description Webhook not found, or registered by another credential */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16884,7 +17093,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller does not hold `audit.read` */
+            /** @description - `forbidden`: the credential does not hold `audit.read`. The operator key holds no permission, so it is refused too. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16998,7 +17207,10 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            /** @description The filter or the cursor cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or a concrete `type` entry nothing registers (`unknown_type`), an `edges` value outside the enum, or a `Last-Event-ID` that is not a decimal event id. */
+            /**
+             * @description - `validation_error`: more than 10 `type` entries, a `type` entry that is `*` or outside the type-identifier grammar, an `edges` value outside the enum, a `Last-Event-ID` that is not a decimal event ID, or, in copy mode, an extra or duplicate query key, an empty or malformed header, or one resume header without the other.
+             *     - `unknown_type`: a `type` entry nothing registers.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

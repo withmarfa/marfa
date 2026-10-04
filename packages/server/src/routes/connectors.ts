@@ -178,6 +178,13 @@ const notFoundResponse = {
   },
 };
 
+const hiddenConnectorResponse = {
+  404: {
+    ...notFoundResponse[404],
+    description: "No such connector, or one registered by another key",
+  },
+};
+
 export const ownKeyResponses = {
   ...anyKeyResponses,
   403: {
@@ -222,7 +229,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register a connector",
   description:
-    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
+    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
   security: [{ bearerAuth: [] }],
   middleware: workingKeyOnly,
   request: {
@@ -254,7 +261,8 @@ const registerConnectorRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "A session token, which is not a key, or the operator key",
+      description:
+        "- `forbidden`: the request carries an app's session token, which is not a key, or the operator key, which runs the instance and never acts as a connector.",
     },
   },
 });
@@ -287,8 +295,7 @@ const getConnectorRoute = createRoute({
   path: "/{id}",
   tags: ["Connectors"],
   summary: "Get a connector",
-  description:
-    "The connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
+  description: "The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -297,7 +304,7 @@ const getConnectorRoute = createRoute({
       description: "The registration",
     },
     ...anyKeyResponses,
-    ...notFoundResponse,
+    ...hiddenConnectorResponse,
   },
 });
 
@@ -308,7 +315,7 @@ const deleteConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Delete a connector",
   description:
-    "Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.",
+    "Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -385,8 +392,7 @@ const listRunsRoute = createRoute({
   path: "/{id}/runs",
   tags: ["Connectors"],
   summary: "List connector runs",
-  description:
-    "Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.",
+  description: "Newest first, to the connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -413,7 +419,7 @@ const listRunsRoute = createRoute({
       description: "A `limit` outside its bounds",
     },
     ...anyKeyResponses,
-    ...notFoundResponse,
+    ...hiddenConnectorResponse,
   },
 });
 
@@ -434,7 +440,7 @@ const createEndpointRoute = createRoute({
   path: "/{id}/endpoints",
   tags: ["Connectors"],
   summary: "Create a webhook endpoint",
-  description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints, and one more is refused \`409 conflict\`.`,
+  description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints.`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -488,7 +494,7 @@ const retireEndpointRoute = createRoute({
   tags: ["Connectors"],
   summary: "Retire a webhook endpoint",
   description:
-    "Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
+    "Its address stops accepting deliveries, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
   request: { params: EndpointParam },
   responses: {
@@ -592,7 +598,7 @@ const markHandledRoute = createRoute({
   tags: ["Connectors"],
   summary: "Mark inbound deliveries handled",
   description:
-    "Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. An id that is not this connector's refuses the whole request and marks nothing. The connector's own key only.",
+    "Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. The connector's own key only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -630,7 +636,8 @@ const markHandledRoute = createRoute({
           ]),
         },
       },
-      description: "No such connector, or a delivery it does not hold",
+      description:
+        "- `connector_not_found`: no such connector.\n- `delivery_not_found`: an ID is not one of this connector's deliveries. Nothing is marked.",
     },
   },
 });

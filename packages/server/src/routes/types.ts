@@ -352,7 +352,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike, for every credential and whatever its type map reaches.\n\nA type whose stored inheritance chain cannot be resolved (circular, or deeper than any resolution walk follows) answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike, for every credential and whatever its type map reaches.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -390,7 +390,8 @@ const getTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_chain_unresolvable"]),
         },
       },
-      description: "Stored inheritance chain cannot be resolved",
+      description:
+        "`type_chain_unresolvable`: the stored inheritance chain cannot be resolved, because it is circular or deeper than any resolution walk follows. `PUT /types/{id}` can still correct it.",
     },
   },
 });
@@ -403,7 +404,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces. A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -436,7 +437,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits.",
+        "`missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses, such as a `link_field` that is not a string field the type declares or inherits, or whose name holds a double quote or a backslash; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits.",
     },
     401: {
       content: {
@@ -511,7 +512,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once. The old link's tombstones go with it, since they hold another field's values.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -546,7 +547,7 @@ const updateTypeRoute = createRoute({
         },
       },
       description:
-        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
+        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses, such as one that leaves a subtype linking by a field it no longer declares or inherits, or by a field that is no longer a string.",
     },
     401: {
       content: {
@@ -605,7 +606,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a type",
   description:
-    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included; platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).\n\nThe tombstones purges left under the type go with it.",
+    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included.\n\n`?force=true` orphans the items of the type that still exist in any lifecycle state, the bin included: they persist, but new writes against the type, and any write setting a field of one of those rows, answer `unknown_type` until the type is registered again.\n\nThe tombstones purges left under the type go with it.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {
@@ -665,7 +666,8 @@ const deleteTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_in_use", "type_has_subtypes"]),
         },
       },
-      description: "Type still has subtypes, or items",
+      description:
+        "- `type_has_subtypes`: another type names this one as its parent (`details.subtype_ids` names them). `?force=true` does not cover this: delete each subtype first, or give it another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists in any lifecycle state, the bin included, and `?force` is not `true`.",
     },
   },
 });
