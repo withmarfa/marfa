@@ -107,12 +107,12 @@ export class SqliteEdgeStore implements EdgeStore {
         await liftOrphanReports(tx, [row.properties]);
       } catch (err) {
         if (isPrimaryKeyViolation(err, "edges")) {
-          // The race the doors' own comparison cannot close: both read the
-          // id as free and one of them inserts first. Same code as that
-          // comparison gives, because it is the same mistake from the
-          // caller's side; no `differs`, because the row that won is not
-          // read here and naming a field without having compared it would
-          // be a guess.
+          // An id held by an edge the caller may not read, which the doors
+          // leave to this collision so the answer says nothing of that edge.
+          // Same code as their own comparison gives, because it is the same
+          // mistake from the caller's side; no `differs`, because the row
+          // holding the id is not read here and naming a field without
+          // having compared it would be a guess.
           throw new MarfaError(
             ErrorCode.ID_REUSED,
             `Edge id ${id} already names a different edge`,
@@ -338,8 +338,9 @@ export class SqliteEdgeStore implements EdgeStore {
     });
   }
 
-  async delete(id: string): Promise<void> {
-    await this.removeWhere(eq(edges.id, id));
+  async delete(id: string): Promise<Edge | null> {
+    const [removed] = await this.removeWhere(eq(edges.id, id));
+    return removed ?? null;
   }
 
   async deleteBySource(sourceId: string, edgeType?: string): Promise<Edge[]> {
@@ -365,51 +366,6 @@ export class SqliteEdgeStore implements EdgeStore {
       );
       return removed.map(rowToEdge);
     });
-  }
-
-  async countBySource(sourceId: string, edgeType: string): Promise<number> {
-    const conditions = [
-      eq(edges.source_id, sourceId),
-      eq(edges.edge_type, edgeType),
-    ];
-    const row = await this.db
-      .select({ c: count() })
-      .from(edges)
-      .where(and(...conditions))
-      .get();
-    return row?.c ?? 0;
-  }
-
-  async countByTarget(targetId: string, edgeType: string): Promise<number> {
-    const conditions = [
-      eq(edges.target_id, targetId),
-      eq(edges.edge_type, edgeType),
-    ];
-    const row = await this.db
-      .select({ c: count() })
-      .from(edges)
-      .where(and(...conditions))
-      .get();
-    return row?.c ?? 0;
-  }
-
-  async existsExact(
-    sourceId: string,
-    targetId: string,
-    edgeType: string,
-  ): Promise<boolean> {
-    const conditions = [
-      eq(edges.source_id, sourceId),
-      eq(edges.target_id, targetId),
-      eq(edges.edge_type, edgeType),
-    ];
-    const row = await this.db
-      .select({ id: edges.id })
-      .from(edges)
-      .where(and(...conditions))
-      .limit(1)
-      .get();
-    return !!row;
   }
 
   async countsBySourceBatch(
@@ -525,46 +481,23 @@ export class SqliteEdgeStore implements EdgeStore {
     return out;
   }
 
-  async findByTriplesBatch(
-    pairs: {
-      source_id: string;
-      target_id: string;
-      edge_type: string;
-    }[],
-  ): Promise<Map<string, Edge>> {
-    const out = new Map<string, Edge>();
-    if (pairs.length === 0) return out;
-    const byType = new Map<string, { s: string; t: string }[]>();
-    for (const p of pairs) {
-      const bucket = byType.get(p.edge_type) ?? [];
-      bucket.push({ s: p.source_id, t: p.target_id });
-      byType.set(p.edge_type, bucket);
-    }
-    for (const [edgeType, entries] of byType) {
-      const sourceIds = Array.from(new Set(entries.map((e) => e.s)));
-      const targetIds = Array.from(new Set(entries.map((e) => e.t)));
-      const wanted = new Set(entries.map((e) => `${e.s}|${e.t}`));
-      const conditions = [
-        eq(edges.edge_type, edgeType),
-        inArray(edges.source_id, sourceIds),
-        inArray(edges.target_id, targetIds),
-      ];
-      const rows = await this.db
-        .select()
-        .from(edges)
-        .where(and(...conditions))
-        .all();
-      for (const row of rows) {
-        const key = `${row.source_id}|${row.target_id}`;
-        if (wanted.has(key)) {
-          out.set(
-            `${row.source_id}|${row.target_id}|${edgeType}`,
-            rowToEdge(row),
-          );
-        }
-      }
-    }
-    return out;
+  async findByTriple(
+    sourceId: string,
+    targetId: string,
+    edgeType: string,
+  ): Promise<Edge | null> {
+    const row = await this.db
+      .select()
+      .from(edges)
+      .where(
+        and(
+          eq(edges.source_id, sourceId),
+          eq(edges.target_id, targetId),
+          eq(edges.edge_type, edgeType),
+        ),
+      )
+      .get();
+    return row ? rowToEdge(row) : null;
   }
 
   async wouldCreateCycle(

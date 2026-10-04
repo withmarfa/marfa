@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List items
-         * @description Returns a paginated list of items, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes `system`, which is not a hydration: it widens the rows returned to include `system.*` items, which this listing omits by default. Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Returns a paginated list of items, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default; use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes `system`, which is not a hydration: it widens the rows returned to include `system.*` items, which this listing omits by default. Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listItems"];
         put?: never;
@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -67,7 +67,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Soft delete an item
+         * Trash an item
          * @description Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
          */
         delete: operations["deleteItem"];
@@ -90,7 +90,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Restore a trashed item
+         * Restore an item
          * @description Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
          */
         post: operations["restoreItem"];
@@ -110,8 +110,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Transition item state
-         * @description Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
+         * Change an item's state
+         * @description Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected; restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
          */
         post: operations["transitionItem"];
         delete?: never;
@@ -129,7 +129,7 @@ export interface paths {
         };
         /**
          * List item versions
-         * @description Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the `type`, `tier`, `occurred_at` and `source_id` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the `type`, `tier`, `occurred_at` and `source_id` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listItemVersions"];
         put?: never;
@@ -153,7 +153,7 @@ export interface paths {
          */
         get: operations["getItemMetadata"];
         /**
-         * Replace item metadata tags
+         * Replace an item's tags
          * @description Replaces the item's tag set with the supplied array, where an empty array clears all tags. Only tags are touched; tier and state are unaffected and change through their own endpoints.
          */
         put: operations["replaceItemMetadata"];
@@ -162,7 +162,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Merge item metadata
+         * Merge tags into an item
          * @description Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.
          */
         patch: operations["mergeItemMetadata"];
@@ -179,7 +179,7 @@ export interface paths {
         put?: never;
         /**
          * Add tags to an item
-         * @description Adds one or more tags to the item. Idempotent — tags already present are not duplicated.
+         * @description Adds one or more tags to the item. Idempotent: tags already present are not duplicated.
          */
         post: operations["addItemTags"];
         delete?: never;
@@ -199,12 +199,12 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Permanently delete an item
-         * @description Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+         * Purge an item
+         * @description Hard-deletes the item and its edges, metadata, extensions, and attachment references. It can't be undone. Requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
          *
          *     The purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.
          *
-         *     `version` makes the purge conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, and deletes nothing. Without it the purge applies to the row as it is. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         *     `version` makes the purge conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, and deletes nothing. Without it the purge applies to the row as it is. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         delete: operations["purgeItem"];
         options?: never;
@@ -224,7 +224,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a tag from an item
-         * @description Removes one tag from the item. Idempotent — removing a tag the item doesn't carry returns 200 with the unchanged metadata.
+         * @description Removes one tag from the item. Idempotent: removing a tag the item doesn't carry returns 200 with the unchanged metadata.
          */
         delete: operations["removeItemTag"];
         options?: never;
@@ -242,10 +242,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Bulk upsert items
-         * @description Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. A key reaching no type at all is refused `403 type_not_permitted` before the list is read, an empty list included. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.
+         * Upsert items in bulk
+         * @description Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. A key reaching no type at all is refused `403 type_not_permitted` before the list is read, an empty list included. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type: the credential's own type permissions decide, and nothing bypasses them.
          *
-         *     An entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.
+         *     An entry that resolves a row of a different type is refused with `type_mismatch`: a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.
          *
          *     An ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways. An entry may carry `properties_mode` as `PATCH /items/{id}` does: `replace` takes its properties as the row's whole, so a field left out is cleared, and a stale one is merged against the version it names as a stale `PATCH` is.
          *
@@ -273,7 +273,7 @@ export interface paths {
          * Apply a bulk action
          * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. A key reaching no type at all, the operator key among them, is refused `403 type_not_permitted` before the filter is read; any other key matches only what it may write. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.
          *
-         *     Unrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.
+         *     Refuses a field it doesn't recognize, in the body or in `filter`, unless the name starts with `_`.
          */
         post: operations["applyBulkAction"];
         delete?: never;
@@ -316,7 +316,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Bulk get items by id
+         * Get items in bulk
          * @description Reads up to 100 items by id in one round-trip, permission-filtered exactly like the single-item GET: ids the caller cannot read (type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request, and the rest come back in the order the request named them, each once. Optional `include` takes the same tokens as GET /items: `edges`, `metadata` and `extensions` hydrate an extra inline, while `system` widens the result to include `system.*` items, which are omitted by default.
          *
          *     Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
@@ -338,7 +338,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Look items up by link, natural key or id
+         * Look up items
          * @description Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.
          *
          *     - `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.
@@ -364,7 +364,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Move tombstones' settled time later
+         * Move tombstones' settled time
          * @description Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.
          */
         post: operations["settleTombstones"];
@@ -382,7 +382,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List extension namespaces for an item
+         * List extension namespaces
          * @description Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
          */
         get: operations["listItemExtensions"];
@@ -414,7 +414,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an extension namespace
-         * @description Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.
+         * @description Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent: deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.
          */
         delete: operations["deleteItemExtension"];
         options?: never;
@@ -430,8 +430,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List outbound edges from an item
-         * @description Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * List outbound edges
+         * @description Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listItemEdges"];
         put?: never;
@@ -450,8 +450,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List inbound edges to an item
-         * @description Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * List inbound edges
+         * @description Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listItemBackrefs"];
         put?: never;
@@ -475,11 +475,11 @@ export interface paths {
          *
          *     Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.
          *
-         *     Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.
+         *     Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate: a client reconciling its copy has to see those edges rather than watch them disappear.
          *
          *     Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.
          *
-         *     Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         *     Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listEdges"];
         put?: never;
@@ -510,7 +510,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge
-         * @description Deletes a single edge by id. The edge type's `cascade_on_delete` setting decides what happens to the connected items: `cascade` deletes them, `orphan` leaves them, and `block` rejects the delete while endpoints remain.
+         * @description Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.
          */
         delete: operations["deleteEdge"];
         options?: never;
@@ -521,7 +521,7 @@ export interface paths {
          *
          *     **Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.
          *
-         *     `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
+         *     `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties, so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
          */
         patch: operations["updateEdge"];
         trace?: never;
@@ -536,8 +536,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Bulk upsert edges
-         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
+         * Upsert edges in bulk
+         * @description Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -555,7 +555,7 @@ export interface paths {
         };
         /**
          * List edge types
-         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
+         * @description Returns every edge type this instance resolves (the shipped types plus any registered through `POST /edge-types`), each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
          */
         get: operations["listEdgeTypes"];
         put?: never;
@@ -582,7 +582,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge type
-         * @description Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
+         * @description Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
          */
         delete: operations["deleteEdgeType"];
         options?: never;
@@ -599,7 +599,7 @@ export interface paths {
         };
         /**
          * List types
-         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.
+         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.
          */
         get: operations["listTypes"];
         put?: never;
@@ -625,18 +625,18 @@ export interface paths {
          * Get a type
          * @description Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.
          *
-         *     A type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.
+         *     A type whose stored inheritance chain cannot be resolved (circular, or deeper than any resolution walk follows) answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.
          */
         get: operations["getType"];
         /**
-         * Update a registered type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+         * Replace a type
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
          */
         put: operations["updateType"];
         post?: never;
         /**
-         * Delete a registered type
-         * @description Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.
+         * Delete a type
+         * @description Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included; platform-shipped types are immutable.
          *
          *     Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.
          *
@@ -659,7 +659,7 @@ export interface paths {
         };
         /**
          * Search items
-         * @description Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["searchItems"];
         put?: never;
@@ -678,8 +678,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List event occurrences in a window
-         * @description Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.
+         * List occurrences
+         * @description Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated. That is worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read, not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.
          */
         get: operations["listOccurrences"];
         put?: never;
@@ -698,7 +698,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List distinct tags in use
+         * List tags
          * @description Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.
          */
         get: operations["listTags"];
@@ -738,7 +738,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the blobs nothing references
+         * List orphaned blobs
          * @description The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.
          */
         get: operations["listBlobOrphans"];
@@ -758,7 +758,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the stores this instance keeps bytes in
+         * List blob stores
          * @description Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.
          */
         get: operations["listBlobStores"];
@@ -778,7 +778,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download blob binary
+         * Download a blob
          * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
          */
         get: operations["downloadBlob"];
@@ -798,7 +798,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a time-limited link to a blob's bytes
+         * Get a blob URL
          * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
          */
         get: operations["getBlobUrl"];
@@ -818,7 +818,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the stores holding a blob
+         * List a blob's locations
          * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
          */
         get: operations["listBlobLocations"];
@@ -841,7 +841,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Drop one store's copy of a blob
+         * Delete a blob's copy in a store
          * @description Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.
          */
         delete: operations["dropBlobLocation"];
@@ -858,7 +858,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the instance's housekeeping jobs
+         * List housekeeping jobs
          * @description Every housekeeping job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.
          */
         get: operations["listHousekeeping"];
@@ -880,7 +880,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run one housekeeping job now
+         * Run a housekeeping job
          * @description Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.
          */
         post: operations["runHousekeeping"];
@@ -898,13 +898,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List the registered connectors
+         * List connectors
          * @description The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.
          */
         get: operations["listConnectors"];
         put?: never;
         /**
-         * Register the caller's key as a connector
+         * Register a connector
          * @description Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.
          */
         post: operations["registerConnector"];
@@ -922,14 +922,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get one registered connector
+         * Get a connector
          * @description The connector's own key or the operator key. Another credential is answered as if the connector did not exist.
          */
         get: operations["getConnector"];
         put?: never;
         post?: never;
         /**
-         * Remove a registration and its runs
+         * Delete a connector
          * @description Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.
          */
         delete: operations["deleteConnector"];
@@ -948,7 +948,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record that the connector is alive
+         * Send a heartbeat
          * @description Stamps `last_heartbeat_at` with the server's clock. The connector's own key only. What a stale heartbeat means is the reader's to decide: nothing here supervises.
          */
         post: operations["heartbeatConnector"];
@@ -966,13 +966,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List a connector's runs
+         * List connector runs
          * @description Newest first, to the connector's own key or the operator key. Another credential is answered as if the connector did not exist.
          */
         get: operations["listConnectorRuns"];
         put?: never;
         /**
-         * Report a run and its outcome
+         * Report a run
          * @description Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.
          */
         post: operations["reportConnectorRun"];
@@ -990,13 +990,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List a connector's inbound webhook endpoints
+         * List webhook endpoints
          * @description Newest first, retired ones included, each address redacted. The connector's own key or the operator key.
          */
         get: operations["listInboundEndpoints"];
         put?: never;
         /**
-         * Make an inbound webhook endpoint
+         * Create a webhook endpoint
          * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
          */
         post: operations["createInboundEndpoint"];
@@ -1017,7 +1017,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Retire an inbound webhook endpoint
+         * Retire a webhook endpoint
          * @description Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
          */
         delete: operations["retireInboundEndpoint"];
@@ -1034,7 +1034,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List a connector's inbound deliveries
+         * List inbound deliveries
          * @description Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.
          */
         get: operations["listInboundDeliveries"];
@@ -1054,7 +1054,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read an inbound delivery's body
+         * Get an inbound delivery's body
          * @description The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.
          */
         get: operations["getInboundDeliveryBody"];
@@ -1096,12 +1096,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Take or renew the hold on a registration
+         * Take or renew a hold
          * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.
          */
         post: operations["holdConnector"];
         /**
-         * Release the hold on a registration
+         * Release a hold
          * @description Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only.
          */
         delete: operations["releaseConnectorHold"];
@@ -1118,18 +1118,18 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read what a connector keeps on the instance
+         * Get the state document
          * @description The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.
          */
         get: operations["getConnectorState"];
         /**
-         * Replace what a connector keeps on the instance
+         * Replace the state document
          * @description Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. A top-level field the body does not declare is refused. The connector's own key only.
          */
         put: operations["replaceConnectorState"];
         post?: never;
         /**
-         * Clear what a connector keeps on the instance
+         * Delete the state document
          * @description Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
          */
         delete: operations["clearConnectorState"];
@@ -1152,7 +1152,7 @@ export interface paths {
         get: operations["listConnectorAgreements"];
         put?: never;
         /**
-         * Write a connector's agreements about rows
+         * Write agreements
          * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. The connector's own key only.
          */
         post: operations["writeConnectorAgreements"];
@@ -1172,7 +1172,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Read a connector's agreements about named rows
+         * Look up agreements
          * @description The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. A top-level field the body does not declare is refused. The connector's own key only.
          */
         post: operations["findConnectorAgreements"];
@@ -1216,7 +1216,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Change a folder's settings
+         * Update a folder
          * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.
          */
         patch: operations["updateFolder"];
@@ -1265,7 +1265,7 @@ export interface paths {
          *
          *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.
          *
-         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it — and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
+         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it), and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
          */
         post: operations["createKey"];
         delete?: never;
@@ -1282,7 +1282,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read the calling key
+         * Get the current key
          * @description Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
          */
         get: operations["getCurrentKey"];
@@ -1313,7 +1313,7 @@ export interface paths {
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
+         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body; revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1326,13 +1326,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the instance configuration
-         * @description Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides — under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.
+         * Get the configuration
+         * @description Returns the instance configuration (the optional `enforcement` levers plus the cleanup-job retention overrides) under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.
          */
         get: operations["getConfig"];
         /**
-         * Replace the instance configuration
-         * @description Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.
+         * Replace the configuration
+         * @description Overwrites the instance config with the supplied object: full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.
          */
         put: operations["replaceConfig"];
         post?: never;
@@ -1352,7 +1352,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Restore types, items, edges, metadata, and blobs from an archive
+         * Restore from an archive
          * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
          */
         post: operations["adminRestoreArchive"];
@@ -1370,8 +1370,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Shipped types this instance carries that the build does not
-         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
+         * List stale platform types
+         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
          */
         get: operations["adminListPlatformTypeDrift"];
         put?: never;
@@ -1393,7 +1393,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Remove one shipped type the build no longer carries
+         * Delete a stale platform type
          * @description Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report, so an item of the type written meanwhile is either counted or refused. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.
          */
         delete: operations["adminRemovePlatformType"];
@@ -1410,7 +1410,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Who owns this instance
+         * Get the owner
          * @description Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. `404 owner_not_found` on an instance that has none yet, which is the state every instance boots in; `POST /owner` is what changes it. Operator key only.
          */
         get: operations["getOwner"];
@@ -1434,8 +1434,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export data
-         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * Export items and edges
+         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["exportData"];
         put?: never;
@@ -1455,7 +1455,7 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.
+         * @description Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here; the plaintext is only returned at create time.
          */
         get: operations["listWebhooks"];
         put?: never;
@@ -1493,7 +1493,7 @@ export interface paths {
         head?: never;
         /**
          * Update a webhook
-         * @description Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.
+         * @description Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here; delete the subscription and create a new one.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -1547,7 +1547,7 @@ export interface paths {
         };
         /**
          * List audit log entries
-         * @description Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `audit.read`. The operator key holds no permission, so it is refused rather than shown the trail. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`. The operator key holds no permission, so it is refused rather than shown the trail. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["listAuditLog"];
         put?: never;
@@ -1591,7 +1591,7 @@ export interface paths {
          *
          *     For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Copy mode refuses other or duplicate query keys, empty or malformed headers, and unpaired resume headers. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A changed view before opening answers 409 `read_view_changed`; after opening it sends only the no-id terminal `read_view_changed` with data `{"type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.
          *
-         *     The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.
+         *     The stream opens with a `stream_cursor` frame, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }`, the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.
          *
          *     For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.
          *
@@ -1601,7 +1601,7 @@ export interface paths {
          *
          *     An item frame carries `type` and `item`, and an edge frame `type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.
          *
-         *     A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame — `{ "type": "stream_incomplete", "reason": "…", "cursor": "<event id>" | null }` — and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.
+         *     A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame, `{ "type": "stream_incomplete", "reason": "…", "cursor": "<event id>" | null }`, and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.
          *
          *     The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. A reconnect with a revoked key is refused `401`; an app reconnects with the token it refreshed to.
          *
@@ -2255,7 +2255,7 @@ export interface components {
             source?: string;
             tier?: components["schemas"]["Tier"];
             tags?: string[];
-            /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` — strictly after this. Exclusive, as every bound but `updated_after` is. */
+            /** @description Lower bound on the item's own time (`occurred_at`, falling back to `created_at`) strictly after this. Exclusive, as every bound but `updated_after` is. */
             occurred_after?: string;
             /** @description Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin. */
             occurred_before?: string;
@@ -2863,25 +2863,25 @@ export interface components {
                 occurrences: number;
                 /** @description Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is. */
                 max_occurrences: number;
-                /** @description Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize. */
+                /** @description Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two (an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another), so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize. */
                 series_errors: number;
                 /** @description Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these. */
                 max_series_errors: number;
-                /** @description Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed. It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one. */
+                /** @description Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window (that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed). It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates (an unreadable rule, a timezone that does not resolve) is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one. */
                 unproductive_iterations: number;
                 /** @description Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it. */
                 max_unproductive_iterations: number;
                 /** @description Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed. */
                 series_unexpanded: number;
             };
-            /** @description One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing. */
+            /** @description One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once: a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing. */
             series_errors?: {
                 item_id: string;
                 message: string;
             }[];
             /** @description Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total. */
             series_errors_truncated?: boolean;
-            /** @description Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names. */
+            /** @description Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it (the budget is spent walking rules from their own start, before the window is reached), so the moves are narrowing by `type` or fixing the rules `series_errors` names. */
             expansion_incomplete?: boolean;
         };
         Occurrence: {
@@ -3746,7 +3746,7 @@ export interface components {
         "X-Request-ID": string;
         /** @description The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record. */
         "X-Error-Code": string;
-        /** @description How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged — so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio. */
+        /** @description How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged, so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio. */
         "X-RateLimit-Limit": number;
         /** @description Requests left in this path group's window for this credential, floored at 0. A 429 from that window is the one that reads 0; a 429 from the credential-wide window described above can read more. */
         "X-RateLimit-Remaining": number;
@@ -3754,7 +3754,7 @@ export interface components {
         "X-RateLimit-Reset": number;
         /** @description Seconds to wait before retrying, sent with the rate limiter's refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own. */
         "Retry-After": number;
-        /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read — the header says where the answer came from, not that anything went wrong. */
+        /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong. */
         "Idempotency-Replayed": "true";
     };
     pathItems: never;
@@ -3774,17 +3774,17 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags; items must carry all of them */
                 tags?: string;
-                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                /** @description Filter expression in the query grammar. A term naming an edge type (`edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand) asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
-                /** @description Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical. */
+                /** @description Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here; their order is semantic, not lexical. */
                 sort?: string;
                 /** @description Sort direction */
                 direction?: "asc" | "desc";
-                /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
                 occurred_before?: string;
-                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
                 updated_after?: string;
                 /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
                 updated_before?: string;
@@ -3936,7 +3936,7 @@ export interface operations {
                     /** @description The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards. */
                     source?: string;
                     source_id?: string;
-                    /** @description Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written. */
+                    /** @description Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten: a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written. */
                     version?: number;
                     tier?: components["schemas"]["Tier"];
                     capture_latitude?: number;
@@ -3949,7 +3949,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (the credential's own, or one its key claims that the body names) and request `source_id` resolve a live item, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted. */
+            /** @description The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (the credential's own, or one its key claims that the body names) and request `source_id` resolve a live item, and it is updated in place, an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4041,7 +4041,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `link_taken`: the type names a `link_field`, and another item of the type, in any state, holds the value this write gives the row; `details.existing_id` names it. `id_reused`: the `id` this request minted is taken by an item it is not describing, and `details.differs` names what disagrees. `POST /edges` answers the same code for an id naming a different triple. `type_mismatch`: the request resolved an existing item by the `(source, source_id)` natural key and declared a type that row is not — the id was never in question, the declaration was. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item this caller cannot read, so the server cannot tell it is a repeat of this caller's own create and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail. */
+            /** @description `link_taken`: the type names a `link_field`, and another item of the type, in any state, holds the value this write gives the row; `details.existing_id` names it. `id_reused`: the `id` this request minted is taken by an item it is not describing, and `details.differs` names what disagrees. `POST /edges` answers the same code for an id naming a different triple. `type_mismatch`: the request resolved an existing item by the `(source, source_id)` natural key and declared a type that row is not: the id was never in question, the declaration was. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item this caller cannot read, so the server cannot tell it is a repeat of this caller's own create and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4135,13 +4135,13 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags; items must carry all of them */
                 tags?: string;
-                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                /** @description Filter expression in the query grammar. A term naming an edge type (`edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand) asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
-                /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
                 occurred_before?: string;
-                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
                 updated_after?: string;
                 /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
                 updated_before?: string;
@@ -4616,7 +4616,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemWithMetadata"] & {
-                        /** @description What the server did, present only when this write resolved a conflict. `conflicted_copy_id` names the sibling carrying the losing values — the only place it is reported, since no route says what a write created. */
+                        /** @description What the server did, present only when this write resolved a conflict. `conflicted_copy_id` names the sibling carrying the losing values. This is the only place it is reported, since no route says what a write created. */
                         conflict_resolution?: {
                             fields: string[];
                             strategy: {
@@ -4689,7 +4689,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's). */
+            /** @description Version conflict: a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's). */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5805,7 +5805,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
+            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` (revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner), or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6106,7 +6106,7 @@ export interface operations {
                         /** @description The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`. */
                         source?: string;
                         source_id?: string;
-                        /** @description The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false. */
+                        /** @description The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here: the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false. */
                         version?: number;
                         tags?: string[];
                         edges?: {
@@ -7889,7 +7889,7 @@ export interface operations {
             query?: {
                 /** @description Comma-separated edge types. Up to 10 entries. Omit to list every edge. */
                 edge_type?: string;
-                /** @description Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect. */
+                /** @description Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect. */
                 updated_after?: string;
                 /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone. */
                 updated_before?: string;
@@ -8041,7 +8041,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`. */
+            /** @description The supplied `id` already names this exact edge (same source, target and type), so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8136,7 +8136,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs` — any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together. */
+            /** @description `id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs`: any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8276,7 +8276,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
+            /** @description - `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8416,7 +8416,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
+            /** @description - `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9894,9 +9894,9 @@ export interface operations {
                 cursor?: string;
                 /** @description Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
-                /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time. */
+                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
                 occurred_before?: string;
             };
             header?: never;
@@ -10027,7 +10027,7 @@ export interface operations {
                     "application/json": components["schemas"]["OccurrencePage"];
                 };
             };
-            /** @description `missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
+            /** @description `missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15887,9 +15887,9 @@ export interface operations {
                 state?: string;
                 /** @description Narrow to rows stamped with this `source`. */
                 source?: string;
-                /** @description Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time. */
+                /** @description Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time. */
                 occurred_after?: string;
-                /** @description Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly before this. */
+                /** @description Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this. */
                 occurred_before?: string;
                 /** @description Output format: `ndjson` (default) or `archive` */
                 format?: "ndjson" | "archive";
@@ -16955,7 +16955,7 @@ export interface operations {
             query?: {
                 /** @description Select certified copy mode; requires explicit edges=all and forbids every other query key. */
                 copy?: "1";
-                /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces — to receive everything, omit the parameter — and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
+                /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
                 type?: string;
                 /** @description Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame. */
                 edges?: "all" | "none";

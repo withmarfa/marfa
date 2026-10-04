@@ -862,6 +862,8 @@ export interface StatusReport {
     warning?: string;
   }>;
   paused: { disk: number; pull: number };
+  /** Present while the first sync waits to be confirmed (`folders.md` 54). */
+  first_sync?: { plan: { write: number; send: number; beside: number } | null };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
@@ -1036,9 +1038,14 @@ export class CliFolder {
     return this.run<StatusReport>(["folders", "status", this.dir]);
   }
 
-  /** Lets a paused large removal go. */
+  /** Lets the first sync go, or a paused large removal. */
   async confirm(): Promise<
-    Outcome<{ deleted: number; moved: number; removed: number }>
+    Outcome<{
+      first_sync: boolean;
+      deleted: number;
+      moved: number;
+      removed: number;
+    }>
   > {
     return this.run(["folders", "confirm", this.dir]);
   }
@@ -1055,14 +1062,32 @@ export class CliFolder {
     return this.run(["folders", "remove", this.dir]);
   }
 
-  /** Binds the directory to the `system.folder` whose settings it follows. */
-  async add(folder: string): Promise<Outcome<unknown>> {
-    return this.run([
+  /**
+   * Binds the directory to the `system.folder` whose settings it follows.
+   * Confirms the first sync with `--yes` unless `confirm` is false, which
+   * leaves the add to say what the first sync will do and wait.
+   */
+  async add(
+    folder: string,
+    options: { confirm?: boolean } = {},
+  ): Promise<Outcome<AddedFolder>> {
+    return this.run<AddedFolder>([
       "folders",
       "add",
       this.dir,
       "--folder",
       folder,
+      ...(options.confirm === false ? [] : ["--yes"]),
+      ...this.server(),
+    ]);
+  }
+
+  /** A push that answered with the first sync waiting, not with a sync. */
+  async pushWaiting(): Promise<Outcome<{ first_sync: FirstSyncJson }>> {
+    return this.run<{ first_sync: FirstSyncJson }>([
+      "folders",
+      "push",
+      this.dir,
       ...this.server(),
     ]);
   }
@@ -1127,6 +1152,22 @@ export class CliFolder {
     // `.marfa`, so it runs at the root, with no `--db` at all.
     return this.device().root<T>(args);
   }
+}
+
+/** What a folder's first sync will do, or that it is confirmed (`folders.md` 54). */
+export interface FirstSyncJson {
+  waiting: boolean;
+  write: number | null;
+  send: number | null;
+  beside: number | null;
+  /** Why the folder could not be read for a plan now, where it could not. */
+  unread: string | null;
+}
+
+export interface AddedFolder {
+  dir: string;
+  folder: string;
+  first_sync: FirstSyncJson;
 }
 
 /** A folder a machine's registry lists (`folders.md` 41). */

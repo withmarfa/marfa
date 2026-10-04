@@ -497,6 +497,11 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // The handle before the server, so a second opener with no server is
     // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
+    // Whatever opened the store, a folder's queue holds only what its scan
+    // read until the person agrees.
+    if crate::folder::waiting(&*core.conn()?)? {
+        return Err(crate::error::CoreError::FirstSyncWaiting);
+    }
     let result = drain_inner(core, stop);
     // A write's answer must be settled before honoring a stop raised during
     // its request, including when it is the last write in the queue.

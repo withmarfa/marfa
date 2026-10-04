@@ -234,7 +234,7 @@ const listWebhooksRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.",
+    "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here; the plaintext is only returned at create time.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   responses: {
@@ -325,7 +325,7 @@ const updateWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.",
+    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here; delete the subscription and create a new one.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {

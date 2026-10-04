@@ -31,7 +31,7 @@ const READS: Record<string, string> = {
   EventLogStore: "getAfter getMinRetainedId getMaxId",
   SettingsStore: "get",
   EdgeStore:
-    "get listFromSource listToTarget list countBySource countByTarget countsBySourceBatch countsByTargetBatch existsExact existsExactBatch findByTriplesBatch listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",
+    "get listFromSource listToTarget list countsBySourceBatch countsByTargetBatch existsExactBatch findByTriple listOutboundOfType listAllByItem listFromSourcesBatched listToTargetsBatched wouldCreateCycle",
   OwnerStore: "find",
   BulkActionJobStore: "scanPendingPropertyPatches getById carriedItems",
   EnrichmentStore: "listCandidates get",
@@ -77,7 +77,8 @@ const WRITES: Record<string, string> = {
   InboundStore: "createEndpoint retireEndpoint receive markHandled cleanup",
 };
 const CONTROL = {
-  Storage: "assertTransactionUsable runInTransaction runInReadSnapshot close",
+  Storage:
+    "assertTransactionUsable assertInWriteTransaction runInTransaction runInReadSnapshot close",
 };
 function keys(groups: Record<string, string>): string[] {
   return Object.entries(groups).flatMap(([store, methods]) =>

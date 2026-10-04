@@ -28,6 +28,7 @@ import {
   request,
   collectItemEvents,
   collectEdgeEvents,
+  raceTheNextTransaction,
   settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -233,16 +234,10 @@ describe("the gates an acknowledgment still runs", () => {
 });
 
 describe("a repeated edge create under concurrency", () => {
-  it("is acknowledged when the row appears after the pre-check", async () => {
-    // The pre-check cannot see a row that does not exist yet, so two sends
-    // of one id can both miss it and the loser of the insert reaches the
-    // trap. That is what the catch behind the pre-check is for.
-    //
-    // Driven by blinding the pre-check once rather than by firing two real
-    // requests: the test database is a single in-memory SQLite, where two
-    // concurrent write transactions produce `SQLITE_BUSY` rather than the
-    // collision under test. A race the harness cannot hold still is not
-    // evidence about this code — the deterministic version is.
+  it("acknowledges the edge the first send wrote just before this one's transaction", async () => {
+    // The repeat is decided inside the transaction that would write, so the
+    // first send landing at the last moment before it is a repeat like any
+    // other rather than a duplicate triple or a collision on the id.
     const source = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "race-source" } },
@@ -262,58 +257,22 @@ describe("a repeated edge create under concurrency", () => {
       target_id: targetId,
       edge_type: "about",
     };
+    const send = () =>
+      request(ctx.app, "POST", "/edges", { key: ctx.workingKey, body });
 
-    expect(
-      (await request(ctx.app, "POST", "/edges", { key: ctx.workingKey, body }))
-        .status,
-    ).toBe(201);
-
-    // Two guards sit between the pre-check and the insert, and a real race
-    // can slip past either. Blind both for one request so the insert is
-    // reached against a row that is already there — which is exactly the
-    // state a lost race leaves.
-    //
-    // `existsExactBatch` is the second one: it is what refuses an exact
-    // duplicate triple with 400 before any insert, and with only the
-    // pre-check blinded that 400 is what comes back rather than the
-    // collision. Worth naming because it means the window this catch
-    // covers is narrower than "the pre-check missed".
-    const store = ctx.storage.edges;
-    const realGet = store.get.bind(store);
-    const realExists = store.existsExactBatch.bind(store);
-    let blindedGet = false;
-    let blindedExists = false;
-    store.get = async (edgeId: string) => {
-      if (!blindedGet) {
-        blindedGet = true;
-        return null;
-      }
-      return realGet(edgeId);
-    };
-    store.existsExactBatch = async (proposals) => {
-      if (!blindedExists) {
-        blindedExists = true;
-        return new Set<string>();
-      }
-      return realExists(proposals);
-    };
+    let first: Response | undefined;
+    const race = raceTheNextTransaction(ctx.storage, async () => {
+      first = await send();
+    });
     let res: Response;
     try {
-      res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.workingKey,
-        body,
-      });
+      res = await send();
     } finally {
-      store.get = realGet;
-      store.existsExactBatch = realExists;
+      race.restore();
     }
 
-    // Both blinds were used. Without this the test passes when the stubs
-    // are never reached, which is the state a refactor that moves the
-    // pre-check would leave — green, and measuring nothing.
-    expect(blindedGet).toBe(true);
-    expect(blindedExists).toBe(true);
-
+    expect(race.fired()).toBe(true);
+    expect(first?.status).toBe(201);
     expect(res.status).toBe(200);
     const parsed = (await res.json()) as EdgeBody;
     expect(parsed.acknowledged).toBe(true);

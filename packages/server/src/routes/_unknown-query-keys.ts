@@ -74,18 +74,11 @@ export const RESERVED_CLIENT_PREFIX = "_";
  * checkable.
  */
 export const UNKNOWN_PARAM_NOTE =
-  "Unrecognized query parameters are refused with `400` rather than ignored, " +
-  "so a misspelled filter cannot silently return an unfiltered page. A " +
-  "parameter of your own — a cache-buster, an analytics tag — must start " +
-  "with `_`, which is always ignored.";
+  "Refuses a query parameter it doesn't recognize, unless the name starts with `_`.";
 
 /** The same note for the door that takes its request in a body. */
 export const UNKNOWN_FILTER_FIELD_NOTE =
-  "Unrecognized fields are refused with `400` rather than ignored, in the " +
-  "request body and inside `filter` alike: a dropped filter field is not a " +
-  "narrower match set but every item, and a dropped `dry_run` " +
-  "is the action running for real. A field of your own must start with " +
-  "`_`, which is always ignored.";
+  "Refuses a field it doesn't recognize, in the body or in `filter`, unless the name starts with `_`.";
 
 /**
  * What these refusals need from a schema: the names it declares.

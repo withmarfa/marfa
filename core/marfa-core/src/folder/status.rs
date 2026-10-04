@@ -30,6 +30,15 @@ pub struct FileStatus {
 pub struct StatusReport {
     pub files: Vec<FileStatus>,
     pub paused: Paused,
+    /// Where the first sync waits to be confirmed, what the last read of the
+    /// folder said it will do; `plan` is empty until a read has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_sync: Option<FirstSyncStatus>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct FirstSyncStatus {
+    pub plan: Option<super::FirstSync>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -204,6 +213,13 @@ impl Folder {
             paused: Paused {
                 disk: disk.len(),
                 pull: pull.len(),
+            },
+            first_sync: if self.awaiting_confirmation()? {
+                Some(FirstSyncStatus {
+                    plan: self.first_sync_plan()?,
+                })
+            } else {
+                None
             },
         })
     }

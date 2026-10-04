@@ -85,6 +85,64 @@ describe("edge events", () => {
     });
   });
 
+  it("answers deletes of one edge after the first 404, and announces it once", async ({
+    signal,
+  }) => {
+    await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 200));
+      const src = await makeItem("double-delete-src");
+      const tgt = await makeItem("double-delete-tgt");
+      const edge = await client.createEdge({
+        source_id: src,
+        target_id: tgt,
+        edge_type: "about",
+      });
+      expect(edge.ok).toBe(true);
+      const edgeId = edge.data.edge.id;
+
+      const deletes = await Promise.all(
+        Array.from({ length: 8 }, () => client.deleteEdge(edgeId)),
+      );
+      expect(deletes.map((r) => r.status).sort()).toEqual([
+        200, 404, 404, 404, 404, 404, 404, 404,
+      ]);
+      for (const refused of deletes.filter((r) => r.status === 404)) {
+        expect(refused.error?.error.code).toBe("edge_not_found");
+      }
+      const again = await client.deleteEdge(edgeId);
+      expect(again.status).toBe(404);
+      expect(again.error?.error.code).toBe("edge_not_found");
+
+      // A later write, so the stream has carried everything the deletes
+      // announced once its frame arrives.
+      const marker = await client.createEdge({
+        source_id: tgt,
+        target_id: src,
+        edge_type: "about",
+      });
+      expect(marker.ok).toBe(true);
+      trackEdge(ctx, marker.data.edge.id);
+      const { events } = await collectUntil(
+        stream,
+        (evts) =>
+          evts.some(
+            (e) =>
+              e.event === "edge.created" &&
+              (e.data as { edge?: { id?: string } }).edge?.id ===
+                marker.data.edge.id,
+          ),
+        `edge.created for ${marker.data.edge.id}`,
+        signal,
+      );
+      const deleted = events.filter(
+        (e) =>
+          e.event === "edge.deleted" &&
+          (e.data as { edge?: { id?: string } }).edge?.id === edgeId,
+      );
+      expect(deleted).toHaveLength(1);
+    });
+  });
+
   it("carries the source item's type on every edge frame", async ({
     signal,
   }) => {

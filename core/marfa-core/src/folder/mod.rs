@@ -5,6 +5,7 @@ mod embeds;
 mod executable;
 mod fault;
 pub mod fields;
+mod first;
 pub mod identity;
 mod landing;
 mod lines;
@@ -13,6 +14,8 @@ mod names;
 pub(crate) mod placement;
 mod preserve;
 mod removal;
+pub(crate) use first::waiting;
+pub use first::{FirstSync, Synced};
 pub use removal::{Confirmed, Restored};
 pub mod registry;
 pub mod settings;
@@ -21,7 +24,7 @@ mod status;
 mod sync;
 mod transfer;
 mod watch;
-pub use status::{FileStatus, Paused, StatusReport};
+pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use sync::SyncReport;
 pub use watch::{RETRY_MOST, WatchError, WatchEvent, WatchPass};
 pub mod state;
@@ -210,6 +213,7 @@ impl Folder {
     fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
         let state = root.join(STATE_DIR);
         let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
+        let fresh = settings_file::bound(&core)?.is_none();
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
         {
@@ -248,6 +252,11 @@ impl Folder {
             });
         }
         settings_file::bind(&added.core, folder)?;
+        // Only a store made now has never synced: one added again over its
+        // own state keeps what it was asked.
+        if fresh {
+            added.wait_for_confirmation()?;
+        }
         if let settings_file::Wrote::Failed(reason) =
             added.write_settings_file(&row.item.properties, row.item.version, None)?
         {
@@ -339,14 +348,22 @@ impl Folder {
         }
     }
 
-    /// Leaves the folder's files; refused while writes wait.
+    /// Leaves the folder's files; refused while writes wait, unless the first
+    /// sync still waits to be confirmed.
     pub fn remove(self) -> Result<()> {
-        let waiting = self
-            .core
-            .queue()?
-            .iter()
-            .filter(|write| matches!(write.verdict, None | Some(crate::model::Verdict::Blocked)))
-            .count();
+        // A first sync still waiting has sent nothing, so its queue holds
+        // only what the scan read from files that stay.
+        let waiting = if self.awaiting_confirmation()? {
+            0
+        } else {
+            self.core
+                .queue()?
+                .iter()
+                .filter(|write| {
+                    matches!(write.verdict, None | Some(crate::model::Verdict::Blocked))
+                })
+                .count()
+        };
         if waiting > 0 {
             return Err(CoreError::Invalid(format!(
                 "{} has {waiting} write(s) not yet sent; push it first, or they are lost with the folder",
@@ -2761,6 +2778,13 @@ impl Folder {
     /// Each file is bound before its bytes land, so the scan never reads it
     /// back.
     pub fn pull(&self) -> Result<PullReport> {
+        self.refuse_while_waiting()?;
+        self.pull_as(None)
+    }
+
+    /// With `planning`, stops where each file's path is chosen and counts the
+    /// files it would write, leaving the directory as it is.
+    fn pull_as(&self, planning: Option<&mut PullPlan>) -> Result<PullReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(PullReport {
                 root_gone: Some(gone),
@@ -2812,7 +2836,9 @@ impl Folder {
         let peers = Peers::of(self, None);
         let mut retained = Vec::new();
         for item in held {
-            if !settings.holds_state(item.state) {
+            // A folder that has never synced writes no file, so what a pass
+            // would let go of is not its to count.
+            if !settings.holds_state(item.state) || planning.is_some() {
                 continue;
             }
             context.same_copy(&*self.core.conn()?)?;
@@ -2991,6 +3017,18 @@ impl Folder {
                 report.beside += 1;
             }
             taken.insert(names::folded(&entry.want));
+        }
+        if let Some(plan) = planning {
+            // Every entry still unbound is a file the pull will write: where
+            // the person's file holds its path, one of the two takes a number,
+            // as the scan's creates, sent by then, rank among the others.
+            for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
+                plan.write += 1;
+                if self.root.join(&entry.want).exists() {
+                    plan.beside += 1;
+                }
+            }
+            return Ok(report);
         }
         // Paths whose file moves away in this pass: an item wanting one waits
         // until it has.
@@ -4363,6 +4401,13 @@ pub struct CaughtUp {
     pub hydrated: Option<crate::model::HydrateReport>,
 }
 
+/// What a pull would write, counted without writing it.
+#[derive(Debug, Default)]
+struct PullPlan {
+    write: usize,
+    beside: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct PullReport {
     pub written: usize,
@@ -4566,5 +4611,41 @@ mod tests {
             "a second opener was handed a folder to work beside the one holding it"
         );
         assert!(working(holder).is_ok());
+    }
+
+    #[test]
+    fn a_folder_waiting_for_its_first_sync_refuses_every_step_that_writes_or_sends() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(
+            !folder.awaiting_confirmation().unwrap(),
+            "a store made without an add has never been asked"
+        );
+        folder.wait_for_confirmation().unwrap();
+        assert!(folder.awaiting_confirmation().unwrap());
+
+        assert!(matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
+        assert!(matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
+        assert!(matches!(
+            folder.send_settings_edit(),
+            Err(CoreError::FirstSyncWaiting)
+        ));
+        assert!(matches!(folder.restore(), Err(CoreError::FirstSyncWaiting)));
+        let stop = AtomicBool::new(false);
+        assert!(matches!(
+            folder.watch(&stop, |_| Ok::<(), ()>(())),
+            Err(WatchError::Core(CoreError::FirstSyncWaiting))
+        ));
+
+        // The witness: confirmed, the same calls are not refused for waiting.
+        assert!(folder.confirm_first_sync().unwrap());
+        assert!(!folder.confirm_first_sync().unwrap());
+        assert!(!matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
+        assert!(!matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
     }
 }

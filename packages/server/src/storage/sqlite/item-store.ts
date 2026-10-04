@@ -313,6 +313,10 @@ async function insertConflictedSibling(
     .onConflictDoNothing()
     .run();
 
+  // Copied without the edge checker. The sibling is new, holds no edge, and has
+  // the row's type, so a copy satisfies every type constraint the original
+  // did, takes only one of a type at an end that holds one, and cannot close a
+  // cycle: a cycle through the sibling would need one through the row already.
   const copied: Edge[] = [];
   const touching = await tx
     .select()
