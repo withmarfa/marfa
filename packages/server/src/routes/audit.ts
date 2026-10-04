@@ -9,10 +9,6 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
 import { pageOf } from "./_schemas.js";
 
 const AuditEntrySchema = z
@@ -38,7 +34,7 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Instance"],
   summary: "List audit log entries",
-  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail.`,
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("audit.read"),
   request: {
@@ -105,7 +101,6 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
-    refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
     const {
       action,
       resource_type,

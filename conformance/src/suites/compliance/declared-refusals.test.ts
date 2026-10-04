@@ -10,6 +10,7 @@ import {
   trackEdge,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { tarGz } from "../../utils/archive.js";
@@ -18,7 +19,10 @@ import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
 } from "../../utils/fresh-server.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  expectMatchesSchema,
+  publishedOperations,
+} from "../../utils/openapi.js";
 
 /**
  * Refusals a door declares that no chapter's fixture otherwise draws.
@@ -699,4 +703,131 @@ describe("a session token", () => {
     },
     2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
+});
+
+describe("a query key no door declares", () => {
+  const STRAY = "definitely-not-a-filter";
+
+  /** One request to a published door, carrying the stray key. */
+  async function stray(
+    method: string,
+    template: string,
+    key: string,
+    id: string = UNKNOWN,
+  ): Promise<{ status: number; unknown: unknown }> {
+    const path = template.replace(/\{[^}]+\}/g, id);
+    const response = await fetch(`${apiUrl}${path}?${STRAY}=1`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: method === "GET" || method === "DELETE" ? undefined : "{}",
+    });
+    // A door that fails to refuse may answer a stream that never ends, so
+    // only a JSON body is read.
+    if (!(response.headers.get("content-type") ?? "").includes("json")) {
+      await response.body?.cancel();
+      return { status: response.status, unknown: undefined };
+    }
+    const unknown = (
+      (await response.json()) as {
+        error?: { details?: { unknown_parameters?: unknown } };
+      }
+    ).error?.details?.unknown_parameters;
+    return { status: response.status, unknown };
+  }
+
+  it("is refused 400 and named on every published door, the event stream included", async () => {
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+
+    // The witness that the doors can be served at all: the same requests
+    // without the stray key answer, so what follows is the key's refusal and
+    // not a door that was never reachable.
+    for (const path of ["/items", "/types", "/keys", "/events?edges=none"]) {
+      const served = await fetch(`${apiUrl}${path}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      expect(served.status, path).toBe(200);
+      await served.body?.cancel();
+    }
+    // And a key of the caller's own, which is ignored by contract.
+    const own = await fetch(`${apiUrl}/items?_cache=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(own.status).toBe(200);
+
+    // The replace door reads its path first: a type the key may not write is
+    // refused before anything else, so it is asked about one the key owns.
+    const ownType = `user.refusal_sweep_${ctx.runId.replaceAll("-", "_")}`;
+    const registered = await client.registerType({
+      id: ownType,
+      label: "Refusal sweep",
+      version: 0,
+      fields: {},
+    });
+    expect(registered.ok).toBe(true);
+    trackType(ctx, ownType, client);
+
+    const doors = await publishedOperations();
+    expect(doors.length).toBeGreaterThan(90);
+    expect(doors.map((d) => `${d.method} ${d.path}`)).toContain("GET /events");
+
+    const unrefused: string[] = [];
+    for (const door of doors) {
+      // The credential that may use the door: the per-test key holds every
+      // permission, and the operator key holds the instance routes it does not.
+      let refused = false;
+      for (const key of [apiKey, operatorKey ?? ""]) {
+        const { status, unknown } = await stray(
+          door.method,
+          door.path,
+          key,
+          door.method === "PUT" && door.path === "/types/{id}"
+            ? ownType
+            : UNKNOWN,
+        );
+        if (
+          status === 400 &&
+          Array.isArray(unknown) &&
+          unknown.includes(STRAY)
+        ) {
+          refused = true;
+          break;
+        }
+      }
+      if (!refused) unrefused.push(`${door.method} ${door.path}`);
+    }
+    expect(unrefused.sort()).toEqual([]);
+  }, 120_000);
+
+  it("is refused after the credential, so a bare request still answers 401", async () => {
+    for (const path of ["/items", "/types", "/keys", "/events"]) {
+      const bare = await fetch(`${apiUrl}${path}?${STRAY}=1`);
+      expect(bare.status, path).toBe(401);
+      await bare.body?.cancel();
+    }
+  });
+
+  it("names a misspelled key on the event stream rather than opening it unfiltered", async () => {
+    const response = await fetch(`${apiUrl}/events?typ=core.note`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    // A stream that opened is an answer that never ends: close it before
+    // judging it.
+    if (response.status !== 400) await response.body?.cancel();
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: { details?: { unknown_parameters?: string[] } };
+    };
+    await expectRefusal(
+      "GET",
+      "/events",
+      { status: response.status, body },
+      400,
+      "validation_error",
+    );
+    expect(body.error.details?.unknown_parameters).toEqual(["typ"]);
+  });
 });

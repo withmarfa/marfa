@@ -16,10 +16,6 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { VersionPageSchema } from "./_schemas.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -44,7 +40,7 @@ const listVersionsRoute = createRoute({
   path: "/{id}/versions",
   tags: ["Items"],
   summary: "List item versions",
-  description: `Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the \`type\`, \`tier\`, \`occurred_at\` and \`source_id\` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the \`type\`, \`tier\`, \`occurred_at\` and \`source_id\` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -105,7 +101,6 @@ export function itemsVersionsRoutes(storage: Storage) {
 
   // GET /items/:id/versions
   router.openapi(listVersionsRoute, async (c) => {
-    refuseUnknownQueryParams(c.req.raw.url, PageQuery);
     const { id } = c.req.valid("param");
     const { limit, cursor } = c.req.valid("query");
     if (!isValidId(id)) {

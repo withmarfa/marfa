@@ -26,10 +26,6 @@ import {
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
 /** How deep the ranking is read; a cursor past it is refused. */
@@ -92,7 +88,7 @@ const searchRoute = createRoute({
   path: "/",
   tags: ["Search"],
   summary: "Search items",
-  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as \`GET /items\` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass \`next_cursor\` back as \`cursor\`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers \`next_cursor: null\`. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as \`GET /items\` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass \`next_cursor\` back as \`cursor\`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers \`next_cursor: null\`.`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -218,11 +214,6 @@ export function searchRoutes(storage: Storage) {
 
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
-
-    // Read from the raw URL, because the validated query has already had
-    // an unknown key stripped from it, and a filter the caller believes
-    // applied would otherwise answer 200 over the whole corpus.
-    refuseUnknownQueryParams(c.req.raw.url, searchRoute.request.query);
 
     const {
       q,

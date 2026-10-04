@@ -96,7 +96,7 @@ import {
   refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
   UNKNOWN_FILTER_FIELD_NOTE,
-} from "./_unknown-query-keys.js";
+} from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------

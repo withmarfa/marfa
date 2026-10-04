@@ -51,10 +51,6 @@ import {
 } from "../storage/edge-constraints.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { publishEdge } from "../pubsub.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
 // ---------------------------------------------------------------------------
@@ -219,8 +215,7 @@ const listEdgesRoute = createRoute({
     "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
     "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate: a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
-    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
-    UNKNOWN_PARAM_NOTE,
+    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -594,11 +589,6 @@ export function edgeRoutes(storage: Storage) {
     // `GET /edges/{id}` beside it already refuses.
     getTypeFilter(c);
 
-    // An edge has no time of its own, so this door carries only the
-    // modification-time bounds. A caller reaching for `occurred_after`
-    // here has to be refused rather than served an unfiltered page at 200
-    // with a well-formed cursor.
-    refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
     const q = c.req.valid("query");
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -934,7 +924,7 @@ const listFromSourceRoute = createRoute({
   operationId: "listItemEdges",
   tags: ["Edges"],
   summary: "List outbound edges",
-  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page.`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -998,7 +988,7 @@ const listBackrefsRoute = createRoute({
   operationId: "listItemBackrefs",
   tags: ["Edges"],
   summary: "List inbound edges",
-  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page.`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1062,10 +1052,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   router.openapi(listFromSourceRoute, async (c) => {
     const key = requireAuth(c);
 
-    // The listing's twin. A misspelled `edge_type` here widens the
-    // page from one type to every edge on the item, which is the
-    // same silence on a smaller set.
-    refuseUnknownQueryParams(c.req.raw.url, listFromSourceRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -1109,10 +1095,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   router.openapi(listBackrefsRoute, async (c) => {
     const key = requireAuth(c);
 
-    // The listing's twin. A misspelled `edge_type` here widens the
-    // page from one type to every edge on the item, which is the
-    // same silence on a smaller set.
-    refuseUnknownQueryParams(c.req.raw.url, listBackrefsRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");

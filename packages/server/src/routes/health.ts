@@ -6,6 +6,7 @@ import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import { hashApiKey, type AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { refuseUndeclaredQueryKeys } from "../middleware/undeclared-query-keys.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import {
   DISK_DEGRADED_BELOW_BYTES,
@@ -184,7 +185,7 @@ export function healthRoutes(
   const router = new Hono<AppEnv>();
   const { versionFile: version, placement } = config;
 
-  router.get("/", async (c) => {
+  router.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
     const components: Record<string, ComponentStatus> = {};
 
     // Database. `down` and `degraded` are different answers and the

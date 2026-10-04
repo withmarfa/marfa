@@ -82,6 +82,10 @@ import {
 } from "./middleware/idempotency.js";
 import { healthRoutes, operatorCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
+import {
+  refuseUndeclaredKeysOf,
+  refuseUndeclaredQueryKeys,
+} from "./middleware/undeclared-query-keys.js";
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
@@ -323,7 +327,7 @@ export function createApp(
   // holds no credential can read it: the id is what distinguishes two
   // instances answering the same shape, which is exactly the question
   // somebody pointing a client at an address is asking.
-  app.get("/", (c) =>
+  app.get("/", refuseUndeclaredQueryKeys([]), (c) =>
     c.json({
       name: "marfa",
       version: deployedVersion,
@@ -651,9 +655,15 @@ export function createApp(
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
-    app.on(["POST", "GET"], "/auth/*", (c) =>
-      authInstance.handler(c.req.raw, c.var.clientIp ?? null),
-    );
+    app.on(["POST", "GET"], "/auth/*", (c) => {
+      // The one door of the library's that the document publishes. It takes
+      // its request in the body, so a query key on it is a mistake like on
+      // any other door.
+      if (c.req.method === "POST" && c.req.path === "/auth/oauth2/register") {
+        refuseUndeclaredKeysOf(c.req.url, []);
+      }
+      return authInstance.handler(c.req.raw, c.var.clientIp ?? null);
+    });
   }
 
   app.route(
@@ -692,7 +702,9 @@ export function createApp(
       info: OPENAPI_DOCUMENT_INFO,
     }),
   );
-  app.get("/openapi.json", (c) => c.json(openapiDocument));
+  app.get("/openapi.json", refuseUndeclaredQueryKeys([]), (c) =>
+    c.json(openapiDocument),
+  );
 
   // The auth instance rides on the app so the test harness can reach the
   // programmatic account seam (`createEmailAccount`) without rebuilding a

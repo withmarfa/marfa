@@ -15,23 +15,31 @@ import {
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
+import {
+  declaredQueryKeys,
+  queryKeyFamilies,
+  refuseUndeclaredQueryKeys,
+} from "./middleware/undeclared-query-keys.js";
 
 /**
- * Hang the credential gate off a route whose own `security` asks for one.
+ * Put a route's guards ahead of everything it declares for itself.
  *
  * **The declaration is the list.** Each route already states whether it
- * takes a credential, the OpenAPI document is generated from that
- * statement, and this reads the same field — so there is no second table of
- * protected paths to keep in step, and a route added without one is open
- * because it said so rather than because somebody forgot a line.
+ * takes a credential and which query keys it takes, the OpenAPI document is
+ * generated from those statements, and this reads the same fields — so there
+ * is no second table of protected paths or accepted keys to keep in step, and
+ * a route added without a credential is open because it said so rather than
+ * because somebody forgot a line.
  *
- * The gate goes ahead of anything the route declares for itself, and
- * `OpenAPIHono.openapi` puts route middleware ahead of the validators it
- * derives from the request schemas. That ordering is the point: a validator
- * refusing first would tell a bare request what was wrong with its body.
+ * The credential gate goes first, and `OpenAPIHono.openapi` puts route
+ * middleware ahead of the validators it derives from the request schemas.
+ * That ordering is the point: a validator refusing first would tell a bare
+ * request what was wrong with its body. A route's own middleware, which holds
+ * the standing rule of its door, comes next, and the refusal of a query key
+ * the route does not declare comes last, so a caller the door turns away
+ * learns nothing about its query.
  */
-function withCredentialGate<R extends RouteConfig>(route: R): R {
-  if (route.security === undefined || route.security.length === 0) return route;
+function withRouteGuards<R extends RouteConfig>(route: R): R {
   const declared = route.middleware;
   const rest =
     declared === undefined
@@ -52,9 +60,20 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
             );
           await next();
         };
+  const gate =
+    route.security === undefined || route.security.length === 0
+      ? []
+      : [requireDeclaredCredential, copyBoundary];
   return {
     ...route,
-    middleware: [requireDeclaredCredential, copyBoundary, ...rest],
+    middleware: [
+      ...gate,
+      ...rest,
+      refuseUndeclaredQueryKeys(
+        declaredQueryKeys(route.request?.query),
+        queryKeyFamilies(route),
+      ),
+    ],
   };
 }
 
@@ -62,8 +81,8 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
  * Create an OpenAPIHono router with the defaultHook configured to throw
  * MarfaError on validation failure, preserving the existing error response format.
  *
- * Every route registered through it is gated by its own declaration; see
- * {@link withCredentialGate}.
+ * Every route registered through it is guarded by its own declaration; see
+ * {@link withRouteGuards}.
  */
 export function createOpenAPIRouter<
   T extends Record<string, unknown>,
@@ -100,14 +119,14 @@ export function createOpenAPIRouter<
       }
     },
   });
-  // Routes go in through `openapi()`, so wrapping it is what makes the gate
+  // Routes go in through `openapi()`, so wrapping it is what makes the guards
   // unforgettable. The two casts are the registrar's own generic signature,
-  // which says nothing this wrapper needs: it reads one field off the route
-  // and passes the rest of the call through untouched.
+  // which says nothing this wrapper needs: it reads fields off the route and
+  // passes the rest of the call through untouched.
   type Registrar = (route: RouteConfig, ...rest: unknown[]) => unknown;
   const register = router.openapi as unknown as Registrar;
   const gated: Registrar = (route, ...rest) =>
-    register(withCredentialGate(route), ...rest);
+    register(withRouteGuards(route), ...rest);
   router.openapi = gated as unknown as typeof router.openapi;
   return router;
 }

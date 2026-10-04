@@ -25,10 +25,6 @@ import type { BlobRead } from "../storage/blob-store.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
-import {
-  refuseUnknownQueryParams,
-  UNKNOWN_PARAM_NOTE,
-} from "./_unknown-query-keys.js";
 import { mayReadBlob } from "./_blob-reach.js";
 import { readableMetadata } from "./_extension-reach.js";
 
@@ -59,8 +55,7 @@ const exportRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Export items and edges",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
-    UNKNOWN_PARAM_NOTE,
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. ",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -93,10 +88,6 @@ const exportRoute = createRoute({
         .describe(
           "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this.",
         ),
-      // Enforced, not merely documented, for the reason
-      // `refuseUnknownQueryParams` is given below: a caller who asked for
-      // an archive and was handed a stream, or asked for anything and was
-      // handed the default, believes the file is something it is not.
       format: z
         .enum(["ndjson", "archive"])
         .optional()
@@ -167,13 +158,6 @@ export function exportRoutes(
 
   router.openapi(exportRoute, async (c) => {
     const callerKey = requireAuth(c);
-
-    // One check for both output formats: `format=archive` is handled by a
-    // separate function further down but arrives through this handler and
-    // shares this query schema, so refusing here covers both. An export
-    // narrowed by a filter that was silently dropped writes everything to
-    // a file the caller believes is a slice of it.
-    refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
 

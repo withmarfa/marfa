@@ -49,7 +49,7 @@ const GENERAL_SECTIONS = [
   "## Pagination",
   'A list returns one page at a time, as `{ "data": [...], "next_cursor": "..." }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.',
   "## Query parameters",
-  "Many operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.",
+  "Every operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.",
   "## Errors",
   'An error answers `{ "error": { "code": "...", "message": "...", "details": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.',
   "## Idempotency",
