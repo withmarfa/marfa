@@ -14,7 +14,7 @@ import {
   getEdgeTypeSchema,
   getTypeSchema,
 } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   initEventLog,
@@ -389,8 +389,9 @@ describe("POST /admin/restore-archive all or nothing", () => {
   });
 
   it("holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own", async () => {
-    const count = 8;
-    const property = 30 * 1024 * 1024;
+    // Rows just under the largest a write door takes (`bulkBodyCap`).
+    const count = 12;
+    const property = 15 * 1024 * 1024;
     const line = (i: number): Buffer =>
       Buffer.from(
         JSON.stringify({
@@ -406,7 +407,8 @@ describe("POST /admin/restore-archive all or nothing", () => {
           },
         }) + "\n",
       );
-    const size = line(0).length * count;
+    let size = 0;
+    for (let i = 0; i < count; i++) size += line(i).length;
     const archive = await buildArchive([
       MANIFEST,
       {
@@ -476,7 +478,7 @@ describe("POST /admin/restore-archive all or nothing", () => {
     expect(((await res.json()) as { imported: number }).imported).toBe(count);
     expect(announced).toBe(count);
     expect(largestPage).toBeLessThan(2 * (property + 1024));
-    // Every row was written; their content, eight times 30 MiB, is not held.
+    // Every row was written; their content, twelve times 15 MiB, is not held.
     expect(heapAtCommit).toBeGreaterThan(0);
     expect(heapAtCommit - before).toBeLessThan(100 * 1024 * 1024);
     expect(turnsAtRow).toHaveLength(count);
@@ -575,6 +577,201 @@ describe("POST /admin/restore-archive all or nothing", () => {
       expect(frames[i]?.eventId).toBeGreaterThan(frames[i - 1]?.eventId ?? 0n);
     }
     expect(await countRows("event_log")).toBe(450 + 449 + 1);
+  });
+
+  it("refuses a row whose properties are larger than any write door takes, as the write door does, and writes nothing", async () => {
+    const limit = 64 * 1024;
+    const small = await createTestContext({ maxBulkRequestBytes: limit });
+    initEventLog(small.storage.eventLog);
+    const post = (archive: Buffer) =>
+      Promise.resolve(
+        small.app.request("/admin/restore-archive", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${small.operatorKey}`,
+            "Content-Type": "application/gzip",
+          },
+          body: archive,
+        }),
+      );
+    // At the limit less its JSON quoting, a row restores: the witness.
+    const sized = (id: string, bytes: number) => ({
+      id,
+      type: "core.note",
+      properties: { body: "x".repeat(bytes - '{"body":""}'.length) },
+      source: "bounds",
+      source_id: id,
+      version: 2,
+    });
+    const line = (value: unknown): Entry => ({
+      name: "items.ndjson",
+      text: JSON.stringify(value) + "\n",
+    });
+    try {
+      const fits = generateId();
+      expect(
+        (
+          await post(
+            await buildArchive([MANIFEST, line({ item: sized(fits, limit) })]),
+          )
+        ).status,
+      ).toBe(200);
+      expect(await small.storage.items.get(fits)).not.toBeNull();
+
+      const over = generateId();
+      const current = await post(
+        await buildArchive([MANIFEST, line({ item: sized(over, limit + 1) })]),
+      );
+      expect(current.status).toBe(413);
+      const error = await errorOf(current);
+      expect(error.code).toBe("request_too_large");
+      expect(error.message).toContain("properties");
+
+      const old = generateId();
+      const snapshot = {
+        id: generateId(),
+        item_id: old,
+        version: 1,
+        properties: sized(old, limit + 1).properties,
+        type: "core.note",
+        tier: "library",
+        occurred_at: "2026-01-01T00:00:00.000Z",
+        source_id: old,
+        created_at: "2026-01-01T00:00:00.000Z",
+      };
+      const history = await post(
+        await buildArchive([
+          MANIFEST,
+          line({ item: sized(old, 100), versions: [snapshot] }),
+        ]),
+      );
+      expect(history.status).toBe(413);
+      expect((await errorOf(history)).message).toContain(
+        "versions.0.properties",
+      );
+
+      const edged = generateId();
+      const edgeOver = await post(
+        await buildArchive([
+          MANIFEST,
+          line({ item: sized(edged, 100) }),
+          {
+            name: "edges.ndjson",
+            text:
+              JSON.stringify({
+                edge: {
+                  id: generateId(),
+                  source_id: edged,
+                  target_id: fits,
+                  edge_type: "references",
+                  properties: { note: "x".repeat(limit) },
+                },
+              }) + "\n",
+          },
+        ]),
+      );
+      expect(edgeOver.status).toBe(413);
+      for (const id of [over, old, edged]) {
+        expect(await small.storage.items.get(id)).toBeNull();
+      }
+    } finally {
+      await small.cleanup();
+    }
+  });
+
+  it("gives the event loop a turn between the pages it reads back after the commit", async () => {
+    const { items, edges } = rows(450, TYPE);
+    const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
+    const eventLog = ctx.storage.eventLog;
+    const getAfter = eventLog.getAfter.bind(eventLog);
+    let pages = 0;
+    let observed: Promise<number> | undefined;
+    let done!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    eventLog.getAfter = async (after, limit, options) => {
+      const page = await getAfter(after, limit, options);
+      if (options?.maxBytes !== undefined) {
+        pages += 1;
+        observed ??= new Promise((resolve) =>
+          setImmediate(() => {
+            resolve(pages);
+          }),
+        );
+        if (page.length === 0 || page.length < limit) done();
+      }
+      return page;
+    };
+    try {
+      expect((await restore(archive)).status).toBe(200);
+      await finished;
+    } finally {
+      eventLog.getAfter = getAfter;
+    }
+    expect(pages).toBeGreaterThan(2);
+    expect(await observed).toBe(1);
+  });
+
+  it("sends a stream opened while the events are read back each event once", async () => {
+    const before = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "before the restore" } },
+    });
+    expect(before.status).toBe(201);
+    const cursor = String((await ctx.storage.eventLog.getMaxId()) ?? 0n);
+    const { items, edges } = rows(450, TYPE);
+    const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
+
+    // The read-back stops after its first page until the stream is live.
+    const eventLog = ctx.storage.eventLog;
+    const getAfter = eventLog.getAfter.bind(eventLog);
+    let readBack = 0;
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    eventLog.getAfter = async (after, limit, options) => {
+      if (options?.maxBytes !== undefined && ++readBack === 2) await opened;
+      return getAfter(after, limit, options);
+    };
+    try {
+      expect((await restore(archive)).status).toBe(200);
+      const stream = await ctx.app.request("/events", {
+        headers: {
+          Authorization: `Bearer ${ctx.workingKey}`,
+          "Last-Event-ID": cursor,
+        },
+      });
+      expect(stream.status).toBe(200);
+      let wrote = false;
+      const { text } = await readSse(stream, {
+        onChunk: (seen) => {
+          if (wrote || !seen.includes("stream_live")) return;
+          wrote = true;
+          open();
+          void (async () => {
+            // Written once the read-back has had time to finish.
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            await request(ctx.app, "POST", "/items", {
+              key: ctx.workingKey,
+              body: {
+                type: "core.note",
+                properties: { body: "after the read-back" },
+              },
+            });
+          })();
+        },
+        until: (seen) => seen.includes("after the read-back"),
+      });
+      const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) => m[1]);
+      expect(readBack).toBeGreaterThan(2);
+      expect(ids).toHaveLength(450 + 449 + 1);
+      expect(new Set(ids).size).toBe(ids.length);
+    } finally {
+      eventLog.getAfter = getAfter;
+      open();
+    }
   });
 
   it("holds other writers in the queue and keeps its rows and types from readers until it commits", async () => {

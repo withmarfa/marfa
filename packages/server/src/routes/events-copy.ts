@@ -364,9 +364,13 @@ export async function buildCopyStream(
               for (const { frame, payload } of projected) {
                 if (isClosed()) break;
                 if (payload === null) continue;
+                const id = frame.event.eventId;
                 if (state.holding) hold(frame);
+                // A live frame at or below the cursor is a repeat of one the
+                // replay sent, as an archive restore's events can be.
+                else if (id !== undefined && id <= state.cursor) continue;
                 else if (!hasRoom()) incomplete("reader_behind");
-                else enqueueFrame(frame.event.eventId, payload);
+                else enqueueFrame(id, payload);
               }
             },
           );

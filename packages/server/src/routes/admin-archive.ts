@@ -146,7 +146,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
+    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit, but an item's properties, any of its earlier versions' or an edge's larger than the bulk write doors accept refuse the whole archive with `413 request_too_large`. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: {
@@ -194,6 +194,15 @@ const restoreArchiveRoute = createRoute({
       },
       description:
         "- `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.\n\nThe restore writes nothing.",
+    },
+    413: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["request_too_large"]),
+        },
+      },
+      description:
+        "`request_too_large`: the request body is larger than this instance accepts.",
     },
     401: {
       content: {
@@ -263,10 +272,10 @@ async function* parsedLines<T>(
     try {
       parsed = JSON.parse(line);
     } catch {
-      yield { value: null, bytes: line.length };
+      yield { value: null, bytes: Buffer.byteLength(line) };
       continue;
     }
-    yield { value: pick(parsed), bytes: line.length };
+    yield { value: pick(parsed), bytes: Buffer.byteLength(line) };
   }
 }
 
@@ -288,6 +297,34 @@ function edgeLines(path: string | undefined) {
 }
 
 /**
+ * The refusal for properties larger than any write door takes
+ * (`bulkBodyCap`), answered as a write door answers a body that large. A
+ * restore is not a way to plant a row the write doors would refuse.
+ */
+function oversizedProperties(
+  kind: "item" | "edge",
+  row: Record<string, unknown>,
+  index: number,
+  field: string,
+  properties: unknown,
+  maxRowBytes: number,
+): MarfaError | null {
+  if (properties === undefined) return null;
+  const bytes = Buffer.byteLength(JSON.stringify(properties));
+  if (bytes <= maxRowBytes) return null;
+  return new MarfaError(
+    ErrorCode.REQUEST_TOO_LARGE,
+    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson parsed row ${String(index + 1)}: ${field} is ${String(bytes)} bytes, more than the ${String(maxRowBytes)} a write door accepts`,
+    {
+      [kind === "item" ? "item_id" : "edge_id"]: row.id,
+      row: index + 1,
+      field,
+      limit_bytes: maxRowBytes,
+    },
+  );
+}
+
+/**
  * The refusals that need nothing from the database, asked of one item line.
  *
  * Asked of every line before anything is written, so a refusal is never
@@ -297,12 +334,36 @@ function itemRefusal(
   entry: ArchivedItemLine,
   index: number,
   seenSnapshotIds: Set<string>,
+  maxRowBytes: number,
 ): MarfaError | null {
   const { item } = entry;
   archiveDates("item", item, index);
-  archiveVersions(item, entry.versions, index, seenSnapshotIds);
+  const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
   const scalar = archiveScalarRefusal("item", item, index);
   if (scalar) return scalar;
+  const oversized =
+    oversizedProperties(
+      "item",
+      item,
+      index,
+      "properties",
+      item.properties,
+      maxRowBytes,
+    ) ??
+    history
+      .map((snapshot, at) =>
+        oversizedProperties(
+          "item",
+          item,
+          index,
+          `versions.${String(at)}.properties`,
+          snapshot.properties,
+          maxRowBytes,
+        ),
+      )
+      .find((refusal) => refusal !== null) ??
+    null;
+  if (oversized) return oversized;
 
   // A row whose `source` claims a reserved credential shape is refused, on
   // the same terms and for the same reason as the state check below: the
@@ -814,7 +875,11 @@ async function restoreRows(
   );
 }
 
-export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
+export function adminArchiveRoutes(
+  storage: Storage,
+  blobs: BlobLayer,
+  limits: { maxRowBytes: number },
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
@@ -859,7 +924,12 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       const seenSnapshotIds = new Set<string>();
       for await (const { value: entry } of itemLines(paths["items.ndjson"])) {
         if (entry === null) continue;
-        const refusal = itemRefusal(entry, totalItems, seenSnapshotIds);
+        const refusal = itemRefusal(
+          entry,
+          totalItems,
+          seenSnapshotIds,
+          limits.maxRowBytes,
+        );
         if (refusal) throw refusal;
         totalItems++;
       }
@@ -868,7 +938,16 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       for await (const { value: edge } of edgeLines(paths["edges.ndjson"])) {
         if (edge === null) continue;
         archiveDates("edge", edge, totalEdges);
-        const refusal = archiveScalarRefusal("edge", edge, totalEdges);
+        const refusal =
+          archiveScalarRefusal("edge", edge, totalEdges) ??
+          oversizedProperties(
+            "edge",
+            edge,
+            totalEdges,
+            "properties",
+            edge.properties,
+            limits.maxRowBytes,
+          );
         if (refusal) throw refusal;
         totalEdges++;
       }

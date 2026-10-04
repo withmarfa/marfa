@@ -61,7 +61,8 @@ export class SqliteEventLogStore implements EventLogStore {
   }
 
   /** How many of the next `limit` rows start within `maxBytes` of
-   *  payload, counted without reading the payloads into this process. */
+   *  payload. `octet_length` reads each size from the row's header, so no
+   *  payload is loaded to count it. */
   private async rowsWithin(
     afterId: bigint,
     limit: number,
@@ -70,7 +71,7 @@ export class SqliteEventLogStore implements EventLogStore {
     const row = await this.db.get<{ rows: number | bigint }>(sql`
       SELECT count(*) AS rows FROM (
         SELECT SUM(size) OVER (ORDER BY id) - size AS before FROM (
-          SELECT id, length(CAST(payload AS BLOB)) AS size FROM event_log
+          SELECT id, octet_length(payload) AS size FROM event_log
           WHERE id > CAST(${afterId.toString()} AS INTEGER)
           ORDER BY id LIMIT ${limit}
         )

@@ -1,4 +1,5 @@
 import { EventEmitter, on } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
@@ -361,6 +362,10 @@ export function announceFromLog(
           emitLogged(row);
           cursor = row.id;
         }
+        // The read is synchronous inside the driver, so the event loop gets
+        // a turn between pages. A write committed meanwhile still waits in
+        // the chain behind this announcement.
+        await setImmediate();
       }
     });
   });
