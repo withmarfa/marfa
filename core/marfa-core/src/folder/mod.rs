@@ -4609,4 +4609,40 @@ mod tests {
         );
         assert!(working(holder).is_ok());
     }
+
+    #[test]
+    fn a_folder_waiting_for_its_first_sync_refuses_every_step_that_writes_or_sends() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(
+            !folder.awaiting_confirmation().unwrap(),
+            "a store made without an add has never been asked"
+        );
+        folder.wait_for_confirmation().unwrap();
+        assert!(folder.awaiting_confirmation().unwrap());
+
+        assert!(matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
+        assert!(matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
+        assert!(matches!(
+            folder.send_settings_edit(),
+            Err(CoreError::FirstSyncWaiting)
+        ));
+        assert!(matches!(folder.restore(), Err(CoreError::FirstSyncWaiting)));
+        let stop = AtomicBool::new(false);
+        assert!(matches!(
+            folder.watch(&stop, |_| Ok::<(), ()>(())),
+            Err(WatchError::Core(CoreError::FirstSyncWaiting))
+        ));
+
+        // The witness: confirmed, the same calls are not refused for waiting.
+        assert!(folder.confirm_first_sync().unwrap());
+        assert!(!folder.confirm_first_sync().unwrap());
+        assert!(!matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
+        assert!(!matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
+    }
 }
