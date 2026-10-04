@@ -521,6 +521,47 @@ export function edgesBulkRoutes(storage: Storage) {
 
     const operationId = generateId();
     const run = async (): Promise<BulkEdgeResult[]> => {
+      // In atomic mode, judge every entry's ids and write gates before any
+      // entry is looked up, as the item door does (`items.md` 31). The
+      // transaction is what undoes a refused page; this pass decides which
+      // refusal the page answers with. Left to the per-entry pass, a stale
+      // entry ahead of a forbidden one would answer first, as a `409`, and
+      // the caller would re-read the edge over a refusal whose cause is a
+      // permission it lacks.
+      if (atomic) {
+        for (const [i, raw] of rawEdges.entries()) {
+          const shape = !isValidId(raw.source_id)
+            ? `Invalid source_id: ${raw.source_id}`
+            : !isValidId(raw.target_id)
+              ? `Invalid target_id: ${raw.target_id}`
+              : raw.id !== undefined && !isValidId(raw.id)
+                ? `Invalid id: ${raw.id}`
+                : null;
+          if (shape !== null) {
+            throw bulkAtomicRollback(
+              i,
+              { code: ErrorCode.INVALID_ID, message: shape },
+              "edge",
+            );
+          }
+          try {
+            const srcItem = await storage.items.getIncludingTrashed(
+              raw.source_id,
+            );
+            checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
+          } catch (err) {
+            if (isEntryVerdict(err)) {
+              throw bulkAtomicRollback(
+                i,
+                { code: err.code, message: err.message, details: err.details },
+                "edge",
+              );
+            }
+            throw err;
+          }
+        }
+      }
+
       const results: BulkEdgeResult[] = [];
       for (const [i, raw] of rawEdges.entries()) {
         // Each entry's edge and its event commit together: inside the page's
