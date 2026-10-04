@@ -157,10 +157,11 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     Status,
-    /// The item types the copy holds, read from it alone.
+    /// The item types the copy holds, read from it alone, and the ones an app
+    /// declares for it.
     Types {
         #[command(subcommand)]
-        command: CatalogCommand,
+        command: TypesCommand,
     },
     /// The edge types the copy holds, read from it alone.
     #[command(name = "edge-types")]
@@ -355,6 +356,38 @@ pub enum EdgesCommand {
         /// The edge id.
         id: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TypesCommand {
+    /// Every one the copy holds, by id.
+    List,
+    /// One by id; a type inherits the fields of the types above it.
+    Get {
+        /// The id, such as `core.note`.
+        id: String,
+    },
+    /// Declare the types this app saves, so a copy with no server checks what
+    /// it queues against them and the first hydration registers the ones the
+    /// instance lacks, where the key may.
+    ///
+    /// Marfa's own types need no declaring. Declaring a type again replaces
+    /// its earlier declaration.
+    Declare {
+        /// A type definition, or an array of them, as JSON.
+        #[arg(
+            long,
+            value_name = "JSON",
+            conflicts_with = "file",
+            required_unless_present = "file"
+        )]
+        definitions: Option<String>,
+        /// A file holding the same.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
+    /// The declarations this copy holds, as they were made.
+    Declared,
 }
 
 #[derive(Debug, Subcommand)]
@@ -561,7 +594,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 } else {
                     format!(", {} held whole", report.edge_types.join(","))
                 };
-                format!(
+                let mut line = format!(
                     "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {} page(s); cursor {}",
                     report.items,
                     report.edges,
@@ -569,7 +602,20 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     report.tier,
                     report.pages,
                     report.cursor
-                )
+                );
+                if !report.registered_types.is_empty() {
+                    line.push_str(&format!(
+                        "\nregistered {} on the server",
+                        report.registered_types.join(",")
+                    ));
+                }
+                for held in &report.unregistered_types {
+                    line.push_str(&format!(
+                        "\nnot registered: {} ({}): {}",
+                        held.id, held.code, held.message
+                    ));
+                }
+                line
             })
         }
         DeviceCommand::Pin { id } => {
@@ -1016,13 +1062,49 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         DeviceCommand::Types { command } => {
             let core = store.open(None)?;
             match command {
-                CatalogCommand::List => {
+                TypesCommand::Declare { definitions, file } => {
+                    let text = match (definitions, file) {
+                        (Some(text), _) => text,
+                        (None, Some(path)) => std::fs::read_to_string(&path).map_err(|error| {
+                            CliError::Invalid(format!("cannot read {}: {error}", path.display()))
+                        })?,
+                        (None, None) => unreachable!("one of the two is required"),
+                    };
+                    let parsed: serde_json::Value = serde_json::from_str(&text)
+                        .map_err(|error| CliError::Invalid(format!("not JSON: {error}")))?;
+                    let definitions = match parsed {
+                        serde_json::Value::Array(all) => all,
+                        one @ serde_json::Value::Object(_) => vec![one],
+                        _ => {
+                            return Err(CliError::Invalid(
+                                "a type definition is a JSON object, or an array of them".into(),
+                            ));
+                        }
+                    };
+                    core.declare_types(&definitions)?;
+                    output::report(
+                        &serde_json::json!({ "declared": definitions.len() }),
+                        json,
+                        || format!("declared {} type(s)", definitions.len()),
+                    )
+                }
+                TypesCommand::Declared => {
+                    let declared = core.declared_types()?;
+                    output::report(&declared, json, || {
+                        declared
+                            .iter()
+                            .filter_map(|held| held["id"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
+                TypesCommand::List => {
                     let types = core.item_types()?;
                     output::report(&types, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
                 }
-                CatalogCommand::Get { id } => {
+                TypesCommand::Get { id } => {
                     let held = core.item_type(&id)?;
                     output::report(&held, json, || {
                         let mut lines = vec![type_line(&held)];
