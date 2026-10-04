@@ -71,7 +71,7 @@ pub struct FlaggedFile {
 
 /// What became of the folder's settings file in a pass.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct SettingsFileReport {
+pub struct SettingsFileOutcome {
     /// Its edit went to the server.
     pub sent: bool,
     /// It was written from the settings in force.
@@ -83,7 +83,7 @@ pub struct SettingsFileReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct ScanReport {
+pub struct FolderScan {
     pub created: u64,
     pub updated: u64,
     pub renamed: u64,
@@ -105,7 +105,7 @@ pub struct ScanReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PullReport {
+pub struct FolderPull {
     pub written: u64,
     pub rewritten: u64,
     pub moved: u64,
@@ -132,8 +132,8 @@ pub struct PullReport {
 /// One pass: the settings file's edit, the scan, the drain and the pull.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FolderPass {
-    pub settings: SettingsFileReport,
-    pub scan: ScanReport,
+    pub settings: SettingsFileOutcome,
+    pub scan: FolderScan,
     pub drain: DrainReport,
     /// Edits written from a version the server no longer holds, sent again.
     pub rebased: u64,
@@ -141,7 +141,7 @@ pub struct FolderPass {
     pub gave_way: u64,
     /// `None` where the catch-up failed after the copy expired, leaving
     /// nothing to pull from.
-    pub pull: Option<PullReport>,
+    pub pull: Option<FolderPull>,
     /// The files the scan and the pull held, each once.
     pub flagged: Vec<FlaggedFile>,
 }
@@ -183,7 +183,7 @@ pub struct RestoredRemoval {
     pub put_back: u64,
     /// Items that left elsewhere, restored at the next sync.
     pub restored: u64,
-    pub pull: PullReport,
+    pub pull: FolderPull,
 }
 
 /// What a watch tells its listener, each when it happens.
@@ -444,13 +444,13 @@ fn pass_of(
         flagged
     });
     Ok(FolderPass {
-        settings: SettingsFileReport {
+        settings: SettingsFileOutcome {
             sent: settings.sent,
             written: settings.written,
             flagged: settings.flagged,
             unwritten: settings.unwritten,
         },
-        scan: ScanReport {
+        scan: FolderScan {
             created: scan.created as u64,
             updated: scan.updated as u64,
             renamed: scan.renamed as u64,
@@ -473,8 +473,8 @@ fn pass_of(
     })
 }
 
-fn pull_of(pull: marfa_core::PullReport) -> PullReport {
-    PullReport {
+fn pull_of(pull: marfa_core::PullReport) -> FolderPull {
+    FolderPull {
         written: pull.written as u64,
         rewritten: pull.rewritten as u64,
         moved: pull.moved as u64,
