@@ -84,6 +84,21 @@ export const sqliteRequestContext =
   new AsyncLocalStorage<SqliteRequestContext>();
 
 /**
+ * Refuse unless the caller runs inside an open write transaction, a savepoint
+ * of one included. The context outlives its transaction in any continuation
+ * started inside it, so the root's outcome is asked as well.
+ */
+export function assertInWriteTransaction(): void {
+  const control = transactionControl.getStore();
+  control?.assertUsable();
+  if (
+    sqliteRequestContext.getStore()?.mode !== "write" ||
+    control?.outcome !== "active"
+  )
+    throw new Error("This must run inside an open write transaction");
+}
+
+/**
  * Wrap a Drizzle libsql instance so per-request transactions transparently
  * substitute. Storage classes and the private credential adapter consume
  * this wrapped instance.

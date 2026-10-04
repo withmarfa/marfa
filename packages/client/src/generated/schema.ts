@@ -510,7 +510,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge
-         * @description Deletes a single edge by id. The edge type's `cascade_on_delete` setting decides what happens to the connected items: `cascade` deletes them, `orphan` leaves them, and `block` rejects the delete while endpoints remain.
+         * @description Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.
          */
         delete: operations["deleteEdge"];
         options?: never;
@@ -537,7 +537,7 @@ export interface paths {
         put?: never;
         /**
          * Upsert edges in bulk
-         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
+         * @description Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -8276,7 +8276,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
+            /** @description - `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8416,7 +8416,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
+            /** @description - `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

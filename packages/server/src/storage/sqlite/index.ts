@@ -6,6 +6,7 @@ import { assertTransactionUsable } from "./transaction-control.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import {
+  assertInWriteTransaction,
   wrapDbWithRequestContext,
   guardStoreWithReadContext,
   sqliteRequestContext,
@@ -202,6 +203,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       const scope = sqliteRequestContext.getStore();
       if (scope?.mode === "read") scope.assertActive();
     },
+    assertInWriteTransaction,
     runInReadSnapshot: readSnapshotRunner(captureRead),
     async runInTransaction<T>(
       fn: () => T | Promise<T>,

@@ -413,8 +413,8 @@ describe("POST /edges/bulk", () => {
 
   it("rejects a key lacking edge-type write (atomic 403)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
-    // surfaced as a bulk_atomic_rollback by the atomic pre-check, at that
-    // refusal's own status rather than 400.
+    // surfaced as a bulk_atomic_rollback at that refusal's own status rather
+    // than 400.
     const rawKey = await mintWorkingKey(ctx, {
       label: "edges-bulk-member-noedge",
       source: `edges-bulk-member-noedge-${Math.random().toString(36).slice(2, 8)}`,
@@ -443,6 +443,68 @@ describe("POST /edges/bulk", () => {
     expect(body.error.details?.code).toBe("edge_permission_denied");
   });
 
+  it("rolls an atomic page back for a forbidden entry behind a stale one", async () => {
+    // The write gates are asked of the whole page before any entry is
+    // looked up, as on the item door, so the page answers for the permission
+    // the key lacks rather than for a stale version it could fix by re-reading.
+    const rawKey = await mintWorkingKey(ctx, {
+      label: "edges-bulk-about-only",
+      source: `edges-bulk-about-only-${Math.random().toString(36).slice(2, 8)}`,
+      edge_permissions: { about: "write", references: "read" },
+    });
+    const { sourceId, targetId } = await makePair();
+    const made = await request(ctx.app, "POST", "/edges", {
+      key: rawKey,
+      body: { source_id: sourceId, target_id: targetId, edge_type: "about" },
+    });
+    expect(made.status).toBe(201);
+
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: rawKey,
+      body: {
+        edges: [
+          {
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "about",
+            version: 99,
+          },
+          {
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "references",
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { code?: string; index?: number } };
+    };
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details).toMatchObject({
+      code: "edge_permission_denied",
+      index: 1,
+    });
+
+    // Alone, the stale entry is refused as a `409`, so the `403` above is
+    // the forbidden entry answering ahead of it.
+    const stale = await request(ctx.app, "POST", "/edges/bulk", {
+      key: rawKey,
+      body: {
+        edges: [
+          {
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "about",
+            version: 99,
+          },
+        ],
+      },
+    });
+    expect(stale.status).toBe(409);
+  });
+
   it("returns an empty-counts shape for an empty edges array", async () => {
     const res = await request(ctx.app, "POST", "/edges/bulk", {
       key: ctx.workingKey,
@@ -467,7 +529,7 @@ describe("POST /edges/bulk", () => {
     expect(body.results).toEqual([]);
   });
 
-  it("atomic pre-check rejects invalid id shape before any write", async () => {
+  it("atomic mode rolls back on an invalid id shape and names its index", async () => {
     const { sourceId, targetId } = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
       key: ctx.workingKey,
@@ -524,10 +586,6 @@ describe("POST /edges/bulk — the client-supplied id", () => {
   });
 
   it("rolls the whole batch back on an invalid id in atomic mode", async () => {
-    // Atomic mode checks id shapes before any write, because SQLite
-    // cannot roll back an async transaction — so the id gate belongs in
-    // that pre-pass beside the source and target ones, not only inside
-    // the per-edge path.
     const pair = await makePair();
     const res = await request(ctx.app, "POST", "/edges/bulk", {
       key: ctx.workingKey,

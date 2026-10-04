@@ -296,7 +296,7 @@
     "calls": {
       "EdgeStore.createRaw": 1,
       "EdgeStore.delete": 1,
-      "EdgeStore.updateProperties": 2,
+      "EdgeStore.updateProperties": 1,
       "runAuditedTransaction": 3
     }
   },
