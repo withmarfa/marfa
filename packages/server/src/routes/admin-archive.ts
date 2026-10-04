@@ -935,8 +935,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             // revoked folder keep the placements it held before its revoke.
             try {
               await assertEdgesCanBeCreated(
-                storage.edges,
-                storage.items,
+                storage,
                 [
                   {
                     source_id: sourceId,

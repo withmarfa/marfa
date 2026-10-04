@@ -6,7 +6,7 @@ import {
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
-import type { EdgeStore, ItemReader } from "./interface.js";
+import type { Storage } from "./interface.js";
 
 /**
  * Edge types that can reach around and close a cycle over more than one
@@ -159,16 +159,19 @@ export interface EdgeProposal {
  * the sequential-validation behavior the single-edge entry point exposed.
  * Returns the resolved edge-type schemas in input order.
  *
- * Runs inside the caller's transaction so a failed check rolls back the write.
+ * Refuses to run outside a write transaction: the graph it judges is the one
+ * the caller's write changes, and outside that write's transaction another
+ * can change it between the check and the write.
  */
 export async function assertEdgesCanBeCreated(
-  edgeStore: EdgeStore,
-  itemStore: ItemReader,
+  storage: Storage,
   proposals: EdgeProposal[],
   mayRead: (type: string) => boolean,
   opts: { replay?: boolean; replacing?: Edge } = {},
 ): Promise<EdgeTypeSchema[]> {
+  storage.assertInWriteTransaction();
   if (proposals.length === 0) return [];
+  const { edges: edgeStore, items: itemStore } = storage;
 
   // Zip each proposal with its schema once, so no downstream loop has to
   // realign the two lists.
@@ -460,17 +463,11 @@ export async function assertEdgesCanBeCreated(
 
 /** Thin single-edge wrapper — preserves the pre-batch call shape. */
 export async function assertEdgeCanBeCreated(
-  edgeStore: EdgeStore,
-  itemStore: ItemReader,
+  storage: Storage,
   input: EdgeProposal,
   mayRead: (type: string) => boolean,
 ): Promise<EdgeTypeSchema> {
-  const schemas = await assertEdgesCanBeCreated(
-    edgeStore,
-    itemStore,
-    [input],
-    mayRead,
-  );
+  const schemas = await assertEdgesCanBeCreated(storage, [input], mayRead);
   const [only] = schemas;
   if (!only) {
     throw new Error(

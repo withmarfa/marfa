@@ -2362,8 +2362,13 @@ export interface EdgeStore {
     expectedVersion?: number,
     ends?: { source_id: string; target_id: string },
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }>;
-  /** Delete an edge by id. An unknown id is a silent no-op. */
-  delete(id: string): Promise<void>;
+  /**
+   * Delete an edge by id and return the row that went, or `null` where no
+   * row had the id: a caller announcing the delete names the edge as it was
+   * removed, and one whose edge another delete took first has nothing to
+   * announce.
+   */
+  delete(id: string): Promise<Edge | null>;
   /**
    * Delete every outbound edge of `sourceId`, optionally narrowed to one
    * edge type, and return the rows that went.
@@ -2379,15 +2384,7 @@ export interface EdgeStore {
   /** Mirror of `deleteBySource` for inbound edges. */
   deleteByTarget(targetId: string, edgeType?: string): Promise<Edge[]>;
   /**
-   * Count edges where the given item is source. Used for cardinality checks.
-   */
-  countBySource(sourceId: string, edgeType: string): Promise<number>;
-  /**
-   * Count edges where the given item is target. Used for cardinality checks.
-   */
-  countByTarget(targetId: string, edgeType: string): Promise<number>;
-  /**
-   * Batched `countBySource` — for each distinct `(source_id, edge_type)` pair
+   * For each distinct `(source_id, edge_type)` pair
    * returns the row count. Key format: `${source_id}|${edge_type}`. Pairs
    * absent from the result map have count zero. One SQL query per distinct
    * `edge_type` in `pairs`.
@@ -2396,22 +2393,14 @@ export interface EdgeStore {
     pairs: { source_id: string; edge_type: string }[],
   ): Promise<Map<string, number>>;
   /**
-   * Batched `countByTarget` — mirror of `countsBySourceBatch`, keyed as
+   * Mirror of `countsBySourceBatch` for targets, keyed as
    * `${target_id}|${edge_type}`.
    */
   countsByTargetBatch(
     pairs: { target_id: string; edge_type: string }[],
   ): Promise<Map<string, number>>;
   /**
-   * Exact-duplicate check (source_id, target_id, edge_type).
-   */
-  existsExact(
-    sourceId: string,
-    targetId: string,
-    edgeType: string,
-  ): Promise<boolean>;
-  /**
-   * Batched `existsExact` — returns the subset of triples that already exist.
+   * Returns the subset of triples that already exist.
    * Key format: `${source_id}|${target_id}|${edge_type}`. Callers check
    * membership to decide whether to reject a proposed edge as a duplicate.
    * One SQL query per distinct `edge_type`.
@@ -2423,21 +2412,12 @@ export interface EdgeStore {
       edge_type: string;
     }[],
   ): Promise<Set<string>>;
-  /**
-   * Batched triple-to-Edge lookup. For each `(source_id, target_id, edge_type)`
-   * that matches an existing row, returns the full `Edge` keyed as
-   * `${source_id}|${target_id}|${edge_type}`. Triples with no match are
-   * absent. Used by `POST /edges/bulk` upsert to resolve duplicate edges to
-   * their ids for in-place property updates. One SQL query per distinct
-   * `edge_type`.
-   */
-  findByTriplesBatch(
-    pairs: {
-      source_id: string;
-      target_id: string;
-      edge_type: string;
-    }[],
-  ): Promise<Map<string, Edge>>;
+  /** The edge holding this exact triple, or `null`. */
+  findByTriple(
+    sourceId: string,
+    targetId: string,
+    edgeType: string,
+  ): Promise<Edge | null>;
   /**
    * Whether adding sourceId -> targetId would close a cycle in the stored
    * graph plus earlier proposals of the same type. The caller holds the
@@ -3169,6 +3149,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   inbound: InboundStore;
   /** Refuse further work when the current root transaction ended or became uncertain. */
   assertTransactionUsable(): void;
+  /** Refuse unless an open write transaction, or a savepoint of one, holds the caller. */
+  assertInWriteTransaction(): void;
   runInTransaction<T>(
     fn: () => T | Promise<T>,
     options?: { retainCommitHooksOnUncertain?: boolean },
