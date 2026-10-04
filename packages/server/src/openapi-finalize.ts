@@ -21,7 +21,11 @@
 
 import { CONDITIONAL_READ_OPERATIONS } from "./middleware/read-view.js";
 import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
-import { REFUSAL_TEXT, refusalComponentName } from "./openapi.js";
+import {
+  IDEMPOTENCY_IN_FLIGHT,
+  REFUSAL_TEXT,
+  refusalComponentName,
+} from "./openapi.js";
 import { toOpenApiPath } from "./openapi-path.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
@@ -53,7 +57,7 @@ const GENERAL_SECTIONS = [
   "## Errors",
   'An error answers `{ "error": { "code": "...", "message": "...", "details": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.',
   "## Idempotency",
-  "A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.",
+  "A write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`.",
   "## Time",
   "Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.",
   "## Every response",
@@ -418,7 +422,7 @@ const READ_VIEW_PARAMETER = {
     maxLength: 64,
   },
   description:
-    "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read.",
+    "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read.",
 };
 
 /**
@@ -479,17 +483,14 @@ const IDEMPOTENCY_REFUSALS: {
   {
     status: "409",
     merge: "branch",
-    refusal: chainRefusal(
-      ["idempotency_key_in_flight"],
-      "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
-    ),
+    refusal: chainRefusal(["idempotency_key_in_flight"], IDEMPOTENCY_IN_FLIGHT),
   },
   {
     status: "422",
     merge: "floor",
     refusal: chainRefusal(
       ["idempotency_key_reused", "idempotency_result_not_retained"],
-      "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+      "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
     ),
   },
 ];

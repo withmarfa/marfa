@@ -115,7 +115,7 @@ const BulkInputItemSchema = z.object({
     .string()
     .optional()
     .describe(
-      "A UUIDv7 for the item. Leave it out and Marfa creates one, or uses the item the natural key matches.",
+      "A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read.",
     ),
   type: z.string().describe("The item's type identifier, such as `core.note`."),
   properties: WrittenPropertiesSchema.optional().describe(
@@ -212,7 +212,7 @@ const bulkRoute = createRoute({
               .enum(["upsert", "create_only"])
               .optional()
               .describe(
-                "`upsert` (the default) updates items that match an entry's natural key. `create_only` skips them, reporting `skipped` with reason `duplicate_source`.",
+                "`upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`.",
               ),
             atomic: z
               .boolean()
@@ -243,7 +243,7 @@ const bulkRoute = createRoute({
         "application/json": { schema: BulkResponseSchema },
       },
       description:
-        "Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source`.",
+        "Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`.",
     },
     400: {
       content: {
@@ -286,7 +286,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "- `bulk_atomic_rollback`: with `atomic` true, an entry names an item that isn't there, such as an edge target. `details.code` is `item_not_found`.",
+        "- `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`.",
     },
     409: {
       content: {
@@ -295,7 +295,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "- `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` is `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe).",
+        "- `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` names the cause, such as `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe).",
     },
   },
 });
@@ -330,7 +330,7 @@ const bulkActionRoute = createRoute({
     202: {
       content: { "application/json": { schema: BulkActionJobSchema } },
       description:
-        "Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands when each chunk runs. If it is revoked or expires, or loses `items.purge` for a purge, the job ends `failed` and keeps its `result`.",
+        "Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands. If your key is revoked or expires, your app's access is revoked, or a purge loses `items.purge`, the job ends `failed` and keeps its `result`.",
     },
     400: {
       content: {
@@ -344,7 +344,7 @@ const bulkActionRoute = createRoute({
         },
       },
       description:
-        '- `validation_error`: the body or `filter` is malformed or has an undeclared key, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more than `max_items` items match (default 10,000, at most 50,000).',
+        '- `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
     },
     401: {
       content: {

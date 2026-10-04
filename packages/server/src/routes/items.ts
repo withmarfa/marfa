@@ -60,6 +60,7 @@ import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
+  IDEMPOTENCY_IN_FLIGHT,
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
@@ -84,7 +85,7 @@ import { itemsVersionsRoutes } from "./items-versions.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import {
-  ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_READ,
   ITEM_NOT_FOUND_ON_WRITE,
   READ_REFUSED,
   WRITE_REFUSED,
@@ -206,8 +207,6 @@ const IdParam = z.object({
   id: z.string().describe("The ID of the item."),
 });
 
-/** The error lines the doors that name an item by ID share. */
-
 /**
  * Upper bound on neighbors hydrated by `GET /items/:id?include=neighbors`.
  * Outbound + inbound edges are each already capped per type
@@ -282,7 +281,7 @@ const createItemRoute = createRoute({
                 "The version you read. Used only when `source_id` matches a live item: the update then applies only if the item is still at this version. Ignored otherwise.",
               ),
             tier: TierEnum.optional().describe(
-              "The item's tier. Defaults to your key's `default_tier`, else `library`. An update that names no tier leaves the item's tier as it is.",
+              "The item's tier. Defaults to your key's `default_tier`, else `library`. If `source_id` matches an existing item, leaving it out keeps that item's tier.",
             ),
             capture_latitude: z
               .number()
@@ -341,7 +340,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a field is malformed, such as `type`, `occurred_at` or `state`.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: no registered type has this identifier.\n- `invalid_id`: `id` is not a valid item ID.\n- `invalid_properties`: the properties don't fit the type's schema.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.",
+        "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {
@@ -392,7 +391,7 @@ const createItemRoute = createRoute({
         },
       },
       description:
-        "- `id_reused`: `id` belongs to a different item. `details.differs` says what differs.\n- `conflict`: `id` belongs to an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+        "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
     },
   },
 });
@@ -624,7 +623,7 @@ const listItemsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, or `cursor` came from another ordering or listing.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+        "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -700,7 +699,7 @@ const getItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
     403: {
       content: {
@@ -866,7 +865,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID is not valid.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `retype` names an unregistered type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.",
+        "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
     },
     401: {
       content: {
@@ -920,7 +919,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "- `version_conflict`: `version` is stale and a change collides. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` you can read, so it can't merge.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` is not `true`.",
+        "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
     },
   },
 });
@@ -997,8 +996,7 @@ const deleteItemRoute = createRoute({
       content: {
         "application/json": { schema: StaleVersionSchema },
       },
-      description:
-        "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.",
+      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is trashed.\n${IDEMPOTENCY_IN_FLIGHT}`,
     },
   },
 });
@@ -1060,7 +1058,7 @@ const getMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -1400,8 +1398,7 @@ const purgeItemRoute = createRoute({
       content: {
         "application/json": { schema: StaleVersionSchema },
       },
-      description:
-        "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is purged.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.",
+      description: `- \`version_conflict\`: \`version\` is stale. \`current\` is the item now, and nothing is purged.\n${IDEMPOTENCY_IN_FLIGHT}`,
     },
   },
 });

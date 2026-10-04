@@ -16,7 +16,7 @@ import {
 } from "../page-limits.js";
 import { VersionPageSchema } from "./_schemas.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
-import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
+import { ITEM_NOT_FOUND_ON_READ, READ_REFUSED } from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -90,7 +90,7 @@ const listVersionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });

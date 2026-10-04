@@ -7,6 +7,10 @@
 export const ITEM_NOT_FOUND =
   "- `item_not_found`: no item has this ID, or its type is one you can't read.";
 
+/** The 404 of a door that reads only items outside the trash. */
+export const ITEM_NOT_FOUND_ON_READ =
+  "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.";
+
 /** The 404 of a door that writes the item, which a row in the trash meets too. */
 export const ITEM_NOT_FOUND_ON_WRITE = `${ITEM_NOT_FOUND} If the item is in the trash and you can read its type, \`details.trashed\` is \`true\`.`;
 

@@ -3765,7 +3765,7 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -3789,7 +3789,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, or `cursor` came from another ordering or listing.
+             * @description - `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.
              *     - `unknown_type`: `type` is a concrete type that nothing registers.
              */
             400: {
@@ -3970,12 +3970,12 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is malformed, such as `type`, `occurred_at` or `state`.
+             * @description - `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.
              *     - `missing_required_field`: `type` is missing.
-             *     - `unknown_type`: no registered type has this identifier.
-             *     - `invalid_id`: `id` is not a valid item ID.
-             *     - `invalid_properties`: the properties don't fit the type's schema.
-             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `invalid_id`: `id` or an edge target is not a valid ID.
+             *     - `invalid_properties`: the properties don't fit the type.
+             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
             400: {
                 headers: {
@@ -4046,8 +4046,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `id_reused`: `id` belongs to a different item. `details.differs` says what differs.
-             *     - `conflict`: `id` belongs to an item you can't read.
+             * @description - `id_reused`: `id` names an item of another type.
+             *     - `conflict`: `id` names an item you can't read.
              *     - `link_taken`: another item of the type holds this link. `details.existing_id` names it.
              *     - `type_mismatch`: `source_id` matches an item of another type.
              *     - `version_conflict`, `ancestor_unavailable`: `version` is stale.
@@ -4079,7 +4079,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4271,7 +4274,7 @@ export interface operations {
                 include?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -4343,7 +4346,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4508,7 +4511,7 @@ export interface operations {
             };
             /**
              * @description - `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.
-             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.
+             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.
              */
             409: {
                 headers: {
@@ -4537,7 +4540,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4662,10 +4668,10 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `version` is missing.
              *     - `validation_error`: the body is malformed, has an undeclared field, or changes nothing.
-             *     - `invalid_id`: the ID is not valid.
+             *     - `invalid_id`: the ID or an edge target is not a valid ID.
              *     - `invalid_properties`: the resulting properties don't fit the type.
-             *     - `unknown_type`: `retype` names an unregistered type.
-             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.
+             *     - `unknown_type`: `type` isn't registered.
+             *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
             400: {
                 headers: {
@@ -4736,11 +4742,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `version` is stale and a change collides. `current` is the item now.
-             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` you can read, so it can't merge.
+             * @description - `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.
+             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.
              *     - `source_id_conflict`: another item under the source holds this `source_id`.
              *     - `link_taken`: another item of the type holds this link.
-             *     - `type_mismatch`: `type` differs and `retype` is not `true`.
+             *     - `type_mismatch`: `type` differs and `retype` isn't `true`.
              */
             409: {
                 headers: {
@@ -4769,7 +4775,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4916,7 +4925,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4944,7 +4953,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5103,7 +5115,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5131,7 +5143,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5261,7 +5276,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5380,7 +5395,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5959,7 +5974,7 @@ export interface operations {
             };
             /**
              * @description - `version_conflict`: `version` is stale. `current` is the item now, and nothing is purged.
-             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.
+             *     - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.
              */
             409: {
                 headers: {
@@ -5988,7 +6003,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6184,7 +6202,7 @@ export interface operations {
                 "application/json": {
                     /** @description The entries to write, at most 5,000. */
                     items: {
-                        /** @description A UUIDv7 for the item. Leave it out and Marfa creates one, or uses the item the natural key matches. */
+                        /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
                         id?: string;
                         /** @description The item's type identifier, such as `core.note`. */
                         type: string;
@@ -6214,7 +6232,7 @@ export interface operations {
                         };
                     }[];
                     /**
-                     * @description `upsert` (the default) updates items that match an entry's natural key. `create_only` skips them, reporting `skipped` with reason `duplicate_source`.
+                     * @description `upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`.
                      * @enum {string}
                      */
                     mode?: "upsert" | "create_only";
@@ -6228,7 +6246,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source`. */
+            /** @description Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6295,7 +6313,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry names an item that isn't there, such as an edge target. `details.code` is `item_not_found`. */
+            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6310,7 +6328,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackRefusal"];
                 };
             };
-            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` is `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe). */
+            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` names the cause, such as `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe). */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6385,6 +6403,7 @@ export interface operations {
                 "application/json": {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6394,6 +6413,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6405,6 +6425,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6414,6 +6435,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6422,6 +6444,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6432,6 +6455,7 @@ export interface operations {
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
+                    /** @description The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000. */
                     max_items?: number;
                     enable_fanout?: boolean;
                     /** @enum {string} */
@@ -6456,7 +6480,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionResult"];
                 };
             };
-            /** @description Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands when each chunk runs. If it is revoked or expires, or loses `items.purge` for a purge, the job ends `failed` and keeps its `result`. */
+            /** @description Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands. If your key is revoked or expires, your app's access is revoked, or a purge loses `items.purge`, the job ends `failed` and keeps its `result`. */
             202: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6472,10 +6496,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
+             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
              *     - `missing_required_field`: a field the action needs is missing.
              *     - `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.
-             *     - `bulk_cap_exceeded`: more than `max_items` items match (default 10,000, at most 50,000).
+             *     - `bulk_cap_exceeded`: more items match than `max_items` allows.
              */
             400: {
                 headers: {
@@ -6526,7 +6550,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6554,7 +6578,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7305,7 +7332,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7417,8 +7444,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't have read on the namespace.
-             *     - `type_not_permitted`: your credential reaches no type.
+             * @description - `type_not_permitted`: your credential reaches no type.
+             *     - `forbidden`: you don't have read on the namespace.
              */
             403: {
                 headers: {
@@ -7434,7 +7461,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7550,7 +7577,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.
+             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              *     - `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).
              */
             403: {
@@ -7686,7 +7713,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.
+             * @description - `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              *     - `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).
              */
             403: {
@@ -7774,7 +7801,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -8051,7 +8078,7 @@ export interface operations {
                 cursor?: string;
             };
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -8316,7 +8343,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8371,7 +8401,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path: {
@@ -8584,7 +8614,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8612,7 +8642,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8798,7 +8831,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9016,7 +9052,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -9389,7 +9425,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;
@@ -10185,7 +10221,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `from` or `to` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`; if it has `expansion_incomplete`, narrow by `type`.
+             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.
              */
             400: {
                 headers: {
@@ -14147,7 +14183,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14175,7 +14211,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14365,7 +14404,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14508,7 +14550,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description - `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14536,7 +14578,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            /**
+             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
+             */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14833,7 +14878,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read. */
+                /** @description A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read. */
                 "X-Marfa-Read-View"?: string;
             };
             path?: never;

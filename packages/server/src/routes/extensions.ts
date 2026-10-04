@@ -36,9 +36,10 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import {
-  ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_READ,
   ITEM_NOT_FOUND_ON_WRITE,
   READ_REFUSED,
+  WRITE_REFUSED,
 } from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ const listExtensionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -167,8 +168,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "- `forbidden`: you don't have read on the namespace.\n- `type_not_permitted`: your credential reaches no type.",
+      description: `${READ_REFUSED}\n- \`forbidden\`: you don't have read on the namespace.`,
     },
     404: {
       content: {
@@ -176,7 +176,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });
@@ -242,8 +242,7 @@ const setExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
+      description: `${WRITE_REFUSED}\n- \`forbidden\`: you don't have write on the namespace, or it is reserved (\`core\`, \`marfa\` or \`system\`).`,
     },
     404: {
       content: {
@@ -303,8 +302,7 @@ const deleteExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description:
-        "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
+      description: `${WRITE_REFUSED}\n- \`forbidden\`: you don't have write on the namespace, or it is reserved (\`core\`, \`marfa\` or \`system\`).`,
     },
     404: {
       content: {

@@ -906,7 +906,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`; if it has `expansion_incomplete`, narrow by `type`.",
+        "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.",
     },
     401: {
       content: {

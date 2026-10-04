@@ -3,7 +3,7 @@
   "info": {
     "title": "Marfa API",
     "version": "0",
-    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nMany operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem."
+    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nMany operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem."
   },
   "components": {
     "securitySchemes": {
@@ -5896,7 +5896,7 @@
                         "$ref": "#/components/schemas/Tier"
                       },
                       {
-                        "description": "The item's tier. Defaults to your key's `default_tier`, else `library`. An update that names no tier leaves the item's tier as it is."
+                        "description": "The item's tier. Defaults to your key's `default_tier`, else `library`. If `source_id` matches an existing item, leaving it out keeps that item's tier."
                       }
                     ]
                   },
@@ -5997,7 +5997,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is malformed, such as `type`, `occurred_at` or `state`.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: no registered type has this identifier.\n- `invalid_id`: `id` is not a valid item ID.\n- `invalid_properties`: the properties don't fit the type's schema.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.",
+            "description": "- `validation_error`: a field is invalid, such as a malformed `occurred_at` or a `state` the type can't start in.\n- `missing_required_field`: `type` is missing.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: `id` or an edge target is not a valid ID.\n- `invalid_properties`: the properties don't fit the type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6123,7 +6123,7 @@
             }
           },
           "409": {
-            "description": "- `id_reused`: `id` belongs to a different item. `details.differs` says what differs.\n- `conflict`: `id` belongs to an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+            "description": "- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6190,7 +6190,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6495,7 +6495,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -6530,7 +6530,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, or `cursor` came from another ordering or listing.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, `updated_after` comes with a different `sort` or `direction`, `cursor` came from another ordering or listing, or `X-Marfa-Read-View` comes without `include=metadata`.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7100,7 +7100,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -7228,7 +7228,7 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7533,7 +7533,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID is not valid.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `retype` names an unregistered type.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules or closes a cycle.",
+            "description": "- `missing_required_field`: `version` is missing.\n- `validation_error`: the body is malformed, has an undeclared field, or changes nothing.\n- `invalid_id`: the ID or an edge target is not a valid ID.\n- `invalid_properties`: the resulting properties don't fit the type.\n- `unknown_type`: `type` isn't registered.\n- `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7659,7 +7659,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `version` is stale and a change collides. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` you can read, so it can't merge.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` is not `true`.",
+            "description": "- `version_conflict`: `version` is stale and a change collides, or only edges change. `current` is the item now.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` that you can read.\n- `source_id_conflict`: another item under the source holds this `source_id`.\n- `link_taken`: another item of the type holds this link.\n- `type_mismatch`: `type` differs and `retype` isn't `true`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7729,7 +7729,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8035,7 +8035,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.",
+            "description": "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is trashed.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8096,7 +8096,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8393,7 +8393,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8447,7 +8447,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8767,7 +8767,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8821,7 +8821,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9092,7 +9092,7 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9331,7 +9331,7 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10471,7 +10471,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is purged.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running. Retry.",
+            "description": "- `version_conflict`: `version` is stale. `current` is the item now, and nothing is purged.\n- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10532,7 +10532,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10932,7 +10932,7 @@
                       "properties": {
                         "id": {
                           "type": "string",
-                          "description": "A UUIDv7 for the item. Leave it out and Marfa creates one, or uses the item the natural key matches."
+                          "description": "A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read."
                         },
                         "type": {
                           "type": "string",
@@ -11005,7 +11005,7 @@
                       "upsert",
                       "create_only"
                     ],
-                    "description": "`upsert` (the default) updates items that match an entry's natural key. `create_only` skips them, reporting `skipped` with reason `duplicate_source`."
+                    "description": "`upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`."
                   },
                   "atomic": {
                     "type": "boolean",
@@ -11029,7 +11029,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source`.",
+            "description": "Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11146,7 +11146,7 @@
             }
           },
           "404": {
-            "description": "- `bulk_atomic_rollback`: with `atomic` true, an entry names an item that isn't there, such as an edge target. `details.code` is `item_not_found`.",
+            "description": "- `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11176,7 +11176,7 @@
             }
           },
           "409": {
-            "description": "- `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` is `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe).",
+            "description": "- `bulk_atomic_rollback`: with `atomic` true, an entry's item has moved or is taken. `details.code` names the cause, such as `version_conflict`, `link_taken`, `type_mismatch` (the natural key matched an item of another type) or `id_reused` (the entry's `id` belongs to an item it doesn't describe).",
             "content": {
               "application/json": {
                 "schema": {
@@ -11321,7 +11321,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11357,7 +11358,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11398,7 +11400,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11439,7 +11442,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11470,7 +11474,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11502,7 +11507,8 @@
                       },
                       "max_items": {
                         "type": "integer",
-                        "exclusiveMinimum": 0
+                        "exclusiveMinimum": 0,
+                        "description": "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000."
                       },
                       "enable_fanout": {
                         "type": "boolean"
@@ -11559,7 +11565,7 @@
             }
           },
           "202": {
-            "description": "Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands when each chunk runs. If it is revoked or expires, or loses `items.purge` for a purge, the job ends `failed` and keeps its `result`.",
+            "description": "Returns the queued job. Poll `GET /items/bulk-actions/jobs/{id}` until `status` is `completed`, `failed` or `canceled`. The job acts for your credential as it stands. If your key is revoked or expires, your app's access is revoked, or a purge loses `items.purge`, the job ends `failed` and keeps its `result`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11589,7 +11595,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body or `filter` is malformed or has an undeclared key, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: \"PURGE\"`.\n- `bulk_cap_exceeded`: more than `max_items` items match (default 10,000, at most 50,000).",
+            "description": "- `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: \"PURGE\"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11682,7 +11688,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11736,7 +11742,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13274,7 +13280,7 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13509,7 +13515,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have read on the namespace.\n- `type_not_permitted`: your credential reaches no type.",
+            "description": "- `type_not_permitted`: your credential reaches no type.\n- `forbidden`: you don't have read on the namespace.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13539,7 +13545,7 @@
             }
           },
           "404": {
-            "description": "- `item_not_found`: no item has this ID, or its type is one you can't read.",
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13767,7 +13773,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
+            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -14035,7 +14041,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
+            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.\n- `forbidden`: you don't have write on the namespace, or it is reserved (`core`, `marfa` or `system`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -14247,7 +14253,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -14852,7 +14858,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -15380,7 +15386,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15530,7 +15536,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -16040,7 +16046,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16335,7 +16341,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16389,7 +16395,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17274,7 +17280,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ]
       }
@@ -17762,7 +17768,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ]
       },
@@ -19254,7 +19260,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`; if it has `expansion_incomplete`, narrow by `type`.",
+            "description": "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27370,7 +27376,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27424,7 +27430,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27860,7 +27866,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28157,7 +28163,7 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28211,7 +28217,7 @@
             }
           },
           "422": {
-            "description": "The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write.",
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29020,7 +29026,7 @@
               "minLength": 64,
               "maxLength": 64
             },
-            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. `GET /items` read this way needs `include=metadata`. Leave it out for an ordinary read."
+            "description": "A read-view certificate from a copy stream, for a working copy. Marfa reads the current data and checks the view in one snapshot, and returns `409 read_view_changed` if the view has changed. Leave it out for an ordinary read."
           }
         ]
       }

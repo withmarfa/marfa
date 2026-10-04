@@ -122,7 +122,7 @@ const CEILINGS = {
   summaryForm: 0,
   descriptionLength: 44,
   parameterUndescribed: 3,
-  parameterLength: 17,
+  parameterLength: 9,
   schemaUndescribed: 97,
   fieldUndescribed: 361,
   fieldLength: 10,
