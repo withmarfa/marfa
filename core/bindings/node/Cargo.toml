@@ -11,9 +11,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 marfa-core.workspace = true
-# `napi5` for a function made from a closure, which the follow's one queue
-# is built on.
-napi = { version = "3", features = ["serde-json", "napi5"] }
+# `napi8` verifies native class identity before converting class values.
+# It includes `napi5`, which the follow's closure-backed queue needs.
+napi = { version = "3", features = ["serde-json", "napi8"] }
 napi-derive = "3"
 serde_json.workspace = true
 
