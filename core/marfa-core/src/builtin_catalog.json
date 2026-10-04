@@ -1803,5 +1803,19 @@
    "property_schema": {},
    "shipped": true
   }
+ ],
+ "field_types": [
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "url",
+  "email",
+  "datetime",
+  "date",
+  "enum",
+  "array",
+  "object",
+  "thumbnail"
  ]
 }

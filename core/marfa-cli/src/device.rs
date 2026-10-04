@@ -584,8 +584,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             tier,
             edge_types,
         } => {
-            let core = store.open_with_server(named)?;
             stop_on_interrupt();
+            let core = store.open_with_server(named)?;
             let report = core.hydrate_until(&types, tier.into(), &edge_types, stop_after(None))?;
             output::report(&report, json, || {
                 let whole = if report.edge_types.is_empty() {
@@ -646,9 +646,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             )
         }
         DeviceCommand::Follow { r#for } => {
+            stop_on_interrupt();
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
-            stop_on_interrupt();
             let mut unwritten: Option<CliError> = None;
             let report = core.follow(stop, |change| {
                 if unwritten.is_some() {
@@ -726,8 +726,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             Ok(())
         }
         DeviceCommand::CatchUp => {
-            let core = store.open_with_server(named)?;
             stop_on_interrupt();
+            let core = store.open_with_server(named)?;
             let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
@@ -992,8 +992,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Drain => {
-            let core = store.open_with_server(named)?;
             stop_on_interrupt();
+            let core = store.open_with_server(named)?;
             let report = core.drain_until(stop_after(None))?;
             output::drained(&report, json)?;
             return Ok(output::drain_exit(&report));
@@ -1238,21 +1238,30 @@ fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
     &STOP
 }
 
-extern "C" fn interrupted(_: libc::c_int) {
-    STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// `SA_RESETHAND`: a second Ctrl-C ends the process at once.
+/// Ctrl-C raises the stop and does not interrupt what the process is doing: a
+/// handler would fail a request in flight with `EINTR`, which reads as the
+/// network failing rather than as a stop. The signal is blocked here, which
+/// every thread made afterwards inherits, and one thread waits for it. That
+/// makes this the first thing a command does, before any thread is made.
+///
+/// A second Ctrl-C ends the process at once.
 fn stop_on_interrupt() {
-    // SAFETY: the handler only stores to an atomic, which is safe inside a
-    // signal handler, and the action is fully initialized before it is
-    // installed.
+    // SAFETY: the set is initialized before it is used, the waiting thread
+    // only stores to an atomic, and the default action is put back before the
+    // signal is let through again.
     unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        action.sa_flags = libc::SA_RESETHAND;
-        libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        std::thread::spawn(move || {
+            let mut signal = 0;
+            if libc::sigwait(&set, &mut signal) == 0 {
+                STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+                libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+            }
+        });
     }
 }
 

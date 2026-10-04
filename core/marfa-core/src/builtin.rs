@@ -28,6 +28,18 @@ pub(crate) fn catalog() -> Result<WireCatalog, CoreError> {
         .map_err(|error| CoreError::Decoding(format!("the shipped catalog: {error}")))
 }
 
+/// The field types a type may declare, as the registry takes them.
+pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
+    static PARSED: OnceLock<Result<Vec<String>, String>> = OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
+            serde_json::from_value(document["field_types"].clone()).map_err(|e| e.to_string())
+        })
+        .clone()
+        .map_err(|error| CoreError::Decoding(format!("the shipped field types: {error}")))
+}
+
 /// Whether Marfa ships a type by this id.
 pub(crate) fn ships(id: &str) -> Result<bool, CoreError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))

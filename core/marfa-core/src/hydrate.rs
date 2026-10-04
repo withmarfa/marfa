@@ -58,8 +58,18 @@ fn hydrate_inner(
         }
     }
 
-    let (instance, cursor, fence) = read_head(http)?;
-    let http = &http.for_view(&fence);
+    let (mut instance, mut cursor, mut fence) = read_head(http)?;
+    let mut view = http.for_view(&fence);
+    let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
+        register_declared(core, &view, view.catalog()?)?;
+    if registered_any {
+        // A registration changes what the instance's read view certifies, so
+        // the head and the catalog read before it are of a view that has gone.
+        (instance, cursor, fence) = read_head(http)?;
+        view = http.for_view(&fence);
+        catalog_rows = view.catalog()?;
+    }
+    let http = &view;
     {
         let mut conn = core.conn()?;
         if store::hydrated(&conn)?
@@ -71,8 +81,6 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
-    let (catalog_rows, registered_types, unregistered_types) =
-        register_declared(core, http, http.catalog()?)?;
     refuse_unreadable(http, &types)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
     {
@@ -310,20 +318,16 @@ pub(crate) fn lay_queue_over(
     Ok(())
 }
 
-/// The shape the server's type patterns take: two or more lowercase dotted
-/// segments, each a letter then letters, digits, hyphens and underscores, at
-/// most 128 characters, or a root of one or more such segments under `.*`.
-/// The server's rules for each root go further, and a name that passes here
-/// and breaks them is one the catalog does not hold.
 /// Registers on the instance the types the app declared that it does not
-/// hold, parents before their children, and reads the catalog again where
-/// one was taken. A key that may not register is no reason to refuse the
+/// hold, parents before their children, and says whether any registration
+/// changed what the instance holds, which leaves the catalog and the head the
+/// caller read stale. A key that may not register is no reason to refuse the
 /// hydration: what it queued waits for the server's verdict like any write.
 fn register_declared(
     core: &Core,
     http: &Http,
-    mut catalog: WireCatalog,
-) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>)> {
+    catalog: WireCatalog,
+) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>, bool)> {
     let mut missing: Vec<(String, String)> = {
         let conn = core.conn()?;
         store::declared_type_rows(&conn)?
@@ -356,12 +360,14 @@ fn register_declared(
             }
         }
     }
-    if taken {
-        catalog = http.catalog()?;
-    }
-    Ok((catalog, registered, refused))
+    Ok((catalog, registered, refused, taken))
 }
 
+/// The shape the server's type patterns take: two or more lowercase dotted
+/// segments, each a letter then letters, digits, hyphens and underscores, at
+/// most 128 characters, or a root of one or more such segments under `.*`.
+/// The server's rules for each root go further, and a name that passes here
+/// and breaks them is one the catalog does not hold.
 pub(crate) fn type_pattern(name: &str) -> bool {
     let segment = |part: &str| {
         let mut characters = part.chars();

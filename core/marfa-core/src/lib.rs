@@ -2195,6 +2195,10 @@ mod tests {
                 "no type",
             ),
             (
+                serde_json::json!({ "id": "app.x", "fields": { "a": { "type": "nonsense" } } }),
+                "not a field type",
+            ),
+            (
                 serde_json::json!({ "id": "app.x", "parent": "app.absent" }),
                 "neither a type Marfa ships nor one declared",
             ),

@@ -175,8 +175,17 @@ pub(crate) fn declaration(
             row.insert("fields".into(), Value::Object(Map::new()));
         }
         Some(Value::Object(fields)) => {
+            let kinds = crate::builtin::field_types()?;
             for (name, definition) in fields {
-                field(name, definition, id).map_err(|error| invalid(error.to_string()))?;
+                let held =
+                    field(name, definition, id).map_err(|error| invalid(error.to_string()))?;
+                if !kinds.contains(&held.r#type) {
+                    return Err(invalid(format!(
+                        "{id} declares {name} as {:?}, which is not a field type: one of {}",
+                        held.r#type,
+                        kinds.join(", ")
+                    )));
+                }
             }
         }
         Some(_) => return Err(invalid(format!("the fields of {id} are an object by name"))),
