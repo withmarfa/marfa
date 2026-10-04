@@ -230,6 +230,138 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
   return "edge" in event;
 }
 
+export interface PublishOptions {
+  /**
+   * `from_log` writes the event's log row and leaves telling this process's
+   * subscribers to `announceFromLog`, which reads the rows back after the
+   * commit. For a door that writes more rows in one transaction than it can
+   * hold in memory until the commit.
+   */
+  announce?: "after_commit" | "from_log";
+}
+
+/**
+ * Emissions waiting behind a log announcement, so subscribers see every
+ * event in the order of its id: a write committed after a restore must not
+ * reach them before the restore's events do.
+ */
+let announcementsPending = 0;
+let announcements: Promise<void> = Promise.resolve();
+
+function inAnnouncementOrder(task: () => void | Promise<void>): void {
+  announcementsPending += 1;
+  announcements = announcements
+    .then(task)
+    .catch(() => {
+      // Subscribers end their streams and resume from the log, which holds
+      // every event the announcement could not hand on.
+      emitter.emit("LIVE_DELIVERY_FAILED");
+    })
+    .finally(() => {
+      announcementsPending -= 1;
+    });
+}
+
+function emitInOrder(emit: () => void): void {
+  if (announcementsPending > 0) inAnnouncementOrder(emit);
+  else emit();
+}
+
+/** The internal name for a wire event name, or undefined for another. */
+function eventTypeOf(wire: unknown): PubsubEvent["type"] | undefined {
+  const types: PubsubEvent["type"][] = [
+    "created",
+    "updated",
+    "deleted",
+    "restored",
+    "purged",
+    "state_changed",
+    "metadata_changed",
+    "edge_created",
+    "edge_updated",
+    "edge_deleted",
+  ];
+  return types.find((type) => wireEventName(type) === wire);
+}
+
+/** Hand one logged event to this process's subscribers. */
+function emitLogged(row: {
+  id: bigint;
+  edge_id: string | null;
+  payload: string;
+  enable_fanout: boolean;
+}): void {
+  const frame = JSON.parse(row.payload) as Record<string, unknown>;
+  const type = eventTypeOf(frame.type);
+  if (row.edge_id !== null) {
+    if (!type?.startsWith("edge_"))
+      throw new Error(`Event ${String(row.id)} is not an edge event`);
+    emitter.emit("EDGE_CHANGED", {
+      type: type as EdgeEvent["type"],
+      edge: frame.edge as Edge,
+      ...(typeof frame.source_type === "string" && {
+        sourceType: frame.source_type,
+      }),
+      ...(typeof frame.purged_with === "string" && {
+        purgedWith: frame.purged_with,
+      }),
+      enableFanout: row.enable_fanout,
+      eventId: row.id,
+    } satisfies EdgeEventWithId);
+    return;
+  }
+  // A cascade mark is folded into the stored item, and is not read back.
+  if (
+    type === undefined ||
+    type.startsWith("edge_") ||
+    "trashed_with_type" in frame ||
+    "restored_with" in frame
+  )
+    throw new Error(`Event ${String(row.id)} cannot be announced from the log`);
+  emitter.emit("ITEM_CHANGED", {
+    type: type as ItemEvent["type"],
+    item: frame.item as Item,
+    ...(frame.metadata !== undefined && {
+      metadata: frame.metadata as Metadata,
+    }),
+    enableFanout: row.enable_fanout,
+    eventId: row.id,
+  } satisfies ItemEventWithId);
+}
+
+/** Events read back from the log per page while they are announced. */
+const ANNOUNCE_PAGE = 200;
+
+/**
+ * Once the transaction this is called in commits, tell this process's
+ * subscribers about the events from `first` to `last`, read back from the
+ * log a page at a time, in id order and ahead of any later write's events.
+ * Pairs with `publish` and `publishEdge` called with `from_log`, inside one
+ * transaction, which holds the write lock and so gives its events adjacent
+ * ids.
+ */
+export function announceFromLog(
+  range: { first: bigint; last: bigint } | undefined,
+): void {
+  const store = eventLogStore;
+  if (!range || !store) return;
+  afterCommit(() => {
+    inAnnouncementOrder(async () => {
+      let cursor = range.first - 1n;
+      while (cursor < range.last) {
+        const rows = await store.getAfter(cursor, ANNOUNCE_PAGE);
+        if (rows.length === 0)
+          throw new Error("Logged events are missing from the log");
+        for (const row of rows) {
+          if (row.id > range.last) return;
+          emitLogged(row);
+          cursor = row.id;
+        }
+      }
+    });
+  });
+}
+
 /**
  * Record an item change in the event log and tell this process's
  * subscribers.
@@ -241,7 +373,10 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
  * transaction, the change before it has already committed, and both happen
  * at once.
  */
-export async function publish(event: ItemEvent): Promise<bigint | undefined> {
+export async function publish(
+  event: ItemEvent,
+  options: PublishOptions = {},
+): Promise<bigint | undefined> {
   const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
@@ -256,13 +391,17 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     });
   }
 
-  afterCommit(() => {
-    emitter.emit("ITEM_CHANGED", {
-      ...event,
-      enableFanout,
-      eventId,
+  if (options.announce !== "from_log") {
+    afterCommit(() => {
+      emitInOrder(() =>
+        emitter.emit("ITEM_CHANGED", {
+          ...event,
+          enableFanout,
+          eventId,
+        }),
+      );
     });
-  });
+  }
   return eventId;
 }
 
@@ -281,6 +420,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  */
 export async function publishEdge(
   event: EdgeEvent,
+  options: PublishOptions = {},
 ): Promise<bigint | undefined> {
   const enableFanout = fansOut(event);
 
@@ -297,13 +437,17 @@ export async function publishEdge(
     });
   }
 
-  afterCommit(() => {
-    emitter.emit("EDGE_CHANGED", {
-      ...event,
-      enableFanout,
-      eventId,
+  if (options.announce !== "from_log") {
+    afterCommit(() => {
+      emitInOrder(() =>
+        emitter.emit("EDGE_CHANGED", {
+          ...event,
+          enableFanout,
+          eventId,
+        }),
+      );
     });
-  });
+  }
   return eventId;
 }
 

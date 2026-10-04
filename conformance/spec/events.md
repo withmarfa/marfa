@@ -74,7 +74,7 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
     If the export observation cannot be persisted, the server MUST refuse the export before opening the stream.
 
-    Rationale: Earlier best-effort entries remain committed when a later entry fails. An archive restore's preparation commits with its rows (`search-and-filters.md` 46), so a refused restore leaves no preparation behind. The export observation represents an extraction attempt and does not certify completion of streaming.
+    Rationale: Earlier best-effort entries remain committed when a later entry fails. An archive restore's preparation commits with its rows (`search-and-filters.md` 46 and 49), so a refused restore leaves no preparation behind. The export observation represents an extraction attempt and does not certify completion of streaming.
 
     Native tests: `routes/audit-atomicity.test.ts`, `routes/bulk-audit.test.ts`, `housekeeping/external-audit.test.ts` and `storage/audited-transaction.test.ts` exercise refused audit insertion, rollback, success, no-op and uncertain commit controls. The external audit suite exercises both export formats with successful and refused audit insertion.
 

@@ -5,10 +5,12 @@
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, blobs_imported}` and the registration
  * counts. Enforces the manifest version 0 contract and blob-hash
- * verification, reads the archive in memory that does not grow with it,
- * checks every row before writing any, and writes in a single transaction
- * covering type and edge-type registrations, blob rows, items, metadata,
- * history, edges and their events.
+ * verification, and checks every row before writing any. Memory does not
+ * grow with the archive: entries it does not read are skipped, the rest are
+ * read one line at a time, and no row is held past its line. It writes in a
+ * single transaction covering type and edge-type registrations, blob rows,
+ * items, metadata, history, edges and their events, and tells subscribers
+ * about the events from the log once that commits.
  *
  * Item ids are preserved from the archive so restored edges resolve;
  * an id or natural-key collision counts as a duplicate and leaves the
@@ -34,8 +36,8 @@ import {
   validateTransition,
   SYSTEM_DEFAULT_STATE,
 } from "@withmarfa/shared";
-import { publish, publishEdge } from "../pubsub.js";
-import type { Edge, Item, Metadata } from "@withmarfa/shared";
+import { announceFromLog, publish, publishEdge } from "../pubsub.js";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -222,11 +224,14 @@ const restoreArchiveRoute = createRoute({
 });
 
 /**
- * Rows written between two turns of the event loop. A restore holds the
- * write lock from its first registration to its commit, and each batch is a
- * stretch in which nothing else in the process answers.
+ * How much of the archive the restore reads between two turns of the event
+ * loop, in lines and in bytes, whichever comes first. A restore holds the
+ * write lock from its first registration to its commit, and each stretch
+ * between turns is one in which nothing else in the process answers, so a
+ * large row gets a turn of its own.
  */
-const RESTORE_BATCH = 100;
+const RESTORE_BATCH_LINES = 100;
+const RESTORE_BATCH_BYTES = 4 * 1024 * 1024;
 
 /** An `items.ndjson` line, which the restore reads defensively. */
 interface ArchivedItemLine {
@@ -240,39 +245,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Lines that do not parse are skipped: the exporter always emits valid
- *  JSON, so a bad line means the archive was edited by hand. */
-async function* itemLines(
+/** One line of a line file, parsed, with its length for pacing. `value` is
+ *  null for a line that does not parse or has the wrong shape, which is
+ *  skipped: the exporter always emits valid JSON, so a bad line means the
+ *  archive was edited by hand. */
+interface ArchiveLine<T> {
+  value: T | null;
+  bytes: number;
+}
+
+async function* parsedLines<T>(
   path: string | undefined,
-): AsyncGenerator<ArchivedItemLine> {
+  pick: (parsed: unknown) => T | null,
+): AsyncGenerator<ArchiveLine<T>> {
   for await (const line of archiveLines(path)) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
     } catch {
+      yield { value: null, bytes: line.length };
       continue;
     }
-    if (isRecord(parsed) && isRecord(parsed.item)) {
-      yield parsed as unknown as ArchivedItemLine;
-    }
+    yield { value: pick(parsed), bytes: line.length };
   }
 }
 
-/** The `edge` of each `edges.ndjson` line, on the same terms as items. */
-async function* edgeLines(
-  path: string | undefined,
-): AsyncGenerator<Record<string, unknown>> {
-  for await (const line of archiveLines(path)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (isRecord(parsed) && parsed.edge) {
-      yield parsed.edge as Record<string, unknown>;
-    }
-  }
+function itemLines(path: string | undefined) {
+  return parsedLines(path, (parsed) =>
+    isRecord(parsed) && isRecord(parsed.item)
+      ? (parsed as unknown as ArchivedItemLine)
+      : null,
+  );
+}
+
+/** The `edge` of each `edges.ndjson` line. */
+function edgeLines(path: string | undefined) {
+  return parsedLines(path, (parsed) =>
+    isRecord(parsed) && parsed.edge
+      ? (parsed.edge as Record<string, unknown>)
+      : null,
+  );
 }
 
 /**
@@ -334,54 +346,71 @@ function itemRefusal(
 
 /**
  * Place an archive's blob bytes in the disk store, before the restore's
- * transaction opens, and answer the hashes whose bytes this request wrote.
+ * transaction opens, and answer the hashes whose bytes were missing there.
  *
  * Bytes go first and rows second, as `POST /blobs` does it: a rollback
  * cannot reach a filesystem or an object store, so the bytes stay outside
- * the transaction and the request takes back what it wrote if no row ends up
- * naming it (`takeBackBytes`). The caller holds the per-hash locks
- * `POST /blobs` takes from before this runs until it has done so, for the
- * same reason: content addressing means two requests can be writing
- * identical bytes at once, so the check of the disk, the write, the rows and
- * any undo have to be one step, or one request deletes what another was just
- * told is stored.
+ * the transaction. Each hash no row names yet gets a copy-deletion record,
+ * committed before its bytes are placed, and `recordLocation` clears it in
+ * the restore's transaction. A restore that does not commit takes the bytes
+ * back itself (`takeBackBytes`); one killed before its commit leaves the
+ * records, and the next copy cleanup (`finishPendingCopyDeletions`) removes
+ * the bytes. A hash a row already names keeps its bytes and gets no record.
+ *
+ * The caller holds the per-hash locks `POST /blobs` takes from before this
+ * runs until it has done so, for the same reason: content addressing means
+ * two requests can be writing identical bytes at once, so the check of the
+ * disk, the write, the rows and any undo have to be one step, or one request
+ * deletes what another was just told is stored.
  */
 async function placeBlobBytes(
   storage: Storage,
   blobs: BlobLayer,
   pending: readonly PendingBlob[],
 ): Promise<string[]> {
-  const wrote: string[] = [];
-  try {
-    for (const blob of pending) {
-      await finishCopyDeletion(storage, blobs.disk, blob.hash);
-      if ((await blobs.disk.has(blob.hash)) === null) {
-        await blobs.disk.put(blob.hash, {
-          path: blob.path,
-          size_bytes: blob.sizeBytes,
-        });
-        wrote.push(blob.hash);
+  const missing: PendingBlob[] = [];
+  for (const blob of pending) {
+    await finishCopyDeletion(storage, blobs.disk, blob.hash);
+    if ((await blobs.disk.has(blob.hash)) === null) missing.push(blob);
+  }
+  const unnamed: string[] = [];
+  for (const blob of missing) {
+    if ((await storage.blobs.get(blob.hash)) === null) unnamed.push(blob.hash);
+  }
+  if (unnamed.length > 0) {
+    await storage.runInTransaction(async () => {
+      for (const hash of unnamed) {
+        await storage.blobs.queueCopyDeletion(hash, blobs.disk.id);
       }
+    });
+  }
+  const placed = missing.map((blob) => blob.hash);
+  try {
+    for (const blob of missing) {
+      await blobs.disk.put(blob.hash, {
+        path: blob.path,
+        size_bytes: blob.sizeBytes,
+      });
     }
   } catch (err) {
-    await takeBackBytes(storage, blobs, wrote);
+    await takeBackBytes(storage, blobs, placed);
     throw err;
   }
-  return wrote;
+  return placed;
 }
 
-/** Delete the bytes this request placed that no row names: a row that was
- *  already there when the bytes were missing is not this request's, and
- *  keeps them. */
+/** Delete the bytes this request placed that no row names, and their
+ *  records: a row that was already there when the bytes were missing is not
+ *  this request's, and keeps them. */
 async function takeBackBytes(
   storage: Storage,
   blobs: BlobLayer,
-  wrote: readonly string[],
+  placed: readonly string[],
 ): Promise<void> {
-  for (const hash of wrote) {
+  for (const hash of placed) {
     try {
       if ((await storage.blobs.get(hash)) !== null) continue;
-      await blobs.disk.delete(hash);
+      await finishCopyDeletion(storage, blobs.disk, hash);
     } catch (err) {
       log("error", "blob.orphaned_after_refused_restore", {
         hash,
@@ -397,10 +426,14 @@ async function takeBackBytes(
  * their events and every audit record, so an interrupted or refused
  * restore leaves none of them.
  *
- * Other writers wait for it in the writer queue, and are answered
- * `503 write_contention` if they wait past its budget. The event loop
- * gets a turn between batches, so reads, health checks and event
- * streams keep answering while it runs.
+ * Nothing it writes is held in memory past the line it came from: events
+ * go to the log as each row is written, and are read back from it to tell
+ * this process's subscribers once the transaction commits
+ * (`announceFromLog`). Other writers wait for it in the writer queue, and
+ * are answered `503 write_contention` if they wait past its budget. The
+ * event loop gets a turn after every `RESTORE_BATCH_LINES` lines or
+ * `RESTORE_BATCH_BYTES` bytes read, so health checks and event streams
+ * keep answering while it runs.
  */
 async function restoreRows(
   storage: Storage,
@@ -422,8 +455,8 @@ async function restoreRows(
     async () => {
       const types = await writeArchiveTypes(storage, plan, actor);
 
-      for (let at = 0; at < pending.length; at += RESTORE_BATCH) {
-        const batch = pending.slice(at, at + RESTORE_BATCH);
+      for (let at = 0; at < pending.length; at += RESTORE_BATCH_LINES) {
+        const batch = pending.slice(at, at + RESTORE_BATCH_LINES);
         await runAuditedTransaction(
           storage,
           async () => {
@@ -469,44 +502,71 @@ async function restoreRows(
         edgesSkippedReasons[reason] = (edgesSkippedReasons[reason] ?? 0) + 1;
       };
 
+      // Every event goes to the log inside the restore's transaction, so
+      // the log holds every row it wrote or none: a restore is a write
+      // like any other from a subscriber's side, and the log is the only
+      // catch-up there is. Every item is announced before any edge,
+      // because an edge names two endpoints and a client receiving one
+      // for a row it has never heard of has no way to resolve it.
+      //
+      // Fan-out is declined, as it is on every other door that writes in
+      // bulk: a restore can carry every row in an instance, and driving
+      // outbound work per row per subscribed connection would push an
+      // archive's worth of writes back out to whatever an installed
+      // connection is joined to. The flag governs only the outbound side
+      // effects, and rides the persisted row, so a catch-up that rebuilds
+      // these events reaches the same answer.
+      let logged: { first: bigint; last: bigint } | undefined;
+      const logs = (eventId: bigint | undefined): void => {
+        if (eventId === undefined) return;
+        logged = { first: logged?.first ?? eventId, last: eventId };
+      };
+
+      // Edges wait for their source types to be read together, and go to
+      // the log at the next turn, so they are held for one stretch at most.
+      let unlogged: Edge[] = [];
+      const logEdges = async (): Promise<void> => {
+        const sourceTypes = await sourceTypesFor(
+          storage,
+          unlogged.map((edge) => edge.source_id),
+        );
+        for (const edge of unlogged) {
+          logs(
+            await publishEdge(
+              {
+                type: "edge_created",
+                edge,
+                sourceType: sourceTypes.get(edge.source_id),
+                enableFanout: false,
+              },
+              { announce: "from_log" },
+            ),
+          );
+        }
+        unlogged = [];
+      };
+
+      let lines = 0;
+      let bytes = 0;
+      const pace = async (lineBytes: number): Promise<void> => {
+        lines += 1;
+        bytes += lineBytes;
+        if (lines < RESTORE_BATCH_LINES && bytes < RESTORE_BATCH_BYTES) return;
+        await logEdges();
+        lines = 0;
+        bytes = 0;
+        await yieldBulkWork();
+      };
+
       // Ids an edge endpoint may resolve against without a storage
       // lookup: every id this restore just wrote, plus ids that
       // collided. A collision means the database already holds that
       // exact id, so edges naming it still land correctly.
       const resolvableIds = new Set<string>();
 
-      // Each batch is announced inside the restore's transaction, so
-      // the log holds every row it wrote or none: a restore is a write
-      // like any other from a subscriber's side, and the log is the
-      // only catch-up there is. Every item is announced before any
-      // edge, because an edge names two endpoints and a client
-      // receiving one for a row it has never heard of has no way to
-      // resolve it.
-      //
-      // Fan-out is declined, as it is on every other door that writes
-      // in bulk: a restore can carry every row in an instance, and
-      // driving outbound work per row per subscribed connection would
-      // push an archive's worth of writes back out to whatever an
-      // installed connection is joined to. The flag governs only the
-      // outbound side effects, and rides the persisted row, so a
-      // catch-up that rebuilds these events reaches the same answer.
-      let restoredItems: { item: Item; metadata: Metadata }[] = [];
-      const announceItems = async (): Promise<void> => {
-        for (const { item, metadata } of restoredItems) {
-          await publish({
-            type: "created",
-            item,
-            metadata,
-            enableFanout: false,
-          });
-        }
-        restoredItems = [];
-        await yieldBulkWork();
-      };
-
       let index = 0;
       const seenSnapshotIds = new Set<string>();
-      for await (const entry of itemLines(files["items.ndjson"])) {
+      const restoreItem = async (entry: ArchivedItemLine): Promise<void> => {
         const { item, metadata: meta, lending_blobs: lending } = entry;
         const dates = archiveDates("item", item, index);
         const history = archiveVersions(
@@ -573,7 +633,7 @@ async function restoreRows(
             if (err.code === ErrorCode.CONFLICT && archiveId !== undefined) {
               resolvableIds.add(archiveId);
             }
-            continue;
+            return;
           }
           throw err;
         }
@@ -598,39 +658,30 @@ async function restoreRows(
           dates,
           history,
         );
-        restoredItems.push({
-          item: finalized,
-          metadata: {
-            item_id: created.id,
-            // `archiveTags` answers `undefined` for "the archive named
-            // none", which is what `create` wants and what a
-            // `Metadata` cannot hold: an item with no tags carries an
-            // empty list.
-            tags: archiveTags(meta) ?? [],
-            extensions: stored,
-          },
-        });
-        if (restoredItems.length >= RESTORE_BATCH) await announceItems();
-      }
-      await announceItems();
-
-      let restoredEdges: Edge[] = [];
-      const announceEdges = async (): Promise<void> => {
-        const sourceTypes = await sourceTypesFor(
-          storage,
-          restoredEdges.map((edge) => edge.source_id),
+        logs(
+          await publish(
+            {
+              type: "created",
+              item: finalized,
+              metadata: {
+                item_id: created.id,
+                // `archiveTags` answers `undefined` for "the archive named
+                // none", which is what `create` wants and what a
+                // `Metadata` cannot hold: an item with no tags carries an
+                // empty list.
+                tags: archiveTags(meta) ?? [],
+                extensions: stored,
+              },
+              enableFanout: false,
+            },
+            { announce: "from_log" },
+          ),
         );
-        for (const edge of restoredEdges) {
-          await publishEdge({
-            type: "edge_created",
-            edge,
-            sourceType: sourceTypes.get(edge.source_id),
-            enableFanout: false,
-          });
-        }
-        restoredEdges = [];
-        await yieldBulkWork();
       };
+      for await (const line of itemLines(files["items.ndjson"])) {
+        if (line.value !== null) await restoreItem(line.value);
+        await pace(line.bytes);
+      }
 
       // Edges restore after every item the archive carries exists, and
       // only where both endpoints resolve in the database, so a
@@ -640,7 +691,9 @@ async function restoreRows(
         resolvableIds.has(id) || (await storage.items.get(id)) !== null;
 
       let edgeIndex = 0;
-      for await (const edge of edgeLines(files["edges.ndjson"])) {
+      const restoreEdge = async (
+        edge: Record<string, unknown>,
+      ): Promise<void> => {
         const dates = archiveDates("edge", edge, edgeIndex);
         edgeIndex++;
         const sourceId = edge.source_id;
@@ -652,21 +705,21 @@ async function restoreRows(
           typeof edgeType !== "string"
         ) {
           skipEdge("malformed");
-          continue;
+          return;
         }
         if (
           !(await endpointResolves(sourceId)) ||
           !(await endpointResolves(targetId))
         ) {
           skipEdge("endpoint_missing");
-          continue;
+          return;
         }
         const edgeId = typeof edge.id === "string" ? edge.id : undefined;
         if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
           // Already present under the same id: a re-restore, not an
           // error.
           skipEdge("already_present");
-          continue;
+          return;
         }
         // An archive is a file someone can hand you: replayed through
         // the raw insert, a hand-edited one could plant edges of an
@@ -702,11 +755,11 @@ async function restoreRows(
         } catch (err) {
           if (err instanceof MarfaError) {
             skipEdge(err.code);
-            continue;
+            return;
           }
           throw err;
         }
-        restoredEdges.push(
+        unlogged.push(
           await storage.edges.createRaw({
             ...dates,
             ...(edgeId !== undefined && { id: edgeId }),
@@ -723,9 +776,13 @@ async function restoreRows(
           }),
         );
         edgesImported++;
-        if (restoredEdges.length >= RESTORE_BATCH) await announceEdges();
+      };
+      for await (const line of edgeLines(files["edges.ndjson"])) {
+        if (line.value !== null) await restoreEdge(line.value);
+        await pace(line.bytes);
       }
-      await announceEdges();
+      await logEdges();
+      announceFromLog(logged);
 
       return {
         imported,
@@ -801,14 +858,16 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       // whole archive, so a refused archive leaves nothing behind.
       let totalItems = 0;
       const seenSnapshotIds = new Set<string>();
-      for await (const entry of itemLines(paths["items.ndjson"])) {
+      for await (const { value: entry } of itemLines(paths["items.ndjson"])) {
+        if (entry === null) continue;
         const refusal = itemRefusal(entry, totalItems, seenSnapshotIds);
         if (refusal) throw refusal;
         totalItems++;
       }
       seenSnapshotIds.clear();
       let totalEdges = 0;
-      for await (const edge of edgeLines(paths["edges.ndjson"])) {
+      for await (const { value: edge } of edgeLines(paths["edges.ndjson"])) {
+        if (edge === null) continue;
         archiveDates("edge", edge, totalEdges);
         const refusal = archiveScalarRefusal("edge", edge, totalEdges);
         if (refusal) throw refusal;

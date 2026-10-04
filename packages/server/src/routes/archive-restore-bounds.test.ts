@@ -1,5 +1,8 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setImmediate } from "node:timers";
@@ -13,8 +16,13 @@ import {
 } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import {
+  initEventLog,
+  subscribeAll,
+  __resetEventLogForTests,
+} from "../pubsub.js";
 import { setBusyBudgetMs } from "../storage/sqlite/connection.js";
+import { finishPendingCopyDeletions } from "../housekeeping/blob-delete.js";
 import { MAX_ARCHIVE_TEXT_BYTES } from "./admin-archive-read.js";
 
 let ctx: TestContext;
@@ -27,7 +35,10 @@ afterEach(async () => {
   await ctx.cleanup();
 });
 
-type Entry = { name: string; text: string } | { name: string; zeros: number };
+type Entry =
+  | { name: string; text: string }
+  | { name: string; zeros: number }
+  | { name: string; lines: () => Iterable<Buffer>; size: number };
 
 function* zeroChunks(bytes: number): Generator<Buffer> {
   const chunk = Buffer.alloc(1 << 20);
@@ -49,6 +60,11 @@ async function buildArchive(entries: Entry[]): Promise<Buffer> {
     if ("text" in entry) {
       const bytes = Buffer.from(entry.text);
       pack.entry({ name: entry.name, size: bytes.length }, bytes);
+    } else if ("lines" in entry) {
+      await pipeline(
+        Readable.from(entry.lines()),
+        pack.entry({ name: entry.name, size: entry.size }),
+      );
     } else {
       await pipeline(
         Readable.from(zeroChunks(entry.zeros)),
@@ -61,10 +77,48 @@ async function buildArchive(entries: Entry[]): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-const MANIFEST: Entry = {
-  name: "manifest.json",
-  text: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
-};
+function manifestFor(blobs: { hash: string; data: Buffer }[]): Entry {
+  return {
+    name: "manifest.json",
+    text: JSON.stringify({
+      version: 0,
+      format: "marfa-archive-v0",
+      blobs: Object.fromEntries(
+        blobs.map(({ hash, data }) => [
+          hash,
+          { mime_type: "text/plain", size_bytes: data.length },
+        ]),
+      ),
+    }),
+  };
+}
+
+const MANIFEST = manifestFor([]);
+
+function blobsOf(count: number, tag: string) {
+  return Array.from({ length: count }, (_, i) => {
+    const data = Buffer.from(`${tag} blob ${String(i)}`);
+    const hash = `sha256:${createHash("sha256").update(data).digest("hex")}`;
+    return { hash, data };
+  });
+}
+
+function blobEntries(blobs: { hash: string; data: Buffer }[]): Entry[] {
+  return blobs.map(({ hash, data }) => ({
+    name: `blobs/${hash}`,
+    text: data.toString(),
+  }));
+}
+
+/** The live heap after a full collection. */
+const liveHeap = (() => {
+  setFlagsFromString("--expose-gc");
+  const gc = runInNewContext("gc") as () => void;
+  return (): number => {
+    gc();
+    return process.memoryUsage().heapUsed;
+  };
+})();
 
 const TYPE = "user.bounds_note";
 const EDGE_TYPE = "user.bounds-link";
@@ -334,6 +388,166 @@ describe("POST /admin/restore-archive all or nothing", () => {
     expect(await observed).toBeLessThanOrEqual(100);
   });
 
+  it("holds no restored row's content in memory until it commits, and gives a large row a turn of its own", async () => {
+    const count = 8;
+    const property = 30 * 1024 * 1024;
+    const line = (i: number): Buffer =>
+      Buffer.from(
+        JSON.stringify({
+          item: {
+            id: generateId(),
+            type: "core.note",
+            properties: {
+              body: `large ${String(i)}`,
+              blob: "x".repeat(property),
+            },
+            source: "bounds",
+            source_id: `large-${String(i)}`,
+          },
+        }) + "\n",
+      );
+    const size = line(0).length * count;
+    const archive = await buildArchive([
+      MANIFEST,
+      {
+        name: "items.ndjson",
+        size,
+        lines: function* () {
+          for (let i = 0; i < count; i++) yield line(i);
+        },
+      },
+    ]);
+
+    let turns = 0;
+    const ticker = setInterval(() => {
+      turns += 1;
+    }, 1);
+    const turnsAtRow: number[] = [];
+    const metadata = ctx.storage.metadata;
+    const setExtensions = metadata.setExtensions.bind(metadata);
+    metadata.setExtensions = async (id, extensions) => {
+      turnsAtRow.push(turns);
+      return setExtensions(id, extensions);
+    };
+    const audit = ctx.storage.audit;
+    const log = audit.log.bind(audit);
+    let heapAtCommit = 0;
+    audit.log = (entry, id) => {
+      if (entry.action === "admin.restore_archive") heapAtCommit = liveHeap();
+      return log(entry, id);
+    };
+    const before = liveHeap();
+    let res: Response;
+    try {
+      res = await restore(archive);
+    } finally {
+      clearInterval(ticker);
+      metadata.setExtensions = setExtensions;
+      audit.log = log;
+    }
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { imported: number }).imported).toBe(count);
+    // Every row was written; their content, eight times 30 MiB, is not held.
+    expect(heapAtCommit).toBeGreaterThan(0);
+    expect(heapAtCommit - before).toBeLessThan(100 * 1024 * 1024);
+    expect(turnsAtRow).toHaveLength(count);
+    for (let i = 1; i < count; i++) {
+      expect(turnsAtRow[i]).toBeGreaterThan(turnsAtRow[i - 1] ?? 0);
+    }
+  });
+
+  it("gives the event loop a turn over lines it skips as well as rows it writes", async () => {
+    const { items } = rows(450, "core.note", false);
+    const archive = await buildArchive([MANIFEST, items]);
+    expect((await restore(archive)).status).toBe(200);
+
+    // Each line is offered to the store, which finds its id taken.
+    const store = ctx.storage.items as unknown as {
+      create: (input: unknown) => Promise<unknown>;
+    };
+    const create = store.create.bind(store);
+    let looked = 0;
+    let observed: Promise<number> | undefined;
+    store.create = async (input: unknown) => {
+      looked += 1;
+      observed ??= new Promise((resolve) =>
+        setImmediate(() => {
+          resolve(looked);
+        }),
+      );
+      return create(input);
+    };
+    let res: Response;
+    try {
+      res = await restore(archive);
+    } finally {
+      store.create = create;
+    }
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { duplicates: number }).duplicates).toBe(450);
+    expect(looked).toBeGreaterThanOrEqual(450);
+    expect(await observed).toBeLessThanOrEqual(100);
+  });
+
+  it("tells live subscribers every restored event once it commits, in id order and ahead of the next write", async () => {
+    const { ids, items, edges } = rows(450, TYPE);
+    const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
+    const abort = new AbortController();
+    const frames: { kind: string; id: string; eventId: bigint }[] = [];
+    const listening = (async () => {
+      try {
+        for await (const batch of subscribeAll({ signal: abort.signal })) {
+          for (const frame of batch) {
+            frames.push(
+              frame.kind === "item"
+                ? {
+                    kind: frame.event.type,
+                    id: frame.event.item.id,
+                    eventId: frame.event.eventId ?? -1n,
+                  }
+                : {
+                    kind: frame.event.type,
+                    id: frame.event.edge.id,
+                    eventId: frame.event.eventId ?? -1n,
+                  },
+            );
+          }
+        }
+      } catch {
+        // The abort ends the generator.
+      }
+    })();
+    try {
+      expect((await restore(archive)).status).toBe(200);
+      const after = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "after the restore" } },
+      });
+      expect(after.status).toBe(201);
+      const { item } = (await after.json()) as { item: { id: string } };
+      const deadline = Date.now() + 10_000;
+      while (!frames.some((frame) => frame.id === item.id)) {
+        if (Date.now() > deadline) throw new Error("no frame for the write");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      abort.abort();
+      await listening;
+    }
+    expect(frames).toHaveLength(450 + 449 + 1);
+    expect(frames.slice(0, 450).map((frame) => frame.id)).toEqual(ids);
+    expect(
+      frames.slice(0, 450).every((frame) => frame.kind === "created"),
+    ).toBe(true);
+    expect(
+      frames.slice(450, 899).every((frame) => frame.kind === "edge_created"),
+    ).toBe(true);
+    for (let i = 1; i < frames.length; i++) {
+      expect(frames[i]?.eventId).toBeGreaterThan(frames[i - 1]?.eventId ?? 0n);
+    }
+    expect(await countRows("event_log")).toBe(450 + 449 + 1);
+  });
+
   it("holds other writers in the queue and keeps its rows and types from readers until it commits", async () => {
     const { ids, items, edges } = rows(250, TYPE);
     const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
@@ -442,7 +656,7 @@ function next(child: ChildProcess, kind: string): Promise<Message> {
 }
 
 describe("POST /admin/restore-archive killed partway", () => {
-  it("leaves no type, row, event or audit record behind", async () => {
+  it("leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup", async () => {
     const children: ChildProcess[] = [];
     const boot = async (stopAfter?: number) => {
       const child = fork(
@@ -465,7 +679,14 @@ describe("POST /admin/restore-archive killed partway", () => {
     };
     try {
       const { ids, items, edges } = rows(250, TYPE);
-      const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
+      const blobs = blobsOf(3, "killed");
+      const archive = await buildArchive([
+        manifestFor(blobs),
+        TYPES,
+        items,
+        edges,
+        ...blobEntries(blobs),
+      ]);
       const first = await boot(150);
       const stopped = next(first.child, "stopped");
       const answer = fetch(`${first.url}/admin/restore-archive`, {
@@ -504,6 +725,23 @@ describe("POST /admin/restore-archive killed partway", () => {
         await countRows("audit_log WHERE action LIKE 'admin.restore_archive%'"),
       ).toBe(0);
 
+      // The bytes were placed before the transaction and are still there,
+      // each named by a cleanup record and by no row, which the copy cleanup
+      // a running server does on its own schedule then removes.
+      expect(await countRows("blobs")).toBe(0);
+      for (const { hash } of blobs) {
+        expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+      }
+      const pending = await ctx.storage.blobs.listPendingCopyDeletions(100);
+      expect(pending.map((copy) => copy.hash).sort()).toEqual(
+        blobs.map((blob) => blob.hash).sort(),
+      );
+      await finishPendingCopyDeletions(ctx.storage, ctx.blobs, 100);
+      for (const { hash } of blobs) {
+        expect(await ctx.blobs.disk.has(hash)).toBeNull();
+      }
+      expect(await ctx.storage.blobs.listPendingCopyDeletions(100)).toEqual([]);
+
       // The same archive restores whole into the restarted server.
       const restored = await fetch(`${second.url}/admin/restore-archive`, {
         method: "POST",
@@ -516,6 +754,11 @@ describe("POST /admin/restore-archive killed partway", () => {
       expect(restored.status).toBe(200);
       expect(await countRows("items WHERE source = 'bounds'")).toBe(250);
       expect(ids).toHaveLength(250);
+      for (const { hash } of blobs) {
+        expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+        expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
+      }
+      expect(await ctx.storage.blobs.listPendingCopyDeletions(100)).toEqual([]);
     } finally {
       for (const child of children) child.kill("SIGKILL");
     }
