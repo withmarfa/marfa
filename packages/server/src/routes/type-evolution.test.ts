@@ -614,6 +614,74 @@ describe("a field is added without schema.write only where no stored row speaks 
   });
 });
 
+describe("a change to a parent is judged against the subtypes it has", () => {
+  it("takes fields named like an object's built-in members", async () => {
+    const ns = namespace("builtin");
+    const curated = await schemaKey(ns);
+    await register(curated, {
+      id: `${ns}.base`,
+      fields: { title: { type: "string" } },
+    });
+    await register(curated, {
+      id: `${ns}.leaf`,
+      parent: `${ns}.base`,
+      fields: { extra: { type: "string" } },
+    });
+    const grown = await replace(curated, `${ns}.base`, {
+      fields: {
+        title: { type: "string" },
+        constructor: { type: "string" },
+        toString: { type: "string" },
+      },
+    });
+    expect(grown.status, await grown.clone().text()).toBe(200);
+  });
+
+  it("refuses removing a field a subtype's display hints or merge policy name, naming both", async () => {
+    const ns = namespace("hints");
+    const curated = await schemaKey(ns);
+    const fields = { title: { type: "string" }, flag: { type: "string" } };
+    await register(curated, { id: `${ns}.base`, fields });
+    await register(curated, {
+      id: `${ns}.leaf`,
+      parent: `${ns}.base`,
+      fields: { extra: { type: "string" } },
+      display_hints: { title_field: "flag" },
+      merge_policy: { fields: { flag: "keep_both_copies" } },
+    });
+    const refused = await replace(curated, `${ns}.base`, {
+      fields: { title: { type: "string" } },
+    });
+    const body = await refused.text();
+    expect(refused.status, body).toBe(400);
+    expect(body).toContain("invalid_schema");
+    expect(body).toContain(`${ns}.leaf`);
+    expect(body).toContain("display_hints.title_field");
+    expect(body).toContain("merge_policy.fields");
+    expect(Object.keys((await stored(`${ns}.base`)).fields as object)).toEqual([
+      "title",
+      "flag",
+    ]);
+
+    // The witness: once the subtype stops naming it, the field goes.
+    expect(
+      (
+        await replace(curated, `${ns}.leaf`, {
+          parent: `${ns}.base`,
+          fields: { extra: { type: "string" } },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await replace(curated, `${ns}.base`, {
+          fields: { title: { type: "string" } },
+        })
+      ).status,
+    ).toBe(200);
+  });
+});
+
 describe("a parent is named only within the key's reach", () => {
   it("refuses a registration naming a parent the key may not write, and takes the same one from a key that may", async () => {
     const owner = namespace("owner");

@@ -278,6 +278,38 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(landed.status, JSON.stringify(landed.error)).toBe(200);
   });
 
+  it("refuses a field whose name only a row of a subtype holds", async () => {
+    const ns = namespace("subtype");
+    const base = `${ns}.base`;
+    const leaf = `${ns}.leaf`;
+    const own = await connector(ns);
+    await register(own, { id: base, fields: { title: { type: "string" } } });
+    await register(own, {
+      id: leaf,
+      parent: base,
+      fields: { size: { type: "integer" } },
+    });
+    const made = await client.createItem({
+      type: leaf,
+      properties: { title: "t", inherited: "x" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const refused = await own.updateType(base, {
+      fields: { title: { type: "string" }, inherited: { type: "string" } },
+    });
+    expect(refused.status).toBe(403);
+    expect(refusal(refused)?.code).toBe("forbidden");
+    expect(refusal(refused)?.details?.changes).toEqual(["fields.inherited"]);
+
+    // The witness: a name no row of either type holds lands.
+    const landed = await own.updateType(base, {
+      fields: { title: { type: "string" }, fresh: { type: "string" } },
+    });
+    expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+  });
+
   it("refuses bringing a removed field back, which would reshape the values rows still hold", async () => {
     const ns = namespace("readd");
     const id = `${ns}.entry`;
@@ -380,6 +412,76 @@ describe("a key whose type map reaches a type evolves it", () => {
     // The witness: the same replacement lands for the key that owns the type.
     expect(
       (await (await connector(ns)).updateType(id, replaced(id, {}))).ok,
+    ).toBe(true);
+  });
+});
+
+describe("a change to a parent is judged against the subtypes it has", () => {
+  it("takes fields named like an object's built-in members", async () => {
+    const ns = namespace("builtin");
+    const curated = await curator(ns);
+    await register(curated, {
+      id: `${ns}.base`,
+      fields: { title: { type: "string" } },
+    });
+    await register(curated, {
+      id: `${ns}.leaf`,
+      parent: `${ns}.base`,
+      fields: { extra: { type: "string" } },
+    });
+    const grown = await curated.updateType(`${ns}.base`, {
+      fields: {
+        title: { type: "string" },
+        constructor: { type: "string" },
+        toString: { type: "string" },
+      },
+    });
+    expect(grown.status, JSON.stringify(grown.error)).toBe(200);
+  });
+
+  it("refuses removing a field a subtype's display hints or merge policy name, naming both", async () => {
+    const ns = namespace("hints");
+    const curated = await curator(ns);
+    const base = `${ns}.base`;
+    const leaf = `${ns}.leaf`;
+    await register(curated, {
+      id: base,
+      fields: { title: { type: "string" }, flag: { type: "string" } },
+    });
+    await register(curated, {
+      id: leaf,
+      parent: base,
+      fields: { extra: { type: "string" } },
+      display_hints: { title_field: "flag" },
+      merge_policy: { fields: { flag: "keep_both_copies" } },
+    });
+    const refused = await curated.updateType(base, {
+      fields: { title: { type: "string" } },
+    });
+    expect(refused.status).toBe(400);
+    expect(refusal(refused)?.code).toBe("invalid_schema");
+    const text = JSON.stringify(refused.error);
+    expect(text).toContain(leaf);
+    expect(text).toContain("display_hints.title_field");
+    expect(text).toContain("merge_policy.fields");
+    await expectMatchesSchema("PUT", "/types/{id}", 400, refused.error);
+    expect(await fieldsOf(base)).toContain("flag");
+
+    // The witness: once the subtype stops naming it, the field goes.
+    expect(
+      (
+        await curated.updateType(leaf, {
+          parent: base,
+          fields: { extra: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await curated.updateType(base, {
+          fields: { title: { type: "string" } },
+        })
+      ).ok,
     ).toBe(true);
   });
 });

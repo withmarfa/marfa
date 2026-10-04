@@ -40,7 +40,7 @@ describe("a change to a parent, judged against the subtypes it has", () => {
       fields: Object.fromEntries([
         ...Object.entries(child.fields),
         ["toString", { type: "integer" }],
-      ]) as TypeSchema["fields"],
+      ]),
     };
     const result = validateTypeSchema(
       { id: "acme.album", fields: { toString: { type: "string" } } },

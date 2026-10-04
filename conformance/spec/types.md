@@ -9,7 +9,7 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 
 ## Registration
 
-3. `POST /types` with an `id` and `fields` answers `201` with `type`; the type then lists at `GET /types`, reads at `GET /types/{id}`, and validates items. `compliance/types.test.ts › registers a custom type`, `compliance/type-registry.test.ts › registers a new custom type`, `› lists registered types including core types`, `› gets a single type by type identifier`, `› creates item with valid properties for a registered type`, `› rejects item with invalid properties for a registered type`. A field may take any name an object's built-in member has, `toString`, `valueOf`, `constructor` and `hasOwnProperty` among them, and an item of the type is written, read and updated with or without it, as with any other name. `compliance/types.test.ts › writes and reads items of a type whose fields share a name with an object's built-in members`.
+3. `POST /types` with an `id` and `fields` answers `201` with `type`; the type then lists at `GET /types`, reads at `GET /types/{id}`, and validates items. `compliance/types.test.ts › registers a custom type`, `compliance/type-registry.test.ts › registers a new custom type`, `› lists registered types including core types`, `› gets a single type by type identifier`, `› creates item with valid properties for a registered type`, `› rejects item with invalid properties for a registered type`. A field may take any name an object's built-in member has, `toString`, `valueOf`, `constructor` and `hasOwnProperty` among them, and an item of the type is written, read and updated with or without it, as with any other name. `compliance/types.test.ts › writes and reads items of a type whose fields share a name with an object's built-in members`, and a type that has a subtype takes such a field too, `compliance/type-evolution.test.ts › takes fields named like an object's built-in members`.
 4. Registration takes `metadata.types:write`; a key without it is refused `403 forbidden` with `details.metadata_subresource: "types"`. `compliance/type-registry.test.ts › rejects type registration from a key without metadata.types:write`.
 5. A duplicate id answers `409`; an invalid identifier answers `400 validation_error` naming `id`; a body without `fields` answers `400 missing_required_field`; a field whose name shadows a first-class item field answers `400 property_shadows_field`. `compliance/type-registry.test.ts › rejects duplicate type registration with 409`, `compliance/types.test.ts › rejects type registration with invalid type identifier`, `› rejects type registration without fields`, `› rejects type registration whose property name shadows a first-class Item field`.
 6. A `label` is stored when given and derived from the id when not (the last segment, hyphen-separated words capitalized); the shipped types carry one. `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`, `› register custom type with label`, `› register custom type without label`, `› label appears in type list`.
@@ -101,43 +101,73 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 
 36. The server MUST refuse a credential admitted on `metadata.types:write` alone a replacement that adds a field when a stored row holds a value under that name, `403 forbidden`, in any lifecycle state and in any row of the type or of a type inheriting from it.
 
-    A removal leaves the values rows hold (39), so adding a field under the name of a held value gives those values a shape, or makes a value a field kept out of search searchable. The refusal is the same whether the field was removed earlier, was never declared, or is held by a row of a subtype, which inherits the field.
+    A removal leaves the values rows hold (42), so adding a field under the name of a held value gives those values a shape, or makes a value a field kept out of search searchable. The refusal is the same whether the field was removed earlier, was never declared, or is held by a row of a subtype, which inherits the field.
 
-    Tests: `compliance/type-evolution.test.ts › refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses bringing a removed field back, which would reshape the values rows still hold`.
+    Tests: `compliance/type-evolution.test.ts › refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses a field whose name only a row of a subtype holds`, `› refuses bringing a removed field back, which would reshape the values rows still hold`.
 
-37. The server MUST refuse a credential admitted on `metadata.types:write` alone any other change, `403 forbidden` with `details.required_scope` set to `schema.write` and `details.changes` listing each member that needs it, and the type MUST stay as it was. The other changes are: removing a field; adding a required field; changing the shape of a field the type keeps, that is its type, constraints, `required` or `searchable`; and changing the `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `compatible_with`. A member the definition gains later is among them until this statement names it. `details.changes` names a member by its name and a field as `fields.<name>`.
+37. The server MUST refuse a credential admitted on `metadata.types:write` alone any change that 40 does not leave free, `403 forbidden`.
 
     Each acts beyond the type. A removal followed by an addition reshapes held values (36). A required field is a new condition on every row. A kept field's shape decides whether rows already written pass their next write, and how they are searched. A changed `link_field` forgets the tombstones that record purges (28). A `version_policy` thins history. A `merge_policy` decides which concurrent edit is dropped. `roles` change what may link to the type. A `parent` changes the fields the type inherits and the queries that find its rows. A `compatible_with` is a claim readers rely on.
 
     Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
 
-38. The server MUST admit a credential that holds `schema.write`, with write on the identifier in its type map, to every replacement.
+38. The refusal in 37 MUST carry `details.required_scope` set to `schema.write` and `details.changes` listing each member that needs it, a member by its name and a field as `fields.<name>`.
+
+    A client reads what to ask for, and which part of its replacement to split off.
+
+    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+
+39. The server MUST leave the type as it was when it refuses a replacement under 37.
+
+    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+
+40. A replacement MUST need `schema.write` when it removes a field; adds a required field; changes the type, constraints, `required` or `searchable` of a field the type keeps; or changes the `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `compatible_with`. A member the definition gains later MUST need it until 35 names the member.
+
+    Holding back by default keeps a new member from being opened to every connector's key by being added.
+
+    Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`.
+
+41. The server MUST admit a credential that holds `schema.write`, with write on the identifier in its type map, to every replacement that is otherwise valid and within 45.
 
     A credential holding both permissions is judged as one holding `schema.write`. The witness in each refusal above is the same replacement landing for such a credential.
 
     Tests: `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
 
-39. When a replacement removes a field, the server MUST leave the value each row holds under its name stored and readable, and MUST leave the row writable.
+## Removing a field
 
-    This is why removal and re-addition need `schema.write` (36, 37). A removal judges no stored row, as an addition does not (29).
+42. When a replacement removes a field, the server MUST leave the value each row holds under its name stored and readable.
+
+    This is why removal and re-addition need `schema.write` (36, 40). A removal judges no stored row, as an addition does not (29).
 
     Tests: `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
 
+43. When a replacement removes a field, the server MUST leave each row of the type writable.
+
+    A row that still holds the value is written like any other: its declared properties change and the undeclared value stays.
+
+    Tests: `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+
+44. The server MUST refuse a replacement that leaves a type inheriting from the replaced type with a `display_hints` or `merge_policy` entry naming a field neither it nor an ancestor declares, `400 invalid_schema`, naming the subtype and the member, and the type MUST stay as it was.
+
+    A subtype is registered with entries that name fields it inherits, and refuses every later replacement of its own once one of them names nothing. The link a subtype names is guarded the same way (27). A field the subtype or a type between declares itself is not asked of the replaced type.
+
+    Tests: `compliance/type-evolution.test.ts › refuses removing a field a subtype's display hints or merge policy name, naming both`.
+
 ## Naming a parent
 
-40. The server MUST refuse `POST /types`, and `PUT /types/{id}` when the replacement's `parent` differs from the stored one, with `403 type_not_permitted` when the credential's type map does not grant write on the parent. The message and `details.grant` name the parent, whether or not the parent is registered, and read on the parent is not enough.
+45. The server MUST refuse `POST /types`, and `PUT /types/{id}` when the replacement's `parent` differs from the stored one, with `403 type_not_permitted` when the credential's type map does not grant write on the parent. The message and `details.grant` name the parent, whether or not the parent is registered, and read on the parent is not enough.
 
     A type that names a parent stops that parent being deleted (14), which changes what the parent's owner can do, so naming it is a write to it. The subtype is outside the owner's map, so the owner could neither change it nor remove it.
 
     Tests: `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
 
-41. The server MUST NOT ask a replacement that keeps its stored `parent` for write on it.
+46. The server MUST NOT ask a replacement that keeps its stored `parent` for write on it.
 
     A type registered before the rule stays editable by its own key.
 
     Tests: `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
 
-42. The server MUST NOT ask write on a platform-shipped parent, `core.*` and `system.*`.
+47. The server MUST NOT ask write on a platform-shipped parent, `core.*` and `system.*`.
 
     No credential can delete a platform-shipped type, and connectors subtype them.
 
