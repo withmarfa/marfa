@@ -260,7 +260,7 @@ describe("restore validates the edges it writes", () => {
   });
 });
 
-describe("archive preparation and restored rows commit separately", () => {
+describe("archive blob rows commit with the restored rows", () => {
   it("still restores blobs when the archive is accepted", async () => {
     const ctx = await newContext();
     const blob = blobOf(`accepted blob`);
@@ -278,7 +278,7 @@ describe("archive preparation and restored rows commit separately", () => {
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
   });
 
-  it("keeps no blobs when validation refuses the archive before preparation", async () => {
+  it("keeps no blobs when validation refuses the archive before writing", async () => {
     const ctx = await newContext();
     const blob = blobOf(`refused blob`);
     // A state the row's lifecycle cannot produce refuses the whole archive
