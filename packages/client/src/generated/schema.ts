@@ -1306,7 +1306,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.
+         * @description Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. So does a key past its `expires_at`, the operator key included. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.
          */
         delete: operations["revokeKey"];
         options?: never;
@@ -3403,7 +3403,7 @@ export interface components {
             };
             enforcement_override?: components["schemas"]["EnforcementOverride"];
             created_at: string;
-            /** @description Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. */
+            /** @description Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one, and is not listed, changed or revoked by any key door: those answer `404 api_key_not_found` for it. */
             expires_at: string | null;
             last_used_at: string | null;
         };
