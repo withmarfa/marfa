@@ -55,4 +55,17 @@ describe("a type's version policy", () => {
       "version_policy.weekly_snapshot_days",
     ]);
   });
+
+  it("holds a window against the longest one before it, not only the last", () => {
+    expect(
+      refusedAt({
+        recent_days: 100,
+        daily_snapshot_days: 50,
+        weekly_snapshot_days: 70,
+      }),
+    ).toEqual([
+      "version_policy.daily_snapshot_days",
+      "version_policy.weekly_snapshot_days",
+    ]);
+  });
 });

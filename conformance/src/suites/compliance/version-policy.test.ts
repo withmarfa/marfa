@@ -35,6 +35,7 @@ describe("a type's version policy", () => {
       { recent_days: 7, daily_snapshot_days: 30, weekly_snapshot_days: 365 },
       { recent_days: 30, daily_snapshot_days: 30, weekly_snapshot_days: 30 },
       { daily_snapshot_days: 30 },
+      { recent_days: 100000 },
     ]) {
       const r = await client.registerType(declared(policy));
       expect(r.status, JSON.stringify(policy)).toBe(201);

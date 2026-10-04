@@ -1322,23 +1322,26 @@ function validateVersionPolicy(
     "weekly_snapshot_days",
   ] as const;
   let ahead: (typeof windows)[number] | undefined;
+  let longest = 0;
   for (const key of windows) {
     const value = vp[key];
     if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
       continue;
     }
-    const before = ahead === undefined ? undefined : vp[ahead];
-    if (ahead !== undefined && typeof before === "number" && value < before) {
+    if (ahead !== undefined && value < longest) {
       errors.push(
         issue({
           field: `version_policy.${key}`,
-          expected: `at least ${ahead} (${String(before)})`,
+          expected: `at least ${ahead} (${String(longest)})`,
           actual: describe(value),
           hint: "The windows run recent_days, then daily_snapshot_days, then weekly_snapshot_days, each counted back from now.",
         }),
       );
     }
-    ahead = key;
+    if (value >= longest) {
+      longest = value;
+      ahead = key;
+    }
   }
 }
 
