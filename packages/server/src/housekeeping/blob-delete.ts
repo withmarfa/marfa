@@ -15,10 +15,9 @@ import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
  *
- * Upload, archive preparation and replication also call a store's
- * `delete` to take back bytes
- * this request wrote when the row that would have named them was refused,
- * under the same lock and before any row exists.
+ * Upload, archive restore and replication also call a store's `delete` to
+ * take back bytes this request wrote when the row that would have named
+ * them was refused, under the same lock and before any row exists.
  */
 export interface Stores {
   readonly stores: readonly BlobStore[];

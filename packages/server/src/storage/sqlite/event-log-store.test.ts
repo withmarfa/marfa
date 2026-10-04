@@ -105,3 +105,33 @@ describe("SqliteEventLogStore.cleanup", () => {
     expect(await retainedIds(s)).toEqual([2n]);
   });
 });
+
+describe("SqliteEventLogStore.getAfter within a byte budget", () => {
+  async function logSized(sizes: number[]): Promise<Storage> {
+    tmpDir = mkdtempSync(join(tmpdir(), "marfa-event-log-"));
+    storage = await createSqliteStorage(join(tmpDir, "marfa.db"));
+    for (const [i, size] of sizes.entries()) {
+      await storage.eventLog.append({
+        event_type: "item.created",
+        item_id: `item-${String(i + 1)}`,
+        payload: JSON.stringify({ body: "x".repeat(size) }),
+      });
+    }
+    return storage;
+  }
+
+  it("answers the rows that fit, and always the first", async () => {
+    const s = await logSized([400, 400, 400, 5_000, 10]);
+    const ids = async (after: bigint, budget: number) =>
+      (await s.eventLog.getAfter(after, 100, { maxBytes: budget })).map(
+        (row) => row.id,
+      );
+    expect(await ids(0n, 1_000)).toEqual([1n, 2n, 3n]);
+    expect(await ids(3n, 1_000)).toEqual([4n]);
+    expect(await ids(4n, 1_000)).toEqual([5n]);
+    expect(await ids(0n, 1_000_000)).toEqual([1n, 2n, 3n, 4n, 5n]);
+    expect(
+      (await s.eventLog.getAfter(0n, 2, { maxBytes: 1_000_000 })).length,
+    ).toBe(2);
+  });
+});

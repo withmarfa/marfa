@@ -126,7 +126,7 @@ const CEILINGS = {
   schemaUndescribed: 97,
   fieldUndescribed: 361,
   fieldLength: 10,
-  responseLength: 12,
+  responseLength: 11,
 };
 
 describe("the API description follows API-STYLE.md", () => {

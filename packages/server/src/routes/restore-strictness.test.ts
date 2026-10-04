@@ -260,7 +260,7 @@ describe("restore validates the edges it writes", () => {
   });
 });
 
-describe("archive preparation and restored rows commit separately", () => {
+describe("archive blob rows commit with the restored rows", () => {
   it("still restores blobs when the archive is accepted", async () => {
     const ctx = await newContext();
     const blob = blobOf(`accepted blob`);
@@ -278,7 +278,7 @@ describe("archive preparation and restored rows commit separately", () => {
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
   });
 
-  it("keeps no blobs when validation refuses the archive before preparation", async () => {
+  it("keeps no blobs when validation refuses the archive before writing", async () => {
     const ctx = await newContext();
     const blob = blobOf(`refused blob`);
     // A state the row's lifecycle cannot produce refuses the whole archive
@@ -307,7 +307,7 @@ describe("archive preparation and restored rows commit separately", () => {
     expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
   });
 
-  it("keeps audited blob preparation when the restored rows roll back", async () => {
+  it("rolls back blob registration with the restored rows, and takes back the bytes it placed", async () => {
     const ctx = await newContext();
     initEventLog(ctx.storage.eventLog);
     const kept = blobOf(`kept blob`);
@@ -316,7 +316,7 @@ describe("archive preparation and restored rows commit separately", () => {
       size_bytes: kept.data.length,
     });
     await ctx.storage.blobs.register(kept.hash, "text/plain", kept.data.length);
-    const placed = blobOf(`prepared and retained`);
+    const placed = blobOf(`placed and taken back`);
     const archive = await buildArchive({
       itemLines: [noteLine(A, "a"), noteLine(B, "b")],
       edgeLines: [
@@ -351,18 +351,12 @@ describe("archive preparation and restored rows commit separately", () => {
     expect(
       (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
     ).toEqual([]);
-    const preparation = (
-      await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" })
-    ).data;
-    expect(preparation).toHaveLength(1);
-    expect(preparation[0]?.details).toEqual({ hashes: [placed.hash] });
-    expect(await ctx.storage.blobs.get(placed.hash)).toEqual({
-      mime_type: "text/plain",
-      size_bytes: placed.data.length,
-    });
-    expect(await ctx.blobs.disk.has(placed.hash)).toEqual({
-      size_bytes: placed.data.length,
-    });
+    expect(
+      (await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" }))
+        .data,
+    ).toEqual([]);
+    expect(await ctx.storage.blobs.get(placed.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(placed.hash)).toBeNull();
     expect(await ctx.storage.blobs.get(kept.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
       size_bytes: kept.data.length,
@@ -379,5 +373,17 @@ describe("archive preparation and restored rows commit separately", () => {
     expect(
       (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
     ).toHaveLength(1);
+    const registered = (
+      await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" })
+    ).data;
+    expect(registered).toHaveLength(1);
+    expect(registered[0]?.details).toEqual({ hashes: [placed.hash] });
+    expect(await ctx.storage.blobs.get(placed.hash)).toEqual({
+      mime_type: "text/plain",
+      size_bytes: placed.data.length,
+    });
+    expect(await ctx.blobs.disk.has(placed.hash)).toEqual({
+      size_bytes: placed.data.length,
+    });
   });
 });

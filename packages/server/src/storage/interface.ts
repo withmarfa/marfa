@@ -2079,7 +2079,13 @@ export interface EventLogStore {
   }): Promise<bigint>;
 
   /** Retrieve events after a given ID. */
-  getAfter(afterId: bigint, limit: number): Promise<PersistedEvent[]>;
+  /** Rows after `afterId`, at most `limit`, and with `maxBytes` only those
+   *  that start within that many bytes of payload, the first always. */
+  getAfter(
+    afterId: bigint,
+    limit: number,
+    options?: { maxBytes?: number },
+  ): Promise<PersistedEvent[]>;
 
   /**
    * Delete a prefix of the log: every event below the oldest one still

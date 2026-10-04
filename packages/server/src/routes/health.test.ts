@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { healthRoutes, operatorCaller, PROBE_TIMEOUT_MS } from "./health.js";
 import {
   DISK_DEGRADED_BELOW_BYTES,
@@ -242,6 +243,32 @@ describe("GET /health failing status", () => {
     expect(body.status).toBe("degraded");
     expect(body.components.database_write?.status).toBe("degraded");
   }, 15_000);
+
+  it("answers 200 and degraded when another write held the lock past the busy budget", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes({
+          // Wrapped as the query layer wraps what the driver threw.
+          write: () =>
+            Promise.reject(
+              new Error("Failed query: insert into settings", {
+                cause: new MarfaError(
+                  ErrorCode.WRITE_CONTENTION,
+                  "The row is being written by something else",
+                ),
+              }),
+            ),
+        }),
+        nobody,
+      ),
+    );
+    expect(status).toBe(200);
+    expect(body.status).toBe("degraded");
+    expect(body.components.database_write?.status).toBe("degraded");
+  });
 
   it.each([
     ["less than the floor", DISK_DOWN_BELOW_BYTES - 1, 503, "down"],

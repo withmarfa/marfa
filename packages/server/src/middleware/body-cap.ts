@@ -19,3 +19,12 @@ export function bodyCapFor(path: string): BodyCap {
   }
   return "request";
 }
+
+/**
+ * The largest body a bulk door takes, `MARFA_MAX_BULK_REQUEST_BYTES`, which
+ * is the largest any door that writes an item's or an edge's properties
+ * takes, so no row a write door accepts has properties larger than this.
+ */
+export function bulkBodyCap(config: { maxBulkRequestBytes?: number }): number {
+  return config.maxBulkRequestBytes ?? 16 * 1024 * 1024;
+}

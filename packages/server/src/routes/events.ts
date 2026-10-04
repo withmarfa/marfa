@@ -756,6 +756,9 @@ export function eventRoutes(
              * this stream reached.
              */
             let replayedTo: bigint | null = null;
+            /** The highest id the stream has covered once it is live, by
+             *  replay or by sending; null until then. */
+            let coveredThrough: bigint | null = null;
 
             // Subscribed before the replay starts, so nothing falls between
             // the two. One subscription for both kinds of frame, in publish
@@ -853,6 +856,15 @@ export function eventRoutes(
               if (!(await refreshReach())) return;
               for (const frame of batch) {
                 if (state.closed) return;
+                // Live frames arrive in id order, so one at or below what the
+                // stream already covers is a repeat: an archive restore tells
+                // subscribers its events after its commit, by which time a
+                // stream opened since may have replayed them from the log.
+                const id = frame.event.eventId;
+                if (id !== undefined && coveredThrough !== null) {
+                  if (id <= coveredThrough) continue;
+                  coveredThrough = id;
+                }
                 if (!hasRoom()) {
                   console.warn(
                     `[events] closing the stream: its reader left ${String(maxUnsentBytes)} bytes of frames untaken`,
@@ -1648,6 +1660,7 @@ export function eventRoutes(
                   reached = candidate;
                 }
               }
+              coveredThrough = reached;
               const payload = JSON.stringify({
                 type: STREAM_LIVE_EVENT,
                 cursor: reached === null ? null : String(reached),

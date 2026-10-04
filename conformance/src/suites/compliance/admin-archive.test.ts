@@ -66,10 +66,8 @@ describe("admin/restore-archive", () => {
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
 
-    // Fetch the archive the server produces — scoped to this file's own
-    // credential-stamped `source`, which keeps the round trip inside the
-    // 5000-item `/admin/restore-archive` cap and keeps other files' rows out
-    // of it.
+    // Fetch the archive the server produces, scoped to this file's own
+    // credential-stamped `source`, which keeps other files' rows out of it.
     const url = `${apiUrl}/export?source=${encodeURIComponent(ctx.source)}&format=archive`;
     const archiveRes = await fetch(url, {
       headers: { Authorization: `Bearer ${fileKey}` },
@@ -436,6 +434,90 @@ describe("admin/restore-archive", () => {
       "read only by the build that wrote it",
     );
     expect((await client.getItem(other)).status).toBe(404);
+  });
+
+  /** One archived note of this file's source, as an `items.ndjson` line. */
+  const archivedLine = (id: string, body: string): string => {
+    const lines = readTarGzEntry(
+      itemsArchive([
+        { id, type: "core.note", source: ctx.source, properties: { body } },
+      ]),
+      "items.ndjson",
+    );
+    if (lines === null) throw new Error("the archive helper wrote no items");
+    return lines.trimEnd();
+  };
+  const manifest = {
+    name: "manifest.json",
+    body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
+  };
+
+  it("steps past an entry it does not read", async () => {
+    const id = uuidv7();
+    const restored = await operator.restoreArchive(
+      tarGz([
+        manifest,
+        {
+          name: "items.ndjson",
+          body: archivedLine(id, "beside padding") + "\n",
+        },
+        { name: "padding.bin", body: new Uint8Array(16 * 1024 * 1024) },
+      ]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses a line longer than 64 MiB, and writes nothing", async () => {
+    const id = uuidv7();
+    const refused = await operator.restoreArchive(
+      tarGz([
+        manifest,
+        {
+          name: "items.ndjson",
+          body: Buffer.concat([
+            Buffer.from(archivedLine(id, "ahead of a long line") + "\n"),
+            Buffer.alloc(64 * 1024 * 1024 + 1, "x"),
+          ]),
+        },
+      ]),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain("items.ndjson line 2");
+    expect((await client.getItem(id)).status).toBe(404);
+  });
+
+  it("refuses an archive carrying an entry twice, and writes nothing", async () => {
+    const first = uuidv7();
+    const second = uuidv7();
+    const items = (id: string, body: string) => ({
+      name: "items.ndjson",
+      body: archivedLine(id, body) + "\n",
+    });
+    const refused = await operator.restoreArchive(
+      tarGz([
+        manifest,
+        items(first, "first copy"),
+        items(second, "second copy"),
+      ]),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(
+      "items.ndjson more than once",
+    );
+    expect((await client.getItem(first)).status).toBe(404);
+    expect((await client.getItem(second)).status).toBe(404);
+
+    // The witness: either copy alone restores.
+    const restored = await operator.restoreArchive(
+      tarGz([manifest, items(first, "first copy")]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, first);
+    expect(restored.data.imported).toBe(1);
   });
 
   it("requires the operator key", async () => {

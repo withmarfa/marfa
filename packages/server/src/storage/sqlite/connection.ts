@@ -214,9 +214,12 @@ async function schemaDifferences(client: Client): Promise<string[]> {
 
 /**
  * How long a statement refused with `SQLITE_BUSY` is retried before the
- * refusal stands: longer than any write transaction the server opens or
- * any checkpoint a sidecar takes on the file, short enough that a lock a
- * stuck process holds surfaces as an error rather than a hang.
+ * refusal stands: longer than any write transaction the server opens on a
+ * request's behalf or any checkpoint a sidecar takes on the file, short
+ * enough that a lock a stuck process holds surfaces as an error rather than
+ * a hang. An archive restore is the exception: it holds the lock until the
+ * whole archive is written, and a write waiting on it past this budget is
+ * refused `write_contention`.
  */
 const BUSY_BUDGET_MS = 5_000;
 /**

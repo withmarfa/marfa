@@ -89,7 +89,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 16. `GET /export` streams NDJSON, one line per item with its metadata and an edge line for each edge between exported items after the item lines, sending each line as it reads it rather than building the body first, under the listing grammar (`type`, `state`, `source`, `occurred_after`, `occurred_before`) and the key's type permissions, and each line's metadata carries only the extension namespaces the key may read (`keys-and-oauth.md` 21). It takes the grammar's keys but not its state default: a caller naming no state is answered every state except `trashed`, because the archive this door writes is what a restore reads back and a copy that dropped archived rows would lose them on the round trip. `compliance/export.test.ts › filters by type`, `› filters by date range on the item's own time`, `› filters by state`, `› respects type permissions on a scoped key`, `› carries an edge line behind the item lines it joins`, `› refuses a bound that is not an instant, on both output formats`, `compliance/state-default.test.ts › an export that names no state carries archived rows`, `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`, `load/export-stream.test.ts › measures time-to-first-record separately from full drain`.
 17. `format` is closed: `ndjson` (the default) and `archive`, with anything else refused `400 validation_error` rather than served as the default. `compliance/export.test.ts › refuses a format outside the two it offers`.
-18. `GET /export?format=archive` answers a gzip archive (`Content-Type: application/gzip`) of the same selection, its rows' extensions narrowed as the NDJSON lines are, so an archive restores only the namespaces the key that wrote it may read. Its manifest comes first and carries the selection's counts and blob list, so the whole selection is read before the body is sent. The blobs it carries are those the blob doors would serve the credential exporting (`blobs.md` 21). `POST /admin/restore-archive` accepts the archive back with the operator key, answering counts `imported`, `duplicates`, `blobs_imported`, `edges_imported` and `edges_skipped`: items keep their ids, tags, extensions and the edges between them in both directions, and a `(source, source_id)` pair already present is reported as a duplicate, as is a row whose link another row of its type holds (`items.md` 55); a working key is refused `403`. The archive carries no tombstones (`items.md` 56), so an archive restored into a new instance starts without them. A type the archive registers is held to its `link_field` as `POST /types` holds one (`types.md` 28): where two rows a forced delete left under the identifier share a value there, the restore is refused `409 link_taken` before any row or blob is written. `compliance/admin-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› requires the operator key`, `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`, `› stops a restore registering a link the rows a forced delete left share`.
+18. `GET /export?format=archive` answers a gzip archive (`Content-Type: application/gzip`) of the same selection, its rows' extensions narrowed as the NDJSON lines are, so an archive restores only the namespaces the key that wrote it may read. Its manifest comes first and carries the selection's counts and blob list, so the whole selection is read before the body is sent. The blobs it carries are those the blob doors would serve the credential exporting (`blobs.md` 21). `POST /admin/restore-archive` accepts the archive back with the operator key, answering counts `imported`, `duplicates`, `blobs_imported`, `edges_imported` and `edges_skipped`: items keep their ids, tags, extensions and the edges between them in both directions, and a `(source, source_id)` pair already present is reported as a duplicate, as is a row whose link another row of its type holds (`items.md` 55); a working key is refused `403`. The archive carries no tombstones (`items.md` 56), so an archive restored into a new instance starts without them. A type the archive registers is held to its `link_field` as `POST /types` holds one (`types.md` 28): where two rows a forced delete left under the identifier share a value there, the restore is refused `409 link_taken` and writes nothing (67). `compliance/admin-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› requires the operator key`, `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`, `› stops a restore registering a link the rows a forced delete left share`.
 19. `POST /admin/restore-archive` takes an archive of any size: the body streams to the disk store's spool as an upload's does, outside the request cap every JSON body sits under (`compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large` is the cap), so an archive carrying a blob larger than the cap restores, and the blob answers byte for byte on `GET /blobs/{hash}` under the type the manifest names; an entry whose bytes do not hash to its name is left out and counted in `blobs_imported` no more than it is stored. `compliance/admin-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`.
 20. A row the archive records in a state its type's lifecycle cannot produce (`revoked` for a canonical type, `trashed` for a `system.*` type, or a value that is no state) refuses the whole archive `400 validation_error` naming the row, before anything is written, the rows ahead of it included; the same canonical rows in states the lifecycle contains restore, each in the state recorded. `compliance/admin-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
@@ -99,7 +99,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 22. A row the archive records with a `source` no credential can hold — one carrying the reserved prefix `oauth:` — refuses the whole archive `400 validation_error` naming the row, before anything is written, the rows ahead of it included. The restore is the one door that copies `source` verbatim, and the key doors refuse that prefix as a key's own source and as one it claims (`keys-and-oauth.md` 34), so without this the restore would be the way around that gate: a row planted through it would read ever after as written by an authority that never existed. The same rows under an ordinary source restore. **An archive that legitimately records one is unrestorable**, and deliberately: nothing in this build writes such a row, so an archive carrying one was either built by hand or exported from an instance running something this one is not, and neither is a thing to restore silently. `compliance/admin-archive.test.ts › refuses an archive recording a source no credential can hold, and writes nothing`.
 
-23. **`POST /admin/restore-archive` refuses a property no type declares wherever `POST /items` would**, which is where the strict-mode lever names the row's type: `400 invalid_properties` with `details.code` `unknown_property`. If strict validation refuses an archived item, the server MUST roll back the final item-and-edge restore unit and its events. Schema and blob preparation units that committed earlier MUST remain, each with its own audit record (`events.md` 18). A refused final restore therefore does not imply that no preparation was written. Native `routes/restore-strictness.test.ts` and `housekeeping/external-audit.test.ts` exercise retained preparation beside refused restored rows. The store validates loosely whatever the lever says, so a door that writes through it asks above it or not at all, and a property that lands reads back ever after undeclared and unmarked under the type's current version. With the lever off the door takes it, because the lever belongs to the type and not to the door. `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› default-off accepts through the restore door as it does through the create door`.
+23. **`POST /admin/restore-archive` refuses a property no type declares wherever `POST /items` would**, which is where the strict-mode lever names the row's type: `400 invalid_properties` with `details.code` `unknown_property`. A refused row refuses the whole restore, which writes nothing (67): no type or edge-type registration, blob row, item, edge, event or audit record remains. Native `routes/restore-strictness.test.ts` and `housekeeping/external-audit.test.ts` exercise rolled-back preparation beside refused restored rows. The store validates loosely whatever the lever says, so a door that writes through it asks above it or not at all, and a property that lands reads back ever after undeclared and unmarked under the type's current version. With the lever off the door takes it, because the lever belongs to the type and not to the door. `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› default-off accepts through the restore door as it does through the create door`.
 
 24. **The item write doors ask the lever, and ask it of the properties the caller sent.** `POST /items`, `POST /items/bulk` on both halves of an upsert, `PATCH /items/{id}`, `POST /admin/restore-archive` and `POST /items/bulk-actions` with `update_properties` reach one function, so a property no type declares is refused `400 invalid_properties` with `details.code` `unknown_property` wherever the lever names the row's type, and the row the refusal names is not written. The bulk door reports it as that entry's `errored` outcome carrying its index, so a page refuses the row rather than the page. The bulk-action job reports it as that row's entry in the job's `errors`, naming the row by its `id` where the bulk door carries the entry's `index`, with `code` `invalid_properties` and `details.code` `unknown_property`, and goes on to the next row, so a filter matching rows of several types writes the rows of the types the lever does not name. The job asks when it writes the row rather than when it was queued, as every other door asks when it writes, so a lever set while the job waits holds for it, and asks it for the credential that queued the job as that credential stands then: a job whose queuing credential is gone writes nothing more (`items.md` 34). The properties the caller sent rather than the merge they land in: the lever refuses a caller introducing an undeclared property, and measuring the merge would instead freeze every row that already carries one from before the lever was set. What is refused is an undeclared key and nothing else: a patch naming only declared properties is taken whatever the type requires elsewhere, because a missing required field is the store's refusal and carries the store's reason. With the lever off every door takes the property and serves it back. `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property through the bulk door, on both halves of an upsert`, `› strict-on rejects the same unknown property through the update door`, `› default-off accepts through the bulk and update doors as it does through the create door`, `› takes a patch naming only declared properties, whatever else the type requires`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
 
@@ -185,9 +185,9 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
     Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › refuses a snapshot ID already held by unrelated history without treating it as a duplicate item`.
 
-41. If a row write fails during archive restoration, the server MUST roll back every item, metadata, history, edge and event write in the restore's row transaction.
+41. If a row write fails during archive restoration, the server MUST roll back every item, metadata, history, edge and event write the restore made.
 
-    Reason: snapshot restoration is part of restoring the item that owns it. Type registration atomicity is a separate requirement.
+    Reason: snapshot restoration is part of restoring the item that owns it. The registrations and blob rows roll back with them (67).
 
     Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › rolls back items, metadata, history and events when a later edge insert fails`, `› rolls back earlier snapshots and row writes when a native history insert fails`.
 
@@ -244,3 +244,101 @@ The server and a device index the same text and read a query the same way, so a 
     Reason: an excerpt drawn from the title alone shows a title with nothing marked for a match in the body, which is most matches, and is empty where the title is.
 
     Tests: `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`, `› marks the match in the column that holds it, not only in the title`; `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+## Restore bounds
+
+60. When an archive carries an entry under a name the restore does not read, the server MUST step past the entry without holding it in memory.
+
+    Reason: an archive is a file anyone can hand an operator, and a small compressed entry can expand to more memory than the server has.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › steps past a 600 MB entry it does not read without holding it`; `compliance/admin-archive.test.ts › steps past an entry it does not read`.
+
+61. If an archive's `manifest.json` or `types.ndjson`, or one line of its `items.ndjson` or `edges.ndjson`, is larger than 67,108,864 bytes (64 MiB), the server MUST refuse the whole archive with `400 validation_error`, naming the entry, before writing anything.
+
+    Reason: the restore parses each of these whole, so this limit and the one row it holds at a time (71) bound the memory a restore takes, beside the ids of the items and snapshots it has written, which it keeps so that edges resolve and snapshot ids stay unique. The line files are otherwise read a line at a time, so an archive of any number of rows restores (33).
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a line longer than the most it reads at once, and writes nothing`; `compliance/admin-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
+
+62. If an archive carries `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` or a `blobs/` entry more than once, the server MUST refuse the whole archive with `400 validation_error`, naming the entry, before writing anything.
+
+    Reason: a repeated entry has no single meaning, and reading both would let a later copy add rows the first one never listed.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses an archive carrying a name it reads twice, and writes nothing`; `compliance/admin-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
+
+63. If an archive body is not a gzip-compressed tar, or its compressed stream breaks partway, the server MUST refuse it with `400 validation_error` before writing anything.
+
+    Reason: a damaged backup is an ordinary input, not a fault in the server.
+
+    Tests: `packages/server/src/routes/admin-archive.test.ts › refuses a body the gzip reader cannot parse and stays up`; `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a body whose gzip stream breaks partway, leaving no spool`.
+
+64. When an archive restore commits, the server MUST commit its type and edge-type registrations, blob rows, items, metadata, history, edges, events and audit records together.
+
+    Reason: an owner who gives up on a restore must not hold types or rows they did not ask for, which only one commit for all of them can promise (67).
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no registration, row or event when it fails after registering the archive's types`; `packages/server/src/housekeeping/external-audit.test.ts › rolls back archive preparation with restored items and events`.
+
+65. While an archive restore writes, the server MUST give other requests a turn of the event loop after at most 100 lines or 4 MiB of the archive's line files, whichever comes first, counting lines it skips or counts as duplicates as well as lines it writes.
+
+    Reason: a restore of a large archive takes long enough that a server answering nothing in the meantime fails its health checks, and a few large rows take as long as many small ones.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between batches inside its transaction`, `› gives the event loop a turn over lines it skips as well as rows it writes`, `› holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
+
+66. When the server refuses an archive whose body it cannot read, it MUST keep serving other requests.
+
+    Reason: the process is every client's server, and a file one operator sends must not stop it.
+
+    Tests: `packages/server/src/routes/admin-archive.test.ts › refuses a body the gzip reader cannot parse and stays up`.
+
+67. If an archive restore is refused, fails or is interrupted, the server MUST leave none of the registrations, rows, events or audit records it wrote, in the database or in the types other requests read.
+
+    Reason: the owner can run the same restore again, and a half-restored instance holds types and rows nobody asked for.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no registration, row or event when it fails after registering the archive's types`, `› leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup`; `packages/server/src/routes/restore-strictness.test.ts › rolls back blob registration with the restored rows, and takes back the bytes it placed`.
+
+68. If an archive restore does not commit, the server MUST remove the blob bytes it placed that no row names: at once when the restore fails or is refused, and through its copy cleanup when the process stopped before the restore ended. The copy cleanup removes a batch on each run of `blob-replicate`, by default up to 100 each minute (`MARFA_BLOB_REPLICATE_BATCH`, `MARFA_BLOB_REPLICATE_INTERVAL_MS`), and of `blob-integrity`, by default up to 500 each hour.
+
+    Reason: the bytes are written before the transaction opens, which nothing can roll back, so a record committed before them names them for removal, and the restore's own transaction clears it.
+
+    Tests: `packages/server/src/routes/restore-strictness.test.ts › rolls back blob registration with the restored rows, and takes back the bytes it placed`; `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup`.
+
+69. While an archive restore writes, the server MUST NOT show its rows, registrations or events to other requests.
+
+    Reason: a reader that saw part of a restore would see rows a failed restore then takes away.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
+
+70. While an archive restore writes, if another request has to write and waits for the restore longer than the write budget, the server MUST refuse that request with `503 write_contention`.
+
+    Reason: the restore holds the write lock until it commits, and a caller retries a `503` (`errors.md` 10).
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
+
+71. While an archive restore writes or tells subscribers about its events, the server MUST hold no more of the archive's content in memory than the line it is reading, the edges it has written since its last turn (at most 100 lines or 4 MiB of them, 65), and, once it has committed, one page of its events: the events that start within 8 MiB of the page's first byte, so at most 8 MiB and one more event.
+
+    Reason: an archive's rows together can be larger than the memory the server has. Each row is itself no larger than a write door takes (74).
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
+
+72. When an archive restore commits, the server MUST tell subscribers about its events in event-log order, ahead of the events of any write committed after it.
+
+    Reason: a subscriber that receives a later event first moves its cursor past events it never saw.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › tells live subscribers every restored event once it commits, in id order and ahead of the next write`.
+
+73. When the server cleans up after an archive restore that did not commit, it MUST NOT remove blob bytes a committed row names.
+
+    Reason: content addressing means another request can be told the same bytes are stored while the restore runs, and the cleanup and that request take the same per-hash lock.
+
+    Tests: `packages/server/src/routes/admin-archive.test.ts › never takes back bytes an upload was told are stored meanwhile`, `› leaves the purge record naming the bytes it found on disk, for the sweep to finish`.
+
+74. If an archived item's properties, the properties of any of its earlier versions, or an archived edge's properties are larger than the largest request body the bulk write doors take (`MARFA_MAX_BULK_REQUEST_BYTES`, 16 MiB by default), the server MUST refuse the whole archive with `413 request_too_large`, naming the row and the field, before writing anything.
+
+    Reason: a restore is not a way to plant a row the write doors would refuse, and the rest of the server sizes its work on rows the write doors took. A line may still be larger than one row, since it carries the item's history, so the line limit (61) stays.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a row whose properties are larger than any write door takes, as the write door does, and writes nothing`.
+
+75. While an archive restore's events are told to subscribers after its commit, the server MUST give the event loop a turn between pages of events it reads back.
+
+    Reason: the database driver reads synchronously, so a long read-back would otherwise hold every other request.
+
+    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between the pages it reads back after the commit`.

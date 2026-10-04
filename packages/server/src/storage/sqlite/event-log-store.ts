@@ -27,7 +27,15 @@ export class SqliteEventLogStore implements EventLogStore {
     return typeof id === "bigint" ? id : BigInt(id);
   }
 
-  async getAfter(afterId: bigint, limit: number): Promise<PersistedEvent[]> {
+  async getAfter(
+    afterId: bigint,
+    limit: number,
+    options: { maxBytes?: number } = {},
+  ): Promise<PersistedEvent[]> {
+    const take =
+      options.maxBytes === undefined
+        ? limit
+        : await this.rowsWithin(afterId, limit, options.maxBytes);
     // The row's id is an INTEGER (i64) and the cursor a bigint. Compared as
     // an integer on the SQLite side rather than through a JS number, which
     // loses precision past 2^53 and would then skip or repeat rows at the
@@ -38,7 +46,7 @@ export class SqliteEventLogStore implements EventLogStore {
       .from(eventLog)
       .where(sql`${eventLog.id} > CAST(${afterId.toString()} AS INTEGER)`)
       .orderBy(eventLog.id)
-      .limit(limit)
+      .limit(take)
       .all();
 
     return rows.map((row) => ({
@@ -50,6 +58,26 @@ export class SqliteEventLogStore implements EventLogStore {
       enable_fanout: row.enable_fanout,
       created_at: row.created_at,
     }));
+  }
+
+  /** How many of the next `limit` rows start within `maxBytes` of
+   *  payload. `octet_length` reads each size from the row's header, so no
+   *  payload is loaded to count it. */
+  private async rowsWithin(
+    afterId: bigint,
+    limit: number,
+    maxBytes: number,
+  ): Promise<number> {
+    const row = await this.db.get<{ rows: number | bigint }>(sql`
+      SELECT count(*) AS rows FROM (
+        SELECT SUM(size) OVER (ORDER BY id) - size AS before FROM (
+          SELECT id, octet_length(payload) AS size FROM event_log
+          WHERE id > CAST(${afterId.toString()} AS INTEGER)
+          ORDER BY id LIMIT ${limit}
+        )
+      ) WHERE before < ${maxBytes}
+    `);
+    return Number(row.rows);
   }
 
   async cleanup(retentionHours: number): Promise<number> {

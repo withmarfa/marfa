@@ -28,7 +28,10 @@ import { BlobReplicator } from "./blob-replicate.js";
 import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
 import { TrashPurger } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
-import { registerArchiveTypes } from "../routes/admin-archive-types.js";
+import {
+  planArchiveTypes,
+  writeArchiveTypes,
+} from "../routes/admin-archive-types.js";
 import { itemWrites } from "../storage/item-writes.js";
 
 const commitFault = vi.hoisted(() => ({
@@ -402,7 +405,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     },
   );
 
-  it("retains separately audited archive preparation but rolls back restored items and events", async () => {
+  it("rolls back archive preparation with restored items and events", async () => {
     const bytes = Buffer.from("archive preparation");
     const blob = { bytes, hash: digest(bytes) };
     const id = generateId();
@@ -413,11 +416,11 @@ describe("external and background audit units with real SQLite and disk", () => 
     expect(await ctx.storage.items.get(id)).toBeNull();
     expect((await ctx.storage.edges.list()).data).toEqual([]);
     expect(await ctx.storage.eventLog.getAfter(0n, 100)).toEqual([]);
-    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
-    expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
-    expect(getTypeSchema(typeId)).toBeDefined();
-    expect((await audits("admin.restore_archive.type")).data).toHaveLength(1);
-    expect((await audits("admin.restore_archive.blobs")).data).toHaveLength(1);
+    expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
+    expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
+    expect(getTypeSchema(typeId)).toBeUndefined();
+    expect((await audits("admin.restore_archive.type")).data).toEqual([]);
+    expect((await audits("admin.restore_archive.blobs")).data).toEqual([]);
     await allow();
     expect((await restore(body)).status).toBe(200);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
@@ -425,6 +428,9 @@ describe("external and background audit units with real SQLite and disk", () => 
     expect((await ctx.storage.edges.list()).data).toHaveLength(1);
     expect((await audits("admin.restore_archive")).data).toHaveLength(1);
     expect((await audits("admin.restore_archive.type")).data).toHaveLength(1);
+    expect((await audits("admin.restore_archive.blobs")).data).toHaveLength(1);
+    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(getTypeSchema(typeId)).toBeDefined();
   });
 
   it.each(["type", "blobs"])(
@@ -455,16 +461,20 @@ describe("external and background audit units with real SQLite and disk", () => 
         cardinality: "many-to-many",
       },
     };
+    const register = async () =>
+      writeArchiveTypes(
+        ctx.storage,
+        await planArchiveTypes(ctx.storage, [edge]),
+        { client_ip: null },
+      );
     await refuse("admin.restore_archive.edge_type");
-    await expect(registerArchiveTypes(ctx.storage, [edge])).rejects.toThrow();
+    await expect(register()).rejects.toThrow();
     expect(getEdgeTypeSchema("custom.audit_edge")).toBeUndefined();
     expect(await ctx.storage.edgeTypes.list()).not.toContainEqual(
       expect.objectContaining({ id: "custom.audit_edge" }),
     );
     await allow();
-    expect(
-      (await registerArchiveTypes(ctx.storage, [edge])).edgeTypesRegistered,
-    ).toBe(1);
+    expect((await register()).edgeTypesRegistered).toBe(1);
     expect(getEdgeTypeSchema("custom.audit_edge")).toBeDefined();
     expect((await audits("admin.restore_archive.edge_type")).data).toHaveLength(
       1,

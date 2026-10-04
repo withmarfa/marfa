@@ -72,7 +72,7 @@ import {
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
-import { bodyCapFor } from "./middleware/body-cap.js";
+import { bodyCapFor, bulkBodyCap } from "./middleware/body-cap.js";
 import { jsonDepthLimit } from "./middleware/json-depth.js";
 import { CONTRACT_VERSION } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
@@ -271,7 +271,7 @@ export function createApp(
   // `MARFA_MAX_BULK_REQUEST_BYTES`, default 16 MB; `bodyCapFor` says which
   // doors take it.
   const bulkBodyLimit = bodyLimit({
-    maxSize: config.maxBulkRequestBytes ?? 16 * 1024 * 1024,
+    maxSize: bulkBodyCap(config),
     onError: tooLarge,
   });
   app.use(
@@ -617,7 +617,10 @@ export function createApp(
   app.route("/folders", folderRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
-  app.route("/admin", adminArchiveRoutes(storage, blobs));
+  app.route(
+    "/admin",
+    adminArchiveRoutes(storage, blobs, { maxRowBytes: bulkBodyCap(config) }),
+  );
   app.route("/admin", adminPlatformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
