@@ -98,7 +98,7 @@ describe("a creator whose own map carries denials", () => {
   });
 
   it("still mints a child holding exactly what it holds", async () => {
-    // The control, and the case the default path takes: naming no maps at all
+    // The control, and the case the default path takes: naming nothing at all
     // copies the creator's, so identity has to be covered or nothing could be
     // minted from a credential whose map denies anything.
     const res = await request(ctx.app, "POST", "/keys", {

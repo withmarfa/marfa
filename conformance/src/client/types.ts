@@ -204,8 +204,8 @@ export interface ApiKeyRequest {
   extension_permissions?: Record<string, string>;
   metadata_permissions?: Record<string, string>;
   profile_permissions?: Record<string, string>;
-  /** The permissions the key holds. Naming any of this, a map or `sources`
-   *  makes the key hold exactly what it names; naming none takes the
+  /** The permissions the key holds. A mint naming this, a map or `sources`
+   *  holds exactly what it names; one naming none of them takes the
    *  creator's whole set. */
   permissions?: readonly string[];
   default_tier?: "library" | "feed";

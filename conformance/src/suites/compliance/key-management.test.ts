@@ -231,6 +231,7 @@ describe("key management", () => {
       creator!.edge_permissions,
       creator!.extension_permissions,
       creator!.metadata_permissions,
+      creator!.profile_permissions,
     ]) {
       expect(Object.keys(map ?? {}).length).toBeGreaterThan(0);
     }
@@ -244,6 +245,7 @@ describe("key management", () => {
       creator!.extension_permissions,
     );
     expect(child!.metadata_permissions).toEqual(creator!.metadata_permissions);
+    expect(child!.profile_permissions).toEqual(creator!.profile_permissions);
   });
 
   it("a key holding no permission reads itself, and no other key", async () => {

@@ -223,8 +223,8 @@ pub struct KeyUpdateArgs {
     pub no_permissions: bool,
 }
 
-/// Every family is named, empty: a mint naming none takes the creator's
-/// whole set.
+/// Names `permissions` and every map empty, because an update changes only
+/// what it names and a mint naming nothing takes the creator's whole set.
 fn hold_nothing(body: &mut Map<String, Value>) {
     body.insert("permissions".into(), json!([]));
     for map in [
