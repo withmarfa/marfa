@@ -17,6 +17,8 @@ The server (`packages/`), the Rust core every native client embeds (`core/`), an
 
 ## Evidence
 
+<!-- throwaway CI proof, never merged -->
+
 - The server's behavior is the specification, written down and held in `conformance/`. The docs site is not a source of truth.
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced.
 - A count, a list or a claim that nothing calls something is checked by running the query, never by trusting a comment.
