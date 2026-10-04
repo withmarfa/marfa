@@ -233,15 +233,15 @@ export class SqliteKeyStore implements KeyStore {
           ? null
           : JSON.stringify(input.enforcement_override);
 
-    if (Object.keys(patch).length > 0) {
-      await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id)).run();
-    }
-
-    const refreshed = await this.db
-      .select()
-      .from(apiKeys)
-      .where(eq(apiKeys.id, id))
-      .get();
+    const [refreshed] = await this.db
+      .update(apiKeys)
+      // Keep empty updates subject to the same live-row predicate.
+      .set(Object.keys(patch).length > 0 ? patch : { id })
+      .where(
+        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+      )
+      .returning()
+      .all();
     if (!refreshed) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
