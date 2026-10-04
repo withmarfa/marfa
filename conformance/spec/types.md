@@ -83,4 +83,4 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 
     The thinning policy fills omitted windows from the instance defaults, which this comparison does not validate.
 
-    Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
+    Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field: %s`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
