@@ -133,7 +133,7 @@ Archive scope: keys, webhooks, configuration and tombstones are not carried. Tra
 
 ## How a query matches
 
-The server and a device index the same text and read a query the same way, so one query finds the same rows online and offline, and orders them the same where both rank the same rows. The server's rules are the reference and the device's follow them.
+The server and a device index the same text and read a query the same way, so a query finds a row a device holds offline exactly when it finds that row online, and orders the hits the same where both rank the same rows. The server's rules are the reference and the device's follow them.
 
 42. The server and a device MUST each reduce every word of the indexed text and of a query to its stem, folding case and diacritics and splitting words at anything that is not a letter or a digit, so that "run" followed by another word matches "running" and "runs" and not "runner".
 
@@ -173,7 +173,7 @@ The server and a device index the same text and read a query the same way, so on
 
 48. The server and a device MUST order hits by BM25 over the title, body, description, name, extra and tags columns at equal weight, best first, and MUST order hits of equal rank by item identifier, ascending. `relevance_score` MUST be the absolute value of the BM25 score.
 
-    Reason: two indexes that hold the same rows then rank them alike. Weighting the title above the body would be a ranking the server does not have, and an unordered tie is two answers to one query. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores, and so can order, by that slice: its scores and its order equal the server's only where the rows they hold are the same, and the hits it finds are the same either way.
+    Reason: two indexes that hold the same rows then rank them alike. Weighting the title above the body would be a ranking the server does not have, and an unordered tie is two answers to one query. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores, and so can order, by that slice: its scores and its order equal the server's only where the rows they hold are the same, and which of the rows it holds it finds is the same either way.
 
     Tests: `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 

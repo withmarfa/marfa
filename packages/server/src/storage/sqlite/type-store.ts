@@ -177,8 +177,8 @@ export class SqliteTypeStore implements TypeStore {
   ): Promise<string[]> {
     const now = new Date().toISOString();
     return this.db.transaction(async (tx) => {
-      // What the rows were indexed under: a build that ships a changed schema
-      // for a type leaves its rows, and its subtypes', as they were.
+      // What the rows were indexed under, so that a build shipping a changed
+      // schema for a type indexes its rows, and its subtypes', again.
       const shapes = new Map<string, string>();
       for (const { schema } of seeded)
         for (const [type, shape] of indexShapes(schema.id))
