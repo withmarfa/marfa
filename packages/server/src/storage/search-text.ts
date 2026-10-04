@@ -30,6 +30,32 @@ export interface SearchableText {
 }
 
 /**
+ * The declared string fields beyond the core four, in field-name order: the
+ * order the device joins them in, so a phrase that crosses two fields matches
+ * on both or on neither.
+ */
+function searchableExtraFields(typeId: string): string[] {
+  return getSearchableStringFields(typeId).sort(compareBytes);
+}
+
+function compareBytes(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a), Buffer.from(b));
+}
+
+/**
+ * What a type contributes to the index apart from any one row: the core
+ * fields it opts out of and the extra fields it declares. Two states of a
+ * type with one shape index every row alike, so a change that leaves the
+ * shape alone leaves the stored rows as they are.
+ */
+export function searchableShape(typeId: string): string {
+  return JSON.stringify([
+    CORE_FTS_FIELDS.filter((field) => isFieldSearchableExcluded(typeId, field)),
+    searchableExtraFields(typeId),
+  ]);
+}
+
+/**
  * The FTS text extractor, and the single source of truth for what text
  * contributes to the index for an item. `SqliteSearchStore` consults it on
  * write, so the indexed surface is whatever this returns.
@@ -62,7 +88,7 @@ export function extractSearchableText(
     if (typeof value === "string") result[field] = value;
   }
 
-  const extraFields = typeId ? getSearchableStringFields(typeId) : [];
+  const extraFields = typeId ? searchableExtraFields(typeId) : [];
   const extraParts: string[] = [];
   for (const field of extraFields) {
     const value = properties[field];

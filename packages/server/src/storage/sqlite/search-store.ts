@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
-  MAX_RESOLUTION_DEPTH,
-  getTypeSchema,
-  listTypes,
+  ErrorCode,
+  MarfaError,
+  declaredDescendants,
   parseFilter,
   typePatternToSql,
   typeFilterTerms,
@@ -17,7 +17,7 @@ import type { SqliteTxContext } from "./request-context.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 // What text reaches the index is decided in `search-text.ts`, not here, so
 // a change to what is indexed is one edit rather than one per writer.
-import { extractSearchableText } from "../search-text.js";
+import { extractSearchableText, searchableShape } from "../search-text.js";
 
 /**
  * Build an FTS5 query with prefix matching on the last token.
@@ -61,9 +61,11 @@ async function replaceIndexRow(
       (SELECT seq FROM item_search_keys WHERE item_id = ${itemId}),
       ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
       COALESCE(
-        (SELECT group_concat(je.value, ' ')
-           FROM metadata m, json_each(m.tags) je
-          WHERE m.item_id = ${itemId}),
+        (SELECT group_concat(value, ' ')
+           FROM (SELECT je.value AS value
+                   FROM metadata m, json_each(m.tags) je
+                  WHERE m.item_id = ${itemId}
+                  ORDER BY je.value)),
         ''
       )
     )
@@ -71,49 +73,58 @@ async function replaceIndexRow(
 }
 
 /**
- * Whether `id` reaches `root` through declared parents. Unlike
- * `isSubtypeOf` it never throws: a type whose chain loops or runs too deep
- * simply does not reach it, so one broken type cannot stop another's change.
+ * What each of `typeId` and the types that inherit from it contributes to the
+ * index, apart from any row. Take it before a change to the registry and give
+ * it to `reindexChangedTypes` after. A type whose chain cannot be resolved
+ * has no shape to compare, and one that stays so is left as it is, since it
+ * cannot index a write either and correcting it is the way back.
  */
-function inheritsFrom(id: string, root: string): boolean {
-  const seen = new Set<string>();
-  let current = getTypeSchema(id)?.parent;
-  while (current && !seen.has(current) && seen.size < MAX_RESOLUTION_DEPTH) {
-    if (current === root) return true;
-    seen.add(current);
-    current = getTypeSchema(current)?.parent;
+export function indexShapes(typeId: string): Map<string, string> {
+  const shapes = new Map<string, string>();
+  for (const type of [typeId, ...declaredDescendants(typeId)]) {
+    try {
+      shapes.set(type, searchableShape(type));
+    } catch (error) {
+      if (
+        !(error instanceof MarfaError) ||
+        error.code !== ErrorCode.TYPE_CHAIN_UNRESOLVABLE
+      )
+        throw error;
+      shapes.set(type, "unresolvable");
+    }
   }
-  return false;
+  return shapes;
 }
 
 /**
- * Indexes again, under the registry as it now stands, every row of `typeId`
- * and of each type that inherits from it. A row's indexed text is decided
- * when it is written, so a change to a type's fields leaves the rows already
- * stored answering by the old ones until this runs. Call it after the change
- * is in the registry and inside the transaction that made it.
+ * Indexes again, under the registry as it now stands, the rows of each of
+ * `typeId` and the types that inherit from it whose shape differs from
+ * `before`. A row's indexed text is decided when it is written, so a change
+ * to a type's fields leaves the rows already stored answering by the old
+ * ones until this runs. A change that leaves the shape alone, a label or a
+ * description, costs nothing. Call it inside the transaction that made the
+ * change, after the registry holds it.
  *
  * A trashed row is not in the index and stays out of it.
  */
-export async function reindexTypeRows(
+export async function reindexChangedTypes(
   db: Executor,
   typeId: string,
+  before: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const affected = [
-    typeId,
-    ...listTypes()
-      .map((schema) => schema.id)
-      .filter((id) => id !== typeId && inheritsFrom(id, typeId)),
-  ];
-  for (const type of affected) {
+  for (const [type, shape] of indexShapes(typeId)) {
+    if (before.get(type) === shape) continue;
     const rows = await db.all<{ id: string; properties: string }>(sql`
       SELECT id, json(properties) AS properties FROM items
       WHERE type = ${type} AND state <> 'trashed'
     `);
     for (const row of rows) {
       const properties = JSON.parse(row.properties) as Record<string, unknown>;
-      const text = extractSearchableText(properties, type);
-      await replaceIndexRow(db, row.id, text);
+      await replaceIndexRow(
+        db,
+        row.id,
+        extractSearchableText(properties, type),
+      );
     }
   }
 }
@@ -136,7 +147,11 @@ export class SqliteSearchStore implements SearchStore {
     // An update rather than a delete and re-insert: the text columns are
     // not at hand here, and an FTS5 table with its own content takes one.
     await this.db.run(sql`
-      UPDATE items_fts SET tags = ${tags.join(" ")}
+      UPDATE items_fts SET tags = COALESCE(
+        (SELECT group_concat(value, ' ')
+           FROM (SELECT value FROM json_each(${JSON.stringify(tags)}) ORDER BY value)),
+        ''
+      )
       WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = ${itemId})
     `);
   }

@@ -4,6 +4,7 @@
  * what text contributes to FTS for an item.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { shippedPlatformTypes } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -382,5 +383,113 @@ describe("what a change to a type does to rows already stored", () => {
     });
     expect(all.status).toBe(200);
     expect(((await all.json()) as { data: unknown[] }).data).toEqual([]);
+  });
+
+  /** A word nothing wrote, put into a row's index text directly, so it
+   *  survives exactly as long as the row is not indexed again. */
+  async function markIndexed(id: string, word: string): Promise<void> {
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    await run(
+      "UPDATE items_fts SET extra = ? WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = ?)",
+      [word, id],
+    );
+  }
+
+  it("leaves the rows of a type as they are when a change does not touch what it contributes", async () => {
+    await registerType("demo.shape", { blurb: { type: "string" } });
+    const id = await create("demo.shape", { blurb: "Cassowary" });
+    await markIndexed(id, "markerzero");
+    expect(await found("markerzero")).toContain(id);
+
+    // A label and a description change what no row contributes.
+    const labelled = await request(ctx.app, "PUT", "/types/demo.shape", {
+      key: ctx.workingKey,
+      body: {
+        id: "demo.shape",
+        version: 2,
+        label: "A shape",
+        description: "Changed",
+        fields: { blurb: { type: "string", description: "A blurb" } },
+      },
+    });
+    expect(labelled.status).toBe(200);
+    expect(await found("markerzero")).toContain(id);
+
+    // The witness: a change to what it contributes indexes the row again.
+    await replaceType("demo.shape", {
+      blurb: { type: "string" },
+      extra: { type: "string" },
+    });
+    expect(await found("markerzero")).not.toContain(id);
+    expect(await found("cassowary")).toContain(id);
+  });
+
+  it("indexes rows again when a build ships a changed schema for their platform type", async () => {
+    const note = shippedPlatformTypes().find(
+      (entry) => entry.schema.id === "core.note",
+    );
+    if (!note) throw new Error("core.note is not shipped");
+    const id = await create("core.note", {
+      title: "Plain",
+      body: "Wallaroo grassland",
+    });
+    expect(await found("wallaroo")).toContain(id);
+
+    const optedOut = {
+      ...note,
+      schema: {
+        ...note.schema,
+        fields: {
+          ...note.schema.fields,
+          body: {
+            ...note.schema.fields.body,
+            type: "string",
+            searchable: false,
+          },
+        },
+      },
+    };
+    await ctx.storage.types.seedPlatformTypes([optedOut as typeof note]);
+    expect(await found("wallaroo")).not.toContain(id);
+    expect(await found("plain")).toContain(id);
+
+    await ctx.storage.types.seedPlatformTypes([note]);
+    expect(await found("wallaroo")).toContain(id);
+  });
+
+  it("indexes the tags and the extra fields in one order, whatever order they were written in", async () => {
+    await registerType("demo.order", {
+      zeta: { type: "string" },
+      alpha: { type: "string" },
+    });
+    const made = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "demo.order",
+        properties: { zeta: "zetaword", alpha: "alphaword" },
+        tags: ["zulutag", "alphatag"],
+      },
+    });
+    expect(made.status).toBe(201);
+    const id = ((await made.json()) as { item: { id: string } }).item.id;
+    for (const [query, matches] of [
+      ['"alphaword zetaword"', true],
+      ['"zetaword alphaword"', false],
+      ['"alphatag zulutag"', true],
+      ['"zulutag alphatag"', false],
+    ] as const)
+      expect((await found(query)).includes(id), query).toBe(matches);
+
+    // A tag written after the row is held in the same order.
+    const tagged = await request(ctx.app, "POST", `/items/${id}/tags`, {
+      key: ctx.workingKey,
+      body: { tags: ["mikotag"] },
+    });
+    expect(tagged.status).toBe(200);
+    expect(await found('"alphatag mikotag zulutag"')).toContain(id);
   });
 });
