@@ -116,3 +116,11 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
     Reason: a run cut off mid-write leaves its record unwritten, and a stop that the runtime kills is read as a crash. A run that outlives its wait is resumed at the next start and does not make the stop a failure.
 
     Tests: `packages/server/src/shutdown.test.ts`; `packages/server/src/shutdown-stream.test.ts › sends the stream its closing frame and ends it, and exits 0 within the grace`.
+
+## Long jobs
+
+19. While the server runs an archive export, an archive restore, an NDJSON export or a bulk action, it SHALL hand the event loop to other requests between units of work of bounded size, so that how long a request waits for the loop depends on the size of one unit and not on the size of the job or of the instance.
+
+    Reason: the database driver runs each statement synchronously behind a promise, so a loop of database awaits never gives the loop a turn. A job that does not give one stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working.
+
+    Tests: `packages/server/src/routes/long-jobs-health.test.ts › answers within the bound during an archive export of 20,000 items`, `› during an archive restore of that archive`, `› during an NDJSON export of 20,000 items`, `› during a bulk action over 10,000 items`; the bound is one the file states and defends. A restore holds the write lock until it commits (`search-and-filters.md` 47), and the write probe of `GET /health` then reports `degraded` after the two seconds of statement 12, which is a held lock and not a held loop.
