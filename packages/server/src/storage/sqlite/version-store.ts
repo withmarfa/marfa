@@ -188,6 +188,7 @@ export class SqliteVersionStore implements VersionStore {
   async listThinningCandidates(
     threshold: number,
     limit: number,
+    afterItemId?: string,
   ): Promise<
     {
       itemId: string;
@@ -203,8 +204,10 @@ export class SqliteVersionStore implements VersionStore {
       })
       .from(versions)
       .innerJoin(items, eq(versions.item_id, items.id))
+      .where(afterItemId ? gt(versions.item_id, afterItemId) : undefined)
       .groupBy(versions.item_id, items.type)
       .having(sql`count(*) > ${threshold}`)
+      .orderBy(asc(versions.item_id))
       .limit(limit)
       .all();
     return rows;
