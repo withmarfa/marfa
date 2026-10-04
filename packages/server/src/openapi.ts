@@ -15,6 +15,7 @@ import {
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
+import { isJsonContentType } from "./middleware/json-content-type.js";
 
 /**
  * Hang the credential gate off a route whose own `security` asks for one.
@@ -58,13 +59,8 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
   };
 }
 
-/** What the library and Hono both read as a JSON `Content-Type`. */
-const JSON_CONTENT_TYPE =
-  /^application\/([a-z-.]+\+)?json(;\s*[a-zA-Z0-9-]+=([^;]+))*$/i;
-
 const requireJsonContentType: MiddlewareHandler = async (c, next) => {
-  const type = c.req.header("content-type");
-  if (type === undefined || !JSON_CONTENT_TYPE.test(type)) {
+  if (!isJsonContentType(c.req.header("content-type"))) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       "The request body must be JSON: send it with Content-Type: application/json",
@@ -82,7 +78,7 @@ const requireJsonContentType: MiddlewareHandler = async (c, next) => {
  * request with no body and no `Content-Type` reaches that branch even though
  * the library's own media-type check, which answers `415`, catches every
  * request that carries a body. A door whose schema accepts `{}` then runs on
- * it, and `PUT /items/{id}/extensions/{namespace}` stored it.
+ * it.
  *
  * Marking the body `required` runs the validator on every request, and the
  * check added last in the route's middleware answers the refusal the contract

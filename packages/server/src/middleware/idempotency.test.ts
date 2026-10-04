@@ -369,6 +369,34 @@ describe("the key names one request in every dimension, not just the body", () =
     expect(await eventsSince(mark)).toBe(0);
   });
 
+  it("replays to a retry that spells the JSON type another way", async () => {
+    const k = key();
+    const body = JSON.stringify({
+      type: "core.note",
+      properties: { body: "spelled" },
+    });
+    const send = (contentType: string) =>
+      ctx.app.request("/items", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.workingKey}`,
+          "Idempotency-Key": k,
+          "Content-Type": contentType,
+        },
+        body,
+      });
+
+    const first = await send("application/json; charset=utf-8");
+    expect(first.status).toBe(201);
+    const retried = await send("application/json");
+    expect(retried.status).toBe(201);
+    expect(retried.headers.get("Idempotency-Replayed")).toBe("true");
+    const [a, b] = (await Promise.all([first.json(), retried.json()])) as {
+      id: string;
+    }[];
+    expect(b!.id).toBe(a!.id);
+  });
+
   it("distinguishes two methods on one path", async () => {
     const k = key();
     const id = await seedItem();
