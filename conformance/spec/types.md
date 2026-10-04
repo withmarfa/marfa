@@ -84,3 +84,9 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
     The thinning policy fills omitted windows from the instance defaults, which this comparison does not validate.
 
     Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field: %s`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
+
+34. When the version-thinning job thins an item's history, it MUST apply the effective `version_policy` of the item's type, read in the transaction that removes the snapshots. The effective policy is the one `GET /types/{id}` returns, in which a type inherits `version_policy` from its parent chain field by field, a field the type declares overriding the same field of every ancestor, and each field no type in the chain declares is taken from the instance defaults.
+
+    A policy that thinning read from the type alone would delete history that the policy advertised for the type retains, and one read before the transaction would ignore a replacement landing meanwhile. A type with no policy anywhere, and an item whose type is no longer registered, are thinned by the instance defaults.
+
+    Tests: `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`, `› thins an item's history by the policy its type inherits`. The referee cannot age a snapshot, so the windows, a replacement landing mid-run and an unresolvable chain are held by the server's own suite (`packages/server/src/storage/version-thinner.test.ts`).
