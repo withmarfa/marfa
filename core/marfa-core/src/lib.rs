@@ -41,9 +41,9 @@ pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
-    CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, Planned,
-    PullReport, Restored, ScanReport, Settings, SettingsFileReport, StatusReport, SyncReport,
-    Synced, WatchError, WatchEvent, WatchPass,
+    CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
+    Restored, ScanReport, Settings, SettingsFileReport, StatusReport, SyncReport, Synced,
+    WatchError, WatchEvent, WatchPass,
 };
 pub use lock::Handle;
 pub use model::{

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::Subcommand;
+use marfa_core::Confirmed;
 use marfa_core::folder::Registry;
 use marfa_core::{CoreError, FirstSync, Folder, SyncReport, Synced};
 
@@ -113,7 +114,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 // The folder is added whether or not it could be read now.
                 match folder.plan_first_sync() {
                     Ok(planned) => {
-                        plan = planned.plan;
+                        plan = planned;
                         confirmed = plan.is_none();
                     }
                     Err(error) => {
@@ -187,24 +188,42 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_status(&report))
         }
         FoldersCommand::Confirm { dir } => {
-            let confirmed = Folder::open(&dir, None).map_err(held(&dir))?.confirm()?;
-            output::report(&confirmed, json, || {
-                if confirmed.first_sync {
-                    return "the first sync is confirmed; `folders push` or `folders watch` runs it"
-                        .into();
-                }
-                format!(
-                    "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
-                    confirmed.deleted,
-                    confirmed.moved,
-                    confirmed.removed,
-                    confirmed
-                        .unsure
-                        .iter()
-                        .map(|file| format!("\n{}: not let go yet, {}", file.path, file.reason))
-                        .collect::<String>()
-                )
-            })
+            let folder = Folder::open(&dir, None).map_err(held(&dir))?;
+            // The first sync goes first; a removal paused beside it waits for
+            // the next confirm.
+            let first_sync = folder.confirm_first_sync()?;
+            let confirmed = if first_sync {
+                Confirmed::default()
+            } else {
+                folder.confirm()?
+            };
+            output::report(
+                &serde_json::json!({
+                    "first_sync": first_sync,
+                    "deleted": confirmed.deleted,
+                    "moved": confirmed.moved,
+                    "unsure": confirmed.unsure,
+                    "removed": confirmed.removed,
+                }),
+                json,
+                || {
+                    if first_sync {
+                        return "the first sync is confirmed; `folders push` or `folders watch` runs it"
+                            .into();
+                    }
+                    format!(
+                        "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
+                        confirmed.deleted,
+                        confirmed.moved,
+                        confirmed.removed,
+                        confirmed
+                            .unsure
+                            .iter()
+                            .map(|file| format!("\n{}: not let go yet, {}", file.path, file.reason))
+                            .collect::<String>()
+                    )
+                },
+            )
         }
         FoldersCommand::Restore { dir } => {
             let restored = opened(&dir, named.session_if_named()?)?.restore()?;
@@ -597,10 +616,10 @@ fn plan_line(plan: &FirstSync) -> String {
         "{} file(s) to write into the directory, {} to send to the server",
         plan.write, plan.send
     );
-    if plan.kept > 0 {
+    if plan.beside > 0 {
         line.push_str(&format!(
-            ", and {} already there where a file would go, which stay as they are and are not written over",
-            plan.kept
+            "; {} of those write where a file is already, so one of the two gets a number added to its name and none is written over",
+            plan.beside
         ));
     }
     line
@@ -636,7 +655,7 @@ fn first_sync_json(
         "waiting": !confirmed,
         "write": plan.map(|plan| plan.write),
         "send": plan.map(|plan| plan.send),
-        "kept": plan.map(|plan| plan.kept),
+        "beside": plan.map(|plan| plan.beside),
         "unread": unread,
     })
 }

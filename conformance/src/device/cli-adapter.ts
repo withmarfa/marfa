@@ -863,7 +863,7 @@ export interface StatusReport {
   }>;
   paused: { disk: number; pull: number };
   /** Present while the first sync waits to be confirmed (`folders.md` 54). */
-  first_sync?: { plan: { write: number; send: number; kept: number } | null };
+  first_sync?: { plan: { write: number; send: number; beside: number } | null };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
@@ -1159,7 +1159,7 @@ export interface FirstSyncJson {
   waiting: boolean;
   write: number | null;
   send: number | null;
-  kept: number | null;
+  beside: number | null;
   /** Why the folder could not be read for a plan now, where it could not. */
   unread: string | null;
 }

@@ -12,8 +12,6 @@ const PUT_BACK: &str = "put-back";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Confirmed {
-    /// The folder's first sync was waiting, and now goes.
-    pub first_sync: bool,
     pub deleted: usize,
     pub moved: usize,
     pub unsure: Vec<Unsure>,
@@ -30,12 +28,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.refuse_if_gone()?;
-        if self.confirm_first_sync()? {
-            return Ok(Confirmed {
-                first_sync: true,
-                ..Confirmed::default()
-            });
-        }
+        self.refuse_while_waiting()?;
         let copy = crate::read_view::Context::capture(&*self.core.conn()?)?;
         let settings = self.settings()?;
         let lists = settings.lists()?;

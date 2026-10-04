@@ -19497,7 +19497,7 @@ describe("a folder's first sync", () => {
       waiting: true,
       write: 2,
       send: 3,
-      kept: 0,
+      beside: 0,
       unread: null,
     });
     expect(
@@ -19512,7 +19512,7 @@ describe("a folder's first sync", () => {
     expect(writesSent(harness)).toEqual([]);
     const status = await harness.folder.status();
     expect(status.ok && status.value.first_sync).toEqual({
-      plan: { write: 2, send: 3, kept: 0 },
+      plan: { write: 2, send: 3, beside: 0 },
     });
   });
 
@@ -19573,28 +19573,44 @@ describe("a folder's first sync", () => {
     expect(existsSync(join(second.dir, "Remote A.md"))).toBe(true);
   });
 
-  it("leaves a file already where an item's file would go, and says so", async () => {
-    harness = await waiting("first-sync-kept", {
+  it("writes beside a file already where an item's file would go, and says so", async () => {
+    harness = await waiting("first-sync-beside", {
       "Remote A.md": typed("Remote A"),
     });
     expect(harness.added.first_sync).toEqual({
       waiting: true,
-      write: 1,
+      write: 2,
       send: 1,
-      kept: 1,
+      beside: 1,
       unread: null,
     });
     expect((await harness.folder.confirm()).ok).toBe(true);
     expect((await harness.folder.push()).ok).toBe(true);
-    // Its words stay, with the id line a sent file is given; the item's
-    // body is not written over them.
-    const kept = read(harness, "Remote A.md");
-    expect(kept).toContain("written by hand");
-    expect(kept, "the item's file was written over the person's").not.toMatch(
-      /^a$/m,
+    // Both end up in the folder, one with a number in its name, and the
+    // person's words are in one of them.
+    const names = readdirSync(harness.dir).filter((name) =>
+      name.startsWith("Remote A"),
     );
+    expect(names.sort()).toEqual(["Remote A (2).md", "Remote A.md"]);
+    const texts = names.map((name) => read(harness!, name));
+    expect(
+      texts.filter((text) => text.includes("written by hand")),
+      "the person's file was written over or lost",
+    ).toHaveLength(1);
+    expect(texts.filter((text) => /^a$/m.test(text))).toHaveLength(1);
     expect(sentTitles(harness)).toEqual(["Remote A"]);
     expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
+  });
+
+  it("refuses a drain by the folder's device door while it waits", async () => {
+    harness = await waiting("first-sync-drain", { "mine.md": typed("Mine") });
+    const drained = await harness.folder.device().drain();
+    expect(!drained.ok && drained.refusal.raw).toContain("first_sync_waiting");
+    expect(writesSent(harness)).toEqual([]);
+    // The witness: confirmed, the same door sends what the scan queued.
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    const sent = await harness.folder.device().drain();
+    expect(sent.ok && sent.value.answered).toBeGreaterThan(0);
   });
 
   it("confirms itself where there is nothing to write, send or keep", async () => {
@@ -19603,7 +19619,7 @@ describe("a folder's first sync", () => {
       waiting: false,
       write: null,
       send: null,
-      kept: null,
+      beside: null,
       unread: null,
     });
     const status = await harness.folder.status();
@@ -19641,7 +19657,7 @@ describe("a folder's first sync", () => {
       waiting: true,
       write: 2,
       send: 1,
-      kept: 0,
+      beside: 0,
       unread: null,
     });
     expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
@@ -19660,7 +19676,7 @@ describe("a folder's first sync", () => {
     expect(
       status.ok && status.value.first_sync,
       "one machine's confirmation let another machine's folder go",
-    ).toEqual({ plan: { write: 2, send: 0, kept: 0 } });
+    ).toEqual({ plan: { write: 2, send: 0, beside: 0 } });
     const first = await harness.folder.status();
     expect(first.ok && first.value.first_sync).toBeUndefined();
   });

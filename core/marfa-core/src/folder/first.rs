@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Folder;
 use crate::error::CoreError;
-use crate::model::{HydrateReport, Verdict, WriteKind};
+use crate::model::{Verdict, WriteKind};
 use crate::{Result, store};
 
 /// Present from the add until the person confirms, holding the last plan.
@@ -16,9 +16,10 @@ pub struct FirstSync {
     /// Files in the directory it will send, as new items or as the edits of
     /// the items they name.
     pub send: usize,
-    /// Files already where an item's file would go. Each stays as it is, and
-    /// the item's file is not written there.
-    pub kept: usize,
+    /// Of the files it will write, those whose path a file already in the
+    /// directory has. Both end up in the folder, and one of the two takes a
+    /// number in its name; none is written over.
+    pub beside: usize,
 }
 
 impl FirstSync {
@@ -35,14 +36,6 @@ pub enum Synced {
     /// The folder's first sync waits to be confirmed, so nothing was written
     /// or sent.
     Waiting(FirstSync),
-}
-
-/// What reading a folder for its first sync found.
-#[derive(Debug, Clone, Default)]
-pub struct Planned {
-    pub hydrated: Option<HydrateReport>,
-    /// `None` where the plan holds nothing to ask about, which confirms it.
-    pub plan: Option<FirstSync>,
 }
 
 impl Folder {
@@ -85,12 +78,20 @@ impl Folder {
     }
 
     /// Reads the folder for what its first sync will do: hydrates a copy that
-    /// does not answer for its slice, scans, and counts the files a pull would
-    /// write. It writes nothing into the directory and sends nothing, and a
-    /// plan that holds nothing to ask about confirms itself.
-    pub fn plan_first_sync(&self) -> Result<Planned> {
+    /// does not answer for its slice, catches it up, scans, and counts the
+    /// files a pull would write. It writes nothing into the directory and
+    /// sends nothing, and `None` says the plan holds nothing to ask about,
+    /// which confirms it.
+    pub fn plan_first_sync(&self) -> Result<Option<FirstSync>> {
         self.refuse_if_gone()?;
-        let hydrated = self.resume()?;
+        self.resume()?;
+        // Of the server's side as far as it can be had: the copy held stands
+        // where the server is out of reach.
+        match self.catch_up() {
+            Ok(_) => {}
+            Err(error) if error.is_environmental() => {}
+            Err(error) => return Err(error),
+        }
         self.scan()?;
         // From the queue, not the scan's counts, which a second look at the
         // same files would find nothing new in.
@@ -101,29 +102,27 @@ impl Folder {
             .filter(|write| matches!(write.verdict, None | Some(Verdict::Blocked)))
             .filter(|write| matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem))
             .count();
-        let mut plan = FirstSync {
-            send,
-            ..FirstSync::default()
-        };
         let mut pulled = super::PullPlan::default();
         self.pull_as(Some(&mut pulled))?;
-        plan.write = pulled.write;
-        plan.kept = pulled.kept;
+        let plan = FirstSync {
+            write: pulled.write,
+            send,
+            beside: pulled.beside,
+        };
         if plan.nothing() {
             self.confirm_first_sync()?;
-            return Ok(Planned {
-                hydrated,
-                plan: None,
-            });
+            return Ok(None);
         }
         store::meta_set(
             &*self.core.conn()?,
             META_FIRST_SYNC,
             &serde_json::to_string(&Some(plan))?,
         )?;
-        Ok(Planned {
-            hydrated,
-            plan: Some(plan),
-        })
+        Ok(Some(plan))
     }
+}
+
+/// Whether the store of a folder whose first sync waits is this one.
+pub(crate) fn waiting(conn: &rusqlite::Connection) -> Result<bool> {
+    Ok(store::meta_get(conn, META_FIRST_SYNC)?.is_some())
 }

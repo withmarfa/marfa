@@ -30,7 +30,7 @@ impl Folder {
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
         if self.awaiting_confirmation()?
-            && let Some(plan) = self.plan_first_sync()?.plan
+            && let Some(plan) = self.plan_first_sync()?
         {
             return Ok(Synced::Waiting(plan));
         }

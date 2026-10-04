@@ -63,9 +63,10 @@ pub struct FirstSyncPlan {
     /// Files in the directory it will send, as new items or as the edits of
     /// the items they name.
     pub send: u64,
-    /// Files already where an item's file would go. Each stays as it is, and
-    /// the item's file is not written there.
-    pub kept: u64,
+    /// Of the files it will write, those whose path a file already in the
+    /// directory has. Both end up in the folder, and one of the two takes a
+    /// number in its name; none is written over.
+    pub beside: u64,
 }
 
 impl From<marfa_core::FirstSync> for FirstSyncPlan {
@@ -73,12 +74,12 @@ impl From<marfa_core::FirstSync> for FirstSyncPlan {
         FirstSyncPlan {
             write: plan.write as u64,
             send: plan.send as u64,
-            kept: plan.kept as u64,
+            beside: plan.beside as u64,
         }
     }
 }
 
-/// A first sync that waits for `confirm`, and what the last read of the
+/// A first sync that waits for `confirm_first_sync`, and what the last read of the
 /// folder said it will do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct WaitingFirstSync {
@@ -187,8 +188,8 @@ pub struct FolderPass {
 pub enum FolderSyncOutcome {
     /// The sync ran.
     Done { sync: FolderSync },
-    /// The first sync waits. `confirm` lets it go, and `remove` drops the
-    /// folder, leaving its files.
+    /// The first sync waits. `confirm_first_sync` lets it go, and `remove`
+    /// drops the folder, leaving its files.
     Waiting { plan: FirstSyncPlan },
 }
 
@@ -209,12 +210,9 @@ pub struct UnsureFile {
     pub reason: String,
 }
 
-/// What confirming did: it let the first sync go, or a paused removal.
+/// What letting a paused removal go did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct FolderConfirmed {
-    /// The folder's first sync was waiting, and now goes at the next sync or
-    /// watch. Nothing else is counted in that case.
-    pub first_sync: bool,
+pub struct ConfirmedRemoval {
     /// Deletes queued, sent at the next sync.
     pub deleted: u64,
     /// Files found in another folder on this machine, whose items stay.
@@ -277,7 +275,7 @@ pub struct Folders {
 #[uniffi::export]
 impl Folders {
     /// `url` and `key` go together; without them only `list`, `status`,
-    /// `confirm`, `restore` and `remove` work.
+    /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
     #[uniffi::constructor]
     pub fn new(url: Option<String>, key: Option<String>) -> Result<Arc<Self>, MarfaError> {
         let server = match (url, key) {
@@ -295,7 +293,7 @@ impl Folders {
     /// Makes `dir` a folder that follows the `system.folder` `folder`, and
     /// lists it in the machine's registry. The directory is made if it is
     /// not there. Its first sync waits: `sync` says what it will do, and
-    /// `confirm` lets it go.
+    /// `confirm_first_sync` lets it go.
     pub fn add(&self, dir: String, folder: String) -> Result<ListedFolder, MarfaError> {
         let added = marfa_core::Folder::add(&dir, &folder, self.server.clone())?;
         Ok(ListedFolder {
@@ -376,12 +374,18 @@ impl Folders {
         })
     }
 
-    /// Lets a folder's first sync go, or a paused large removal: its deletes
-    /// are queued, and files whose items left elsewhere are taken away.
-    pub fn confirm(&self, dir: String) -> Result<FolderConfirmed, MarfaError> {
+    /// Lets a folder's first sync go, at the next sync or watch. Answers
+    /// whether it was waiting. A paused removal is not touched.
+    pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
+        Ok(marfa_core::Folder::open(&dir, None)?.confirm_first_sync()?)
+    }
+
+    /// Lets a paused large removal go: its deletes are queued, and files
+    /// whose items left elsewhere are taken away. Refused while the first
+    /// sync waits.
+    pub fn confirm(&self, dir: String) -> Result<ConfirmedRemoval, MarfaError> {
         let confirmed = marfa_core::Folder::open(&dir, None)?.confirm()?;
-        Ok(FolderConfirmed {
-            first_sync: confirmed.first_sync,
+        Ok(ConfirmedRemoval {
             deleted: confirmed.deleted as u64,
             moved: confirmed.moved as u64,
             removed: confirmed.removed as u64,
@@ -677,7 +681,7 @@ mod tests {
         let path = dir.path().display().to_string();
         let folders = Folders::new(Some(url), Some(key)).unwrap();
         folders.add(path.clone(), id).unwrap();
-        folders.confirm(path.clone()).unwrap();
+        folders.confirm_first_sync(path.clone()).unwrap();
         folders.sync(path.clone()).unwrap();
 
         let (sender, ended) = std::sync::mpsc::channel();

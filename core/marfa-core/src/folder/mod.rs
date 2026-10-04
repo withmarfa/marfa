@@ -14,7 +14,8 @@ mod names;
 pub(crate) mod placement;
 mod preserve;
 mod removal;
-pub use first::{FirstSync, Planned, Synced};
+pub(crate) use first::waiting;
+pub use first::{FirstSync, Synced};
 pub use removal::{Confirmed, Restored};
 pub mod registry;
 pub mod settings;
@@ -2553,7 +2554,6 @@ pub struct Drained {
 impl Folder {
     /// Its passes are one drain: another on the store waits for all of them.
     pub fn drain(&self) -> Result<Drained> {
-        self.refuse_while_waiting()?;
         let one = self.core.one_drain();
         let mut report = self.core.drain_held(&one)?;
         let mut rebased = 0;
@@ -3019,11 +3019,13 @@ impl Folder {
             taken.insert(names::folded(&entry.want));
         }
         if let Some(plan) = planning {
+            // Every entry still unbound is a file the pull will write: where
+            // the person's file holds its path, one of the two takes a number,
+            // as the scan's creates, sent by then, rank among the others.
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
+                plan.write += 1;
                 if self.root.join(&entry.want).exists() {
-                    plan.kept += 1;
-                } else {
-                    plan.write += 1;
+                    plan.beside += 1;
                 }
             }
             return Ok(report);
@@ -4403,7 +4405,7 @@ pub struct CaughtUp {
 #[derive(Debug, Default)]
 struct PullPlan {
     write: usize,
-    kept: usize,
+    beside: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
