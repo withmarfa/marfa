@@ -12,6 +12,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
 import { extractText, isEnrichableMime } from "./extract.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 import {
   DIMENSION_FIELDS,
   deriveDimensions,
@@ -126,6 +127,7 @@ export class TextEnrichmentSweeper {
     // parser), so running the batch concurrently would compete with the
     // request path on the same event loop for no throughput gain.
     for (const candidate of candidates) {
+      await yieldBulkWork();
       const outcome = await this.processOne(candidate);
       if (outcome === "extracted") extracted += 1;
       else if (outcome === "failed") failed += 1;

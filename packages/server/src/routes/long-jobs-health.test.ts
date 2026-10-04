@@ -5,6 +5,8 @@ import { Hono } from "hono";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
+import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import { VersionThinner } from "../storage/version-thinner.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -99,6 +101,15 @@ async function seed(target: TestContext) {
        json_object('body', 'past ' || v || ' ' || ?), 'core.note', 'feed', ?, 'past-' || v, ? FROM n
      WHERE v % 5 < 2`,
     [ITEMS, body, at, at],
+  );
+  // Long histories on a hundred items, which the version thinner prunes.
+  await sql(
+    target,
+    `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < 500)
+     INSERT INTO versions (id, item_id, version, properties, type, tier, occurred_at, source_id, created_at)
+     SELECT printf('01912348-0000-7000-8000-%012x', v), printf('01912345-0000-7000-8000-%012x', (v - 1) / 5 + 1), 10 + (v - 1) % 5,
+       json_object('body', 'long ' || v), 'core.note', 'feed', ?, 'long-' || v, ? FROM n`,
+    [at, at],
   );
   await sql(
     target,
@@ -295,5 +306,37 @@ describe("GET /health while a long job runs", () => {
     });
     expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
     expect(asked).toBeGreaterThan(20);
+  }, 120_000);
+
+  it("answers within the bound during the blob orphan sweep", async () => {
+    const reporter = new BlobOrphanReporter(
+      source.storage,
+      source.blobs,
+      86_400_000,
+    );
+    const { worstMs, asked, result } = await worstWait(health, () =>
+      reporter.runOnce(),
+    );
+    // Every blob is named by a row, so the sweep walked the corpus to learn
+    // that and reported none.
+    expect(result).toEqual({ reported: 0, purged: 0 });
+    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
+    expect(asked).toBeGreaterThan(5);
+  }, 120_000);
+
+  it("answers within the bound during version thinning", async () => {
+    const thinner = new VersionThinner(source.storage, {
+      recentDays: 0,
+      dailySnapshotDays: 0,
+      weeklySnapshotDays: 0,
+      maxVersions: 1,
+    });
+    const { worstMs, asked, result } = await worstWait(health, () =>
+      thinner.runOnce(),
+    );
+    expect(result.items).toBe(100);
+    expect(result.pruned).toBeGreaterThan(400);
+    expect(worstMs).toBeLessThan(HEALTH_BOUND_MS);
+    expect(asked).toBeGreaterThan(5);
   }, 120_000);
 });

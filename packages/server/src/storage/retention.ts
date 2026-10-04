@@ -6,6 +6,7 @@ import { readInstanceConfig } from "./instance-config.js";
 import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 
 /**
  * The retention sweeps. Each is a class with one `runOnce()` that does a
@@ -229,6 +230,7 @@ export class GrantInactivityRetirer {
     // aborts on a fault by design, and a persistent fault on one row would
     // otherwise stall the sweep at that row every day.
     for (const grant of inactive.slice(0, RETIRE_PER_RUN)) {
+      await yieldBulkWork();
       try {
         await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
