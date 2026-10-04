@@ -258,7 +258,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
+    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. A registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   middleware: registersEdgeType,
   request: {
@@ -307,7 +307,8 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["conflict"]),
         },
       },
-      description: "Edge type already exists, or a name it claims is held",
+      description:
+        "`conflict`: the ID is a shipped edge-type name, or the ID or `reverse_name` is already held by another edge type as either.",
     },
   },
 });
@@ -340,7 +341,7 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
+    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included. `?force=true` deletes the registration even if edges of the type are stored, and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {

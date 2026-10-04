@@ -148,7 +148,7 @@ const putConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Replace the configuration",
   description:
-    "Overwrites the instance config with the supplied object: full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.",
+    "Overwrites the instance config with the supplied object: full replacement, not a merge. A cleanup-job retention override of `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   request: {
@@ -174,7 +174,8 @@ const putConfigRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: the body names a key Marfa does not recognize, a cleanup-job retention override below `0`, or an `instance_id` that names a different instance.",
     },
     401: {
       content: {

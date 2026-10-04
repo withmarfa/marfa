@@ -1,4 +1,3 @@
-import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -16,13 +15,14 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { VersionPageSchema } from "./_schemas.js";
+import { ITEM_NOT_FOUND_ON_READ, READ_REFUSED } from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
 // ---------------------------------------------------------------------------
 
 const IdParam = z.object({
-  id: z.string().describe("Item id whose version history to return"),
+  id: z.string().describe("The ID of the item."),
 });
 
 const PageQuery = z.object({
@@ -40,7 +40,8 @@ const listVersionsRoute = createRoute({
   path: "/{id}/versions",
   tags: ["Items"],
   summary: "List item versions",
-  description: `Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the \`type\`, \`tier\`, \`occurred_at\` and \`source_id\` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, and a page is filled past them, so only the last page is short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.`,
+  description:
+    "Returns a page of the item's version snapshots, oldest first. Marfa thins older snapshots over time, so the history can have gaps.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -54,7 +55,8 @@ const listVersionsRoute = createRoute({
           schema: VersionPageSchema,
         },
       },
-      description: "Version history",
+      description:
+        "Returns the snapshots you can read. Each holds the properties before the write that replaced them, and the `type`, `tier`, `occurred_at` and `source_id` the item had at that version. Snapshots written under a type you can't read are left out, and a page fills past them.",
     },
     400: {
       content: {
@@ -63,7 +65,7 @@ const listVersionsRoute = createRoute({
         },
       },
       description:
-        "The id is not a well-formed item id, or a query parameter is unknown or out of range, or the cursor is malformed or was issued by another listing.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: a query parameter is unknown or out of range, or `cursor` is malformed or came from another listing.",
     },
     401: {
       content: {
@@ -87,7 +89,7 @@ const listVersionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_READ,
     },
   },
 });

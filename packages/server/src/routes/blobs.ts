@@ -164,7 +164,7 @@ const TYPE_NOT_PERMITTED_RESPONSE = {
     },
   },
   description:
-    "The credential's type permissions reach no type, or, on an upload, grant write on none",
+    "The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read.",
 };
 
 /** What a reading door answers for a blob the credential may not read. */
@@ -183,7 +183,7 @@ const UNREADABLE_BLOB_RESPONSE = {
  * cannot drift apart.
  */
 const READ_RULE =
-  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.";
+  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.";
 
 const bytesResponses = {
   200: {
@@ -227,7 +227,7 @@ const uploadBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
+    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. Send the bytes themselves, not `multipart/form-data`. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
   security: [{ bearerAuth: [] }],
   middleware: uploadsBlobs,
   request: {
@@ -277,7 +277,7 @@ const listBlobStoresRoute = createRoute({
   tags: ["Blobs"],
   summary: "List blob stores",
   description:
-    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.",
+    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
@@ -320,7 +320,7 @@ const getBlobRoute = createRoute({
   path: "/{hash}",
   tags: ["Blobs"],
   summary: "Download a blob",
-  description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. A hash this instance does not hold answers \`404\`. ${READ_RULE}`,
+  description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
   middleware: readsBlobs,
   request: {
@@ -419,7 +419,7 @@ const fetchBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Fetch a blob's bytes through an instance-served link",
   description:
-    "Serves the bytes to whoever holds a link minted by `GET /blobs/{hash}/url`. The `expires` and `signature` query values are the credential; a link past its expiry, or altered, answers `401`.",
+    "Serves the bytes to whoever holds a link minted by `GET /blobs/{hash}/url`. The `expires` and `signature` query values are the credential.",
   security: [],
   request: {
     params: HashParam,
@@ -500,7 +500,7 @@ const dropBlobLocationRoute = createRoute({
   tags: ["Blobs"],
   summary: "Delete a blob's copy in a store",
   description:
-    "Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.",
+    "Removes the copy of the blob that one store holds, and its row in the location log. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: HashAndStoreParam },
@@ -544,7 +544,8 @@ const dropBlobLocationRoute = createRoute({
           ]),
         },
       },
-      description: "No such blob, or no such copy",
+      description:
+        "- `blob_not_found`: no such blob.\n- `blob_location_not_found`: the store holds no copy of the blob, or is not attached.",
     },
     409: {
       content: {

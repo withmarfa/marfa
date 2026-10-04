@@ -182,6 +182,10 @@ export const REFUSAL_TEXT = {
     "More about the error, such as the field it concerns. Each code defines its own details.",
 } as const;
 
+/** The 409 line of every door that takes an `Idempotency-Key`. */
+export const IDEMPOTENCY_IN_FLIGHT =
+  "- `idempotency_key_in_flight`: a request with this `Idempotency-Key` is still running, and this one wrote nothing. Retry.";
+
 function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
   codes: C,
 ) {

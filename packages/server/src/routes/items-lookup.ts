@@ -43,7 +43,7 @@ const TombstoneSchema = z
     settled_at: z
       .string()
       .describe(
-        "The purge time, or the later time of the vendor's own change a connector made in carrying the purge out, moved by `POST /items/tombstones`; a vendor change after it is a new row.",
+        "When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item.",
       ),
   })
   .openapi("Tombstone");
@@ -57,7 +57,9 @@ const selectorFields = {
   links: z
     .array(z.string().min(1))
     .optional()
-    .describe("Link values, which `type` must name a `link_field` for."),
+    .describe(
+      "Link values to name. `type` must name a `link_field`. Links held by a subtype's items aren't included.",
+    ),
   source: z
     .string()
     .min(1)
@@ -66,17 +68,20 @@ const selectorFields = {
   source_ids: z
     .array(z.string().min(1))
     .optional()
-    .describe("Natural-key identifiers under `source`."),
+    .describe("The `source_id` values to name under `source`."),
 };
 
 const LookupRequestSchema = z.strictObject({
   ...selectorFields,
-  ids: z.array(z.string()).optional().describe("Item ids."),
+  ids: z
+    .array(z.string())
+    .optional()
+    .describe("Item IDs to look up, whatever their types."),
   include: z
     .array(z.enum(["edges"]))
     .optional()
     .describe(
-      "`edges` hydrates each row's outbound edges as `GET /items?include=edges` does, held to the same two read permissions.",
+      "`edges` adds each item's outbound edges, as `GET /items?include=edges` does.",
     ),
 });
 
@@ -84,12 +89,12 @@ const LookupResponseSchema = z.object({
   data: z
     .array(ItemSchema)
     .describe(
-      "The rows found, in any state, in the order the request named their keys, each once.",
+      "The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` items, are left out.",
     ),
   tombstones: z
     .array(TombstoneSchema)
     .describe(
-      "The tombstones under `type` for the keys named, in the order named. Empty by `ids`.",
+      "The tombstones under `type` for the keys named, in the order named. Empty when you look up by `ids`.",
     ),
 });
 
@@ -98,7 +103,7 @@ const TombstonesRequestSchema = z.strictObject({
   settled_at: z
     .string()
     .describe(
-      "An RFC 3339 instant: the time of the vendor's own change the connector made in carrying the purge out. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise.",
+      "The time of the vendor's own change that carried out the purge, as an RFC 3339 time. A tombstone takes it only if it is later than the tombstone's current `settled_at`.",
     ),
 });
 
@@ -124,11 +129,7 @@ const lookupRoute = createRoute({
   tags: ["Items"],
   summary: "Look up items",
   description:
-    "Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.\n\n" +
-    "- `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.\n" +
-    "- `source` and `source_ids`: the rows holding those natural keys, whatever their type, so a row retyped since it was written is found.\n" +
-    "- `ids`: the rows with those ids, whatever their type.\n\n" +
-    "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids`. A credential that reads nothing under `type` is refused `403 type_not_permitted`, and one that reads only a type under it gets no tombstones. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
+    "Finds items, in any state, by link, by natural key or by ID, and returns the tombstones that purges left for those keys. Name exactly one of `links`, `source` with `source_ids`, or `ids`, with at most 500 values.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -139,12 +140,13 @@ const lookupRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: LookupResponseSchema } },
-      description: "The rows found and the tombstones for the keys named",
+      description:
+        "Returns the items found and the tombstones purges left for the keys named. A key that an item holds again has no tombstone. You get no tombstones if you can read only subtypes of `type`.",
     },
     400: {
       content: { "application/json": { schema: selectorRefusal } },
       description:
-        "`missing_required_field` for a body naming no `type`; `validation_error` for a malformed `type`, a body naming no selector or more than one, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered; `invalid_id` for a malformed id.",
+        "- `missing_required_field`: `type` is missing.\n- `validation_error`: `type` is malformed, or the body doesn't name exactly one selector, or has more than 500 values, an empty value, an undeclared key, or `links` for a type with no `link_field`.\n- `unknown_type`: `type` isn't registered.\n- `invalid_id`: an ID in `ids` is malformed.",
     },
     401: {
       content: {
@@ -161,7 +163,7 @@ const lookupRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, or it reads nothing under `type`. A credential that reaches some types is answered the rows it may read and the rest are left out.",
+        "- `type_not_permitted`: your credential reaches no type, or reads nothing under `type`.",
     },
   },
 });
@@ -173,7 +175,7 @@ const tombstonesRoute = createRoute({
   tags: ["Items"],
   summary: "Move tombstones' settled time",
   description:
-    "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.",
+    "Moves the `settled_at` of tombstones later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -184,7 +186,8 @@ const tombstonesRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: TombstonesResponseSchema } },
-      description: "The named tombstones as they now stand",
+      description:
+        "Returns the named tombstones as they now stand. A key with no tombstone under `type` is left out.",
     },
     400: {
       content: {
@@ -197,7 +200,7 @@ const tombstonesRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body naming no `type` or `settled_at`; `validation_error` for a malformed `type` or `settled_at`, a body naming neither selector or both, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered.",
+        "- `missing_required_field`: `type` or `settled_at` is missing.\n- `validation_error`: `type` or `settled_at` is malformed, the body doesn't name exactly one of `links` or `source` with `source_ids`, or has more than 500 values, an empty value, an undeclared key, or `links` for a type with no `link_field`.\n- `unknown_type`: `type` isn't registered.",
     },
     401: {
       content: {
@@ -214,7 +217,7 @@ const tombstonesRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted`: the credential does not hold write on `type`. `forbidden`: `source` is neither the credential's own nor one its key claims, named in `details.source`.",
+        "- `type_not_permitted`: you don't have write on `type`.\n- `forbidden`: `source` is not your credential's own or one of your key's `sources`. `details.source` names it.",
     },
   },
 });

@@ -34,7 +34,8 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Instance"],
   summary: "List audit log entries",
-  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail.`,
+  description:
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("audit.read"),
   request: {
@@ -83,7 +84,8 @@ const listAuditRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller does not hold `audit.read`",
+      description:
+        "- `forbidden`: the credential does not hold `audit.read`. The operator key holds no permission, so it is refused too.",
     },
     400: {
       content: {

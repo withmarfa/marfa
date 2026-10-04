@@ -120,13 +120,13 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  */
 const CEILINGS = {
   summaryForm: 0,
-  descriptionLength: 76,
+  descriptionLength: 44,
   parameterUndescribed: 3,
-  parameterLength: 26,
+  parameterLength: 9,
   schemaUndescribed: 97,
   fieldUndescribed: 361,
   fieldLength: 10,
-  responseLength: 11,
+  responseLength: 4,
 };
 
 describe("the API description follows API-STYLE.md", () => {
@@ -235,6 +235,18 @@ describe("the API description follows API-STYLE.md", () => {
 
   it("uses no em dashes anywhere", () => {
     expect(JSON.stringify(document).includes("\u2014")).toBe(false);
+  });
+
+  it("leaves refusals to the responses", () => {
+    const refusal =
+      /\brefus|`[45]\d\d\b|\b[45]\d\d `?[a-z]+_[a-z_]+|\b(answers?|returns?) `?[45]\d\d\b/i;
+    expect(
+      operations()
+        .filter(({ operation }) =>
+          refusal.test(text(operation.description) ?? ""),
+        )
+        .map(({ key }) => key),
+    ).toEqual([]);
   });
 
   it("links nowhere outside the document", () => {

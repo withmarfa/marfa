@@ -38,11 +38,7 @@ export const MAX_AGREEMENTS_PER_REQUEST = 500;
 
 const CONNECTOR_KEY_ONLY = "The connector's own key only.";
 
-const UNDECLARED_REFUSED =
-  "A top-level field the body does not declare is refused.";
-
-const FENCED =
-  "Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it.";
+const FENCED = "Taken only from the `process` holding a live hold.";
 
 const ProcessSchema = z
   .string()
@@ -122,7 +118,7 @@ const AgreementsInputSchema = z.object({
     .describe("Rows whose records to remove."),
 });
 
-const bodyRefusal = {
+const queryRefusal = {
   400: {
     content: {
       "application/json": {
@@ -133,6 +129,14 @@ const bodyRefusal = {
       },
     },
     description: "A field missing, or one of the wrong shape or past its bound",
+  },
+};
+
+const bodyRefusal = {
+  400: {
+    ...queryRefusal[400],
+    description:
+      "A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare",
   },
 };
 
@@ -166,7 +170,7 @@ const holdRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Take or renew a hold",
-  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers \`409 connector_held\` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
+  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -221,7 +225,7 @@ const releaseHoldRoute = createRoute({
       content: { "application/json": { schema: OkResponseSchema } },
       description: "Released, or never held by this process",
     },
-    ...bodyRefusal,
+    ...queryRefusal,
     ...ownKeyResponses,
   },
 });
@@ -250,7 +254,7 @@ const putStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Replace the state document",
-  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
+  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -296,7 +300,7 @@ const writeAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "Write agreements",
-  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. ${UNDECLARED_REFUSED} A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
+  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -331,7 +335,7 @@ const findAgreementsRoute = createRoute({
   path: "/{id}/agreements/find",
   tags: ["Connectors"],
   summary: "Look up agreements",
-  description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
+  description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

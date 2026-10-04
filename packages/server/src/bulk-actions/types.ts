@@ -69,7 +69,14 @@ export const BulkActionFilterSchema = BulkActionFilterShape.optional();
 const BulkActionBaseSchema = z.object({
   filter: BulkActionFilterSchema,
   dry_run: z.boolean().optional(),
-  max_items: z.number().int().positive().optional(),
+  max_items: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "The most items the action may match. Defaults to 10,000. A value above 50,000 counts as 50,000.",
+    ),
   enable_fanout: z.boolean().optional(),
 });
 

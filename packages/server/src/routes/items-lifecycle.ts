@@ -1,5 +1,4 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -9,13 +8,14 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { writeItem } from "../storage/item-write.js";
+import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
 // ---------------------------------------------------------------------------
 
 const IdParam = z.object({
-  id: z.string().describe("Item id to act on"),
+  id: z.string().describe("The ID of the item."),
 });
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ const restoreItemRoute = createRoute({
   tags: ["Items"],
   summary: "Restore an item",
   description:
-    "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
+    "Restores a trashed item to `active`, along with every item its trash took through a cascading edge such as `parent-of`. Items that were already in the trash before then stay there.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -40,7 +40,7 @@ const restoreItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
       },
-      description: "Item restored",
+      description: "Returns the restored item and its metadata.",
     },
     400: {
       content: {
@@ -53,7 +53,7 @@ const restoreItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: `Idempotency-Key` is malformed.",
     },
     401: {
       content: {
@@ -89,7 +89,7 @@ const transitionItemRoute = createRoute({
   tags: ["Items"],
   summary: "Change an item's state",
   description:
-    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected; restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
+    "Moves the item to `active`, `archived` or `trashed`. Moving to `trashed` deletes the item as `DELETE /items/{id}` does, and moving from `trashed` to `active` restores it as `POST /items/{id}/restore` does.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -98,7 +98,9 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            state: z.enum(["active", "archived", "trashed"]),
+            state: z
+              .enum(["active", "archived", "trashed"])
+              .describe("The state to move the item to."),
           }),
         },
       },
@@ -109,7 +111,7 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
       },
-      description: "Item state changed",
+      description: "Returns the item in its new state, with its metadata.",
     },
     400: {
       content: {
@@ -124,7 +126,7 @@ const transitionItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take.",
+        "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is not a valid state.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
     },
     401: {
       content: {

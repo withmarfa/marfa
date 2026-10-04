@@ -109,7 +109,7 @@ describe("the folder door", () => {
     expect(listed.data.data.map((row) => row.id)).toContain(item.id);
   });
 
-  it("changes a folder at its version, merges a stale change to another setting, and refuses one to the same whatever conflict asks", async () => {
+  it("changes a folder at its version, merges a stale change to another setting, and refuses one to the same, and refuses a conflict parameter as undeclared", async () => {
     const { id } = await folder({ include: ["a"] });
     const changed = await client.updateFolder(id, {
       version: 1,
@@ -143,8 +143,11 @@ describe("the folder door", () => {
       method: "PATCH",
       body: { version: 1, include: ["d"] },
     });
-    expect(asked.status).toBe(409);
-    expect(asked.error?.error.code).toBe("version_conflict");
+    expect(asked.status).toBe(400);
+    expect(asked.error?.error.code).toBe("validation_error");
+    expect(asked.error?.error.details?.["unknown_parameters"]).toEqual([
+      "conflict",
+    ]);
   });
 
   it("refuses a change naming no version or no setting, and one to an id that is not a folder", async () => {

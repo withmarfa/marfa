@@ -34,10 +34,6 @@
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { RESERVED_CLIENT_PREFIX } from "../middleware/undeclared-query-keys.js";
 
-/** The sentence the bulk-action door adds to its published description. */
-export const UNKNOWN_FILTER_FIELD_NOTE =
-  "Refuses a field it doesn't recognize, in the body or in `filter`, unless the name starts with `_`.";
-
 /**
  * What these refusals need from a schema: the names it declares.
  *
