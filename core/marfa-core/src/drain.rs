@@ -545,7 +545,7 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
     let unconfirmed = owed && !confirm(&mut report)?;
-    if !unconfirmed && let Some(why) = read_owed_backs(core)? {
+    if !unconfirmed && let Some(why) = read_owed_backs(core, stop)? {
         report.unavailable = Some(why.reason);
         waited(&mut report, why.retry_after_seconds);
     }
@@ -1636,7 +1636,7 @@ fn unreadable(error: &CoreError) -> Option<Unreadable> {
 /// Every read-back a refusal left owed, tried before anything is sent. One
 /// that fails again stays owed, and one that cannot get through ends the
 /// pass before anything is sent.
-fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
+fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>> {
     let pending = {
         let conn = core.conn()?;
         store::queued_writes(&conn)?
@@ -1649,6 +1649,7 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
             .collect::<Result<Vec<_>>>()?
     };
     for (row, shape) in pending {
+        crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
             if let Some(unread) = reconcile(core, &row)? {
                 return Ok(Some(unread));
@@ -1689,6 +1690,7 @@ fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
     }
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
+        crate::catch_up::refuse_if_stopped(stop)?;
         match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
             Err(
                 error @ (CoreError::Redirected { .. }
@@ -2367,7 +2369,7 @@ mod tests {
         let before = core.queue().unwrap();
         assert_eq!(
             core.drain_until(&AtomicBool::new(true)).unwrap_err(),
-            CoreError::Cancelled
+            CoreError::Canceled
         );
         assert!(server.seen("/items/a").is_empty());
         assert_eq!(core.queue().unwrap(), before);
@@ -2771,7 +2773,11 @@ mod tests {
                 &body.to_string(),
             ))],
         );
-        assert!(read_owed_backs(&core).unwrap().is_none());
+        assert!(
+            read_owed_backs(&core, &AtomicBool::new(false))
+                .unwrap()
+                .is_none()
+        );
         let conn = core.conn().unwrap();
         let moved = store::queued_write(&conn, &dependant.id).unwrap().unwrap();
         assert_eq!(moved.item_id.as_deref(), Some("server"));

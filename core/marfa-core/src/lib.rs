@@ -216,26 +216,24 @@ impl Core {
 
     /// Declares the types the app saves under, each as the JSON a server
     /// lists a type as: its `id`, its `fields`, and whatever else a type
-    /// carries. A copy that has never reached a server checks what it queues
-    /// against these and the types Marfa ships, and the first hydration
+    /// carries. The call is the app's whole set: it replaces every earlier
+    /// declaration, so a type the app no longer declares is no longer held to
+    /// or registered. A copy that has never reached a server checks what it
+    /// queues against these and the types Marfa ships, and a hydration
     /// registers on the instance the ones it does not hold, where the key may.
-    /// A type declared again replaces the earlier declaration. On a copy that
-    /// holds a server's catalog the declaration waits for the next hydration.
+    /// On a copy that holds a server's catalog the set waits for the next
+    /// hydration.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        let mut declared: Vec<String> = store::declared_type_rows(&tx)?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        // The ids of the whole batch are known to each other, so a parent may
+        // The ids of the whole set are known to each other, so a parent may
         // come after its child.
-        for definition in types {
-            if let Some(id) = definition.get("id").and_then(Value::as_str) {
-                declared.push(id.to_string());
-            }
-        }
+        let declared: Vec<String> = types
+            .iter()
+            .filter_map(|definition| definition.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
         let known = |id: &str| {
             declared.iter().any(|held| held == id) || builtin::ships(id).unwrap_or(false)
         };
@@ -243,6 +241,7 @@ impl Core {
         for definition in types {
             rows.push(catalog::declaration(definition, &known)?);
         }
+        store::clear_declared_types(&tx)?;
         for (id, json) in &rows {
             store::declare_type(&tx, id, json)?;
         }
@@ -253,7 +252,8 @@ impl Core {
         Ok(())
     }
 
-    /// The types the app declared, as it declared them, by id.
+    /// The types the app declared, by id, with the empty `fields` and the
+    /// `version` a registration needs filled in where the app left them out.
     pub fn declared_types(&self) -> Result<Vec<Value>> {
         let conn = self.conn()?;
         store::declared_type_rows(&conn)?
@@ -273,7 +273,7 @@ impl Core {
         self.hydrate_with(types, tier, &[])
     }
 
-    /// `hydrate_with`, ended with `Cancelled` soon after `stop` is raised. The
+    /// `hydrate_with`, ended with `Canceled` soon after `stop` is raised. The
     /// copy is then unfinished and refuses reads, as after any hydration that
     /// failed part way; the queue is untouched.
     pub fn hydrate_until(
@@ -398,7 +398,7 @@ impl Core {
         self.catch_up_until(&NEVER_STOPPED)
     }
 
-    /// Ended with `Cancelled` soon after `stop` is raised, keeping the cursor
+    /// Ended with `Canceled` soon after `stop` is raised, keeping the cursor
     /// of the last event applied.
     pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
@@ -531,7 +531,7 @@ impl Core {
         self.drain_until(&NEVER_STOPPED)
     }
 
-    /// Ended with `Cancelled` before the next write is sent once `stop` is
+    /// Ended with `Canceled` before the next write is sent once `stop` is
     /// raised. A write already sent stays sent and unanswered, to be settled
     /// by a later drain under the same key; what the pass had answered stays
     /// answered in the queue.
@@ -2167,6 +2167,38 @@ mod tests {
         assert!(create(serde_json::json!({ "title": 3 })).is_ok());
         assert_eq!(core.declared_types().unwrap().len(), 1);
         assert_eq!(core.declared_types().unwrap()[0]["version"], 0);
+    }
+
+    #[test]
+    fn a_declaration_is_the_whole_set_the_app_holds() {
+        let core = Core::open_in_memory(None).unwrap();
+        let draft = |kind: &str| Draft {
+            r#type: kind.into(),
+            properties: serde_json::json!({ "title": "t" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..Default::default()
+        };
+        core.declare_types(&[serde_json::json!({ "id": "app.recipe", "fields": {} })])
+            .unwrap();
+        assert!(core.create_item(&draft("app.recipe")).is_ok());
+        // The app renames its type: the old one is no longer one it holds a
+        // write to, and no longer one a hydration would register.
+        core.declare_types(&[serde_json::json!({ "id": "app.dish", "fields": {} })])
+            .unwrap();
+        assert!(matches!(
+            core.create_item(&draft("app.recipe")),
+            Err(CoreError::UnknownType { .. })
+        ));
+        assert!(core.create_item(&draft("app.dish")).is_ok());
+        let held: Vec<String> = core
+            .declared_types()
+            .unwrap()
+            .iter()
+            .filter_map(|held| held["id"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(held, ["app.dish"]);
     }
 
     #[test]

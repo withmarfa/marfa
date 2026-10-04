@@ -135,6 +135,34 @@ describe("a copy no server has been named for", () => {
     ]);
   });
 
+  it("holds the app's latest declarations alone", async () => {
+    const device = await offline("save-declared-set");
+    value(await device.declareTypes([RECIPE]));
+    expect(
+      value(
+        await device.create({
+          type: "app.recipe",
+          properties: { title: "Soup" },
+        }),
+      ).kind,
+    ).toBe("create_item");
+    // The app renames its type. A declaration is the whole set, so the old
+    // name is no longer one the copy holds a write to.
+    value(await device.declareTypes([{ id: "app.dish", fields: {} }]));
+    expect(
+      value(await device.declaredTypes()).map((held) => held.id),
+      "a type the app no longer declares was still held",
+    ).toEqual(["app.dish"]);
+    const stale = await device.create({
+      type: "app.recipe",
+      properties: { title: "Soup" },
+    });
+    expect(stale.ok ? "queued" : stale.refusal.code).toBe("unknown_type");
+    expect((await device.create({ type: "app.dish", properties: {} })).ok).toBe(
+      true,
+    );
+  });
+
   it("refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know", async () => {
     const device = await offline("save-declare-refused");
     for (const definition of [

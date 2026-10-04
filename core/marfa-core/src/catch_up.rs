@@ -283,7 +283,7 @@ fn pass_withheld(
 
 pub(crate) fn refuse_if_stopped(stop: &AtomicBool) -> Result<()> {
     if stop.load(Ordering::Relaxed) {
-        Err(CoreError::Cancelled)
+        Err(CoreError::Canceled)
     } else {
         Ok(())
     }
@@ -312,6 +312,7 @@ pub(crate) fn catch_up(
     idle: Duration,
     stop: &AtomicBool,
 ) -> Result<CatchUpReport> {
+    refuse_if_stopped(stop)?;
     start(core)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);

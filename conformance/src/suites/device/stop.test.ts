@@ -128,7 +128,7 @@ describe("stopping a hydration", () => {
       await hydrating.exited();
       expect(hydrating.exitCode(), hydrating.stderr).toBe(UNFINISHED);
       expect(JSON.parse(hydrating.stderr).error.code, hydrating.stderr).toBe(
-        "cancelled",
+        "canceled",
       );
     } finally {
       release();
@@ -191,7 +191,7 @@ describe("stopping a catch-up", () => {
       expect(catching.exitCode(), `${catching.stdout} ${catching.stderr}`).toBe(
         UNFINISHED,
       );
-      expect(JSON.parse(catching.stderr).error.code).toBe("cancelled");
+      expect(JSON.parse(catching.stderr).error.code).toBe("canceled");
       expect(
         Date.now() - raised,
         "the catch-up went on waiting on its stream after the stop",
@@ -246,7 +246,7 @@ describe("stopping a drain", () => {
       release();
       await draining.exited();
       expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
-      expect(JSON.parse(draining.stderr).error.code).toBe("cancelled");
+      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
     } finally {
       release();
       await draining.stop();
@@ -269,5 +269,51 @@ describe("stopping a drain", () => {
       "accepted",
       "accepted",
     ]);
+  });
+});
+
+describe("stopping a call that cannot be stopped at once", () => {
+  it("ends the process on a second Ctrl-C, where a first one waits for the call to notice", async () => {
+    harness = await startHarness("stop-twice");
+    const { server, device } = harness;
+    // A listing that is never answered, so no check is ever reached.
+    server.copyAnswer("GET", "/items", { kind: "stall" });
+    scriptHydration(server, { head: "10" });
+    expect((await device.status()).ok).toBe(true);
+    const hydrating = device.hold([
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            server.requests.filter((request) => request.pathname === "/items")
+              .length,
+            hydrating.stderr,
+          ).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      hydrating.interrupt();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        hydrating.exitCode(),
+        `a first Ctrl-C ended a call that had not yet reached a place to stop: ${hydrating.stderr}`,
+      ).toBeNull();
+      hydrating.interrupt();
+      await vi.waitFor(
+        () => {
+          expect(hydrating.exitCode()).not.toBeNull();
+        },
+        { timeout: 5_000, interval: 25 },
+      );
+      expect(hydrating.exitCode()).toBe(130);
+    } finally {
+      await hydrating.stop();
+    }
   });
 });

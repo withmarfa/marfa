@@ -58,10 +58,14 @@ fn hydrate_inner(
         }
     }
 
+    // Nothing is cleared until the copy is about to be replaced, so a stop
+    // raised before then leaves it as it was.
+    crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http)?;
     let mut view = http.for_view(&fence);
+    crate::catch_up::refuse_if_stopped(stop)?;
     let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
-        register_declared(core, &view, view.catalog()?)?;
+        register_declared(core, &view, view.catalog()?, stop)?;
     if registered_any {
         // A registration changes what the instance's read view certifies, so
         // the head and the catalog read before it are of a view that has gone.
@@ -83,6 +87,7 @@ fn hydrate_inner(
     }
     refuse_unreadable(http, &types)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
+    crate::catch_up::refuse_if_stopped(stop)?;
     {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
@@ -327,6 +332,7 @@ fn register_declared(
     core: &Core,
     http: &Http,
     catalog: WireCatalog,
+    stop: &AtomicBool,
 ) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>, bool)> {
     let mut missing: Vec<(String, String)> = {
         let conn = core.conn()?;
@@ -337,8 +343,10 @@ fn register_declared(
     let mut refused: Vec<UnregisteredType> = Vec::new();
     let mut taken = false;
     while !missing.is_empty() {
-        // A type whose parent is still to come waits for it; where none can
-        // go (a parent the instance refused), the rest go and are told.
+        crate::catch_up::refuse_if_stopped(stop)?;
+        // A type whose parent is still to come waits for it. Only parents
+        // that name each other leave none to go, and then the first goes and
+        // the server answers it.
         let next = missing
             .iter()
             .position(|(_, json)| {

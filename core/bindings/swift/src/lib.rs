@@ -162,7 +162,7 @@ pub struct UnregisteredType {
 }
 
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
-/// after, with `MarfaError.Cancelled`. What the call had taken is consistent:
+/// after, with `MarfaError.Canceled`. What the call had taken is consistent:
 /// a hydration left unfinished refuses reads, a catch-up keeps the cursor it
 /// reached, and a drain leaves what it had not sent queued. A raised `Stop`
 /// stays raised, so a call given one afterwards ends at once.
@@ -742,7 +742,7 @@ pub enum MarfaError {
         message: String,
     },
     /// The `Stop` the call was given was raised before it finished.
-    Cancelled {
+    Canceled {
         message: String,
     },
     Invalid {
@@ -780,7 +780,7 @@ impl MarfaError {
             | MarfaError::WrongServer { message, .. }
             | MarfaError::BytesAbsent { message, .. }
             | MarfaError::ContractMismatch { message, .. }
-            | MarfaError::Cancelled { message }
+            | MarfaError::Canceled { message }
             | MarfaError::Invalid { message } => message,
         }
     }
@@ -875,7 +875,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 write_sent,
                 message,
             },
-            E::Cancelled => MarfaError::Cancelled { message },
+            E::Canceled => MarfaError::Canceled { message },
             E::Invalid(_) => MarfaError::Invalid { message },
         }
     }
@@ -1338,8 +1338,8 @@ impl MarfaCore {
     /// Declares the types this app saves, each a JSON object with its `id`,
     /// its `fields` and whatever else a type carries. A copy that has never
     /// reached a server checks what it queues against them and the types
-    /// Marfa ships, and the first hydration registers the ones the instance
-    /// lacks, where the key may. Declaring a type again replaces it.
+    /// Marfa ships, and a hydration registers the ones the instance
+    /// lacks, where the key may. The call is the app's whole set and replaces every earlier declaration.
     pub fn declare_types(&self, types: Vec<String>) -> Result<(), MarfaError> {
         let parsed = types
             .iter()
@@ -1354,7 +1354,9 @@ impl MarfaCore {
         Ok(self.inner.declare_types(&parsed)?)
     }
 
-    /// The declarations this copy holds, each as the JSON it was made with.
+    /// The declarations this copy holds, each as JSON, with the empty
+    /// `fields` and the `version` a registration needs filled in where the app
+    /// left them out.
     pub fn declared_types(&self) -> Result<Vec<String>, MarfaError> {
         Ok(self
             .inner
@@ -2296,7 +2298,7 @@ mod tests {
     }
 
     #[test]
-    fn a_raised_stop_ends_each_long_call_with_cancelled() {
+    fn a_raised_stop_ends_each_long_call_with_canceled() {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
@@ -2306,16 +2308,16 @@ mod tests {
             stop.raise();
             Some(stop)
         };
-        let cancelled = |error: MarfaError| matches!(error, MarfaError::Cancelled { .. });
-        assert!(cancelled(
+        let canceled = |error: MarfaError| matches!(error, MarfaError::Canceled { .. });
+        assert!(canceled(
             core.hydrate(vec!["core.note".into()], Tier::Library, raised())
                 .unwrap_err()
         ));
-        assert!(cancelled(core.drain(raised()).unwrap_err()));
+        assert!(canceled(core.drain(raised()).unwrap_err()));
         // The witness: given none, the same calls run to their end.
         core.hydrate(vec!["core.note".into()], Tier::Library, Some(Stop::new()))
             .unwrap();
-        assert!(cancelled(core.catch_up(raised()).unwrap_err()));
+        assert!(canceled(core.catch_up(raised()).unwrap_err()));
         core.catch_up(None).unwrap();
         core.drain(None).unwrap();
     }

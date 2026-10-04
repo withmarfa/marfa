@@ -106,7 +106,7 @@ pub enum CoreError {
     /// hydration left unfinished refuses reads, a catch-up keeps the cursor
     /// it reached, and a drain leaves what it had not sent queued.
     #[error("the operation was stopped before it finished")]
-    Cancelled,
+    Canceled,
     #[error("{0}")]
     Invalid(String),
 }

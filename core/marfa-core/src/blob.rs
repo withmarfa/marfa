@@ -287,27 +287,87 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
             "the link door answered a link that is not an absolute URL ({error}): {link}"
         ))
     })?;
-    pull(cache, hash, link, CACHE_MOST, LINK_BODY_BUDGET)
+    pull(cache, hash, link, CACHE_MOST, LINK_IDLE)
 }
 
-/// How long the bytes of one blob may take to arrive once the link has
-/// answered. A link that stops sending would otherwise hold the call.
-const LINK_BODY_BUDGET: Duration = Duration::from_secs(30 * 60);
+/// How long a link may send nothing before the fetch is given up on. A blob
+/// can be large and a link slow, so the whole body has no budget; one that
+/// has stopped sending would otherwise hold the call for good.
+const LINK_IDLE: Duration = Duration::from_secs(60);
 
 /// What a link sends is bounded by what the cache holds: a body past it would
 /// be trimmed the moment it was kept.
-fn pull(cache: &Cache, hash: &str, link: &str, most: u64, within: Duration) -> Result<PathBuf> {
-    let bytes = open(link, within).map_err(|reason| CoreError::BytesAbsent {
+fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<PathBuf> {
+    let bytes = open(link).map_err(|reason| CoreError::BytesAbsent {
         hash: hash.to_string(),
         reason,
     })?;
     cache.keep(
         hash,
         Bounded {
-            inner: bytes,
+            inner: Idle::watching(bytes, idle),
             left: most,
         },
     )
+}
+
+/// A reader whose reads fail once the source has sent nothing for `idle`. The
+/// HTTP client bounds a phase of a call, not a silence in one. The source is
+/// read on a thread of its own, which is left behind when a read gives up.
+struct Idle {
+    chunks: std::sync::mpsc::Receiver<io::Result<Vec<u8>>>,
+    idle: Duration,
+    held: Vec<u8>,
+    at: usize,
+}
+
+impl Idle {
+    fn watching(mut source: impl Read + Send + 'static, idle: Duration) -> Idle {
+        let (sender, chunks) = std::sync::mpsc::sync_channel(4);
+        std::thread::spawn(move || {
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                let chunk = match source.read(&mut buffer) {
+                    Ok(read) => Ok(buffer[..read].to_vec()),
+                    Err(error) => Err(error),
+                };
+                let last = !matches!(&chunk, Ok(bytes) if !bytes.is_empty());
+                if sender.send(chunk).is_err() || last {
+                    return;
+                }
+            }
+        });
+        Idle {
+            chunks,
+            idle,
+            held: Vec::new(),
+            at: 0,
+        }
+    }
+}
+
+impl Read for Idle {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        if self.at == self.held.len() {
+            match self.chunks.recv_timeout(self.idle) {
+                Ok(chunk) => {
+                    self.held = chunk?;
+                    self.at = 0;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "the link went silent",
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+            }
+        }
+        let n = into.len().min(self.held.len() - self.at);
+        into[..n].copy_from_slice(&self.held[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
 }
 
 struct Bounded<R> {
@@ -335,12 +395,11 @@ impl<R: Read> Read for Bounded<R> {
 /// Not through `Http`: it rebuilds a URL from segments and re-encodes them,
 /// which breaks an object store's signature, and it carries the bearer,
 /// which an object store's host must never see.
-fn open(link: &str, within: Duration) -> std::result::Result<impl Read, String> {
+fn open(link: &str) -> std::result::Result<impl Read + Send + 'static, String> {
     let agent: Agent = Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_recv_body(Some(within))
         .build()
         .into();
     let response = agent

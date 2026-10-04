@@ -368,11 +368,11 @@ pub enum TypesCommand {
         id: String,
     },
     /// Declare the types this app saves, so a copy with no server checks what
-    /// it queues against them and the first hydration registers the ones the
+    /// it queues against them and a hydration registers the ones the
     /// instance lacks, where the key may.
     ///
-    /// Marfa's own types need no declaring. Declaring a type again replaces
-    /// its earlier declaration.
+    /// Marfa's own types need no declaring. The call is the app's whole set,
+    /// so it replaces every earlier declaration.
     Declare {
         /// A type definition, or an array of them, as JSON.
         #[arg(
@@ -386,7 +386,8 @@ pub enum TypesCommand {
         #[arg(long, value_name = "PATH")]
         file: Option<PathBuf>,
     },
-    /// The declarations this copy holds, as they were made.
+    /// The declarations this copy holds, with the empty `fields` and the
+    /// `version` a registration needs filled in.
     Declared,
 }
 
@@ -1244,11 +1245,11 @@ fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
 /// every thread made afterwards inherits, and one thread waits for it. That
 /// makes this the first thing a command does, before any thread is made.
 ///
-/// A second Ctrl-C ends the process at once.
+/// A second Ctrl-C ends the process at once, with the status a shell gives
+/// one that died of it.
 fn stop_on_interrupt() {
-    // SAFETY: the set is initialized before it is used, the waiting thread
-    // only stores to an atomic, and the default action is put back before the
-    // signal is let through again.
+    // SAFETY: the set is initialized before it is used, and the waiting thread
+    // only stores to an atomic and then exits the process.
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -1256,10 +1257,12 @@ fn stop_on_interrupt() {
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         std::thread::spawn(move || {
             let mut signal = 0;
+            if libc::sigwait(&set, &mut signal) != 0 {
+                return;
+            }
+            STOP.store(true, std::sync::atomic::Ordering::Relaxed);
             if libc::sigwait(&set, &mut signal) == 0 {
-                STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-                libc::signal(libc::SIGINT, libc::SIG_DFL);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+                libc::_exit(130);
             }
         });
     }

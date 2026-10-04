@@ -575,6 +575,10 @@ impl Http {
             CoreError::Server {
                 status: 409, code, ..
             } if code == "type_already_exists" => Ok(Registration::Held),
+            // A server that failed or asked to be tried later has not refused
+            // the type, so the hydration is tried again rather than reporting
+            // the type as one the key may not register.
+            error if error.is_environmental() => Err(error),
             CoreError::Validation { code, message }
             | CoreError::Forbidden { code, message }
             | CoreError::Server { code, message, .. } => {

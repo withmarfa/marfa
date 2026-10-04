@@ -1329,6 +1329,11 @@ pub fn declare_type(conn: &Connection, id: &str, json: &str) -> Result<(), CoreE
     Ok(())
 }
 
+pub fn clear_declared_types(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM declared_types", [])?;
+    Ok(())
+}
+
 /// Both reads and replacements nest inside a caller's transaction. The
 /// connection is shared immutably, so rusqlite's mutable savepoint guard
 /// cannot represent this scope.

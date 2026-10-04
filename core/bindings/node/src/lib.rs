@@ -918,7 +918,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::WrongServer { .. } => ("wrong_server", error.to_string()),
         E::BytesAbsent { .. } => ("bytes_absent", error.to_string()),
         E::ContractMismatch { .. } => ("contract_mismatch", error.to_string()),
-        E::Cancelled => ("cancelled", error.to_string()),
+        E::Canceled => ("canceled", error.to_string()),
         E::Invalid(message) => ("invalid", message.clone()),
     };
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
@@ -999,7 +999,7 @@ pub struct MarfaCore {
 }
 
 /// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
-/// after, with an error coded `cancelled`. What the call had taken is
+/// after, with an error coded `canceled`. What the call had taken is
 /// consistent: a hydration left unfinished refuses reads, a catch-up keeps
 /// the cursor it reached, and a drain leaves what it had not sent queued. A
 /// raised `Stop` stays raised, so a call given one afterwards ends at once.
@@ -1468,12 +1468,11 @@ impl MarfaCore {
         })
     }
 
-    /// Every item type the copy holds, by id, read from the copy alone.
     /// Declares the types this app saves, each an object with its `id`, its
     /// `fields` and whatever else a type carries. A copy that has never
     /// reached a server checks what it queues against them and the types
-    /// Marfa ships, and the first hydration registers the ones the instance
-    /// lacks, where the key may. Declaring a type again replaces it.
+    /// Marfa ships, and a hydration registers the ones the instance
+    /// lacks, where the key may. The call is the app's whole set and replaces every earlier declaration.
     #[napi]
     pub fn declare_types(
         &self,
@@ -1482,12 +1481,15 @@ impl MarfaCore {
         self.inner.declare_types(&types).map_err(failure)
     }
 
-    /// The declarations this copy holds, as they were made.
+    /// The declarations this copy holds, by id, with the empty `fields` and
+    /// the `version` a registration needs filled in where the app left them
+    /// out.
     #[napi(ts_return_type = "Record<string, unknown>[]")]
     pub fn declared_types(&self) -> Result<Vec<serde_json::Value>> {
         self.inner.declared_types().map_err(failure)
     }
 
+    /// Every item type the copy holds, by id, read from the copy alone.
     #[napi]
     pub fn item_types(&self) -> Result<Vec<ItemType>> {
         Ok(self

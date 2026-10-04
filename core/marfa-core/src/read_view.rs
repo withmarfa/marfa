@@ -662,7 +662,7 @@ mod tests {
             stop.store(true, Ordering::Relaxed);
             assert!(matches!(
                 hydrating.join().unwrap(),
-                Err(CoreError::Cancelled)
+                Err(CoreError::Canceled)
             ));
         });
         assert_eq!(
@@ -678,6 +678,79 @@ mod tests {
             .unwrap();
         assert_eq!(report.pages, 1);
         assert!(store::hydrated(&core.conn().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn a_hydration_stopped_before_it_starts_changes_nothing() {
+        use crate::scripted::*;
+        use std::sync::atomic::AtomicBool;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        core.declare_types(&[serde_json::json!({ "id": "app.note", "fields": {} })])
+            .unwrap();
+        let saved = core
+            .create_item(&crate::Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "t", "body": "b" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let types = ["core.note".to_string()];
+        assert_eq!(
+            core.hydrate_until(&types, crate::Tier::Library, &[], &AtomicBool::new(true))
+                .unwrap_err(),
+            CoreError::Canceled
+        );
+        assert_eq!(server.asked(), 0, "a stopped hydration went to the server");
+        assert_eq!(core.status().unwrap().hydration, crate::Hydration::Never);
+        // The copy still saves and still reads what it saved.
+        assert!(
+            core.get(saved.item_id.as_deref().unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            core.create_item(&crate::Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "u", "body": "v" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_server_failing_a_registration_fails_the_hydration_rather_than_refusing_the_type() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        catalog(&server);
+        server.on(
+            "/keys/current",
+            vec![certified(json(
+                200,
+                r#"{"type_permissions":{"core.note":"read"}}"#,
+            ))],
+        );
+        server.on(
+            "/events",
+            vec![stream(vec![copy_marker("stream_cursor", "10")], Then::End)],
+        );
+        core.declare_types(&[serde_json::json!({ "id": "app.note", "fields": {} })])
+            .unwrap();
+        server.on("/types", vec![refusal(503, "unavailable")]);
+        let failed = core
+            .hydrate(&["core.note".into()], crate::Tier::Library)
+            .unwrap_err();
+        assert!(failed.is_environmental(), "{failed:?}");
+        assert!(store::hydrated(&core.conn().unwrap()).is_ok());
+        assert_eq!(core.status().unwrap().hydration, crate::Hydration::Never);
     }
 
     #[test]
@@ -706,7 +779,7 @@ mod tests {
             let raised = std::time::Instant::now();
             stop.store(true, Ordering::Relaxed);
             let ended = catching.join().unwrap();
-            assert!(matches!(ended, Err(CoreError::Cancelled)), "{ended:?}");
+            assert!(matches!(ended, Err(CoreError::Canceled)), "{ended:?}");
             assert!(raised.elapsed() < std::time::Duration::from_secs(3));
         });
         // The cursor is where it was, and the copy is still whole.

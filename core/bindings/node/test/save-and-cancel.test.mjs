@@ -192,7 +192,7 @@ test("an app saves with no server, is checked against its declared types, and jo
   assert.equal(joined.queue().length, 1);
 });
 
-test("a hydration given a stop that is raised in flight ends cancelled and leaves an unfinished copy", async (t) => {
+test("a hydration given a stop that is raised in flight ends canceled and leaves an unfinished copy", async (t) => {
   const server = await serving({ slowPages: true });
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
@@ -202,7 +202,7 @@ test("a hydration given a stop that is raised in flight ends cancelled and leave
   stop.raise();
   const error = await refusal(pending);
   assert.equal(/** @type {{ code?: string }} */ (error).code, "GenericFailure");
-  assert.match(error.message, /^cancelled/);
+  assert.match(error.message, /^canceled/);
   assert.equal(server.seen.filter((line) => line === "GET /items").length, 1);
   assert.notEqual(core.status().hydration, Hydration.Complete);
   assert.throws(() => core.get("x"), /hydration_incomplete/);
@@ -211,7 +211,7 @@ test("a hydration given a stop that is raised in flight ends cancelled and leave
   assert.equal(core.status().hydration, Hydration.Complete);
 });
 
-test("a catch-up given a stop that is raised in flight ends cancelled", async (t) => {
+test("a catch-up given a stop that is raised in flight ends canceled", async (t) => {
   const server = await serving();
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
@@ -222,10 +222,10 @@ test("a catch-up given a stop that is raised in flight ends cancelled", async (t
   await sleep(200);
   stop.raise();
   const error = await refusal(pending);
-  assert.match(error.message, /^cancelled/);
+  assert.match(error.message, /^canceled/);
 });
 
-test("a drain given a stop that is raised in flight ends cancelled and leaves the rest queued", async (t) => {
+test("a drain given a stop that is raised in flight ends canceled and leaves the rest queued", async (t) => {
   const server = await serving({ slowWrites: true });
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
@@ -237,7 +237,7 @@ test("a drain given a stop that is raised in flight ends cancelled and leaves th
   await sleep(150);
   stop.raise();
   const error = await refusal(pending);
-  assert.match(error.message, /^cancelled/);
+  assert.match(error.message, /^canceled/);
   const sent = server.seen.filter((line) => line === "POST /items").length;
   assert.equal(sent, 1, "a write was sent after the stop");
   const untouched = core
