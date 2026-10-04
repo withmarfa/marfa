@@ -366,6 +366,8 @@ describe("what a change to a type does to rows already stored", () => {
   it("leaves a trashed row out of the index when its type changes", async () => {
     await registerType("demo.binned", { blurb: { type: "string" } });
     const id = await create("demo.binned", { blurb: "Echidna spines" });
+    // The witness: the row is matchable before it is trashed.
+    expect(await found("echidna")).toContain(id);
     const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
       key: ctx.workingKey,
     });

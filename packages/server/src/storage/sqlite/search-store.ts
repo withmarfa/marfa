@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
-  isSubtypeOf,
+  MAX_RESOLUTION_DEPTH,
+  getTypeSchema,
   listTypes,
   parseFilter,
   typePatternToSql,
@@ -70,6 +71,22 @@ async function replaceIndexRow(
 }
 
 /**
+ * Whether `id` reaches `root` through declared parents. Unlike
+ * `isSubtypeOf` it never throws: a type whose chain loops or runs too deep
+ * simply does not reach it, so one broken type cannot stop another's change.
+ */
+function inheritsFrom(id: string, root: string): boolean {
+  const seen = new Set<string>();
+  let current = getTypeSchema(id)?.parent;
+  while (current && !seen.has(current) && seen.size < MAX_RESOLUTION_DEPTH) {
+    if (current === root) return true;
+    seen.add(current);
+    current = getTypeSchema(current)?.parent;
+  }
+  return false;
+}
+
+/**
  * Indexes again, under the registry as it now stands, every row of `typeId`
  * and of each type that inherits from it. A row's indexed text is decided
  * when it is written, so a change to a type's fields leaves the rows already
@@ -86,7 +103,7 @@ export async function reindexTypeRows(
     typeId,
     ...listTypes()
       .map((schema) => schema.id)
-      .filter((id) => id !== typeId && isSubtypeOf(id, typeId)),
+      .filter((id) => id !== typeId && inheritsFrom(id, typeId)),
   ];
   for (const type of affected) {
     const rows = await db.all<{ id: string; properties: string }>(sql`
@@ -95,11 +112,8 @@ export async function reindexTypeRows(
     `);
     for (const row of rows) {
       const properties = JSON.parse(row.properties) as Record<string, unknown>;
-      await replaceIndexRow(
-        db,
-        row.id,
-        extractSearchableText(properties, type),
-      );
+      const text = extractSearchableText(properties, type);
+      await replaceIndexRow(db, row.id, text);
     }
   }
 }
