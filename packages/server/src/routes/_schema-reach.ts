@@ -11,10 +11,25 @@
  * map, and write on the edge type's id and reverse name in the edge map,
  * the names a registration claims. `schema-door-census.test.ts` fails on a
  * changing door that does not.
+ *
+ * **A type's replacement is the one door two permissions open.** The key
+ * that registered a type evolves it with `metadata.types:write`, within what
+ * {@link evolutionOf} allows, and `schema.write` still opens
+ * every replacement. Naming a parent is a reach of its own
+ * ({@link requireParentReach}).
  */
+import {
+  ErrorCode,
+  MarfaError,
+  TYPE_REGISTRY,
+  declaredDescendants,
+} from "@withmarfa/shared";
+import type { TypeSchema } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  holdsMetadataPermission,
+  holdsPermission,
   requireEdgePermission,
   requireMetadataPermission,
   requirePermission,
@@ -22,10 +37,21 @@ import {
   standingPermission,
   standingRule,
 } from "../middleware/auth.js";
+import { evolutionOf } from "./_type-evolution.js";
 
 /** Asked of every caller of a door that replaces or deletes a type or an
  *  edge type, before the request is read. */
 export const changesSchema = standingPermission("schema.write");
+
+/** Asked of every caller of the type replacement door: `schema.write`, or
+ *  else the scope that registers types. What the replacement changes is
+ *  asked once it is read ({@link requireTypeReplacement}). */
+export const replacesType = standingRule(
+  "schema.write or metadata.types:write",
+  (c) => {
+    admitTypeReplacement(c);
+  },
+);
 
 /** Asked of every caller of the type registration door. */
 export const registersType = standingRule("metadata.types:write", (c) => {
@@ -40,9 +66,23 @@ export const registersEdgeType = standingRule(
   },
 );
 
-/** A registration takes the metadata scope; a replacement or a delete takes
- *  `schema.write`. */
-export type SchemaDoor = "register" | "change";
+/** A registration takes the metadata scope; a delete takes `schema.write`; a
+ *  type's replacement takes either, as {@link admitTypeReplacement} says. */
+export type SchemaDoor = "register" | "change" | "replace";
+
+/** Admit a key to the type replacement door on `schema.write`, or on the
+ *  types scope when it holds no `schema.write`. A key holding neither is
+ *  told the permission that opens every replacement. */
+function admitTypeReplacement(c: Context<AppEnv>): void {
+  if (
+    !holdsPermission(c, "schema.write") &&
+    holdsMetadataPermission(c, "types", "write")
+  ) {
+    requireSchemaRegistration(c, "types");
+    return;
+  }
+  requirePermission(c, "schema.write");
+}
 
 /** The permission half for a registration: the registry's metadata scope,
  *  which `registersType` and `registersEdgeType` ask before the request is
@@ -60,6 +100,7 @@ function requireDoorPermission(
   door: SchemaDoor,
 ): void {
   if (door === "register") requireSchemaRegistration(c, registry);
+  else if (door === "replace" && registry === "types") admitTypeReplacement(c);
   else requirePermission(c, "schema.write");
 }
 
@@ -71,6 +112,86 @@ export function requireTypeSchemaWrite(
 ): void {
   requireDoorPermission(c, "types", door);
   requireTypeAccess(c, id, "write");
+}
+
+/**
+ * Admit the replacement of the type `stored` for `next`, or refuse it `403`.
+ *
+ * A key holding `schema.write` may make any replacement. A key admitted on
+ * `metadata.types:write` alone may add optional fields whose names no stored
+ * row of the type or of a subtype holds, and change what
+ * {@link evolutionOf} leaves free. Any other change is refused `forbidden`
+ * naming the members that need `schema.write`. A parent the replacement
+ * changes is held to the key's reach on top of that, whichever permission
+ * admitted it.
+ *
+ * `heldBy` answers which of the names some row of the given types holds a
+ * value under, in any lifecycle state.
+ */
+export async function requireTypeReplacement(
+  c: Context<AppEnv>,
+  stored: TypeSchema,
+  next: TypeSchema,
+  heldBy: (types: string[], names: string[]) => Promise<string[]>,
+): Promise<void> {
+  admitTypeReplacement(c);
+  if (!holdsPermission(c, "schema.write")) {
+    const { needsSchemaWrite, additions } = evolutionOf(stored, next);
+    const held =
+      additions.length === 0
+        ? []
+        : await heldBy(
+            [stored.id, ...declaredDescendants(stored.id)],
+            additions,
+          );
+    const changes = [
+      ...needsSchemaWrite,
+      ...held.map((name) => `fields.${name}`),
+    ].sort();
+    if (changes.length > 0) {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        `Changing ${changes.join(", ")} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored row holds a value under, and change the label, description, display hints and version.`,
+        { required_scope: "schema.write", changes },
+      );
+    }
+  }
+  if (next.parent !== undefined && next.parent !== stored.parent) {
+    requireParentReach(c, next.parent);
+  }
+}
+
+/**
+ * Whether an identifier names a type this instance treats as locked.
+ *
+ * Reads the live registry rather than a set compiled from the shipped arrays,
+ * because the platform vocabulary is seeded data now: an instance can hold a
+ * type the running build never shipped, and locking has to follow what the
+ * instance actually has. `TYPE_REGISTRY` is the platform map — a runtime
+ * registration lives in the runtime overlay and never appears in it — so
+ * membership is exactly the "shipped, not yours to edit" question.
+ *
+ * The lock spans core, connector and system alike. A connector type is
+ * no more mutable than a core one.
+ */
+export function isLockedPlatformType(id: string): boolean {
+  return TYPE_REGISTRY.has(id);
+}
+
+/**
+ * Admit naming `parent` for a type, or refuse it `403 type_not_permitted`
+ * naming the parent.
+ *
+ * **Write, not read, on the parent.** A type that names a parent stops the
+ * parent being deleted (`409 type_has_subtypes`), which changes what the
+ * parent's owner can do, and a read grant does not let a key do that. A
+ * platform-shipped parent is exempt: no key can delete one, and connectors
+ * subtype them. The check does not ask whether the parent exists, so a key
+ * is not told by this door which identifiers are held.
+ */
+export function requireParentReach(c: Context<AppEnv>, parent: string): void {
+  if (isLockedPlatformType(parent)) return;
+  requireTypeAccess(c, parent, "write");
 }
 
 /** Admit a change to the edge type these names belong to, or refuse it

@@ -20,7 +20,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 50. WHEN a `type` filter names a registered concrete type and the credential may read neither it nor any type under it, the server MUST refuse the request `403 type_not_permitted`, with `details.grant` naming the type and the level asked, on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and each entry of `GET /events`'s `type` list.
 
-    Reason: an empty page answers "nothing here" about a type that is registered, so it tells a caller nothing it can act on, while the write doors already answer the same credential and the same type `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types.md` 35): an unregistered type is already told from a registered one (1). An item named by id keeps answering as a missing one when its type is unreadable, because there the caller named a row and not a type.
+    Reason: an empty page answers "nothing here" about a type that is registered, so it tells a caller nothing it can act on, while the write doors already answer the same credential and the same type `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types.md` 48): an unregistered type is already told from a registered one (1). An item named by id keeps answering as a missing one when its type is unreadable, because there the caller named a row and not a type.
 
     Tests: `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› the same type is served to a key that reads it, on every door but the bulk action`, `› GET /events holds each entry of a list to the rule`, `› refuses the same type to a key that reads nothing under it`.
 

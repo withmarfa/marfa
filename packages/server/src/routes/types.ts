@@ -7,7 +7,6 @@ import {
   directChildrenOf,
   maxDescendantDepth,
   listTypes,
-  TYPE_REGISTRY,
   validateTypeSchema,
   isValidTypeIdentifier,
   classifyNamespace,
@@ -31,7 +30,11 @@ import {
 import { assertParentChain } from "./_parent-chain.js";
 import {
   changesSchema,
+  isLockedPlatformType,
   registersType,
+  replacesType,
+  requireParentReach,
+  requireTypeReplacement,
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
 import { MergePolicySchema, pageOf } from "./_schemas.js";
@@ -39,23 +42,6 @@ import { MergePolicySchema, pageOf } from "./_schemas.js";
 // ---------------------------------------------------------------------------
 // Constants & helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Whether an identifier names a type this instance treats as locked.
- *
- * Reads the live registry rather than a set compiled from the shipped arrays,
- * because the platform vocabulary is seeded data now: an instance can hold a
- * type the running build never shipped, and locking has to follow what the
- * instance actually has. `TYPE_REGISTRY` is the platform map — a runtime
- * registration lives in the runtime overlay and never appears in it — so
- * membership is exactly the "shipped, not yours to edit" question.
- *
- * The lock spans core, connector and system alike. A connector type is
- * no more mutable than a core one.
- */
-function isLockedPlatformType(id: string): boolean {
-  return TYPE_REGISTRY.has(id);
-}
 
 /**
  * How `POST /types` and `PUT /types/:id` phrase a rejected chain.
@@ -417,7 +403,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -467,7 +453,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
+        "`forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on the `parent` the type names (`details.grant` names it).",
     },
     409: {
       content: {
@@ -498,7 +484,7 @@ const updateTypeRoute = createRoute({
   method: "put",
   path: "/{id}",
   middleware: [
-    changesSchema,
+    replacesType,
     (c: Context<AppEnv>, next: Next) => {
       // The path parameter, before the route's own validator has run: the
       // router matched this route on it, so it is present.
@@ -518,14 +504,14 @@ const updateTypeRoute = createRoute({
           `Type "${id}" not found`,
         );
       }
-      requireTypeSchemaWrite(c, "change", id);
+      requireTypeSchemaWrite(c, "replace", id);
       return next();
     },
   ] as const,
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write; core types are immutable and return 403. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -581,7 +567,7 @@ const updateTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
+        "`forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only the second and the replacement needs `schema.write` (`details.changes` names what). `core_type_immutable`: the identifier names a platform-shipped type. `type_not_permitted`: the type map does not grant write on the identifier or on a new `parent` (`details.grant` names it).",
     },
     404: {
       content: {
@@ -781,6 +767,7 @@ export function typeRoutes(storage: Storage) {
           }
 
           if (schema.parent) {
+            requireParentReach(c, schema.parent);
             validateParentChain(schema.id, schema.parent);
           }
           if (getTypeSchema(schema.id)) {
@@ -818,7 +805,8 @@ export function typeRoutes(storage: Storage) {
       const updated = await runAuditedTransaction(
         storage,
         async () => {
-          if (!getTypeSchema(id)) {
+          const stored = getTypeSchema(id);
+          if (!stored) {
             throw new MarfaError(
               ErrorCode.TYPE_NOT_FOUND,
               `Type "${id}" not found`,
@@ -830,6 +818,9 @@ export function typeRoutes(storage: Storage) {
           }
 
           const schema = result.data;
+          await requireTypeReplacement(c, stored, schema, (types, names) =>
+            storage.types.propertyNamesHeld(types, names),
+          );
           if (schema.parent) {
             // Measured on the type as it stands, before the update lands, which
             // is the subtree that would move with it.
