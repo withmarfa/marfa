@@ -1014,9 +1014,15 @@ export interface VersionStore {
     properties: Record<string, unknown>[];
     cursor: string | null;
   }>;
+  /**
+   * Items holding more than `threshold` snapshots, in item id order, the
+   * page after `afterItemId` when one is given. The id order lets a sweep
+   * reach every item however many keep their history.
+   */
   listThinningCandidates(
     threshold: number,
     limit: number,
+    afterItemId?: string,
   ): Promise<
     {
       itemId: string;
