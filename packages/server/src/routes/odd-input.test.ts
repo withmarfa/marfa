@@ -1,8 +1,5 @@
 /**
  * Input no person would type is refused `400`, never answered `500`.
- *
- * Every case first writes the nearest accepted input, so a refusal cannot be
- * a door that was never reaching the write at all.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -54,37 +51,58 @@ async function newItem(): Promise<string> {
 }
 
 describe("JSON nesting depth", () => {
-  it("stores a body at the limit and refuses one past it, on a create", async () => {
-    const at = `{"type":"core.note","properties":{"body":"x","deep":${nested(MAX_JSON_DEPTH - 2)}}}`;
-    expect((await send("POST", "/items", at)).status).toBe(201);
-
-    const past = `{"type":"core.note","properties":{"body":"x","deep":${nested(MAX_JSON_DEPTH - 1)}}}`;
-    const res = await send("POST", "/items", past);
-    expect(res.status).toBe(400);
-    expect(await code(res)).toBe("validation_error");
-  });
-
-  it("refuses 1,000 levels on a create and on a patch", async () => {
+  it("accepts the depth limit and refuses deeper item, extension and bulk bodies", async () => {
     const id = await newItem();
-    const create = await send(
-      "POST",
-      "/items",
-      `{"type":"core.note","properties":{"body":"x","deep":${nested(1000)}}}`,
-    );
-    expect(create.status).toBe(400);
-    const patch = await send(
-      "PATCH",
-      `/items/${id}`,
-      `{"properties":{"deep":${nested(1000)}}}`,
-    );
-    expect(patch.status).toBe(400);
-  });
-
-  it("refuses 1,200 levels on the extensions door", async () => {
-    const id = await newItem();
-    const res = await send("PUT", `/items/${id}/extensions/odd`, nested(1200));
-    expect(res.status).toBe(400);
-    expect(await code(res)).toBe("validation_error");
+    const doors = [
+      {
+        method: "POST",
+        path: "/items",
+        status: 201,
+        body: (depth: number) =>
+          `{"type":"core.note","properties":{"body":"x","deep":${nested(depth - 2)}}}`,
+      },
+      {
+        method: "PATCH",
+        path: `/items/${id}`,
+        status: 200,
+        body: (depth: number, version: number) =>
+          `{"version":${String(version)},"properties":{"deep":${nested(depth - 2)}}}`,
+      },
+      {
+        method: "PUT",
+        path: `/items/${id}/extensions/odd`,
+        status: 200,
+        body: (depth: number) => nested(depth),
+      },
+      {
+        method: "POST",
+        path: "/items/bulk",
+        status: 200,
+        body: (depth: number) =>
+          `{"items":[{"type":"core.note","properties":{"body":"x","deep":${nested(depth - 4)}}}]}`,
+      },
+    ];
+    for (const door of doors) {
+      const accepted = await send(
+        door.method,
+        door.path,
+        door.body(MAX_JSON_DEPTH, 1),
+      );
+      expect(accepted.status, door.path).toBe(door.status);
+      if (door.path === "/items/bulk") {
+        expect(await accepted.json()).toMatchObject({
+          counts: { created: 1, errored: 0 },
+        });
+      }
+      for (const depth of [MAX_JSON_DEPTH + 1, 1000]) {
+        const res = await send(door.method, door.path, door.body(depth, 2));
+        expect(
+          res.status,
+          `${door.method} ${door.path}, depth ${String(depth)}`,
+        ).toBe(400);
+        expect(await code(res)).toBe("validation_error");
+      }
+    }
   });
 
   it("does not count brackets inside a string", async () => {
@@ -115,7 +133,7 @@ describe("a search query holding NUL", () => {
 });
 
 describe("tags", () => {
-  it("are non-empty, not blank and bounded, on every door that takes one", async () => {
+  it("are non-empty, not blank and bounded, on item create, tag and metadata writes", async () => {
     const id = await newItem();
     const fine = "a".repeat(MAX_TAG_LENGTH);
     expect(
@@ -126,6 +144,23 @@ describe("tags", () => {
         })
       ).status,
     ).toBe(200);
+
+    for (const [method, path, body, status] of [
+      [
+        "POST",
+        "/items",
+        { type: "core.note", properties: { body: "x" }, tags: [fine] },
+        201,
+      ],
+      ["PUT", `/items/${id}/metadata`, { tags: [fine] }, 200],
+      ["PATCH", `/items/${id}/metadata`, { tags: [fine] }, 200],
+    ] as const) {
+      expect(
+        (await request(ctx.app, method, path, { key: ctx.workingKey, body }))
+          .status,
+        path,
+      ).toBe(status);
+    }
 
     const bad = ["", "   ", "a".repeat(MAX_TAG_LENGTH + 1)];
     for (const tag of bad) {
@@ -155,7 +190,7 @@ describe("tags", () => {
 });
 
 describe("property names", () => {
-  it("must not be empty, on every door that writes properties", async () => {
+  it("must not be empty, on item create and patch", async () => {
     const id = await newItem();
     const withName = (name: string) => ({ body: "x", [name]: 1 });
     const fine = await request(ctx.app, "PATCH", `/items/${id}`, {
@@ -164,6 +199,14 @@ describe("property names", () => {
     });
     expect(fine.status).toBe(200);
 
+    expect(
+      (
+        await request(ctx.app, "POST", "/items", {
+          key: ctx.workingKey,
+          body: { type: "core.note", properties: withName("named") },
+        })
+      ).status,
+    ).toBe(201);
     const doors: [string, string, unknown][] = [
       ["POST", "/items", { type: "core.note", properties: withName("") }],
       ["PATCH", `/items/${id}`, { version: 2, properties: withName("") }],
@@ -201,5 +244,73 @@ describe("the bulk-action door", () => {
     const named = await act({ action: "update_properties", patch: { "": 1 } });
     expect(named.status).toBe(400);
     expect(await code(named)).toBe("validation_error");
+  });
+});
+
+describe("bulk items and folder defaults", () => {
+  it("accepts valid tags and property names and refuses invalid ones on each write", async () => {
+    const folder = await request(ctx.app, "POST", "/folders", {
+      key: ctx.workingKey,
+      body: { title: "odd input" },
+    });
+    expect(folder.status).toBe(201);
+    const { item } = (await folder.json()) as { item: { id: string } };
+    const doors = [
+      {
+        method: "POST",
+        path: "/items/bulk",
+        status: 200,
+        body: (fields: object) => ({
+          items: [{ type: "core.note", ...fields }],
+        }),
+      },
+      {
+        method: "POST",
+        path: "/folders",
+        status: 201,
+        body: (fields: object) => ({
+          title: "odd input",
+          defaults: fields,
+        }),
+      },
+      {
+        method: "PATCH",
+        path: `/folders/${item.id}`,
+        status: 200,
+        body: (fields: object, version: number) => ({
+          version,
+          defaults: fields,
+        }),
+      },
+    ];
+    for (const door of doors) {
+      const valid = {
+        tags: ["a".repeat(MAX_TAG_LENGTH)],
+        properties: { body: "x" },
+      };
+      const accepted = await request(ctx.app, door.method, door.path, {
+        key: ctx.workingKey,
+        body: door.body(valid, 1),
+      });
+      expect(accepted.status, door.path).toBe(door.status);
+      if (door.path === "/items/bulk") {
+        expect(await accepted.json()).toMatchObject({
+          counts: { created: 1, errored: 0 },
+        });
+      }
+      for (const invalid of [
+        { ...valid, tags: [""] },
+        { ...valid, tags: ["   "] },
+        { ...valid, tags: ["a".repeat(MAX_TAG_LENGTH + 1)] },
+        { ...valid, properties: { "": 1 } },
+      ]) {
+        const refused = await request(ctx.app, door.method, door.path, {
+          key: ctx.workingKey,
+          body: door.body(invalid, 2),
+        });
+        expect(refused.status, `${door.method} ${door.path}`).toBe(400);
+        expect(await code(refused)).toBe("validation_error");
+      }
+    }
   });
 });
