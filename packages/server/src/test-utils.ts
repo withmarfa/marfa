@@ -1169,3 +1169,33 @@ export async function withSecondStore(
   ctx.blobs.byId = (id) => all.find((store) => store.id === id);
   return { second, stores: ctx.blobs };
 }
+
+/**
+ * Commit `change` the first time the app opens a transaction after this is
+ * called, and report whether it fired: the latest moment a check made before
+ * that transaction could have run, so a door that judges outside its write
+ * judges the state as it was before `change`.
+ */
+export function raceTheNextTransaction(
+  storage: Storage,
+  change: () => Promise<void>,
+): { fired: () => boolean; restore: () => void } {
+  const original = storage.runInTransaction.bind(storage);
+  let fired = false;
+  storage.runInTransaction = async <T>(
+    fn: () => T | Promise<T>,
+    options?: { retainCommitHooksOnUncertain?: boolean },
+  ): Promise<T> => {
+    if (!fired) {
+      fired = true;
+      await change();
+    }
+    return await original(fn, options);
+  };
+  return {
+    fired: () => fired,
+    restore: () => {
+      storage.runInTransaction = original;
+    },
+  };
+}
