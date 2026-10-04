@@ -499,7 +499,7 @@ const dropBlobLocationRoute = createRoute({
   method: "delete",
   path: "/{hash}/locations/{store}",
   tags: ["Blobs"],
-  summary: "Delete a blob location",
+  summary: "Delete a blob's copy in a store",
   description:
     "Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.",
   security: [{ bearerAuth: [] }],

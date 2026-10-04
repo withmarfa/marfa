@@ -162,7 +162,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update an item's tags
+         * Merge tags into an item
          * @description Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.
          */
         patch: operations["mergeItemMetadata"];
@@ -364,7 +364,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Postpone tombstone settling
+         * Move tombstones' settled time
          * @description Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.
          */
         post: operations["settleTombstones"];
@@ -679,7 +679,7 @@ export interface paths {
         };
         /**
          * List occurrences
-         * @description Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated, worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read, not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.
+         * @description Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated. That is worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read, not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.
          */
         get: operations["listOccurrences"];
         put?: never;
@@ -841,7 +841,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete a blob location
+         * Delete a blob's copy in a store
          * @description Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.
          */
         delete: operations["dropBlobLocation"];
@@ -990,13 +990,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List inbound endpoints
+         * List webhook endpoints
          * @description Newest first, retired ones included, each address redacted. The connector's own key or the operator key.
          */
         get: operations["listInboundEndpoints"];
         put?: never;
         /**
-         * Create an inbound endpoint
+         * Create a webhook endpoint
          * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
          */
         post: operations["createInboundEndpoint"];
@@ -1017,7 +1017,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Retire an inbound endpoint
+         * Retire a webhook endpoint
          * @description Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
          */
         delete: operations["retireInboundEndpoint"];
@@ -1054,7 +1054,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a delivery body
+         * Get an inbound delivery's body
          * @description The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.
          */
         get: operations["getInboundDeliveryBody"];
@@ -1118,18 +1118,18 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get connector state
+         * Get the state document
          * @description The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.
          */
         get: operations["getConnectorState"];
         /**
-         * Replace connector state
+         * Replace the state document
          * @description Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. A top-level field the body does not declare is refused. The connector's own key only.
          */
         put: operations["replaceConnectorState"];
         post?: never;
         /**
-         * Delete connector state
+         * Delete the state document
          * @description Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
          */
         delete: operations["clearConnectorState"];
@@ -1265,7 +1265,7 @@ export interface paths {
          *
          *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.
          *
-         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it) and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
+         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it), and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
          */
         post: operations["createKey"];
         delete?: never;
@@ -1434,7 +1434,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export the instance
+         * Export items and edges
          * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, and `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Refuses a query parameter it doesn't recognize, unless the name starts with `_`.
          */
         get: operations["exportData"];
@@ -1528,7 +1528,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Redeliver a delivery
+         * Redeliver a failed delivery
          * @description Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.
          */
         post: operations["redeliverWebhookDelivery"];
@@ -4616,7 +4616,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemWithMetadata"] & {
-                        /** @description What the server did, present only when this write resolved a conflict. `conflicted_copy_id` names the sibling carrying the losing values, the only place it is reported, since no route says what a write created. */
+                        /** @description What the server did, present only when this write resolved a conflict. `conflicted_copy_id` names the sibling carrying the losing values. This is the only place it is reported, since no route says what a write created. */
                         conflict_resolution?: {
                             fields: string[];
                             strategy: {
@@ -5805,7 +5805,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection`; revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
+            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` (revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner), or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

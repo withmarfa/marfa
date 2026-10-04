@@ -103,9 +103,12 @@ const PUBLIC_TAGS = [
   { name: "Metadata", description: "An item's tags, and the tags in use." },
   {
     name: "Extensions",
-    description: "Documents an app attaches to an item, one per namespace.",
+    description: "JSON objects attached to an item, one per namespace.",
   },
-  { name: "Edges", description: "Typed links from one item to another." },
+  {
+    name: "Edges",
+    description: "Typed, directed relationships between items.",
+  },
   {
     name: "Types",
     description:
@@ -116,7 +119,10 @@ const PUBLIC_TAGS = [
     description:
       "The types edges can have, each with its cardinality and cascade rule.",
   },
-  { name: "Blobs", description: "Files, stored by the hash of their bytes." },
+  {
+    name: "Blobs",
+    description: "Bytes stored by content hash, and the stores that hold them.",
+  },
   {
     name: "Folders",
     description: "A folder's settings, held as a `system.folder` item.",
@@ -134,7 +140,7 @@ const PUBLIC_TAGS = [
   {
     name: "Connectors",
     description:
-      "Processes outside the server that bring data in: their registration, state, runs and inbound deliveries.",
+      "Processes outside the server that read and write on your behalf, and what the instance keeps for them.",
   },
   {
     name: "Access",

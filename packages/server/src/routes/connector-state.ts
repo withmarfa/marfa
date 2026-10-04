@@ -234,7 +234,7 @@ const getStateRoute = createRoute({
   method: "get",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Get connector state",
+  summary: "Get the state document",
   description: `The state document of the registration's source, which a later key with the same source reads too. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
@@ -252,7 +252,7 @@ const putStateRoute = createRoute({
   method: "put",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Replace connector state",
+  summary: "Replace the state document",
   description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -279,7 +279,7 @@ const clearStateRoute = createRoute({
   method: "delete",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Delete connector state",
+  summary: "Delete the state document",
   description:
     "Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],

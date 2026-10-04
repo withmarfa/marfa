@@ -433,7 +433,7 @@ const createEndpointRoute = createRoute({
   method: "post",
   path: "/{id}/endpoints",
   tags: ["Connectors"],
-  summary: "Create an inbound endpoint",
+  summary: "Create a webhook endpoint",
   description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints, and one more is refused \`409 conflict\`.`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -463,7 +463,7 @@ const listEndpointsRoute = createRoute({
   method: "get",
   path: "/{id}/endpoints",
   tags: ["Connectors"],
-  summary: "List inbound endpoints",
+  summary: "List webhook endpoints",
   description:
     "Newest first, retired ones included, each address redacted. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
@@ -486,7 +486,7 @@ const retireEndpointRoute = createRoute({
   method: "delete",
   path: "/{id}/endpoints/{endpoint_id}",
   tags: ["Connectors"],
-  summary: "Retire an inbound endpoint",
+  summary: "Retire a webhook endpoint",
   description:
     "Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
@@ -555,7 +555,7 @@ const deliveryBodyRoute = createRoute({
   method: "get",
   path: "/{id}/deliveries/{delivery_id}/body",
   tags: ["Connectors"],
-  summary: "Get a delivery body",
+  summary: "Get an inbound delivery's body",
   description:
     "The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.",
   security: [{ bearerAuth: [] }],

@@ -204,7 +204,7 @@ const UpdatedItemSchema = ItemWithMetadataSchema.extend({
     .describe(
       "What the server did, present only when this write resolved a " +
         "conflict. `conflicted_copy_id` names the sibling carrying the " +
-        "losing values, the only place it is reported, since no route " +
+        "losing values. This is the only place it is reported, since no route " +
         "says what a write created.",
     ),
 });
@@ -1111,7 +1111,7 @@ const patchMetadataRoute = createRoute({
   method: "patch",
   path: "/{id}/metadata",
   tags: ["Metadata"],
-  summary: "Update an item's tags",
+  summary: "Merge tags into an item",
   description:
     "Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.",
   security: [{ bearerAuth: [] }],
@@ -1173,7 +1173,7 @@ const addTagsRoute = createRoute({
   operationId: "addItemTags",
   method: "post",
   path: "/{id}/tags",
-  tags: ["Items"],
+  tags: ["Metadata"],
   summary: "Add tags to an item",
   description:
     "Adds one or more tags to the item. Idempotent: tags already present are not duplicated.",
@@ -1238,7 +1238,7 @@ const removeTagRoute = createRoute({
   operationId: "removeItemTag",
   method: "delete",
   path: "/{id}/tags/{tag}",
-  tags: ["Items"],
+  tags: ["Metadata"],
   summary: "Remove a tag from an item",
   description:
     "Removes one tag from the item. Idempotent: removing a tag the item doesn't carry returns 200 with the unchanged metadata.",
@@ -1327,7 +1327,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection`; revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
+        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` (revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner), or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
     },
     401: {
       content: {

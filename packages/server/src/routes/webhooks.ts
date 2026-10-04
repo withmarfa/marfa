@@ -453,7 +453,7 @@ const redeliverRoute = createRoute({
   method: "post",
   path: "/{id}/deliveries/{delivery_id}/redeliver",
   tags: ["Webhooks"],
-  summary: "Redeliver a delivery",
+  summary: "Redeliver a failed delivery",
   description:
     "Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.",
   security: [{ bearerAuth: [] }],

@@ -233,7 +233,12 @@ describe("the API description follows API-STYLE.md", () => {
     expect(prose().filter((value) => banned.test(value))).toEqual([]);
   });
 
-  it("uses no em dashes", () => {
-    expect(prose().filter((value) => value.includes("\u2014"))).toEqual([]);
+  it("uses no em dashes anywhere", () => {
+    expect(JSON.stringify(document).includes("\u2014")).toBe(false);
+  });
+
+  it("links nowhere outside the document", () => {
+    const outbound = /https?:\/\//;
+    expect(prose().filter((value) => outbound.test(value))).toEqual([]);
   });
 });
