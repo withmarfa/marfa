@@ -60,9 +60,11 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
     When an asynchronous bulk job commits a resource-changing chunk, the server MUST record the chunk.
 
-    When blob or archive work requires external bytes, the server MUST stage those bytes before opening the short database units that record them.
+    When blob or archive work requires external bytes, the server MUST stage those bytes before opening the database unit that records them.
 
-    When a blob or archive preparation unit commits, the server MUST retain its own audit record even if later restore work fails.
+    When an archive restore commits, the server MUST commit an audit record for each type registration, each edge-type registration and each batch of blob rows in the same database unit as the restore's own record.
+
+    If an archive restore does not commit, the server MUST NOT retain any of those audit records.
 
     When automated enrichment, retention or blob work changes a resource, the server MUST record a system audit entry without an acting key.
 
@@ -72,7 +74,7 @@ The ordinary stream below remains available. A working copy uses the stricter co
 
     If the export observation cannot be persisted, the server MUST refuse the export before opening the stream.
 
-    Rationale: Earlier best-effort entries remain committed when a later entry fails. Separately committed archive preparation remains after a later restore refusal. The export observation represents an extraction attempt and does not certify completion of streaming.
+    Rationale: Earlier best-effort entries remain committed when a later entry fails. An archive restore's preparation commits with its rows (`search-and-filters.md` 46), so a refused restore leaves no preparation behind. The export observation represents an extraction attempt and does not certify completion of streaming.
 
     Native tests: `routes/audit-atomicity.test.ts`, `routes/bulk-audit.test.ts`, `housekeeping/external-audit.test.ts` and `storage/audited-transaction.test.ts` exercise refused audit insertion, rollback, success, no-op and uncertain commit controls. The external audit suite exercises both export formats with successful and refused audit insertion.
 

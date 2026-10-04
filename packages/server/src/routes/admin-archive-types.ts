@@ -4,10 +4,9 @@
  *
  * An item can be of a type registered here rather than shipped, and until
  * the archive carried those registrations a restore into an empty database
- * dropped every such item as an unknown type. The registrations therefore
- * land first, each committed in a transaction of its own before the rows'
- * transaction opens: see the note on `registerArchiveTypes` for why, and
- * what it costs.
+ * dropped every such item as an unknown type. The registrations are planned
+ * before anything is written, and written first inside the restore's one
+ * transaction, so they commit with the rows that use them or not at all.
  */
 
 import {
@@ -265,27 +264,26 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   return { types, edgeTypes };
 }
 
+/** The registrations an archive adds, decided before anything is written. */
+export interface ArchiveTypePlan {
+  types: PendingType[];
+  edgeTypes: EdgeTypeSchema[];
+  typesSkipped: number;
+  edgeTypesSkipped: number;
+}
+
 /**
- * Validates and registers the archive's types, then reports what landed.
+ * Validates the archive's types and decides which to register.
  *
- * Runs before the rows' transaction opens. Each type is checked against its
- * parent and written in a transaction of its own, which puts the registry
- * back if it does not commit, and edge types are claimed the same way. A
- * registration that commits stays when the rows' transaction later rolls
- * back: a failed restore can leave a registration no item uses, which the
- * next restore skips as identical and an operator can delete. Blobs land
- * outside the rows' transaction too.
- *
- * Conflicts are decided in a pre-pass over the whole batch so a refusal
- * names every clashing id at once and nothing has been written yet. An
- * identical existing registration is a skip, not a conflict: re-restoring
- * the same archive has to be a no-op.
+ * Conflicts are decided over the whole batch so a refusal names every
+ * clashing id at once, before anything has been written. An identical
+ * existing registration is a skip, not a conflict: re-restoring the same
+ * archive has to be a no-op.
  */
-export async function registerArchiveTypes(
+export async function planArchiveTypes(
   storage: Storage,
   entries: ArchiveTypeEntry[],
-  actor: Pick<AuditLogEntry, "key_id" | "client_ip"> = { client_ip: null },
-): Promise<ArchiveTypeResult> {
+): Promise<ArchiveTypePlan> {
   const { types, edgeTypes } = parseTypeEntries(entries);
 
   // What is registered is a question about this database,
@@ -337,11 +335,39 @@ export async function registerArchiveTypes(
       { conflicting_ids: conflicts },
     );
   }
+  return {
+    types: typesToWrite,
+    edgeTypes: edgeTypesToWrite,
+    typesSkipped,
+    edgeTypesSkipped,
+  };
+}
 
+/** The refusal for a registration another request made since the plan. */
+function registeredMeanwhile(id: string): MarfaError {
+  return new MarfaError(
+    ErrorCode.CONFLICT,
+    `Archive carries "${id}", which was registered while the restore ran`,
+  );
+}
+
+/**
+ * Registers what `planArchiveTypes` decided, inside the caller's
+ * transaction, so a restore that does not commit leaves no registration
+ * behind, in the database or in this process's registry.
+ *
+ * Each registration is audited on its own, and the audit commits or rolls
+ * back with the restore.
+ */
+export async function writeArchiveTypes(
+  storage: Storage,
+  plan: ArchiveTypePlan,
+  actor: Pick<AuditLogEntry, "key_id" | "client_ip">,
+): Promise<ArchiveTypeResult> {
   // Parents before children, so a subtype's parent resolves whichever
   // order the archive listed them in. A chain longer than the batch is
   // caught by the depth guard rather than by looping forever.
-  const pending = [...typesToWrite];
+  const pending = [...plan.types];
   const written: PendingType[] = [];
   let progress = true;
   while (pending.length > 0 && progress) {
@@ -375,7 +401,17 @@ export async function registerArchiveTypes(
           // `user`, the one the consent screen offers a read-and-write wildcard
           // over, so defaulting would turn a row recorded as `unknown` into the
           // person's own on a round trip.
-          await storage.types.create(schema, entry.provenance);
+          try {
+            await storage.types.create(schema, entry.provenance);
+          } catch (err) {
+            // The plan read the rows before the restore's transaction opened.
+            if (
+              err instanceof MarfaError &&
+              err.code === ErrorCode.TYPE_ALREADY_EXISTS
+            )
+              throw registeredMeanwhile(schema.id);
+            throw err;
+          }
           return true;
         },
         (wrote) =>
@@ -406,19 +442,14 @@ export async function registerArchiveTypes(
   // awaited since, so each is checked again where it is claimed: under the
   // write lock, with the row written before the registry holds the name, as
   // the route does.
-  for (const schema of edgeTypesToWrite) {
+  for (const schema of plan.edgeTypes) {
     await runAuditedTransaction(
       storage,
       async () => {
         // An id registered since the rows were read was registered by a
         // request that wrote its own row, and registering over it would put
         // this archive's schema in its place.
-        if (getEdgeTypeSchema(schema.id)) {
-          throw new MarfaError(
-            ErrorCode.CONFLICT,
-            `Archive carries "${schema.id}", which was registered while the restore ran`,
-          );
-        }
+        if (getEdgeTypeSchema(schema.id)) throw registeredMeanwhile(schema.id);
         assertEdgeNamesFree(schema.id, schema.reverse_name);
         await storage.edgeTypes.create(schema);
       },
@@ -433,8 +464,8 @@ export async function registerArchiveTypes(
 
   return {
     typesRegistered: written.length,
-    typesSkipped,
-    edgeTypesRegistered: edgeTypesToWrite.length,
-    edgeTypesSkipped,
+    typesSkipped: plan.typesSkipped,
+    edgeTypesRegistered: plan.edgeTypes.length,
+    edgeTypesSkipped: plan.edgeTypesSkipped,
   };
 }

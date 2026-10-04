@@ -1353,7 +1353,7 @@ export interface paths {
         put?: never;
         /**
          * Restore types, items, edges, metadata, and blobs from an archive
-         * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
+         * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
          */
         post: operations["adminRestoreArchive"];
         delete?: never;
@@ -15316,7 +15316,12 @@ export interface operations {
                     };
                 };
             };
-            /** @description `validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; item and edge restoration is refused; previously committed type preparation remains audited. */
+            /**
+             * @description - `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
+             *     - `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.
+             *
+             *     The restore writes nothing.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15361,7 +15366,12 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, or an imported snapshot ID already exists. A snapshot collision rolls back the row transaction; earlier audited type and blob preparation remains. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops before items or blobs are written; earlier type registrations remain audited. */
+            /**
+             * @description - `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.
+             *     - `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.
+             *
+             *     The restore writes nothing.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

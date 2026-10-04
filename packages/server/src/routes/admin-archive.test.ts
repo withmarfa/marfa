@@ -239,15 +239,15 @@ describe("POST /admin/restore-archive", () => {
     expect((await errorOf(refusal)).message).toContain(
       "created_at must be a valid instant",
     );
-    // The body's spool and the blob entry's.
+    // The body's spool, the item lines' and the blob entry's.
     const refusedSpools = spoolsMinted();
-    expect(refusedSpools).toHaveLength(2);
+    expect(refusedSpools).toHaveLength(3);
     for (const path of refusedSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
 
     // A valid row restores, and its spools are consumed:
-    // the blob's moved into place, the body's removed.
+    // the blob's moved into place, the others removed.
     const kept = makeBlobData("spooled then kept");
     const fine = await buildArchive(
       manifestFor(kept),
@@ -260,7 +260,7 @@ describe("POST /admin/restore-archive", () => {
       ((await restored.json()) as { blobs_imported: number }).blobs_imported,
     ).toBe(1);
     const keptSpools = spoolsMinted();
-    expect(keptSpools).toHaveLength(2);
+    expect(keptSpools).toHaveLength(3);
     for (const path of keptSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
@@ -276,7 +276,7 @@ describe("POST /admin/restore-archive", () => {
       ((await again.json()) as { blobs_imported: number }).blobs_imported,
     ).toBe(1);
     const againSpools = spoolsMinted();
-    expect(againSpools).toHaveLength(2);
+    expect(againSpools).toHaveLength(3);
     for (const path of againSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
@@ -712,48 +712,63 @@ describe("POST /admin/restore-archive against the orphan sweep", () => {
 
 describe("POST /admin/restore-archive refused after its blobs are stored", () => {
   it("never takes back bytes an upload was told are stored meanwhile", async () => {
-    // Blob preparation commits before item restore; a refused item restore
-    // keeps those audited bytes. An upload of the same bytes also keeps them.
+    // The restore places the bytes, then is refused while it registers
+    // them, and takes back what it placed. An upload of the same bytes
+    // arriving meanwhile waits for the restore to let go of the hash, so it
+    // is told the bytes are stored only once they are its own.
     const blob = makeBlobData(
       `uploaded during a refused restore ${String(Date.now())}`,
     );
-    const storage = ctx.storage;
-    const runInTransaction = storage.runInTransaction.bind(storage);
-    let uploading: Promise<Response> | undefined;
-    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
-      if (!uploading && (await storage.blobs.get(blob.hash)) !== null) {
-        uploading = Promise.resolve(
-          ctx.app.request("/blobs", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${ctx.workingKey}`,
-              "Content-Type": "text/plain",
-            },
-            body: blob.data,
-          }),
-        );
-        // Long enough for the upload to land when nothing holds it back.
-        await Promise.race([
-          uploading,
-          new Promise((resolve) => setTimeout(resolve, 200)),
-        ]);
-        throw new Error("rows refused");
-      }
-      return runInTransaction(fn);
+    const store = ctx.storage.blobs;
+    const register = store.register.bind(store);
+    let registering!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      registering = resolve;
+    });
+    let refuse!: () => void;
+    const refused = new Promise<void>((resolve) => {
+      refuse = resolve;
+    });
+    store.register = async (hash, mimeType, sizeBytes) => {
+      if (hash !== blob.hash) return register(hash, mimeType, sizeBytes);
+      registering();
+      await refused;
+      throw new Error("rows refused");
     };
     let res: Response;
+    let uploaded: Response;
     try {
-      res = await postArchive(
+      const restoring = postArchive(
         await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
       );
+      await reached;
+      expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
+      const uploading = Promise.resolve(
+        ctx.app.request("/blobs", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.workingKey}`,
+            "Content-Type": "text/plain",
+          },
+          body: blob.data,
+        }),
+      );
+      // Long enough for the upload to land if nothing held it back.
+      const early = await Promise.race([
+        uploading.then(() => "answered"),
+        new Promise((resolve) => setTimeout(resolve, 200, "waiting")),
+      ]);
+      expect(early).toBe("waiting");
+      store.register = register;
+      refuse();
+      res = await restoring;
+      uploaded = await uploading;
     } finally {
-      storage.runInTransaction = runInTransaction;
+      store.register = register;
     }
     expect(res.status).toBe(500);
-    expect(uploading).toBeDefined();
-    const uploaded = await uploading;
-    expect(uploaded?.status).toBe(201);
-    expect(await storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(uploaded.status).toBe(201);
+    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
     const served = await ctx.app.request(`/blobs/${blob.hash}`, {
       headers: { Authorization: `Bearer ${ctx.operatorKey}` },
@@ -763,10 +778,11 @@ describe("POST /admin/restore-archive refused after its blobs are stored", () =>
 });
 
 describe("POST /admin/restore-archive refused over bytes a purge left", () => {
-  it("leaves a row naming the bytes it found on disk, for the sweep to judge", async () => {
+  it("leaves the purge record naming the bytes it found on disk, for the sweep to finish", async () => {
     // A purge cut short: the row is gone, the bytes are still on disk and
     // the purge record waits. The restore registers the bytes it found,
-    // which clears the record, and is then refused.
+    // which clears the record, and is then refused, which puts the record
+    // back.
     const blob = makeBlobData(
       `left by a purge cut short ${String(Date.now())}`,
     );
@@ -816,13 +832,11 @@ describe("POST /admin/restore-archive refused over bytes a purge left", () => {
       storage.runInTransaction = runInTransaction;
     }
     expect(res.status).toBe(500);
-    // The bytes stay named: a row the sweep can report and purge, never
-    // bytes with neither a row nor a purge record.
+    // The bytes stay named: never bytes with neither a row nor a purge
+    // record. The restore wrote no bytes of its own, so it takes none back.
     expect(await disk.has(blob.hash)).not.toBeNull();
-    const named = await storage.blobs.get(blob.hash);
-    const pending = await storage.blobs.purgePending(blob.hash);
-    expect(named !== null || pending).toBe(true);
-    expect(named).not.toBeNull();
+    expect(await storage.blobs.get(blob.hash)).toBeNull();
+    expect(await storage.blobs.purgePending(blob.hash)).toBe(true);
   });
 });
 

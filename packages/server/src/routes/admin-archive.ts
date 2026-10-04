@@ -3,9 +3,12 @@
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
- * edges_imported, edges_skipped, blobs_imported}`. Enforces the
- * manifest version 0 contract, blob-hash verification, and a single import
- * transaction covering items, metadata, history, and edges.
+ * edges_imported, edges_skipped, blobs_imported}` and the registration
+ * counts. Enforces the manifest version 0 contract and blob-hash
+ * verification, reads the archive in memory that does not grow with it,
+ * checks every row before writing any, and writes in a single transaction
+ * covering type and edge-type registrations, blob rows, items, metadata,
+ * history, edges and their events.
  *
  * Item ids are preserved from the archive so restored edges resolve;
  * an id or natural-key collision counts as a duplicate and leaves the
@@ -17,17 +20,14 @@
  * Paired with GET /export?format=archive.
  */
 
-import { createReadStream, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
 import { createRoute, z } from "@hono/zod-openapi";
-import * as tar from "tar-stream";
 import {
   MarfaError,
   ErrorCode,
-  isValidBlobHash,
   isTier,
   TIERS,
   resolveEnforcement,
@@ -35,7 +35,7 @@ import {
   SYSTEM_DEFAULT_STATE,
 } from "@withmarfa/shared";
 import { publish, publishEdge } from "../pubsub.js";
-import type { Edge, Item, Metadata, Version } from "@withmarfa/shared";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -46,25 +46,25 @@ import {
 import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
 import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type {
-  ArchivedDates,
-  AuditLogEntry,
-  Storage,
-} from "../storage/interface.js";
+import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import { HashingTransform } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { constantTimeEqual } from "../utils/crypto.js";
-import { registerArchiveTypes } from "./admin-archive-types.js";
+import { planArchiveTypes, writeArchiveTypes } from "./admin-archive-types.js";
+import type {
+  ArchiveTypeEntry,
+  ArchiveTypePlan,
+} from "./admin-archive-types.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
-import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 import { blobPrincipal } from "./_blob-reach.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
 import { archiveDates, archiveVersions } from "./admin-archive-history.js";
+import { archiveLines, readArchive } from "./admin-archive-read.js";
+import type { PendingBlob, ReadArchive } from "./admin-archive-read.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 
 function archiveScalarRefusal(
   kind: "item" | "edge",
@@ -137,45 +137,6 @@ function archiveExtensions(
   return out;
 }
 
-/**
- * What the restore reads out of `manifest.json`, which is narrower than what
- * the export writes.
- *
- * `ArchiveManifest` in `routes/export.ts` is the writer's own declaration
- * and the authority on the format. This one stops at the fields the restore
- * consults — `version`, which it refuses, and `blobs`, whose mime type each
- * blob entry is stored under. Widening it to match the writer would have it
- * claim fields of every archive ever written, which is a claim nothing here
- * can keep. It is checked rather than cast because a blob entry reads it
- * in a stream callback, where a missing `blobs` would throw outside every
- * refusal, as an unhandled rejection.
- */
-const archiveManifestSchema = z.object({
-  version: z.literal(0),
-  blobs: z.record(
-    z.string(),
-    z.object({
-      mime_type: z.string(),
-      size_bytes: z.number().int().nonnegative(),
-    }),
-  ),
-});
-type ArchiveManifest = z.infer<typeof archiveManifestSchema>;
-
-/** The refusal for a manifest the schema does not take, naming each field. */
-function invalidManifest(error: z.ZodError): MarfaError {
-  const errors = error.issues.map((issue) => ({
-    path: issue.path.map(String).join("."),
-    message: issue.message,
-  }));
-  const named = errors.map((e) => e.path || "the manifest itself").join(", ");
-  return new MarfaError(
-    ErrorCode.VALIDATION_ERROR,
-    `Invalid manifest.json: ${named}`,
-    { errors },
-  );
-}
-
 const restoreArchiveRoute = createRoute({
   operationId: "adminRestoreArchive",
   method: "post",
@@ -183,7 +144,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
+    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that is refused, fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Invalid dates or history refuse before row writes; a snapshot ID collision refuses the row transaction with `409 conflict`. Duplicate items retain their live metadata, dates and history. There is no separate item or edge count limit. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it and answer `503 write_contention` past their budget. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: {
@@ -230,7 +191,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "`validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; item and edge restoration is refused; previously committed type preparation remains audited.",
+        "- `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.\n\nThe restore writes nothing.",
     },
     401: {
       content: {
@@ -255,72 +216,142 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, or an imported snapshot ID already exists. A snapshot collision rolls back the row transaction; earlier audited type and blob preparation remains. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops before items or blobs are written; earlier type registrations remain audited.",
+        "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n\nThe restore writes nothing.",
     },
   },
 });
 
-interface PendingBlob {
-  hash: string;
-  mimeType: string;
-  /** A spool on the disk store's own filesystem holding the entry's bytes,
-   *  which hashed to `hash` as they were read. */
-  path: string;
-  sizeBytes: number;
+/**
+ * Rows written between two turns of the event loop. A restore holds the
+ * write lock from its first registration to its commit, and each batch is a
+ * stretch in which nothing else in the process answers.
+ */
+const RESTORE_BATCH = 100;
+
+/** An `items.ndjson` line, which the restore reads defensively. */
+interface ArchivedItemLine {
+  item: Record<string, unknown>;
+  metadata?: unknown;
+  lending_blobs?: unknown;
+  versions?: unknown;
 }
 
-/** A filesystem error, which is a fault here and not a fault in the
- *  archive: Node's own stream and zlib codes carry underscores. */
-function isFilesystemError(err: unknown): err is NodeJS.ErrnoException {
-  return (
-    err instanceof Error &&
-    /^E[A-Z0-9]+$/.test((err as NodeJS.ErrnoException).code ?? "")
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Lines that do not parse are skipped: the exporter always emits valid
+ *  JSON, so a bad line means the archive was edited by hand. */
+async function* itemLines(
+  path: string | undefined,
+): AsyncGenerator<ArchivedItemLine> {
+  for await (const line of archiveLines(path)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (isRecord(parsed) && isRecord(parsed.item)) {
+      yield parsed as unknown as ArchivedItemLine;
+    }
+  }
+}
+
+/** The `edge` of each `edges.ndjson` line, on the same terms as items. */
+async function* edgeLines(
+  path: string | undefined,
+): AsyncGenerator<Record<string, unknown>> {
+  for await (const line of archiveLines(path)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (isRecord(parsed) && parsed.edge) {
+      yield parsed.edge as Record<string, unknown>;
+    }
+  }
 }
 
 /**
- * Write an archive's blobs, remembering which bytes and which rows this
- * request created.
+ * The refusals that need nothing from the database, asked of one item line.
  *
- * The caller holds the per-hash locks `POST /blobs` takes, from before this
- * runs until the restore has committed, and for the
+ * Asked of every line before anything is written, so a refusal is never
+ * half a restore and never leaves blob bytes to take back.
+ */
+function itemRefusal(
+  entry: ArchivedItemLine,
+  index: number,
+  seenSnapshotIds: Set<string>,
+): MarfaError | null {
+  const { item } = entry;
+  archiveDates("item", item, index);
+  archiveVersions(item, entry.versions, index, seenSnapshotIds);
+  const scalar = archiveScalarRefusal("item", item, index);
+  if (scalar) return scalar;
+
+  // A row whose `source` claims a reserved credential shape is refused, on
+  // the same terms and for the same reason as the state check below: the
+  // restore is the one door that copies `source` verbatim, and `POST /keys`
+  // refuses that prefix precisely so no credential can stamp one. A row
+  // carrying `oauth:` would otherwise read, ever after, as written by a
+  // grant that never existed, planted through the one door that does not
+  // ask.
+  const source = item.source;
+  if (typeof source === "string" && isReservedCredentialSource(source)) {
+    return new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Item ${String(item.id)} records a source no credential can hold: ${source}`,
+      { item_id: item.id, source },
+    );
+  }
+
+  // A row in a state its type's lifecycle cannot produce is refused, the
+  // question `POST /items` asks of a caller: `trashed` is a state, and not
+  // one a `system.*` row can be in, and a restore that wrote it would land a
+  // row nothing can purge, restore or move. Only an absent state (the
+  // default) and the default itself pass without the question, since the
+  // store would write whatever else the line carried. The lifecycle a type
+  // has follows from its namespace, so the archive's own registrations do
+  // not change the answer.
+  const state = item.state;
+  if (state === undefined || state === null || state === SYSTEM_DEFAULT_STATE)
+    return null;
+  const error = validateTransition(
+    String(item.type),
+    SYSTEM_DEFAULT_STATE,
+    state as ItemState,
+  );
+  return error
+    ? new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Item ${String(item.id)} of type ${String(item.type)} is recorded in a state its lifecycle cannot produce: ${error}`,
+      )
+    : null;
+}
+
+/**
+ * Place an archive's blob bytes in the disk store, before the restore's
+ * transaction opens, and answer the hashes whose bytes this request wrote.
+ *
+ * Bytes go first and rows second, as `POST /blobs` does it: a rollback
+ * cannot reach a filesystem or an object store, so the bytes stay outside
+ * the transaction and the request takes back what it wrote if no row ends up
+ * naming it (`takeBackBytes`). The caller holds the per-hash locks
+ * `POST /blobs` takes from before this runs until it has done so, for the
  * same reason: content addressing means two requests can be writing
  * identical bytes at once, so the check of the disk, the write, the rows and
- * any undo have to be one step, or one request deletes what another was
- * just told is stored, and a purge cannot delete bytes found already stored
- * before the row naming them commits.
+ * any undo have to be one step, or one request deletes what another was just
+ * told is stored.
  */
-async function restoreArchiveBlobs(
+async function placeBlobBytes(
   storage: Storage,
   blobs: BlobLayer,
   pending: readonly PendingBlob[],
-  uploader: string,
-  actor: Pick<AuditLogEntry, "key_id" | "client_ip">,
-): Promise<void> {
-  const wroteBytes: string[] = [];
-
-  /** Delete the bytes this request placed that no row names: a row that
-   *  was already there when the bytes were missing is not this request's,
-   *  and keeps them. */
-  const undoBytes = async (): Promise<void> => {
-    for (const hash of wroteBytes) {
-      try {
-        if ((await storage.blobs.get(hash)) !== null) continue;
-        await blobs.disk.delete(hash);
-      } catch (err) {
-        log("error", "blob.orphaned_after_refused_restore", {
-          hash,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  };
-
-  // Bytes first, rows second, same as `POST /blobs`. A rollback cannot
-  // reach a filesystem or an object store, so the bytes stay outside the
-  // transaction and this request takes back what it wrote on refusal. Each
-  // spool is moved into place or removed, so past the placing none is left.
-  let placed = 0;
+): Promise<string[]> {
+  const wrote: string[] = [];
   try {
     for (const blob of pending) {
       await finishCopyDeletion(storage, blobs.disk, blob.hash);
@@ -329,50 +360,402 @@ async function restoreArchiveBlobs(
           path: blob.path,
           size_bytes: blob.sizeBytes,
         });
-        wroteBytes.push(blob.hash);
-      } else {
-        await rm(blob.path, { force: true });
+        wrote.push(blob.hash);
       }
-      placed++;
     }
   } catch (err) {
-    for (const blob of pending.slice(placed)) {
-      await rm(blob.path, { force: true });
-    }
-    await undoBytes();
+    await takeBackBytes(storage, blobs, wrote);
     throw err;
   }
+  return wrote;
+}
 
-  // Each bounded preparation batch is durable on its own. Later refusal
-  // leaves its rows and audit intact; only unregistered new bytes are undone.
-  try {
-    for (let offset = 0; offset < pending.length; offset += 100) {
-      const batch = pending.slice(offset, offset + 100);
-      await runAuditedTransaction(
-        storage,
-        async () => {
-          for (const blob of batch) {
-            await storage.blobs.register(
-              blob.hash,
-              blob.mimeType,
-              blob.sizeBytes,
-            );
-            await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
-            await storage.blobs.recordUploader(blob.hash, uploader);
-          }
-        },
-        {
-          ...actor,
-          action: "admin.restore_archive.blobs",
-          resource_type: "blob",
-          details: { hashes: batch.map((blob) => blob.hash) },
-        },
-      );
+/** Delete the bytes this request placed that no row names: a row that was
+ *  already there when the bytes were missing is not this request's, and
+ *  keeps them. */
+async function takeBackBytes(
+  storage: Storage,
+  blobs: BlobLayer,
+  wrote: readonly string[],
+): Promise<void> {
+  for (const hash of wrote) {
+    try {
+      if ((await storage.blobs.get(hash)) !== null) continue;
+      await blobs.disk.delete(hash);
+    } catch (err) {
+      log("error", "blob.orphaned_after_refused_restore", {
+        hash,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  } catch (err) {
-    await undoBytes();
-    throw err;
   }
+}
+
+/**
+ * Everything the restore writes, in one transaction: the registrations,
+ * the blob rows, the items with their metadata and history, the edges,
+ * their events and every audit record, so an interrupted or refused
+ * restore leaves none of them.
+ *
+ * Other writers wait for it in the writer queue, and are answered
+ * `503 write_contention` if they wait past its budget. The event loop
+ * gets a turn between batches, so reads, health checks and event
+ * streams keep answering while it runs.
+ */
+async function restoreRows(
+  storage: Storage,
+  blobs: BlobLayer,
+  restore: {
+    plan: ArchiveTypePlan;
+    pending: readonly PendingBlob[];
+    files: ReadArchive["lineFiles"];
+    totalItems: number;
+    totalEdges: number;
+    uploader: string;
+    actor: Pick<AuditLogEntry, "key_id" | "client_ip">;
+    apiKey: AppEnv["Variables"]["apiKey"];
+  },
+) {
+  const { plan, pending, files, uploader, actor } = restore;
+  return runAuditedTransaction(
+    storage,
+    async () => {
+      const types = await writeArchiveTypes(storage, plan, actor);
+
+      for (let at = 0; at < pending.length; at += RESTORE_BATCH) {
+        const batch = pending.slice(at, at + RESTORE_BATCH);
+        await runAuditedTransaction(
+          storage,
+          async () => {
+            for (const blob of batch) {
+              await storage.blobs.register(
+                blob.hash,
+                blob.mimeType,
+                blob.sizeBytes,
+              );
+              await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
+              await storage.blobs.recordUploader(blob.hash, uploader);
+            }
+          },
+          {
+            ...actor,
+            action: "admin.restore_archive.blobs",
+            resource_type: "blob",
+            details: { hashes: batch.map((blob) => blob.hash) },
+          },
+        );
+        await yieldBulkWork();
+      }
+
+      // A row carrying a property no type declares is refused wherever
+      // the strict-mode lever names that type, which is the question
+      // `POST /items` asks of a caller. This door writes through the
+      // store, where validation runs loose, so the question has to be
+      // asked here or not at all. It is asked after the archive's own
+      // registrations, so a type this instance is learning from the
+      // archive is measured against the declaration it arrives with.
+      const enforcement = resolveEnforcement(
+        await readInstanceConfig(storage.settings),
+        restore.apiKey,
+      );
+
+      let imported = 0;
+      let duplicates = 0;
+      let edgesImported = 0;
+      let edgesSkipped = 0;
+      const edgesSkippedReasons: Record<string, number> = {};
+      const skipEdge = (reason: string): void => {
+        edgesSkipped++;
+        edgesSkippedReasons[reason] = (edgesSkippedReasons[reason] ?? 0) + 1;
+      };
+
+      // Ids an edge endpoint may resolve against without a storage
+      // lookup: every id this restore just wrote, plus ids that
+      // collided. A collision means the database already holds that
+      // exact id, so edges naming it still land correctly.
+      const resolvableIds = new Set<string>();
+
+      // Each batch is announced inside the restore's transaction, so
+      // the log holds every row it wrote or none: a restore is a write
+      // like any other from a subscriber's side, and the log is the
+      // only catch-up there is. Every item is announced before any
+      // edge, because an edge names two endpoints and a client
+      // receiving one for a row it has never heard of has no way to
+      // resolve it.
+      //
+      // Fan-out is declined, as it is on every other door that writes
+      // in bulk: a restore can carry every row in an instance, and
+      // driving outbound work per row per subscribed connection would
+      // push an archive's worth of writes back out to whatever an
+      // installed connection is joined to. The flag governs only the
+      // outbound side effects, and rides the persisted row, so a
+      // catch-up that rebuilds these events reaches the same answer.
+      let restoredItems: { item: Item; metadata: Metadata }[] = [];
+      const announceItems = async (): Promise<void> => {
+        for (const { item, metadata } of restoredItems) {
+          await publish({
+            type: "created",
+            item,
+            metadata,
+            enableFanout: false,
+          });
+        }
+        restoredItems = [];
+        await yieldBulkWork();
+      };
+
+      let index = 0;
+      const seenSnapshotIds = new Set<string>();
+      for await (const entry of itemLines(files["items.ndjson"])) {
+        const { item, metadata: meta, lending_blobs: lending } = entry;
+        const dates = archiveDates("item", item, index);
+        const history = archiveVersions(
+          item,
+          entry.versions,
+          index,
+          seenSnapshotIds,
+        );
+        index++;
+        const refusal = undeclaredPropertyRefusal(
+          enforcement,
+          String(item.type),
+          (item.properties ?? {}) as Record<string, unknown>,
+          { item_id: item.id },
+        );
+        if (refusal) throw refusal;
+
+        const archiveId = typeof item.id === "string" ? item.id : undefined;
+        let created: Item;
+        try {
+          ({ item: created } = await writeItem(
+            storage,
+            { kind: "platform" },
+            {
+              op: "create",
+              // A digest lends here exactly where it lent in the
+              // instance the archive was taken from, and a line naming
+              // none lends nothing.
+              blob_proof: (hash) =>
+                Promise.resolve(
+                  Array.isArray(lending) && lending.includes(hash),
+                ),
+              ...(archiveId !== undefined && { id: archiveId }),
+              // The row comes back under its archived id, so it comes
+              // back at its archived version too. Re-minting at 1 lets
+              // a client's stale precondition pass, later, against
+              // content it never read from.
+              ...(typeof item.version === "number" && {
+                version: item.version,
+              }),
+              type: item.type as string,
+              properties: (item.properties ?? {}) as Record<string, unknown>,
+              state: item.state as ItemState | undefined,
+              tier: item.tier as Tier | undefined,
+              occurred_at: item.occurred_at as string | undefined,
+              source: item.source as string | undefined,
+              source_id: item.source_id as string | undefined,
+              capture_latitude: item.capture_latitude as number | undefined,
+              capture_longitude: item.capture_longitude as number | undefined,
+              tags: archiveTags(meta),
+            },
+            // Announced with the extensions it carries, which a second
+            // write sets.
+            { announce: false },
+          ));
+        } catch (err) {
+          if (
+            err instanceof MarfaError &&
+            (err.code === ErrorCode.DUPLICATE_SOURCE ||
+              err.code === ErrorCode.CONFLICT ||
+              err.code === ErrorCode.LINK_TAKEN)
+          ) {
+            duplicates++;
+            if (err.code === ErrorCode.CONFLICT && archiveId !== undefined) {
+              resolvableIds.add(archiveId);
+            }
+            continue;
+          }
+          throw err;
+        }
+        imported++;
+        resolvableIds.add(created.id);
+
+        // One write for the whole set, not one per namespace. Each
+        // `setExtension` rewrites the same JSON column and bumps the
+        // item's modification time beside it, so writing them
+        // separately cost namespaces times items on the one path
+        // whose purpose is moving a lot of rows at once.
+        const { extensions: stored } = await storage.metadata.setExtensions(
+          created.id,
+          archiveExtensions(meta),
+        );
+        // A history conflict escapes the create-only duplicate catch
+        // above: an existing snapshot ID belongs to a different
+        // recorded past.
+        const finalized = await finalizeArchiveItem(
+          storage,
+          created.id,
+          dates,
+          history,
+        );
+        restoredItems.push({
+          item: finalized,
+          metadata: {
+            item_id: created.id,
+            // `archiveTags` answers `undefined` for "the archive named
+            // none", which is what `create` wants and what a
+            // `Metadata` cannot hold: an item with no tags carries an
+            // empty list.
+            tags: archiveTags(meta) ?? [],
+            extensions: stored,
+          },
+        });
+        if (restoredItems.length >= RESTORE_BATCH) await announceItems();
+      }
+      await announceItems();
+
+      let restoredEdges: Edge[] = [];
+      const announceEdges = async (): Promise<void> => {
+        const sourceTypes = await sourceTypesFor(
+          storage,
+          restoredEdges.map((edge) => edge.source_id),
+        );
+        for (const edge of restoredEdges) {
+          await publishEdge({
+            type: "edge_created",
+            edge,
+            sourceType: sourceTypes.get(edge.source_id),
+            enableFanout: false,
+          });
+        }
+        restoredEdges = [];
+        await yieldBulkWork();
+      };
+
+      // Edges restore after every item the archive carries exists, and
+      // only where both endpoints resolve in the database, so a
+      // partial or hand-edited archive cannot plant a reference to an
+      // item that is not there.
+      const endpointResolves = async (id: string): Promise<boolean> =>
+        resolvableIds.has(id) || (await storage.items.get(id)) !== null;
+
+      let edgeIndex = 0;
+      for await (const edge of edgeLines(files["edges.ndjson"])) {
+        const dates = archiveDates("edge", edge, edgeIndex);
+        edgeIndex++;
+        const sourceId = edge.source_id;
+        const targetId = edge.target_id;
+        const edgeType = edge.edge_type;
+        if (
+          typeof sourceId !== "string" ||
+          typeof targetId !== "string" ||
+          typeof edgeType !== "string"
+        ) {
+          skipEdge("malformed");
+          continue;
+        }
+        if (
+          !(await endpointResolves(sourceId)) ||
+          !(await endpointResolves(targetId))
+        ) {
+          skipEdge("endpoint_missing");
+          continue;
+        }
+        const edgeId = typeof edge.id === "string" ? edge.id : undefined;
+        if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
+          // Already present under the same id: a re-restore, not an
+          // error.
+          skipEdge("already_present");
+          continue;
+        }
+        // An archive is a file someone can hand you: replayed through
+        // the raw insert, a hand-edited one could plant edges of an
+        // unregistered type, or edges violating every constraint the
+        // enforcer exists to apply, past checks the API refuses at. It
+        // is validated exactly the way `POST /edges` validates, one
+        // edge at a time: the batch entry point throws on its first
+        // violation, which would cost the whole restore over one bad
+        // line, and this route's contract is to skip and count.
+        //
+        // The archive's own edge types resolve because they were
+        // registered earlier in this transaction. `replay` lets a
+        // revoked folder keep the placements it held before its
+        // revoke.
+        try {
+          await assertEdgesCanBeCreated(
+            storage.edges,
+            storage.items,
+            [
+              {
+                source_id: sourceId,
+                target_id: targetId,
+                edge_type: edgeType,
+                properties: (edge.properties ?? {}) as Record<string, unknown>,
+              },
+            ],
+            // A restore replays every row the archive holds, so no
+            // target is one to withhold; the operator's own map
+            // reaches no type.
+            () => true,
+            { replay: true },
+          );
+        } catch (err) {
+          if (err instanceof MarfaError) {
+            skipEdge(err.code);
+            continue;
+          }
+          throw err;
+        }
+        restoredEdges.push(
+          await storage.edges.createRaw({
+            ...dates,
+            ...(edgeId !== undefined && { id: edgeId }),
+            // Same rule as the item path above. Both doors move
+            // together or the hole stays reachable through the other
+            // one.
+            ...(typeof edge.version === "number" && {
+              version: edge.version,
+            }),
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: edgeType,
+            properties: (edge.properties ?? {}) as Record<string, unknown>,
+          }),
+        );
+        edgesImported++;
+        if (restoredEdges.length >= RESTORE_BATCH) await announceEdges();
+      }
+      await announceEdges();
+
+      return {
+        imported,
+        duplicates,
+        edgesImported,
+        edgesSkipped,
+        edgesSkippedReasons,
+        types,
+      };
+    },
+    (result) => ({
+      ...actor,
+      action: "admin.restore_archive",
+      resource_type: "admin.restore_archive",
+      details: {
+        imported: result.imported,
+        duplicates: result.duplicates,
+        edges_imported: result.edgesImported,
+        edges_skipped: result.edgesSkipped,
+        edges_skipped_reasons: result.edgesSkippedReasons,
+        blobs_imported: pending.length,
+        types_registered: result.types.typesRegistered,
+        types_skipped: result.types.typesSkipped,
+        edge_types_registered: result.types.edgeTypesRegistered,
+        edge_types_skipped: result.types.edgeTypesSkipped,
+        total_items: restore.totalItems,
+        total_edges: restore.totalEdges,
+      },
+    }),
+  );
 }
 
 export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
@@ -386,680 +769,102 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     };
 
     // The body streams to a spool on the disk store's filesystem, as an
-    // upload's does, so an archive is as large as an archive is: nothing
-    // here holds it in memory, and the blob entries inside it are spooled
-    // the same way, each hashed as it is read. Every spool is recorded the
-    // moment it is minted, because a refusal can land while an entry's
-    // pipeline is still settling, before that entry is pending.
+    // upload's does, so an archive is as large as an archive is. Every spool
+    // is recorded the moment it is minted and removed however the request
+    // ends: a refusal can land while an entry is still being written, and a
+    // blob spool the store moved into place is simply no longer there.
     const spools: string[] = [];
     const mintSpool = (): string => {
       const spool = blobs.disk.spoolPath();
       spools.push(spool);
       return spool;
     };
-    const bodySpool = mintSpool();
     try {
+      const bodySpool = mintSpool();
       const body = c.req.raw.body;
       if (body) {
         await pipeline(Readable.fromWeb(body), createWriteStream(bodySpool));
       }
-    } catch (err) {
-      await rm(bodySpool, { force: true });
-      throw err;
-    }
-    if (
-      (await stat(bodySpool).then(
-        (s) => s.size,
-        () => 0,
-      )) === 0
-    ) {
-      await rm(bodySpool, { force: true });
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty archive");
-    }
-
-    let manifest: ArchiveManifest | null = null;
-    const itemLines: string[] = [];
-    const edgeLines: string[] = [];
-    const typeLines: string[] = [];
-    const pendingBlobs: PendingBlob[] = [];
-    let blobCount = 0;
-    const extract = tar.extract();
-    const gunzip = createGunzip();
-    const inputStream = createReadStream(bodySpool);
-
-    const entries = new Promise<void>((resolve, reject) => {
-      // Every stream in the pipeline needs its own listener: `pipe` does not
-      // forward an error, and a stream without one re-emits it as an
-      // unhandled `error` event that ends the process. A body the
-      // decompressor or the tar reader cannot parse is a refusal, not a crash.
-      const fail = (err: unknown) => {
-        reject(
-          err instanceof MarfaError || isFilesystemError(err)
-            ? err
-            : new MarfaError(
-                ErrorCode.VALIDATION_ERROR,
-                "Invalid archive: expected a gzip-compressed tar",
-              ),
-        );
-      };
-
-      inputStream.on("error", fail);
-      gunzip.on("error", fail);
-      extract.on("error", fail);
-
-      extract.on("entry", (header, stream, next) => {
-        stream.on("error", fail);
-        // A blob entry goes to a spool of its own, hashed on the way; an
-        // entry that does not hash to its name is left out, as an entry
-        // under a name that is no hash is. The manifest and the line files
-        // are small and are read whole.
-        if (header.name.startsWith("blobs/")) {
-          const hash = header.name.slice("blobs/".length);
-          if (!isValidBlobHash(hash)) {
-            stream.on("end", next);
-            stream.resume();
-            return;
-          }
-          const spool = mintSpool();
-          const hashing = new HashingTransform();
-          pipeline(stream, hashing, createWriteStream(spool)).then(
-            async () => {
-              if (constantTimeEqual(hashing.digest(), hash)) {
-                blobCount++;
-                const mimeType =
-                  manifest?.blobs[hash]?.mime_type ??
-                  "application/octet-stream";
-                pendingBlobs.push({
-                  hash,
-                  mimeType,
-                  path: spool,
-                  sizeBytes: hashing.bytes,
-                });
-              } else {
-                await rm(spool, { force: true });
-              }
-              next();
-            },
-            async (err: unknown) => {
-              await rm(spool, { force: true });
-              fail(err);
-            },
-          );
-          return;
-        }
-        const chunks: Buffer[] = [];
-        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-        stream.on("end", () => {
-          const buf = Buffer.concat(chunks);
-
-          if (header.name === "manifest.json") {
-            try {
-              const parsed: unknown = JSON.parse(buf.toString("utf-8"));
-              const version =
-                typeof parsed === "object" && parsed !== null
-                  ? (parsed as { version?: unknown }).version
-                  : undefined;
-              // Ahead of the shape, because another version's manifest is
-              // free to lay its other fields out differently.
-              if (typeof version === "number" && version !== 0) {
-                reject(
-                  new MarfaError(
-                    ErrorCode.VALIDATION_ERROR,
-                    // An archive at another version may name its
-                    // registrations under keys this build does not read,
-                    // with no fallback key, so the refusal has to be here:
-                    // parsing one would drop every registration it carries
-                    // and answer 200.
-                    `Unsupported archive version ${String(version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
-                  ),
-                );
-                return;
-              }
-              const checked = archiveManifestSchema.safeParse(parsed);
-              if (!checked.success) {
-                reject(invalidManifest(checked.error));
-                return;
-              }
-              manifest = checked.data;
-            } catch (err) {
-              if (err instanceof MarfaError) {
-                reject(err);
-                return;
-              }
-              reject(
-                new MarfaError(
-                  ErrorCode.VALIDATION_ERROR,
-                  "Invalid manifest.json",
-                ),
-              );
-              return;
-            }
-          } else if (header.name === "items.ndjson") {
-            const text = buf.toString("utf-8").trimEnd();
-            if (text) {
-              itemLines.push(...text.split("\n"));
-            }
-          } else if (header.name === "edges.ndjson") {
-            const text = buf.toString("utf-8").trimEnd();
-            if (text) {
-              edgeLines.push(...text.split("\n"));
-            }
-          } else if (header.name === "types.ndjson") {
-            const text = buf.toString("utf-8").trimEnd();
-            if (text) {
-              typeLines.push(...text.split("\n"));
-            }
-          }
-
-          next();
-        });
-        stream.resume();
-      });
-      extract.on("finish", () => {
-        resolve();
-      });
-    });
-
-    // The spools this request wrote are its to remove on a refusal, up to
-    // the point `restoreArchiveBlobs` takes them: past it, each is either
-    // in the store under its name or already gone.
-    const refuse = async (err: unknown): Promise<never> => {
-      for (const spool of spools) await rm(spool, { force: true });
-      throw err;
-    };
-
-    inputStream.pipe(gunzip).pipe(extract);
-    try {
-      await entries;
-    } catch (err) {
-      // A refusal mid-read leaves the decompressor holding the body and the
-      // reader waiting on an entry that will never be taken; both are let go
-      // here rather than left for the collector.
-      inputStream.destroy();
-      gunzip.destroy();
-      extract.destroy();
-      return refuse(err);
-    }
-    await rm(bodySpool, { force: true });
-
-    const items: {
-      item: Record<string, unknown>;
-      metadata?: unknown;
-      lending_blobs?: unknown;
-      versions?: unknown;
-    }[] = [];
-    for (const line of itemLines) {
-      try {
-        const parsed = JSON.parse(line) as {
-          item: Record<string, unknown>;
-          metadata?: unknown;
-          lending_blobs?: unknown;
-          versions?: unknown;
-        };
-        items.push(parsed);
-      } catch {
-        // Skip malformed lines; the round-trip export always emits valid
-        // JSON so a bad line means the archive was hand-edited.
-      }
-    }
-
-    const edges: Record<string, unknown>[] = [];
-    for (const line of edgeLines) {
-      try {
-        const parsed = JSON.parse(line) as {
-          edge?: Record<string, unknown>;
-        };
-        if (parsed.edge) {
-          edges.push(parsed.edge);
-        }
-      } catch {
-        // Same rule as item lines.
-      }
-    }
-
-    const preparedItems: {
-      entry: (typeof items)[number];
-      dates: ArchivedDates;
-      history: Version[];
-    }[] = [];
-    const edgeDates: ArchivedDates[] = [];
-    const seenSnapshotIds = new Set<string>();
-    try {
-      for (const [index, entry] of items.entries()) {
-        preparedItems.push({
-          entry,
-          dates: archiveDates("item", entry.item, index),
-          history: archiveVersions(
-            entry.item,
-            entry.versions,
-            index,
-            seenSnapshotIds,
-          ),
-        });
-      }
-      for (const [index, edge] of edges.entries()) {
-        edgeDates.push(archiveDates("edge", edge, index));
-      }
-    } catch (err) {
-      return refuse(err);
-    }
-
-    // Registrations publish outside the rows' transaction, so scalar
-    // refusals must precede them rather than depend on a later rollback.
-    for (const [index, { item }] of items.entries()) {
-      const error = archiveScalarRefusal("item", item, index);
-      if (error) return refuse(error);
-    }
-    for (const [index, edge] of edges.entries()) {
-      const error = archiveScalarRefusal("edge", edge, index);
-      if (error) return refuse(error);
-    }
-
-    // A row whose `source` claims a reserved credential shape is refused,
-    // on the same terms and for the same reason as the state check below:
-    // the restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses that prefix precisely so no credential can
-    // stamp one. A row carrying `oauth:` would otherwise read, ever after,
-    // as written by a grant that never existed — planted through the one
-    // door that does not ask.
-    for (const { item } of items) {
-      const source = item.source;
-      if (typeof source === "string" && isReservedCredentialSource(source)) {
-        return refuse(
-          new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `Item ${String(item.id)} records a source no credential can hold: ${source}`,
-            { item_id: item.id, source },
-          ),
-        );
-      }
-    }
-
-    // A row in a state its type's lifecycle cannot produce is refused, the
-    // question `POST /items` asks of a caller: `trashed` is a state, and
-    // not one a `system.*` row can be in, and a restore that wrote it would
-    // land a row nothing can purge, restore or move. Only an absent state
-    // (the default) and the default itself pass without the question,
-    // since the store would write whatever else the line carried. The
-    // whole archive is refused, before anything is written, so the answer
-    // is never half a restore.
-    for (const { item } of items) {
-      const state = item.state;
       if (
-        state === undefined ||
-        state === null ||
-        state === SYSTEM_DEFAULT_STATE
+        (await stat(bodySpool).then(
+          (s) => s.size,
+          () => 0,
+        )) === 0
       ) {
-        continue;
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty archive");
       }
-      const error = validateTransition(
-        String(item.type),
-        SYSTEM_DEFAULT_STATE,
-        state as ItemState,
-      );
-      if (error) {
-        return refuse(
-          new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `Item ${String(item.id)} of type ${String(item.type)} is recorded in a state its lifecycle cannot produce: ${error}`,
-          ),
-        );
-      }
-    }
+      const archive = await readArchive(bodySpool, mintSpool);
+      await rm(bodySpool, { force: true });
+      const paths = archive.lineFiles;
 
-    const typeEntries: ArchiveTypeEntry[] = [];
-    for (const line of typeLines) {
+      // Everything that can refuse without writing is asked first, over the
+      // whole archive, so a refused archive leaves nothing behind.
+      let totalItems = 0;
+      const seenSnapshotIds = new Set<string>();
+      for await (const entry of itemLines(paths["items.ndjson"])) {
+        const refusal = itemRefusal(entry, totalItems, seenSnapshotIds);
+        if (refusal) throw refusal;
+        totalItems++;
+      }
+      seenSnapshotIds.clear();
+      let totalEdges = 0;
+      for await (const edge of edgeLines(paths["edges.ndjson"])) {
+        archiveDates("edge", edge, totalEdges);
+        const refusal = archiveScalarRefusal("edge", edge, totalEdges);
+        if (refusal) throw refusal;
+        totalEdges++;
+      }
+      const typeEntries: ArchiveTypeEntry[] = [];
+      for await (const line of archiveLines(paths["types.ndjson"])) {
+        try {
+          typeEntries.push(JSON.parse(line) as ArchiveTypeEntry);
+        } catch {
+          // Same rule as item and edge lines.
+        }
+      }
+      const typePlan = await planArchiveTypes(storage, typeEntries);
+
+      const releaseBlobs = await holdBlobUploadLocks(
+        archive.blobs.map((blob) => blob.hash),
+      );
       try {
-        typeEntries.push(JSON.parse(line) as ArchiveTypeEntry);
-      } catch {
-        // Same rule as item and edge lines: the exporter always emits
-        // valid JSON, so a bad line means the archive was hand-edited.
-      }
-    }
-
-    // Each registration commits in a transaction of its own before the rows'
-    // transaction opens, so a rollback of the rows cannot strand the registry
-    // holding types the database no longer has. See registerArchiveTypes.
-    let typeResult;
-    try {
-      typeResult = await registerArchiveTypes(storage, typeEntries, actor);
-    } catch (err) {
-      return refuse(err);
-    }
-
-    // A row carrying a property no type declares is refused wherever the
-    // strict-mode lever names that type, which is the question
-    // `POST /items` asks of a caller. This door writes through the store,
-    // where validation runs loose, so the question has to be asked here
-    // or not at all — and a property that lands reads back ever after
-    // undeclared and unmarked under the type's current version. Refused
-    // whole, and after the archive's own type registrations so a type
-    // this instance is learning from the archive is measured against the
-    // declaration it arrives with, but before any blob or row is
-    // written.
-    const archiveEnforcement = resolveEnforcement(
-      await readInstanceConfig(storage.settings),
-      c.get("apiKey"),
-    );
-    for (const { item } of items) {
-      const refusal = undeclaredPropertyRefusal(
-        archiveEnforcement,
-        String(item.type),
-        (item.properties ?? {}) as Record<string, unknown>,
-        { item_id: item.id },
-      );
-      if (refusal) return refuse(refusal);
-    }
-
-    // Blob preparation commits separately with its own audit. If item restore
-    // later fails, these registered bytes remain for the ordinary orphan
-    // sweep; no unaudited compensation removes committed preparation.
-    // Hold the per-hash locks through item restore to exclude a purge.
-    const releaseBlobs = await holdBlobUploadLocks(
-      pendingBlobs.map((blob) => blob.hash),
-    );
-    try {
-      await restoreArchiveBlobs(storage, blobs, pendingBlobs, uploader, actor);
-    } catch (err) {
-      releaseBlobs();
-      throw err;
-    }
-
-    // Filled inside the transaction and announced at its end, inside it.
-    const restoredItems: { item: Item; metadata: Metadata }[] = [];
-    const restoredEdges: Edge[] = [];
-    let result;
-    try {
-      result = await runAuditedTransaction(
-        storage,
-        async () => {
-          let imported = 0;
-          let duplicates = 0;
-          let edgesImported = 0;
-          let edgesSkipped = 0;
-          const edgesSkippedReasons: Record<string, number> = {};
-          const skipEdge = (reason: string): void => {
-            edgesSkipped++;
-            edgesSkippedReasons[reason] =
-              (edgesSkippedReasons[reason] ?? 0) + 1;
-          };
-
-          // Ids an edge endpoint may resolve against without a storage
-          // lookup: every id this restore just wrote, plus ids that
-          // collided — a collision means the database already holds
-          // that exact id, so edges naming it still land correctly.
-          const resolvableIds = new Set<string>();
-
-          for (const {
-            entry: { item, metadata: meta, lending_blobs: lending },
-            dates,
-            history,
-          } of preparedItems) {
-            const archiveId = typeof item.id === "string" ? item.id : undefined;
-            let created: Item;
-            try {
-              ({ item: created } = await writeItem(
-                storage,
-                { kind: "platform" },
-                {
-                  op: "create",
-                  // A digest lends here exactly where it lent in the instance the
-                  // archive was taken from, and a line naming none lends nothing.
-                  blob_proof: (hash) =>
-                    Promise.resolve(
-                      Array.isArray(lending) && lending.includes(hash),
-                    ),
-                  ...(archiveId !== undefined && { id: archiveId }),
-                  // The row comes back under its archived id, so it comes
-                  // back at its archived version too. Re-minting at 1 lets a
-                  // client's stale precondition pass, later, against content
-                  // it never read from.
-                  ...(typeof item.version === "number" && {
-                    version: item.version,
-                  }),
-                  type: item.type as string,
-                  properties: (item.properties ?? {}) as Record<
-                    string,
-                    unknown
-                  >,
-                  state: item.state as ItemState | undefined,
-                  tier: item.tier as Tier | undefined,
-                  occurred_at: item.occurred_at as string | undefined,
-                  source: item.source as string | undefined,
-                  source_id: item.source_id as string | undefined,
-                  capture_latitude: item.capture_latitude as number | undefined,
-                  capture_longitude: item.capture_longitude as
-                    number | undefined,
-                  tags: archiveTags(meta),
-                },
-                // Announced below with the extensions it carries, which a
-                // second write sets.
-                { announce: false },
-              ));
-            } catch (err) {
-              if (
-                err instanceof MarfaError &&
-                (err.code === ErrorCode.DUPLICATE_SOURCE ||
-                  err.code === ErrorCode.CONFLICT ||
-                  err.code === ErrorCode.LINK_TAKEN)
-              ) {
-                duplicates++;
-                if (
-                  err.code === ErrorCode.CONFLICT &&
-                  archiveId !== undefined
-                ) {
-                  resolvableIds.add(archiveId);
-                }
-                continue;
-              }
-              throw err;
-            }
-            imported++;
-            resolvableIds.add(created.id);
-
-            // History conflicts must escape the create-only duplicate catch:
-            // an existing snapshot ID belongs to a different recorded past.
-            // One write for the whole set, not one per namespace. Each
-            // `setExtension` rewrites the same JSON column and bumps the
-            // item's modification time beside it, so writing them
-            // separately cost namespaces times items on the one path
-            // whose purpose is moving a lot of rows at once. What is
-            // stored is identical either way.
-            const extensions = archiveExtensions(meta);
-            const { extensions: stored } = await storage.metadata.setExtensions(
-              created.id,
-              extensions,
-            );
-            const finalized = await finalizeArchiveItem(
-              storage,
-              created.id,
-              dates,
-              history,
-            );
-            restoredItems.push({
-              item: finalized,
-              metadata: {
-                item_id: created.id,
-                // `archiveTags` answers `undefined` for "the archive named
-                // none", which is what `create` wants and what a `Metadata`
-                // cannot hold: an item with no tags carries an empty list.
-                tags: archiveTags(meta) ?? [],
-                extensions: stored,
-              },
-            });
-          }
-
-          // Second pass, after every item the archive carries exists: an
-          // edge restores only when both endpoints resolve in the database,
-          // so a partial or hand-edited archive cannot plant a
-          // reference to an item that is not there.
-          const endpointResolves = async (id: string): Promise<boolean> =>
-            resolvableIds.has(id) || (await storage.items.get(id)) !== null;
-
-          for (const [index, edge] of edges.entries()) {
-            const sourceId = edge.source_id;
-            const targetId = edge.target_id;
-            const edgeType = edge.edge_type;
-            if (
-              typeof sourceId !== "string" ||
-              typeof targetId !== "string" ||
-              typeof edgeType !== "string"
-            ) {
-              skipEdge("malformed");
-              continue;
-            }
-            if (
-              !(await endpointResolves(sourceId)) ||
-              !(await endpointResolves(targetId))
-            ) {
-              skipEdge("endpoint_missing");
-              continue;
-            }
-            const edgeId = typeof edge.id === "string" ? edge.id : undefined;
-            if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
-              // Already present under the same id — a re-restore, not an error.
-              skipEdge("already_present");
-              continue;
-            }
-            // An archive is a file someone can hand you: replayed through the
-            // raw insert, a hand-edited one could plant edges of an
-            // unregistered type, or edges violating every constraint the
-            // enforcer exists to apply, past checks the API refuses at. It is
-            // validated exactly the way `POST /edges` validates, one edge at a
-            // time: the batch entry point throws on its first violation, which
-            // would cost the whole restore over one bad line, and this route's
-            // contract is to skip and count.
-            //
-            // Registered edge types resolve because the archive's own
-            // registrations are replayed before this loop runs. `replay` lets a
-            // revoked folder keep the placements it held before its revoke.
-            try {
-              await assertEdgesCanBeCreated(
-                storage.edges,
-                storage.items,
-                [
-                  {
-                    source_id: sourceId,
-                    target_id: targetId,
-                    edge_type: edgeType,
-                    properties: (edge.properties ?? {}) as Record<
-                      string,
-                      unknown
-                    >,
-                  },
-                ],
-                // A restore replays every row the archive holds, so no target
-                // is one to withhold; the operator's own map reaches no type.
-                () => true,
-                { replay: true },
-              );
-            } catch (err) {
-              if (err instanceof MarfaError) {
-                skipEdge(err.code);
-                continue;
-              }
-              throw err;
-            }
-            const restored = await storage.edges.createRaw({
-              ...edgeDates[index],
-              ...(edgeId !== undefined && { id: edgeId }),
-              // Same rule as the item path above. Both doors move together
-              // or the hole stays reachable through the other one.
-              ...(typeof edge.version === "number" && {
-                version: edge.version,
-              }),
-              source_id: sourceId,
-              target_id: targetId,
-              edge_type: edgeType,
-              properties: (edge.properties ?? {}) as Record<string, unknown>,
-            });
-            restoredEdges.push(restored);
-            edgesImported++;
-          }
-
-          // Announced inside the restore's transaction, so the log holds
-          // every row it wrote or none: a restore is a write like any other
-          // from a subscriber's side, and the log is the only catch-up there
-          // is. Items before edges, because an edge names two endpoints and a
-          // client receiving one for a row it has never heard of has no way
-          // to resolve it.
-          //
-          // Fan-out is declined, as it is on every other door that writes in
-          // bulk: a restore can carry every row in an instance, and
-          // driving outbound work per row per subscribed connection would
-          // push an archive's worth of writes back out to whatever an
-          // installed connection is joined to. The flag governs only the
-          // outbound side effects, and rides the persisted row, so a catch-up
-          // that rebuilds these events reaches the same answer.
-          for (const { item, metadata } of restoredItems) {
-            await publish({
-              type: "created",
-              item,
-              metadata,
-              enableFanout: false,
-            });
-          }
-          const sourceTypes = await sourceTypesFor(
-            storage,
-            restoredEdges.map((edge) => edge.source_id),
+        const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
+        try {
+          const result = await restoreRows(storage, blobs, {
+            plan: typePlan,
+            pending: archive.blobs,
+            files: paths,
+            totalItems,
+            totalEdges,
+            uploader,
+            actor,
+            apiKey: c.get("apiKey"),
+          });
+          return c.json(
+            {
+              imported: result.imported,
+              duplicates: result.duplicates,
+              edges_imported: result.edgesImported,
+              edges_skipped: result.edgesSkipped,
+              edges_skipped_reasons: result.edgesSkippedReasons,
+              blobs_imported: archive.blobs.length,
+              types_registered: result.types.typesRegistered,
+              types_skipped: result.types.typesSkipped,
+              edge_types_registered: result.types.edgeTypesRegistered,
+              edge_types_skipped: result.types.edgeTypesSkipped,
+            },
+            200,
           );
-          for (const edge of restoredEdges) {
-            await publishEdge({
-              type: "edge_created",
-              edge,
-              sourceType: sourceTypes.get(edge.source_id),
-              enableFanout: false,
-            });
-          }
-
-          return {
-            imported,
-            duplicates,
-            edgesImported,
-            edgesSkipped,
-            edgesSkippedReasons,
-          };
-        },
-        (result) => ({
-          client_ip: c.get("clientIp") ?? null,
-          key_id: c.get("apiKey")?.id,
-          action: "admin.restore_archive",
-          resource_type: "admin.restore_archive",
-          details: {
-            imported: result.imported,
-            duplicates: result.duplicates,
-            edges_imported: result.edgesImported,
-            edges_skipped: result.edgesSkipped,
-            edges_skipped_reasons: result.edgesSkippedReasons,
-            blobs_imported: blobCount,
-            types_registered: typeResult.typesRegistered,
-            types_skipped: typeResult.typesSkipped,
-            edge_types_registered: typeResult.edgeTypesRegistered,
-            edge_types_skipped: typeResult.edgeTypesSkipped,
-            total_items: items.length,
-            total_edges: edges.length,
-          },
-        }),
-      );
+        } catch (err) {
+          await takeBackBytes(storage, blobs, wrote);
+          throw err;
+        }
+      } finally {
+        releaseBlobs();
+      }
     } finally {
-      releaseBlobs();
+      for (const spool of spools) await rm(spool, { force: true });
     }
-
-    return c.json(
-      {
-        imported: result.imported,
-        duplicates: result.duplicates,
-        edges_imported: result.edgesImported,
-        edges_skipped: result.edgesSkipped,
-        edges_skipped_reasons: result.edgesSkippedReasons,
-        blobs_imported: blobCount,
-        types_registered: typeResult.typesRegistered,
-        types_skipped: typeResult.typesSkipped,
-        edge_types_registered: typeResult.edgeTypesRegistered,
-        edge_types_skipped: typeResult.edgeTypesSkipped,
-      },
-      200,
-    );
   });
 
   return router;
