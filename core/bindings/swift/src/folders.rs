@@ -365,17 +365,33 @@ impl Folders {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
-            let watched = folder.watch(&flag, |event| {
-                listener.told(event_of(event)?);
-                Ok::<(), MarfaError>(())
-            });
+            // Caught, so a listener waiting to be told the watch ended is told.
+            let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                folder.watch(&flag, |event| {
+                    listener.told(event_of(event)?);
+                    Ok::<(), MarfaError>(())
+                })
+            }));
             // Let go of the folder before saying so: a listener that works it
             // again on being told must find it free.
             drop(folder);
-            listener.ended(watched.err().map(|error| ended(error, origin.as_deref())));
+            listener.ended(match watched {
+                Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
+                Err(fault) => Some(MarfaError::Invalid {
+                    message: format!("the watch stopped on a fault: {}", said(fault.as_ref())),
+                }),
+            });
         });
         Ok(Arc::new(Subscription { stop }))
     }
+}
+
+fn said(fault: &(dyn std::any::Any + Send)) -> String {
+    fault
+        .downcast_ref::<&str>()
+        .map(|said| (*said).to_string())
+        .or_else(|| fault.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into())
 }
 
 fn ended(error: marfa_core::WatchError<MarfaError>, origin: Option<&str>) -> MarfaError {
@@ -543,5 +559,78 @@ mod tests {
     fn a_url_without_a_key_is_refused() {
         assert!(Folders::new(Some("http://127.0.0.1:9".into()), None).is_err());
         assert!(Folders::new(None, None).is_ok());
+    }
+
+    /// Lists every folder in a registry under a temporary directory, named
+    /// once before any folder call reads it.
+    fn registry() {
+        static NAMED: std::sync::Once = std::sync::Once::new();
+        NAMED.call_once(|| {
+            let dir = tempfile::tempdir().unwrap().keep();
+            // SAFETY: under the `Once`, before this test reads the environment.
+            unsafe {
+                std::env::set_var(marfa_core::folder::REGISTRY_ENV, dir.join("folders.json"))
+            };
+        });
+    }
+
+    struct Panicking {
+        ended: std::sync::Mutex<std::sync::mpsc::Sender<Option<MarfaError>>>,
+    }
+
+    impl FolderListener for Panicking {
+        fn told(&self, _: FolderEvent) {
+            panic!("the listener faulted");
+        }
+
+        fn ended(&self, error: Option<MarfaError>) {
+            let _ = self.ended.lock().unwrap().send(error);
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_watch_whose_listener_panics_ends_with_an_error_and_lets_the_folder_go() {
+        registry();
+        let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
+        let key = std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key");
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
+        let made = std::process::Command::new(seed)
+            .args([
+                "folder",
+                "binding watch",
+                r#"{"search":{"types":["core.note"],"filter":"tags contains \"binding-watch\""}}"#,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        let id = String::from_utf8(made.stdout).unwrap().trim().to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().display().to_string();
+        let folders = Folders::new(Some(url), Some(key)).unwrap();
+        folders.add(path.clone(), id).unwrap();
+        folders.sync(path.clone()).unwrap();
+
+        let (sender, ended) = std::sync::mpsc::channel();
+        let _watch = folders
+            .watch(
+                path.clone(),
+                Arc::new(Panicking {
+                    ended: std::sync::Mutex::new(sender),
+                }),
+            )
+            .unwrap();
+        let error = ended
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("a watch whose listener panicked never said it ended");
+        assert!(
+            matches!(&error, Some(MarfaError::Invalid { message }) if message.contains("the listener faulted")),
+            "{error:?}"
+        );
+        folders.sync(path).expect("the watch let the folder go");
     }
 }

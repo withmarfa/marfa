@@ -125,8 +125,12 @@ impl Folder {
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
             let follower = scope.spawn(|| follow(self, &ended, server_wakes));
-            let watched = self.watch_files(stop, sender, &wakes, &mut tell);
-            ended.store(true, Ordering::SeqCst);
+            let watched = {
+                // A guard, so a pass or a `tell` that panics still ends the
+                // follow: the scope waits for it before the panic goes on.
+                let _ending = Raise(&ended);
+                self.watch_files(stop, sender, &wakes, &mut tell)
+            };
             let followed = follower.join().map_err(|_| {
                 WatchError::Unwatchable(
                     "the follow of the server's changes ended in a fault".into(),
@@ -272,6 +276,15 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
             code: "unauthorized".into(),
             message: stopped.clone(),
         })
+}
+
+/// Raises its flag when dropped, unwinding included.
+struct Raise<'a>(&'a AtomicBool);
+
+impl Drop for Raise<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CoreError> {

@@ -18,6 +18,11 @@ if [[ "$(basename "$(dirname "$1")")" == deps ]]; then
   cap -f 1048576
   # Processor seconds for the whole binary, every test in it.
   cap -t 600
+  # A test that opens a folder lists it in the registry; never the person's.
+  if [[ -z "${MARFA_FOLDER_REGISTRY:-}" ]]; then
+    MARFA_FOLDER_REGISTRY="$(mktemp -d "${TMPDIR:-/tmp}/marfa-test-registry.XXXXXX")/folders.json"
+    export MARFA_FOLDER_REGISTRY
+  fi
 fi
 
 exec "$@"

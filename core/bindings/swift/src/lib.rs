@@ -1285,8 +1285,8 @@ pub trait ChangeListener: Send + Sync {
 }
 
 /// A held stream or a folder's watch, stopped by `stop` or by letting it go.
-/// A follow ends within a quarter second of either, and a watch once the
-/// pass under way is done; `ended` is called once it has.
+/// A follow ends within a quarter second of either; a watch within about a
+/// second, or once the pass under way is done. `ended` is called once it has.
 #[derive(uniffi::Object)]
 pub struct Subscription {
     stop: Arc<AtomicBool>,

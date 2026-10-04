@@ -369,3 +369,27 @@ fn a_watch_whose_tell_fails_ends_with_that_failure() {
         "{watched:?}"
     );
 }
+
+#[test]
+#[ignore = "needs a running server"]
+fn a_watch_whose_tell_panics_ends_and_lets_the_folder_go() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = added(dir.path(), server());
+    folder.sync().unwrap();
+    let (done, ended) = mpsc::channel();
+    std::thread::spawn(move || {
+        let stop = AtomicBool::new(false);
+        let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            folder.watch(&stop, |_| -> Result<(), ()> {
+                panic!("the caller faulted")
+            })
+        }));
+        drop(folder);
+        let _ = done.send(watched.is_err());
+    });
+    let panicked = ended
+        .recv_timeout(Duration::from_secs(30))
+        .expect("a watch whose tell panicked never ended, and holds its folder");
+    assert!(panicked, "the panic did not reach the caller");
+    Folder::open(dir.path(), None).expect("the watch let the folder go");
+}
