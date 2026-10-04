@@ -65,8 +65,9 @@ impl Folder {
     }
 
     /// Takes the folder at `dir` off this machine: its own state under
-    /// `.marfa` goes, and its files stay. Refused while writes wait. A folder
-    /// whose directory is gone is only taken off the registry.
+    /// `.marfa` goes, and its files stay. Refused while writes wait, unless
+    /// the first sync still waits to be confirmed. A folder whose directory
+    /// is gone is only taken off the registry.
     pub fn remove_at(dir: impl AsRef<Path>) -> Result<()> {
         let dir = dir.as_ref();
         if dir.join(STATE_DIR).exists() || !Folder::forget(dir)? {

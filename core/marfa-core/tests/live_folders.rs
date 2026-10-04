@@ -133,13 +133,6 @@ fn registry() -> Registry {
 /// A folder of the notes tagged with a tag of its own, so it holds only
 /// what the test writes, its first sync already confirmed.
 fn added(dir: &Path, through: Server) -> Folder {
-    let folder = added_waiting(dir, through);
-    folder.confirm_first_sync().unwrap();
-    folder
-}
-
-/// The same folder with its first sync still waiting.
-fn added_waiting(dir: &Path, through: Server) -> Folder {
     registry();
     let tag = nonce();
     let settings = serde_json::json!({
@@ -147,7 +140,9 @@ fn added_waiting(dir: &Path, through: Server) -> Folder {
         "defaults": { "tags": [tag] },
     });
     let id = seed(&["folder", &nonce(), &settings.to_string()]);
-    Folder::add(dir, &id, Some(through)).unwrap()
+    let folder = Folder::add(dir, &id, Some(through)).unwrap();
+    folder.confirm_first_sync().unwrap();
+    folder
 }
 
 /// A sync that ran, not one waiting to be confirmed.

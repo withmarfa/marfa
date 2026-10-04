@@ -347,7 +347,8 @@ impl Folder {
         }
     }
 
-    /// Leaves the folder's files; refused while writes wait.
+    /// Leaves the folder's files; refused while writes wait, unless the first
+    /// sync still waits to be confirmed.
     pub fn remove(self) -> Result<()> {
         // A first sync still waiting has sent nothing, so its queue holds
         // only what the scan read from files that stay.
