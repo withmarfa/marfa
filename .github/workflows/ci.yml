@@ -116,9 +116,6 @@ jobs:
           echo "::error::A draft runs only the quick checks. Mark the pull request ready for review to run the tests, the contract, the core and the rest."
           exit 1
 
-  # `marfa-client` is held to its generator, not these: `--no-deps` keeps
-  # clippy off it where a crate depends on it. Formatting still takes it,
-  # since the generator formats what it writes.
   core-checks:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
@@ -144,8 +141,8 @@ jobs:
         working-directory: core
         run: |
           cargo fmt --all --check
-          cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-          scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace --exclude marfa-client
+          cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace
       - name: Check the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
@@ -579,36 +576,6 @@ jobs:
           if [ -n "$(git status --porcelain packages/client/src/generated)" ]; then
             git status --porcelain packages/client/src/generated
             echo "@withmarfa/client's generated sources are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
-            exit 1
-          fi
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Regenerate the Rust client and check for drift
-        run: |
-          rm -rf core/marfa-client/src
-          pnpm run generate:rust
-          if [ -n "$(git status --porcelain core/marfa-client)" ]; then
-            git status --porcelain core/marfa-client
-            echo "marfa-client is out of date with openapi.json, or holds a file the generator did not write. Run 'pnpm generate' and commit."
-            exit 1
-          fi
-          configuration=$(printf '%s\n' \
-            core/marfa-client/.openapi-generator-ignore \
-            core/marfa-client/.openapi-generator/FILES \
-            core/marfa-client/.openapi-generator/VERSION \
-            core/marfa-client/Cargo.toml \
-            core/marfa-client/openapitools.json \
-            core/marfa-client/templates/lib.mustache \
-            core/marfa-client/templates/model_mod.mustache)
-          beside=$(git ls-files core/marfa-client | grep -v '^core/marfa-client/src/' || true)
-          if [ "$beside" != "$configuration" ]; then
-            echo "marfa-client holds files outside src/ other than its generator's configuration:"
-            diff <(echo "$configuration") <(echo "$beside") || true
             exit 1
           fi
       - name: Regenerate the core's contract and check for drift

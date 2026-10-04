@@ -558,7 +558,7 @@ mod tests {
     fn token_door(status: &'static str, body: &str) -> (String, Door) {
         let root = format!(
             r#"{{"name":"marfa","contract":{}}}"#,
-            marfa_client::CONTRACT_VERSION
+            marfa_core::contract::CONTRACT_VERSION
         );
         let door = Door::open(vec![
             Answer::json("200 OK", &root),
@@ -828,7 +828,7 @@ mod tests {
     fn a_dead_grant_ends_the_sign_in_and_any_other_refusal_leaves_it() {
         let root = format!(
             r#"{{"name":"marfa","contract":{}}}"#,
-            marfa_client::CONTRACT_VERSION
+            marfa_core::contract::CONTRACT_VERSION
         );
         let door = Door::open(vec![
             Answer::json("200 OK", &root),

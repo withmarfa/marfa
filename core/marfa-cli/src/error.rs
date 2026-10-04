@@ -1,9 +1,10 @@
 use std::io;
 
-use marfa_core::CoreError;
+use marfa_core::{CoreError, ERROR_CODES};
 
-/// Agents read the exit code and the code string, which `EXIT_CODES_HELP`
-/// documents by hand: change them together.
+/// Agents read the exit code and the code string. The help lists the codes
+/// from the lists they are made from, and the exit codes by hand: change an
+/// exit code and `EXIT_CODES_TEXT` together.
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error(transparent)]
@@ -81,6 +82,30 @@ pub enum CliError {
     },
 }
 
+impl CliError {
+    /// For an error from a request the command itself sent, where a mismatch
+    /// is worded for the command. A device command keeps the core's own
+    /// words, which say what became of a queued write.
+    pub fn direct(error: CoreError) -> Self {
+        match error {
+            CoreError::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
+            } => Self::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
+            },
+            other => Self::from(other),
+        }
+    }
+}
+
 impl From<CoreError> for CliError {
     fn from(error: CoreError) -> Self {
         match error {
@@ -96,20 +121,20 @@ impl From<CoreError> for CliError {
                     retry_after_seconds: None,
                     details: None,
                 },
-                CoreError::ContractMismatch {
-                    origin,
-                    served,
-                    expected,
-                    write_sent,
-                    status,
-                } => Self::ContractMismatch {
-                    origin,
-                    served,
-                    expected,
-                    write_sent,
-                    status,
+                CoreError::RateLimited {
+                    code,
+                    message,
+                    retry_after_seconds,
+                } => Self::Refused {
+                    status: 429,
+                    code,
+                    message,
+                    retry_after_seconds,
+                    details: None,
                 },
-                other => Self::from(other),
+                CoreError::SignedOut { origin } => Self::SignedOut { origin },
+                CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
+                other => Self::direct(other),
             },
             CoreError::Redirected {
                 origin,
@@ -135,67 +160,86 @@ pub enum Exit {
     Credential = 5,
 }
 
-impl CliError {
-    pub fn code(&self) -> &'static str {
-        match self {
-            CliError::Core(core) => match core {
-                CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).code(),
-                CoreError::Redirected { .. } => "redirect",
-                CoreError::NotFound { .. } => "not_found",
-                CoreError::Unauthorized { .. } => "unauthorized",
-                CoreError::Forbidden { .. } => "forbidden",
-                CoreError::Validation { .. } => "validation",
-                CoreError::UnknownType { .. } => "unknown_type",
-                CoreError::RateLimited { .. } => "rate_limited",
-                CoreError::Server { .. } => "server",
-                CoreError::Io(_) => "io",
-                CoreError::Network(_) => "network",
-                CoreError::Unnamed { .. } => "unnamed_answer",
-                CoreError::Decoding(_) => "decoding",
-                CoreError::Store(_) => "store",
-                CoreError::StorageFull(_) => "storage_full",
-                CoreError::SignedOut { .. } => "signed_out",
-                CoreError::NoKeychain(_) => "no_keychain",
-                CoreError::NoServer => "no_server",
-                CoreError::NoCursor => "no_cursor",
-                CoreError::HydrationIncomplete => "hydration_incomplete",
-                CoreError::NoCatalog => "no_catalog",
-                CoreError::ReadingHandle => "reading_handle",
-                CoreError::WrongSchema { .. } => "wrong_schema",
-                CoreError::CopyExpired { .. } => "copy_expired",
-                CoreError::StreamIncomplete { .. } => "stream_incomplete",
-                CoreError::WrongServer { .. } => "wrong_server",
-                CoreError::BytesAbsent { .. } => "bytes_absent",
-                CoreError::ContractMismatch { .. } => "contract_mismatch",
-                CoreError::Invalid(_) => "invalid",
-            },
-            CliError::Io(_) => "io",
-            CliError::NotHeld(_) => "not_held",
-            CliError::FolderHeld(_) => "reading_handle",
-            CliError::Watch(_) => "watch",
-            CliError::ClosedOutput => "closed_output",
-            CliError::Refused { status, .. } => match status {
-                400 | 422 => "validation",
-                401 => "unauthorized",
-                403 => "forbidden",
-                404 => "not_found",
-                409 => "conflict",
-                413 => "too_large",
-                429 => "rate_limited",
-                _ => "server",
-            },
-            CliError::Usage(_) => "usage",
-            CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
-            CliError::NoServerNamed => "no_server",
-            CliError::NoCredential { .. } => "no_credential",
-            CliError::NoKeychain(_) => "no_keychain",
-            CliError::SignedOut { .. } => "signed_out",
-            CliError::Invalid(_) => "invalid",
-            CliError::ContractMismatch { .. } => "contract_mismatch",
-            CliError::Redirected { .. } => "redirect",
+/// The core's own errors are named by `CoreError::code`; this names the rest.
+/// One list drives the match and `OWN_CODES`, so a variant added here fails to
+/// compile until it has a code, and the code then joins what the help lists.
+macro_rules! own_codes {
+    ($($pattern:pat => $code:literal,)*) => {
+        const OWN_CODES: &[&str] = &[$($code),*];
+
+        impl CliError {
+            pub fn code(&self) -> &'static str {
+                match self {
+                    CliError::Core(core) => core.code(),
+                    CliError::Refused { status, .. } => refused_code(*status),
+                    $($pattern => $code,)*
+                }
+            }
+        }
+    };
+}
+
+own_codes! {
+    CliError::Io(_) => "io",
+    CliError::NotHeld(_) => "not_held",
+    CliError::FolderHeld(_) => "reading_handle",
+    CliError::Watch(_) => "watch",
+    CliError::ClosedOutput => "closed_output",
+    CliError::Usage(_) => "usage",
+    CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
+    CliError::NoServerNamed => "no_server",
+    CliError::NoCredential { .. } => "no_credential",
+    CliError::NoKeychain(_) => "no_keychain",
+    CliError::SignedOut { .. } => "signed_out",
+    CliError::Invalid(_) => "invalid",
+    CliError::ContractMismatch { .. } => "contract_mismatch",
+    CliError::Redirected { .. } => "redirect",
+}
+
+/// What the server's own refusal is named by, from its status.
+fn refused_code(status: u16) -> &'static str {
+    match status {
+        400 | 422 => "validation",
+        401 => "unauthorized",
+        403 => "forbidden",
+        404 => "not_found",
+        409 => "conflict",
+        413 => "too_large",
+        429 => "rate_limited",
+        _ => "server",
+    }
+}
+
+/// Every name `refused_code` answers.
+const REFUSED_CODES: &[&str] = &[
+    "validation",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "too_large",
+    "rate_limited",
+    "server",
+];
+
+/// Every code a refusal on stderr can carry, each once: the core's, then the
+/// binary's own. `closed_output` is left out, as nothing is printed for it.
+pub fn codes() -> Vec<&'static str> {
+    let mut codes: Vec<&'static str> = Vec::new();
+    for code in ERROR_CODES
+        .iter()
+        .chain(OWN_CODES)
+        .chain(REFUSED_CODES)
+        .filter(|code| **code != "closed_output")
+    {
+        if !codes.contains(code) {
+            codes.push(code);
         }
     }
+    codes
+}
 
+impl CliError {
     pub fn exit(&self) -> Exit {
         match self {
             CliError::Core(core) => match core {
@@ -347,7 +391,7 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
-pub const EXIT_CODES_HELP: &str = "\
+const EXIT_CODES_TEXT: &str = "\
 Exit codes:
   0  done
   1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
@@ -362,11 +406,14 @@ A report exit prints no additional refusal on stderr. Refused verdicts have a se
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
-where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
-too_large, unknown_type, rate_limited, server, network, unnamed_answer, decoding, io, watch, store, storage_full, no_store,
-no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
-no_catalog, reading_handle, wrong_schema, copy_expired, stream_incomplete, wrong_server, not_held,
-contract_mismatch, redirect.";
+where error.code is one of: ";
+
+/// The exit codes and every code a refusal can carry, the second read from
+/// the lists the codes are made from rather than written out again.
+pub fn exit_codes_help() -> &'static str {
+    static HELP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HELP.get_or_init(|| format!("{EXIT_CODES_TEXT}{}.", codes().join(", ")))
+}
 
 #[cfg(test)]
 mod tests {
@@ -412,123 +459,136 @@ mod tests {
     }
 
     #[test]
-    fn the_help_names_every_code_and_nothing_else() {
-        let listed: Vec<&str> = EXIT_CODES_HELP
-            .split("one of:")
+    fn a_mismatch_keeps_the_core_words_unless_the_command_sent_the_request() {
+        let mismatch = || CoreError::ContractMismatch {
+            origin: "https://marfa.example".into(),
+            served: Some("other".into()),
+            expected: 1,
+            write_sent: true,
+            status: Some(200),
+        };
+        let carried = CliError::from(mismatch());
+        assert!(matches!(
+            &carried,
+            CliError::Core(CoreError::ContractMismatch { .. })
+        ));
+        assert_eq!(carried.to_string(), mismatch().to_string());
+        assert!(matches!(
+            CliError::direct(mismatch()),
+            CliError::ContractMismatch { .. }
+        ));
+        assert_ne!(
+            CliError::direct(mismatch()).to_string(),
+            mismatch().to_string()
+        );
+    }
+
+    #[test]
+    fn a_renewal_that_finds_the_grant_dead_says_to_sign_in_with_the_command() {
+        let signed_out = CliError::from(CoreError::RenewalFailed(Box::new(CoreError::SignedOut {
+            origin: "https://marfa.example".into(),
+        })));
+        assert!(matches!(signed_out, CliError::SignedOut { .. }));
+        let no_keychain = CliError::from(CoreError::RenewalFailed(Box::new(
+            CoreError::NoKeychain("locked".into()),
+        )));
+        assert!(matches!(no_keychain, CliError::NoKeychain(_)));
+    }
+
+    /// The codes in the help, as an agent reads them.
+    fn listed() -> Vec<&'static str> {
+        exit_codes_help()
+            .split("one of: ")
             .nth(1)
             .unwrap()
             .trim_end_matches('.')
-            .split(',')
-            .map(str::trim)
-            .collect();
-        let answered = [
-            CliError::Usage(String::new()).code(),
-            CliError::Invalid(String::new()).code(),
-            CliError::Core(CoreError::NotFound {
-                code: String::new(),
-                message: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::Unauthorized {
-                code: String::new(),
-                message: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::Forbidden {
-                code: String::new(),
-                message: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::Validation {
-                code: String::new(),
-                message: String::new(),
-            })
-            .code(),
-            refused(409).code(),
-            refused(413).code(),
-            CliError::Core(CoreError::UnknownType {
-                message: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::RateLimited {
-                code: String::new(),
-                message: String::new(),
-                retry_after_seconds: None,
-            })
-            .code(),
-            CliError::Core(CoreError::Server {
-                status: 500,
-                code: String::new(),
-                message: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::Network(String::new())).code(),
-            CliError::Core(CoreError::Unnamed {
-                origin: String::new(),
-                status: 401,
-                retry_after_seconds: None,
-            })
-            .code(),
-            CliError::Core(CoreError::Decoding(String::new())).code(),
-            CliError::Io(io::Error::other("x")).code(),
-            CliError::Watch(String::new()).code(),
-            CliError::Core(CoreError::Store(String::new())).code(),
-            CliError::Core(CoreError::StorageFull(String::new())).code(),
-            CliError::NoStoreNamed.code(),
-            CliError::NoServerNamed.code(),
+            .split(", ")
+            .collect()
+    }
+
+    #[test]
+    fn the_help_names_every_code_the_core_and_the_binary_answer_and_nothing_else() {
+        let mut expected: Vec<&str> = ERROR_CODES.to_vec();
+        for own in [
+            "usage",
+            "conflict",
+            "too_large",
+            "not_held",
+            "watch",
+            "no_store",
+            "no_credential",
+        ] {
+            expected.push(own);
+        }
+        let mut listed = listed();
+        // The witness that the list is read, not assumed: the code the help
+        // left out was `bytes_absent`, which `device blobs get` answers.
+        assert!(listed.contains(&"bytes_absent"));
+        assert!(!listed.contains(&"closed_output"));
+        let mut once = listed.clone();
+        once.sort_unstable();
+        once.dedup();
+        assert_eq!(once.len(), listed.len(), "a code is listed twice");
+        listed.sort_unstable();
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn every_code_an_error_answers_is_in_the_help() {
+        let listed = listed();
+        let errors = [
+            CliError::Io(io::Error::other("x")),
+            CliError::NotHeld(String::new()),
+            CliError::FolderHeld(std::path::PathBuf::new()),
+            CliError::Watch(String::new()),
+            CliError::Usage(String::new()),
+            CliError::NoStoreNamed,
+            CliError::NoStoreAt(std::path::PathBuf::new()),
+            CliError::NoServerNamed,
             CliError::NoCredential {
                 origin: String::new(),
-            }
-            .code(),
-            CliError::NoKeychain(String::new()).code(),
+            },
+            CliError::NoKeychain(String::new()),
             CliError::SignedOut {
                 origin: String::new(),
-            }
-            .code(),
-            CliError::Core(CoreError::NoCursor).code(),
-            CliError::Core(CoreError::HydrationIncomplete).code(),
-            CliError::Core(CoreError::NoCatalog).code(),
-            CliError::Core(CoreError::ReadingHandle).code(),
-            CliError::Core(CoreError::WrongSchema {
-                path: String::new(),
-                reason: String::new(),
-                unsent: None,
-            })
-            .code(),
-            CliError::Core(CoreError::CopyExpired {
-                reason: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::StreamIncomplete {
-                reason: String::new(),
-            })
-            .code(),
-            CliError::Core(CoreError::WrongServer {
-                expected: String::new(),
-                got: String::new(),
-            })
-            .code(),
-            CliError::NotHeld(String::new()).code(),
+            },
+            CliError::Invalid(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),
-                served: Some(String::new()),
+                served: None,
                 expected: 1,
                 write_sent: false,
                 status: None,
-            }
-            .code(),
+            },
             CliError::Redirected {
                 origin: String::new(),
                 status: 302,
                 location: None,
-            }
-            .code(),
+            },
+            CliError::Core(CoreError::BytesAbsent {
+                hash: String::new(),
+                reason: String::new(),
+            }),
         ];
-        let mut sorted_listed = listed.clone();
-        sorted_listed.sort_unstable();
-        let mut sorted_answered = answered.to_vec();
-        sorted_answered.sort_unstable();
-        assert_eq!(sorted_listed, sorted_answered);
+        for error in errors {
+            assert!(listed.contains(&error.code()), "{}", error.code());
+        }
+        // Every status a server can answer, each named by a listed code and
+        // each listed code reached by one.
+        let mut reached: Vec<&str> = Vec::new();
+        for status in 100..=599 {
+            let code = refused(status).code();
+            assert!(listed.contains(&code), "{status} is {code}");
+            assert!(REFUSED_CODES.contains(&code), "{status} is {code}");
+            if !reached.contains(&code) {
+                reached.push(code);
+            }
+        }
+        for code in REFUSED_CODES {
+            assert!(reached.contains(code), "no status is {code}");
+        }
         // `no_server` is answered twice, by the core's variant and the
         // binary's, and `closed_output` never leaves the process.
         assert_eq!(CliError::Core(CoreError::NoServer).code(), "no_server");

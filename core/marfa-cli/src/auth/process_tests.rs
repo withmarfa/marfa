@@ -346,7 +346,7 @@ fn respond(
         );
     }
     let body = match path {
-        "/" => format!(r#"{{"name":"marfa","contract":{}}}"#, marfa_client::CONTRACT_VERSION),
+        "/" => format!(r#"{{"name":"marfa","contract":{}}}"#, marfa_core::contract::CONTRACT_VERSION),
         "/token" => r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#.into(),
         "/revoke" => "{}".into(),
         _ => panic!("unexpected path {path}"),
@@ -354,7 +354,7 @@ fn respond(
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        marfa_client::CONTRACT_VERSION,
+        marfa_core::contract::CONTRACT_VERSION,
         body.len(),
         body
     );

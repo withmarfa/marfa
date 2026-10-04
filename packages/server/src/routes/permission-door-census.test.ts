@@ -381,8 +381,8 @@ function sample(schema: Schema | undefined, doc: Schema, name = ""): unknown {
     case "boolean":
       return false;
     case "string":
-      // The document declares no `date-time` format, which the generated
-      // Rust client cannot carry, so an instant is known by its name.
+      // The document declares no `date-time` format, so an instant is known
+      // by its name.
       return schema.format === "date-time" || name.endsWith("_at")
         ? new Date().toISOString()
         : "x".repeat(

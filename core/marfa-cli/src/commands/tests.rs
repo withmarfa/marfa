@@ -1077,10 +1077,9 @@ mod dispatch {
     use crate::door::{Answer, Door};
     use crate::output::Printer;
     use crate::remote::Remote;
-    use crate::remote::Transport;
 
     fn remote_at(door: &Door) -> Remote {
-        Remote::with(Transport::new(&door.url, Some("marfa_k1_x")).unwrap())
+        Remote::keyed(&door.url, "marfa_k1_x").unwrap()
     }
 
     const QUIET: Printer = Printer { json: true };
@@ -1200,7 +1199,7 @@ mod dispatch {
                 "200 OK",
                 &format!(
                     r#"{{"name":"marfa","contract":{}}}"#,
-                    marfa_client::CONTRACT_VERSION
+                    marfa_core::contract::CONTRACT_VERSION
                 ),
             ),
             Answer::json(

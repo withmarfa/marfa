@@ -82,7 +82,7 @@ function refuseIfStale(binary: string): void {
   // these crates, or a test under a crate's `tests/`, is not in the binary,
   // so counting it would refuse a binary that `cargo build -p marfa-cli` has
   // no reason to relink.
-  const sources = ["marfa-core", "marfa-cli", "marfa-client"]
+  const sources = ["marfa-core", "marfa-cli"]
     .map((crate) => join(core, crate, "src"))
     .filter((source) => existsSync(source));
   let newest = 0;
@@ -391,7 +391,7 @@ export async function hydratedHarness(
 export interface ScriptedWrites {
   create?: Responder[];
   update?: Responder[];
-  /** The single-item read a refused write is reconciled against. */
+  /** The certified single-item read used to reconcile a settled write. */
   read?: Responder[];
   /** The tag and metadata doors, which answer the same sidecar. */
   tags?: Responder[];
@@ -407,10 +407,8 @@ export function scriptWrites(
     server.answer("POST", "/items", ...options.create);
   if (options.update !== undefined)
     server.answer("PATCH", /^\/items\/[^/]+$/, ...options.update);
-  // A refused write is read back from the server
-  // (`queue-and-verdicts.md` 12), so a fixture that scripts a refusal
-  // scripts the read too or the device meets an unscripted door on its way
-  // to reconciling.
+  // A receipt cannot establish present read access (`device.md` 54), so
+  // reconciliation after an accepted or refused write needs a certified read.
   if (options.read !== undefined)
     server.copyAnswer("GET", /^\/items\/[^/]+$/, ...options.read);
   if (options.tags !== undefined) {

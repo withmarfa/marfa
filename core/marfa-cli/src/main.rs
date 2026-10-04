@@ -21,7 +21,7 @@ use crate::commands::{
     webhooks, whoami,
 };
 use crate::device::DeviceArgs;
-use crate::error::{CliError, EXIT_CODES_HELP, Exit};
+use crate::error::{CliError, Exit, exit_codes_help};
 use crate::folders::FoldersCommand;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
@@ -30,7 +30,7 @@ use crate::remote::{Named, Remote};
 /// copy of a slice of it under `device`, and folders that hold a slice as
 /// files.
 #[derive(Debug, Parser)]
-#[command(name = "marfa", version, after_long_help = EXIT_CODES_HELP)]
+#[command(name = "marfa", version, after_long_help = exit_codes_help())]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
     /// server a kept credential made current.

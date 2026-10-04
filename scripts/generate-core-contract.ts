@@ -1,8 +1,6 @@
 /**
  * Write the contract version the core is built for, read off the document
- * the server is described by, so the two cannot differ. The core keeps its
- * own transport rather than the generated crate, so it takes the number
- * here rather than from that crate.
+ * the server is described by, so the two cannot differ.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

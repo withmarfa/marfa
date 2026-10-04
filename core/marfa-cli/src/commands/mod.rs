@@ -186,4 +186,6 @@ pub fn insert_opt(body: &mut Map<String, Value>, key: &str, value: Option<impl I
 }
 
 #[cfg(test)]
+mod driven;
+#[cfg(test)]
 mod tests;

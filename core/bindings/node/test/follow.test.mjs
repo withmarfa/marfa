@@ -168,7 +168,7 @@ test(
     /** @type {Subscription | undefined} */
     let subscription;
     t.after(() => subscription?.stop());
-    /** @type {Promise<{ error: string | null | undefined; before: number }>} */
+    /** @type {Promise<{ error: (Error & { code: string }) | null | undefined; before: number }>} */
     const ended = new Promise((resolve) => {
       subscription = core.follow(
         (change) => told.push(change.cursor),
@@ -182,7 +182,9 @@ test(
     while (Date.now() < until);
     const { error, before } = await ended;
     assert.equal(before, 50, "onEnd ran before every change sent ahead of it");
-    assert.match(String(error), /^copy_expired: /);
+    assert.ok(error instanceof Error);
+    assert.equal(error.code, "copy_expired");
+    assert.match(error.message, /^copy_expired: /);
   },
 );
 
@@ -201,14 +203,16 @@ test(
     /** @type {Subscription | undefined} */
     let subscription;
     t.after(() => subscription?.stop());
-    /** @type {string | null | undefined} */
+    /** @type {(Error & { code: string }) | null | undefined} */
     const error = await new Promise((resolve) => {
       subscription = core.follow(() => {
         calls += 1;
         throw new Error("the listener broke");
       }, resolve);
     });
-    assert.match(String(error), /^listener_threw: .*the listener broke/);
+    assert.ok(error instanceof Error);
+    assert.equal(error.code, "listener_threw");
+    assert.match(error.message, /^listener_threw: .*the listener broke/);
     assert.equal(calls, 1, "a listener that threw was called again");
   },
 );

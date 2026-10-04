@@ -29,7 +29,7 @@ fn server() -> (String, Receiver<Option<String>>) {
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-marfa-contract: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                marfa_client::CONTRACT_VERSION,
+                marfa_core::contract::CONTRACT_VERSION,
                 body.len()
             );
         }

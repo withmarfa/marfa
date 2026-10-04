@@ -185,5 +185,14 @@ test("refuses a pin of a row neither the server nor the copy holds", async (t) =
   const core = await opened(t);
   await core.hydrate(["core.note"], Tier.Library);
   await assert.rejects(core.pin("absent"), /no item absent/);
+  // A refusal off the JavaScript thread carries its code and fields as a
+  // thrown one does.
+  await assert.rejects(core.pin("absent"), (/** @type {any} */ error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.code, "not_found");
+    assert.equal(typeof error.serverCode, "string");
+    assert.match(error.message, /^not_found: /);
+    return true;
+  });
   assert.deepEqual(core.status().pinned, []);
 });
