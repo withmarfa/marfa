@@ -307,7 +307,8 @@ describe("GET /events refuses a filter it cannot honor", () => {
     // The boundary belongs beside the refusal: a cap written one out is a
     // refusal of a request the documentation says is legal, and only the
     // pair pins which side of the boundary is which.
-    const types = Array.from({ length: 10 }, (_, i) => `core.t${String(i)}`);
+    // Wildcards, because a concrete name has to be registered to be accepted.
+    const types = Array.from({ length: 10 }, (_, i) => `core.t${String(i)}.*`);
     expect(await open(`?type=${types.join(",")}`)).toBe(200);
   });
 

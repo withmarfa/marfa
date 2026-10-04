@@ -69,7 +69,7 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Filter to a single type identifier, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`.",
+          "Filter to a single type identifier, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read.",
         ),
       state: z
         .string()
@@ -140,7 +140,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read.",
     },
   },
 });
@@ -204,7 +204,7 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    assertTypeFilter(type);
+    assertTypeFilter(c, type);
 
     // Same resolution as `GET /items`, sentinel included: `any` means the
     // same thing on every door that reads items. What this door does not

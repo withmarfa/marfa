@@ -4,7 +4,7 @@
 
 Every listing door shares one grammar. `GET /items` is the reference; `GET /edges`, `GET /export` and the bulk-action filter take the same keys where the rows have the same axes.
 
-1. `type` narrows to a type and its subtree; a well-formed type nothing registered answers `400 unknown_type` rather than an empty page. `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`.
+1. `type` narrows to a type and its subtree; a well-formed type nothing registered answers `400 unknown_type` rather than an empty page, on every door but the bulk-action filter (52). `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`.
 2. `state` narrows to one lifecycle state; the default is the active state, which the export door alone departs from (statement 16); `state=any` reads every state in one pass; a value outside the enum answers `400 validation_error`. Both are the same on the listing, the search and the export doors, which resolve the parameter through one rule — with one difference the index imposes rather than the grammar: a trashed row leaves the full-text index on the write that trashes it, so no state value reaches it through a search (statement 12). `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `sync/catchup.test.ts › reads across every lifecycle state in one pass`, `compliance/state-default.test.ts › a listing that names no state answers the active state`, `› a named state and the sentinel still reach every row`, `› refuses a state that is not a state, on every door that reads items`, `compliance/export.test.ts › refuses an unknown state filter`, `correctness/trash.test.ts › deleted item is hidden from default queries`.
 3. `source` narrows to rows stamped with that source, and a source filter on the instance configuration narrows the same way. `correctness/tags.test.ts › filtering by tags=[favorite] returns tagged items and excludes others`, `compliance/schema-enforcement.test.ts › narrows reads to listed sources`, `compliance/admin-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
 4. `tags` narrows to rows carrying every named tag. `correctness/tags.test.ts › filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
@@ -182,3 +182,21 @@ The server and a device index the same text and read a query the same way, so a 
     Reason: an excerpt drawn from the title alone shows a title with nothing marked for a match in the body, which is most matches, and is empty where the title is.
 
     Tests: `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`, `› marks the match in the column that holds it, not only in the title`; `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+
+50. WHEN a `type` filter names a registered concrete type the credential may not read, the server MUST refuse the request `403 type_not_permitted`, with `details.grant` naming the type and the level asked, on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences`, each entry of `GET /events`'s `type` list, and the `filter.type` of `POST /items/bulk-actions`. A type the credential may read and not write is not refused on the bulk action: the action is narrowed to what it may write, which is nothing.
+
+    Reason: an empty page answers "nothing here" about a type that is registered, and so tells a caller nothing it can act on, while the write doors already answer the same credential and the same type `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types.md` 34): an unregistered type is already told from a registered one (1). An item named by id keeps answering as a missing one when its type is unreadable, because there the caller named a row and not a type.
+
+    Tests: `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› the same type is served to a key that reads it, on every door but the bulk action`, `› GET /events holds each entry of a list to the rule`.
+
+51. WHEN a `type` filter is a wildcard, the server MUST answer the types it matches that the credential may read, and MUST NOT refuse it for the types it matches that the credential may not read; WHEN none is readable the answer MUST be an empty page, a stats object with no counts or a stream with no frames of those types.
+
+    Reason: a wildcard names a set, so the readable part of it is a complete answer, and a refusal would turn a client that asks for `core.*` into one that has to know its own grant first. `GET /search` once refused a wildcard its credential read only part of, while `GET /items` answered it.
+
+    Tests: `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› a wildcard over types the key reads none of is an empty page, not a refusal`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`.
+
+52. The `filter.type` of `POST /items/bulk-actions` MUST NOT be refused for naming a type nothing registers.
+
+    Reason: the door takes no wildcard, so the type's own name is the only way to select the rows a type removed with `force` left behind, to purge them. It is still held to 50: a type the credential may not read is refused.
+
+    Tests: `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the rows a removed type kept`.

@@ -94,7 +94,12 @@
  *     does not order against a `Z` one as text.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { MarfaError, ErrorCode, matchesTypeFilter } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  matchesTypeFilter,
+  typeMatchesPattern,
+} from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -878,7 +883,7 @@ const occurrencesRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Restrict to one event type. Defaults to every event type the caller can read.",
+          "Restrict to one event type, or to the event types a wildcard matches. Defaults to every event type the caller can read. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`.",
         ),
     }),
   },
@@ -916,7 +921,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` wildcard answers the event types it matches that the credential may read.",
     },
   },
 });
@@ -1019,10 +1024,9 @@ export function occurrenceRoutes(
         { from: query.from, to: query.to, max_days: MAX_WINDOW_DAYS },
       );
     }
-    // The same judgment `/items`, `/search` and `/export` make: the global
-    // wildcard and a malformed pattern are refused, and a concrete id nobody
-    // has registered is `unknown_type` rather than an empty window.
-    assertTypeFilter(query.type);
+    // The same judgment `/items`, `/search` and `/export` make, reasoned at
+    // `assertTypeFilter`.
+    assertTypeFilter(c, query.type);
 
     // The caller's own type permissions still decide what is readable;
     // this route narrows to event types on top of that rather than
@@ -1032,9 +1036,10 @@ export function occurrenceRoutes(
     // narrowing goes through the same predicate the SSE stream uses rather
     // than a membership test.
     const typeFilter = getTypeFilter(c);
+    const named = query.type;
     const wanted = (
-      query.type !== undefined
-        ? EVENT_TYPES.filter((t) => t === query.type)
+      named !== undefined
+        ? EVENT_TYPES.filter((t) => typeMatchesPattern(t, named))
         : EVENT_TYPES
     ).filter((t) => matchesTypeFilter(t, typeFilter));
     if (wanted.length === 0) {

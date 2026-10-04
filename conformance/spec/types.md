@@ -84,3 +84,9 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
     The thinning policy fills omitted windows from the instance defaults, which this comparison does not validate.
 
     Tests: `compliance/version-policy.test.ts › registers a policy of whole positive numbers in order`, `› refuses a number that is not a whole positive one, naming the field: %s`, `› refuses windows out of order, naming the one that ends too soon`, `› refuses the same on a replacement and keeps the type as it was`.
+
+34. The server MUST answer `GET /types`, `GET /types/{id}` and `GET /edge-types` with the whole registry to every credential, whatever its type map and edge map reach.
+
+    Reason: type existence is not secret, because an unregistered type and a registered one are already told apart (`search-and-filters.md` 1, 50); a schema holds no item data; and a device resolves an inherited field by walking `parent` through `GET /types` (`device.md` 47), so hiding an ancestor would silently drop the fields it declares. Narrowing the registry would not simplify the doors that name a type either, since each already refuses by the type's name.
+
+    Tests: `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.

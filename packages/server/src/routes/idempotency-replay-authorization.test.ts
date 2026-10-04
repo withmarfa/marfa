@@ -523,10 +523,10 @@ it("a queued job refusal does not introduce an internally matched item id", asyn
   await narrow(key.id, { "core.task": "read" });
   const mark = await ctx.storage.eventLog.getMaxId();
   const denied = await ask();
-  expect(denied.status).toBe(404);
+  expect(denied.status).toBe(403);
   expect(denied.headers.get("Idempotency-Replayed")).toBeNull();
   const refusal = await denied.text();
-  expect(JSON.parse(refusal).error.code).toBe("item_not_found");
+  expect(JSON.parse(refusal).error.code).toBe("type_not_permitted");
   for (const id of matched) expect(refusal).not.toContain(id);
   expect(await receipt(key.id, headers["Idempotency-Key"])).toEqual(stored);
   expect(await ctx.storage.eventLog.getMaxId()).toBe(mark);

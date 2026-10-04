@@ -47,6 +47,7 @@ import {
   requirePermission,
   requireAuth,
   checkTypeAccess,
+  checkTypePermission,
   mayWriteReserved,
   itemProvenanceSource,
   getTypeFilter,
@@ -324,7 +325,7 @@ const bulkActionRoute = createRoute({
         },
       },
       description:
-        "`forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
+        "`forbidden` where `items.purge` is missing (purge only); `type_not_permitted` where `filter.type` names a type the credential may not read; `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
     },
   },
 });
@@ -836,11 +837,20 @@ export function bulkRoutes(storage: Storage) {
 
     // Validate filter fields up-front so a caller with a bad filter gets
     // a 400 before any matching happens.
-    if (filter.type && !isValidTypeIdentifier(filter.type)) {
-      throw malformedTypeIdentifier(
-        "filter.type",
-        `Invalid type identifier: ${filter.type}`,
-      );
+    if (filter.type) {
+      if (!isValidTypeIdentifier(filter.type)) {
+        throw malformedTypeIdentifier(
+          "filter.type",
+          `Invalid type identifier: ${filter.type}`,
+        );
+      }
+      // The type is named outright, so a credential that may not read it is
+      // told so rather than handed a match set of nothing. Readable and not
+      // writable is still narrowed to nothing below, as it is for a filter
+      // naming no type. Registration is not asked: this door takes no
+      // pattern, so the name is the only way to select the rows a type
+      // removed with `force` left behind.
+      checkTypePermission(c.get("apiKey"), filter.type, "read");
     }
     if (
       action === "update_occurred_at" &&

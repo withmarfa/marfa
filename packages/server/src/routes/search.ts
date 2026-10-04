@@ -6,7 +6,6 @@ import { assertTypeFilter } from "./_type-filter.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import {
   requireAuth,
-  requireTypeAccess,
   getTypeFilter,
   readsSomeType,
 } from "../middleware/auth.js";
@@ -106,7 +105,7 @@ const searchRoute = createRoute({
       type: z
         .string()
         .describe(
-          "Restrict to a single type, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`.",
+          "Restrict to a single type, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read.",
         )
         .optional(),
       state: z
@@ -209,7 +208,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
     },
   },
 });
@@ -241,9 +240,7 @@ export function searchRoutes(storage: Storage) {
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(type);
-
-    if (type) requireTypeAccess(c, type, "read");
+    assertTypeFilter(c, type);
 
     // This door takes the same grammar `GET /items` takes, and it
     // compiles an edge term rather than ignoring one, so it asks the same

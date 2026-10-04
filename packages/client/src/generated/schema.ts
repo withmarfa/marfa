@@ -555,7 +555,7 @@ export interface paths {
         };
         /**
          * List edge types
-         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
+         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it. Every credential reads the whole list, whatever its edge map reaches: an edge type's existence is not secret, and a client resolves an edge's names from this list.
          */
         get: operations["listEdgeTypes"];
         put?: never;
@@ -599,7 +599,7 @@ export interface paths {
         };
         /**
          * List types
-         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup.
+         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary — a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.
          */
         get: operations["listTypes"];
         put?: never;
@@ -623,7 +623,7 @@ export interface paths {
         };
         /**
          * Get a type
-         * @description Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike.
+         * @description Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike, for every credential and whatever its type map reaches.
          *
          *     A type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.
          */
@@ -2250,6 +2250,7 @@ export interface components {
             };
         };
         BulkActionFilter: {
+            /** @description Restrict to one type, subtypes included. A type the credential may not read is refused `403 type_not_permitted`; one it may read and not write matches nothing. A type nothing registers is accepted, so the rows a type removed with `force` left behind can still be selected. */
             type?: string;
             state?: components["schemas"]["ItemState"] & unknown;
             source?: string;
@@ -3764,7 +3765,7 @@ export interface operations {
     listItems: {
         parameters: {
             query?: {
-                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page. */
+                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read, an empty page when there are none. */
                 type?: string;
                 /** @description Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. `any` returns every state in one pass, which a resuming client needs in order to see a row leave the active state. */
                 state?: string;
@@ -3849,7 +3850,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
+            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4125,7 +4126,7 @@ export interface operations {
             query?: {
                 /** @description Grouping axis. Defaults to `state`. */
                 by?: "state" | "type";
-                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page. */
+                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read, an empty page when there are none. */
                 type?: string;
                 /** @description Count only this lifecycle state. Omitting the parameter counts every state, as does `any`. */
                 state?: string;
@@ -4200,7 +4201,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
+            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6388,7 +6389,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it. */
+            /** @description `forbidden` where `items.purge` is missing (purge only); `type_not_permitted` where `filter.type` names a type the credential may not read; `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9878,7 +9879,7 @@ export interface operations {
             query: {
                 /** @description Full-text search query. */
                 q: string;
-                /** @description Restrict to a single type, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`. */
+                /** @description Restrict to a single type, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read. */
                 type?: string;
                 /** @description Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. `any` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value. */
                 state?: string;
@@ -9949,7 +9950,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10004,7 +10005,7 @@ export interface operations {
                 from: string;
                 /** @description Window end, ISO 8601. An event starting at or after it is outside the window. */
                 to: string;
-                /** @description Restrict to one event type. Defaults to every event type the caller can read. */
+                /** @description Restrict to one event type, or to the event types a wildcard matches. Defaults to every event type the caller can read. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. */
                 type?: string;
             };
             header?: never;
@@ -10057,7 +10058,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` wildcard answers the event types it matches that the credential may read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15871,7 +15872,7 @@ export interface operations {
     exportData: {
         parameters: {
             query?: {
-                /** @description Filter to a single type identifier, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`. */
+                /** @description Filter to a single type identifier, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`, and a registered one the credential may not read with 403 `type_not_permitted`. A wildcard answers the types it matches that the credential may read. */
                 type?: string;
                 /** @description Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass. */
                 state?: string;
@@ -15935,7 +15936,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read, or `type` names a registered type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused, and a `type` pattern answers the types it matches that the credential may read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16945,7 +16946,7 @@ export interface operations {
             query?: {
                 /** @description Select certified copy mode; requires explicit edges=all and forbids every other query key. */
                 copy?: "1";
-                /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces — to receive everything, omit the parameter — and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
+                /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces — to receive everything, omit the parameter — and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
                 type?: string;
                 /** @description Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame. */
                 edges?: "all" | "none";
@@ -16975,7 +16976,7 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            /** @description The filter or the cursor cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, an `edges` value outside the enum, or a `Last-Event-ID` that is not a decimal event id. */
+            /** @description The filter or the cursor cannot be honored: more than 10 types, a `type` entry that is the global `*` or is outside the type-identifier grammar, or a concrete `type` entry nothing registers (`unknown_type`), an `edges` value outside the enum, or a `Last-Event-ID` that is not a decimal event id. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16987,7 +16988,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -17005,7 +17006,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types opens a stream narrowed to them rather than being refused. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read, or a `type` entry names a registered type it may not read. A credential that reaches some types opens a stream narrowed to them rather than being refused. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
