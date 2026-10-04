@@ -40,7 +40,8 @@
  * not exist is worse than none.
  *
  * Wrapped, because they are the API surface a client calls: the SSE stream
- * (`routes/events.ts`), both export shapes (`routes/export.ts`), the blob
+ * (`routes/events.ts`), both export shapes (`routes/export.ts` and
+ * `routes/export-archive.ts`), the blob
  * bytes on both of their doors and on `HEAD` (`routes/blobs.ts`, one
  * function serving the bearer door and the link door), and a replayed answer
  * served from the idempotency store (`middleware/idempotency.ts`). The last
