@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use ureq::Agent;
+use ureq::unversioned::transport::{
+    Buffers, ConnectionDetails, Connector, DefaultConnector, NextTimeout, Transport,
+};
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
@@ -66,13 +69,75 @@ pub type Renew = Box<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
 type Response = ureq::http::Response<ureq::Body>;
 
 /// Which of the agent's time budgets a call is held to.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Budget {
     Whole,
-    Stream,
+    Stream(Arc<RwLock<Option<std::time::Instant>>>),
     /// A file is sent whole and the server may work on all of it before it
     /// answers, as a restore does.
     Upload,
+}
+
+/// ureq fixes its body budget before the status is known. A stream gets its
+/// own transport so only a refusal can activate a whole-body deadline, with
+/// no blocked reader thread or shared connection left behind.
+#[derive(Debug)]
+struct RefusalDeadline(Arc<RwLock<Option<std::time::Instant>>>);
+
+impl Connector<Box<dyn Transport>> for RefusalDeadline {
+    type Out = RefusalTransport;
+
+    fn connect(
+        &self,
+        _: &ConnectionDetails,
+        transport: Option<Box<dyn Transport>>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        Ok(transport.map(|transport| RefusalTransport {
+            transport,
+            deadline: Arc::clone(&self.0),
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct RefusalTransport {
+    transport: Box<dyn Transport>,
+    deadline: Arc<RwLock<Option<std::time::Instant>>>,
+}
+
+impl Transport for RefusalTransport {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        self.transport.buffers()
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.transport.transmit_output(amount, timeout)
+    }
+
+    fn await_input(&mut self, mut timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        if let Some(deadline) = *self.deadline.read().expect("refusal deadline lock") {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(ureq::Error::Timeout(ureq::Timeout::RecvBody));
+            }
+            let after = ureq::unversioned::transport::time::Duration::Exact(remaining);
+            if after < timeout.after {
+                timeout = NextTimeout {
+                    after,
+                    reason: ureq::Timeout::RecvBody,
+                };
+            }
+        }
+        self.transport.maybe_await_input(timeout)
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.transport.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.transport.is_tls()
+    }
 }
 
 pub struct ItemsQuery<'a> {
@@ -660,8 +725,9 @@ impl Http {
     pub fn fetch(&self, call: Call<'_>, held: bool) -> Result<Reply, CoreError> {
         let url = self.url(call.segments, call.params);
         let json = matches!(call.body, CallBody::Json(_));
+        let deadline = Arc::new(RwLock::new(None));
         let budget = if call.stream {
-            Budget::Stream
+            Budget::Stream(Arc::clone(&deadline))
         } else if matches!(call.body, CallBody::Reader(_)) {
             Budget::Upload
         } else {
@@ -697,8 +763,10 @@ impl Http {
         let send = |authorization: Option<&str>, text: Option<&str>| {
             let builder = builder(authorization);
             match text {
-                Some(text) => self.dispatch(builder.body(text).map_err(cannot_send)?, budget),
-                None => self.dispatch(builder.body(()).map_err(cannot_send)?, budget),
+                Some(text) => {
+                    self.dispatch(builder.body(text).map_err(cannot_send)?, budget.clone())
+                }
+                None => self.dispatch(builder.body(()).map_err(cannot_send)?, budget.clone()),
             }
             .map_err(network)
         };
@@ -750,6 +818,16 @@ impl Http {
             .to_string();
         let contract = header(&response, CONTRACT_HEADER);
         let location = header(&response, "Location");
+        if call.stream && !(200..300).contains(&status) {
+            let duration = self
+                .agent
+                .config()
+                .timeouts()
+                .recv_body
+                .unwrap_or(BODY_BUDGET);
+            *deadline.write().expect("refusal deadline lock") =
+                Some(std::time::Instant::now() + duration);
+        }
         // A refusal is read whole even on a streamed call, so its envelope
         // reaches the classification.
         let body = if call.stream && (200..300).contains(&status) {
@@ -758,6 +836,11 @@ impl Http {
             ReplyBody::Text(
                 response
                     .into_body()
+                    // A page or export can exceed ureq's default 10 MiB;
+                    // the response budget still bounds a whole-body read.
+                    .into_with_config()
+                    .limit(u64::MAX)
+                    .lossy_utf8(true)
                     .read_to_string()
                     .map_err(|error| CoreError::Network(error.to_string()))?,
             )
@@ -783,12 +866,19 @@ impl Http {
     ) -> Result<Response, ureq::Error> {
         match budget {
             Budget::Whole => self.agent.run(request),
-            Budget::Stream => self.agent.run(
-                self.agent
-                    .configure_request(request)
-                    .timeout_recv_body(None)
-                    .build(),
-            ),
+            Budget::Stream(deadline) => {
+                let agent = Agent::with_parts(
+                    self.agent.config().clone(),
+                    DefaultConnector::default().chain(RefusalDeadline(deadline)),
+                    ureq::unversioned::resolver::DefaultResolver::default(),
+                );
+                agent.run(
+                    agent
+                        .configure_request(request)
+                        .timeout_recv_body(None)
+                        .build(),
+                )
+            }
             Budget::Upload => self.agent.run(
                 self.agent
                     .configure_request(request)
@@ -1406,6 +1496,51 @@ mod tests {
     }
 
     #[test]
+    fn a_large_list_is_read_whole_with_a_length_or_in_chunks() {
+        let note = serde_json::json!({"body": "x".repeat(100_000)});
+        let body = serde_json::json!({"data": vec![note; 110]}).to_string();
+        assert!(body.len() > 10 * 1024 * 1024);
+        for chunked in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let sent = body.clone();
+            let serving = std::thread::spawn(move || {
+                use std::io::Write;
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut head = [0u8; 4096];
+                Read::read(&mut socket, &mut head).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
+                    if chunked {
+                        "Transfer-Encoding: chunked\r\n".into()
+                    } else {
+                        format!("Content-Length: {}\r\n", sent.len())
+                    }
+                )
+                .unwrap();
+                if chunked {
+                    for chunk in sent.as_bytes().chunks(65_536) {
+                        write!(socket, "{:x}\r\n", chunk.len())?;
+                        socket.write_all(chunk)?;
+                        socket.write_all(b"\r\n")?;
+                    }
+                    socket.write_all(b"0\r\n\r\n")?;
+                } else {
+                    socket.write_all(sent.as_bytes())?;
+                }
+                Ok::<_, std::io::Error>(())
+            });
+            let reply = Http::new(&url, "k")
+                .unwrap()
+                .fetch(get(&["items"], false), true)
+                .unwrap();
+            assert!(matches!(reply.body, ReplyBody::Text(text) if text == body));
+            serving.join().unwrap().unwrap();
+        }
+    }
+
+    #[test]
     fn a_streamed_answer_outlasts_the_body_budget_and_a_read_one_does_not() {
         let budgets = |url: &str| {
             Http::with_timeouts(
@@ -1448,6 +1583,38 @@ mod tests {
             Err(CoreError::Network(_))
         ));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_streamed_refusal_cannot_leave_its_body_open_forever() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = [0u8; 4096];
+            Read::read(&mut socket, &mut head).unwrap();
+            write!(
+                socket,
+                "HTTP/1.1 401 Unauthorized\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 100\r\n\r\n"
+            )
+            .unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        let http = Http::with_timeouts(
+            &url,
+            "k",
+            Duration::from_secs(1),
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            http.fetch(get(&["events"], true), true),
+            Err(CoreError::Network(_))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        serving.join().unwrap();
     }
 
     /// Reads a byte at a time, slowly.
