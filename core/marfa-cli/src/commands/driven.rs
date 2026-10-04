@@ -72,7 +72,7 @@ impl Server {
     }
 }
 
-/// An optional flag of a command, with the values it takes where the parser
+/// A flag of a command, with the values it takes where the parser
 /// names them.
 struct Flag {
     spelling: String,
@@ -86,6 +86,29 @@ struct Leaf {
     flags: Vec<Flag>,
 }
 
+impl Leaf {
+    fn variants(&self) -> Vec<(Vec<String>, bool)> {
+        // Each flag alone, with each value the parser names, or, where
+        // it takes any text, with the first of these the command accepts.
+        const TEXTS: [&str; 5] = ["x", "{}", "x=x", "1", "2026-01-01T00:00:00Z"];
+        let mut variants: Vec<(Vec<String>, bool)> = vec![(Vec::new(), false)];
+        for flag in &self.flags {
+            if flag.values.is_empty() && !flag.spelling.contains('<') {
+                variants.push((vec![flag.spelling.clone()], false));
+            }
+            for value in &flag.values {
+                variants.push((vec![flag.spelling.clone(), value.clone()], true));
+            }
+            if flag.values.is_empty() && flag.spelling.contains('<') {
+                for text in TEXTS {
+                    variants.push((vec![flag.spelling.clone(), text.into()], false));
+                }
+            }
+        }
+        variants
+    }
+}
+
 fn leaves(command: &Command, words: &mut Vec<String>, found: &mut Vec<Leaf>) {
     let subcommands: Vec<&Command> = command
         .get_subcommands()
@@ -95,8 +118,7 @@ fn leaves(command: &Command, words: &mut Vec<String>, found: &mut Vec<Leaf>) {
         let flags = command
             .get_arguments()
             .filter(|argument| {
-                !argument.is_required_set()
-                    && !argument.is_global_set()
+                !argument.is_global_set()
                     && !argument.is_positional()
                     && argument.get_long().is_some()
                     && !matches!(argument.get_id().as_str(), "help" | "version")
@@ -542,8 +564,49 @@ fn the_document_check_lets_a_held_request_through_and_refuses_each_way_off_it() 
     }
 }
 
+#[test]
+fn required_enum_flags_are_driven_and_held_to_the_document() {
+    let leaf = every_leaf()
+        .into_iter()
+        .find(|leaf| leaf.words == ["items", "transition"])
+        .unwrap();
+    let flag = leaf
+        .flags
+        .iter()
+        .find(|flag| flag.spelling.starts_with("--state "))
+        .expect("a required enum flag was excluded from the walk");
+    assert_eq!(flag.values, ["active", "archived", "trashed"]);
+    let server = Server::answering("400 Bad Request", "", "{}", true);
+    let (dir, file) = fixture("required-enum");
+    let document = Document::read();
+    let mut renamed = Document(document.0.clone());
+    renamed.0["paths"]["/items/{id}/transition"]["post"]["requestBody"]["content"]["application/json"]
+        ["schema"]["properties"]["state"]["enum"] = serde_json::json!(["renamed"]);
+    let variants: Vec<_> = leaf
+        .variants()
+        .into_iter()
+        .filter(|(given, _)| given.first() == Some(&flag.spelling))
+        .collect();
+    assert_eq!(variants.len(), flag.values.len());
+    for (given, named) in variants {
+        let argv = command_line(
+            &server.url,
+            &leaf.words,
+            &[(given[0].clone(), Some(given[1].clone()))],
+            &file,
+        )
+        .unwrap();
+        let _ = crate::run(crate::Cli::try_parse_from(argv).unwrap());
+        let asked = server.take();
+        assert_eq!(asked.len(), 1);
+        assert!(document.held(&asked[0], named).is_ok());
+        assert!(renamed.held(&asked[0], named).is_err());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A command's every request, sent in turn: the leaf by itself, and then with
-/// each optional flag, and each value a flag names.
+/// each flag, and each value a flag names, including required flags.
 #[test]
 fn every_request_a_command_sends_is_one_the_document_publishes() {
     let server = Server::answering(
@@ -563,23 +626,7 @@ fn every_request_a_command_sends_is_one_the_document_publishes() {
         }
         let name = leaf.words.join(" ");
         std::fs::write(&file, file_body(&leaf.words)).unwrap();
-        // Each optional flag alone, with each value the parser names, or, where
-        // it takes any text, with the first of these the command accepts.
-        const TEXTS: [&str; 5] = ["x", "{}", "x=x", "1", "2026-01-01T00:00:00Z"];
-        let mut variants: Vec<(Vec<String>, bool)> = vec![(Vec::new(), false)];
-        for flag in &leaf.flags {
-            if flag.values.is_empty() && !flag.spelling.contains('<') {
-                variants.push((vec![flag.spelling.clone()], false));
-            }
-            for value in &flag.values {
-                variants.push((vec![flag.spelling.clone(), value.clone()], true));
-            }
-            if flag.values.is_empty() && flag.spelling.contains('<') {
-                for text in TEXTS {
-                    variants.push((vec![flag.spelling.clone(), text.into()], false));
-                }
-            }
-        }
+        let variants = leaf.variants();
         // A flag whose text a command refused before sending anything is tried
         // again with the next, so one is kept per flag.
         let mut satisfied: Vec<String> = Vec::new();
