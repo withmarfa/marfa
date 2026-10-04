@@ -94,6 +94,7 @@ describe("the exit codes", () => {
         directory,
         "--folder",
         folder.item.id,
+        "--yes",
       ]);
       const tokenDoor = await ScriptedServer.start();
       try {

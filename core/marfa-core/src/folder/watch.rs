@@ -118,6 +118,9 @@ impl Folder {
         stop: &AtomicBool,
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<(), WatchError<E>> {
+        // Only a person's go-ahead lets it write or send, and none can reach
+        // a folder this watch holds.
+        self.refuse_while_waiting()?;
         // Raised as the passes end, whatever ended them, so the follow and a
         // hydration it runs end with them.
         let ended = AtomicBool::new(false);

@@ -109,10 +109,10 @@ const getConfigRoute = createRoute({
   operationId: "getConfig",
   method: "get",
   path: "/",
-  tags: ["Config"],
-  summary: "Get the instance configuration",
+  tags: ["Instance"],
+  summary: "Get the configuration",
   description:
-    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides — under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
+    "Returns the instance configuration (the optional `enforcement` levers plus the cleanup-job retention overrides) under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   responses: {
@@ -145,10 +145,10 @@ const putConfigRoute = createRoute({
   operationId: "replaceConfig",
   method: "put",
   path: "/",
-  tags: ["Config"],
-  summary: "Replace the instance configuration",
+  tags: ["Instance"],
+  summary: "Replace the configuration",
   description:
-    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.",
+    "Overwrites the instance config with the supplied object: full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   request: {
