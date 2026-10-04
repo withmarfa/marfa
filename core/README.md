@@ -5,7 +5,6 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 | Crate | What it is |
 | --- | --- |
 | `marfa-core` | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate` |
-| `marfa-client` | The Rust client, generated from `openapi.json` by `pnpm generate` (needs Java 11 or later); never edited by hand |
 | `marfa-cli` | The `marfa` binary |
 | `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
 | `bindings/node` | The napi-rs module `@withmarfa/core` |
@@ -40,8 +39,8 @@ Reading commands on an absent store, including `--reader` and `device changes`, 
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-cargo nextest run --locked --workspace --exclude marfa-client
+cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+cargo nextest run --locked --workspace
 cargo build -p marfa-cli   # the device fixtures refuse a binary older than its source
 ```
 

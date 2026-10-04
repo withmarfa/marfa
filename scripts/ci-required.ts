@@ -98,7 +98,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // by the version check. A fixture is test input and a generated tree is
   // checked file by file, so those fall through to their folder's rule.
   [
-    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/|core\/marfa-client\/).*\.md$/i,
+    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
   [/^(LICENSE|\.env\.example|\.infisical\.json)$/, []],
@@ -143,12 +143,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-core\/src\/contract\.rs$/,
     [...RUST, "clients-freshness", "workspace"],
   ],
-  [/^core\/marfa-client\/(src\/|Cargo\.toml$)/, [...RUST, "clients-freshness"]],
-  // The generator's configuration and templates make the client's source,
-  // and the freshness check regenerates it from them.
-  [/^core\/marfa-client\//, ["clients-freshness"]],
-  [/^core\/Cargo\.toml$/, [...RUST, "clients-freshness", "workspace"]],
-  [/^core\/Cargo\.lock$/, [...RUST, "clients-freshness"]],
+  [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
+  [/^core\/Cargo\.lock$/, RUST],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
   [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
   [/^core\/\.gitignore$/, []],

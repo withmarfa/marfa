@@ -82,7 +82,7 @@ function refuseIfStale(binary: string): void {
   // these crates, or a test under a crate's `tests/`, is not in the binary,
   // so counting it would refuse a binary that `cargo build -p marfa-cli` has
   // no reason to relink.
-  const sources = ["marfa-core", "marfa-cli", "marfa-client"]
+  const sources = ["marfa-core", "marfa-cli"]
     .map((crate) => join(core, crate, "src"))
     .filter((source) => existsSync(source));
   let newest = 0;

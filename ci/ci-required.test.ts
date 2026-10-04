@@ -152,8 +152,8 @@ describe("what a change runs", () => {
     ],
     [
       "Markdown in a generated tree, which its freshness check refuses",
-      ["core/marfa-client/NOTES.md", "packages/types/generated/NOTES.md"],
-      [...SERVER, "types-freshness", "clients-freshness"],
+      ["packages/types/generated/NOTES.md"],
+      [...SERVER, "types-freshness"],
     ],
     ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
     [
@@ -626,11 +626,7 @@ describe("what a job reads reaches it", () => {
         }
       }
     }
-    expect([...crates].sort()).toEqual([
-      "marfa-cli",
-      "marfa-client",
-      "marfa-core",
-    ]);
+    expect([...crates].sort()).toEqual(["marfa-cli", "marfa-core"]);
 
     const { jobs } = workflow("ci.yml");
     for (const job of ["conformance", "cli-scenarios"]) {

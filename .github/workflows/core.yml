@@ -110,7 +110,7 @@ jobs:
           # Assigned first: `eval "$(…)"` of a failed boot's empty output succeeds.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          cargo nextest run --locked --workspace --exclude marfa-client --run-ignored only
+          cargo nextest run --locked --workspace --run-ignored only
 
       # marfa-swift builds the framework itself, at the commit it pins.
       - name: Build the Swift FFI crate
