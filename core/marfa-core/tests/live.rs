@@ -43,8 +43,13 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let path = dir.path().join("core.sqlite");
     let marker = nonce();
     let first = seed(&["note", "First", &format!("{marker} one"), "live,alpha"]);
-    let second = seed(&["note", "Second", &format!("{marker} two"), "live"]);
-    let third = seed(&["note", &format!("{marker} in the title"), "three"]);
+    // Equal token counts and match frequencies give the first two rows tied ranks.
+    let second = seed(&["note", "Second", &format!("{marker} two"), "live,beta"]);
+    let third = seed(&[
+        "note",
+        &format!("{marker} in the title"),
+        "three longer words make this match less concentrated",
+    ]);
     let file = seed(&["file", "notes.txt", &format!("{marker} in a file")]);
 
     let core = Core::open(&path, Some(server()))
@@ -100,12 +105,25 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
 
     let hits = core.search(&marker, &SearchFilters::default(), 20).unwrap();
     let hit_ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
-    assert_eq!(
-        hit_ids[0], third,
-        "the title match ranks first: {hit_ids:?}"
-    );
-    for id in [&first, &second, &file] {
-        assert!(hit_ids.contains(&id.as_str()), "{id} found by search");
+    let mut found = hit_ids.clone();
+    found.sort_unstable();
+    let mut expected = vec![
+        first.as_str(),
+        second.as_str(),
+        third.as_str(),
+        file.as_str(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(found, expected, "all four rows match the marker");
+    let score = |id: &str| hits.iter().find(|hit| hit.item.id == id).unwrap().score;
+    assert_eq!(score(&first), score(&second), "the tie-order witness");
+    assert!(score(&first) > score(&third), "the score-order witness");
+    for pair in hits.windows(2) {
+        assert!(
+            pair[0].score > pair[1].score
+                || (pair[0].score == pair[1].score && pair[0].item.id < pair[1].item.id),
+            "hits rank by score descending, then identifier ascending: {hits:?}"
+        );
     }
 
     let fourth = seed(&["note", "Fourth", &format!("{marker} four")]);
