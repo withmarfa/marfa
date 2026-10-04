@@ -28,18 +28,18 @@ import { storageProbes } from "./health-probes.js";
  *
  * Processor time and not the wait on the clock, because the clock counts what
  * the server does not control: a machine running other work leaves this
- * process waiting for a core, and a wait of seconds then cost the process
+ * process waiting for a core, and a wait of seconds then costs the process
  * milliseconds. A held loop spends its time computing, so its stretch is as
  * long in processor time as on the clock, however busy the machine is. The
  * clock is used once, in the witness's favor: `/health` has to be answered at
  * all while the job runs.
  *
  * The bound is two seconds of processor time. A job that hands the loop over
- * between units of work spends one unit between turns: 25 ms for the archive
- * export, 160 ms for a restore batch and 300 ms for a bulk-action chunk on a
- * laptop, so the bound is several times the largest. A job that does not hand
- * the loop over spent 3.5 seconds at this size on the same laptop, and spends
- * more the larger the instance.
+ * between units of work spends one unit between turns: at most about 65 ms
+ * for the archive export, 310 ms for a restore batch and 460 ms for a
+ * bulk-action chunk on a laptop, so the bound is more than four times the
+ * largest. A bulk action that does not hand the loop over spent 7 seconds at
+ * this size on the same laptop, and spends more the larger the instance.
  */
 const CPU_BOUND_MS = 2_000;
 
