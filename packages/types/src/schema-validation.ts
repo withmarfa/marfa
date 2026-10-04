@@ -1313,9 +1313,8 @@ function validateVersionPolicy(
       );
     }
   }
-  // Each window ends where the next begins, so one that ends before the
-  // window ahead of it is empty and the versions it was meant to hold fall
-  // to the next window or are thinned away.
+  // Windows are ages counted back from now, so a later window with a
+  // smaller bound is empty.
   const windows = [
     "recent_days",
     "daily_snapshot_days",
