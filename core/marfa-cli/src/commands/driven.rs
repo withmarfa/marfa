@@ -516,6 +516,32 @@ const MISSED: &[&str] = &[
     "createOwner",
 ];
 
+/// The witness for the walk's claim that nothing it sends is off the document:
+/// a request that is held is let through, and each way of being off it is
+/// refused.
+#[test]
+fn the_document_check_lets_a_held_request_through_and_refuses_each_way_off_it() {
+    let document = Document::read();
+    let asking = |line: &str, body: &str| Received {
+        line: format!("{line} HTTP/1.1"),
+        headers: vec![("content-type".into(), "application/json".into())],
+        body: body.into(),
+    };
+    assert!(document.held(&asking("GET /items/stats", ""), true).is_ok());
+    for (what, request) in [
+        ("a path", asking("GET /itemz/stats", "")),
+        ("a method", asking("PUT /items/stats", "")),
+        ("a query name", asking("GET /items/stats?bogus=1", "")),
+        ("a body key", asking("POST /items", r#"{"bogus":1}"#)),
+        ("an enum value", asking("GET /items?direction=bogus", "")),
+    ] {
+        assert!(
+            document.held(&request, true).is_err(),
+            "{what} off the document was let through"
+        );
+    }
+}
+
 /// A command's every request, sent in turn: the leaf by itself, and then with
 /// each optional flag, and each value a flag names.
 #[test]
