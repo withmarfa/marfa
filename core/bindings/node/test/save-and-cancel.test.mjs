@@ -162,7 +162,10 @@ test("an app saves with no server, is checked against its declared types, and jo
     assert.ok(refused, "a write missing a required field was queued");
     assert.match(refused.message, /^validation/);
     // The witness: the same write with the field is taken.
-    copy.createItem({ type: "app.recipe.entry", properties: { title: "Soup" } });
+    copy.createItem({
+      type: "app.recipe.entry",
+      properties: { title: "Soup" },
+    });
     assert.equal(copy.queue().length, 1);
   })();
   const server = await serving();
@@ -201,7 +204,7 @@ test("a hydration given a stop that is raised in flight ends canceled and leaves
   await sleep(150);
   stop.raise();
   const error = await refusal(pending);
-  assert.equal(/** @type {{ code?: string }} */ (error).code, "GenericFailure");
+  assert.equal(/** @type {{ code?: string }} */ (error).code, "canceled");
   assert.match(error.message, /^canceled/);
   assert.equal(server.seen.filter((line) => line === "GET /items").length, 1);
   assert.notEqual(core.status().hydration, Hydration.Complete);

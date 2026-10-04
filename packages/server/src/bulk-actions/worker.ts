@@ -74,6 +74,8 @@ export class BulkActionWorker {
   private stopped = false;
   /** Set when a run is in-flight; the next tick is queued behind it. */
   private inFlight = false;
+  /** Settles when the run in flight has ended; already settled when none is. */
+  private finishing: Promise<void> = Promise.resolve();
   /** Current idle backoff delay. Starts at `pollIntervalMs`, widens by
    *  `pollBackoffMultiplier` on each empty poll up to `maxPollIntervalMs`,
    *  and resets to `pollIntervalMs` whenever a job is claimed. */
@@ -101,14 +103,17 @@ export class BulkActionWorker {
     this.scheduleNext(0);
   }
 
-  /** Graceful shutdown. The current in-flight run finishes; no new
-   *  jobs are claimed after this. */
-  stop(): void {
+  /** Graceful shutdown. No new jobs are claimed after this, and the answer
+   *  settles once the run in flight has finished. The caller bounds the
+   *  wait: a run that outlives it loses its storage client when the caller
+   *  closes it, and its job is recovered at the next start. */
+  async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    await this.finishing;
   }
 
   /** Reset `in_progress` jobs with stale heartbeats back to `queued`.
@@ -207,6 +212,10 @@ export class BulkActionWorker {
       return;
     }
     this.inFlight = true;
+    let ended!: () => void;
+    this.finishing = new Promise<void>((resolve) => {
+      ended = resolve;
+    });
     try {
       const ran = await this.runOnce();
       if (ran) {
@@ -230,6 +239,7 @@ export class BulkActionWorker {
       this.scheduleNext(this.currentPollMs);
     } finally {
       this.inFlight = false;
+      ended();
     }
   }
 

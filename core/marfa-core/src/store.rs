@@ -1564,12 +1564,21 @@ fn index_row(
     indexing: &Indexing,
 ) -> Result<(), CoreError> {
     let tags = tags_for_one(conn, id)?;
-    let (title, body) = fts_text(properties, indexing);
+    let text = fts_text(properties, indexing);
     conn.execute("DELETE FROM items_fts WHERE rowid = ?1", [seq])?;
     if ItemState::from_str_checked(state)? != ItemState::Trashed {
         conn.execute(
-            "INSERT INTO items_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
-            params![seq, title, body, tags.join(" ")],
+            "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                seq,
+                text.title,
+                text.body,
+                text.description,
+                text.name,
+                text.extra,
+                tags.join(" ")
+            ],
         )?;
     }
     Ok(())
@@ -2168,34 +2177,43 @@ fn invalid_row(column: usize, text: &str) -> rusqlite::Error {
     )
 }
 
-/// A thumbnail is never indexed, not even where a type names it the title.
-pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> (String, String) {
-    let title_key = indexing.title_field.as_deref().unwrap_or("title");
-    let title = if indexing.thumbnail_field.as_deref() == Some(title_key) {
-        String::new()
-    } else {
-        properties
-            .get(title_key)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    let mut body = Vec::new();
-    for (key, value) in properties {
-        if key == title_key || indexing.thumbnail_field.as_deref() == Some(key.as_str()) {
-            continue;
-        }
-        collect_strings(value, &mut body);
-    }
-    (title, body.join("\n"))
+/// What one row contributes to the index, column by column.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FtsText {
+    pub title: String,
+    pub body: String,
+    pub description: String,
+    pub name: String,
+    pub extra: String,
 }
 
-fn collect_strings(value: &Value, into: &mut Vec<String>) {
-    match value {
-        Value::String(text) => into.push(text.clone()),
-        Value::Array(values) => values.iter().for_each(|value| collect_strings(value, into)),
-        Value::Object(map) => map.values().for_each(|value| collect_strings(value, into)),
-        _ => {}
+/// The server's rule: the four core properties when they hold a string, the
+/// type's other declared string properties joined by a space, and nothing the
+/// type does not declare. A thumbnail is not a string property, so its base64
+/// is never indexed.
+pub fn fts_text(properties: &Map<String, Value>, indexing: &Indexing) -> FtsText {
+    let core = |name: &str| -> String {
+        if indexing.opted_out.iter().any(|opted| opted == name) {
+            return String::new();
+        }
+        properties
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let extra: Vec<&str> = indexing
+        .extra
+        .iter()
+        .filter_map(|name| properties.get(name).and_then(Value::as_str))
+        .filter(|text| !text.is_empty())
+        .collect();
+    FtsText {
+        title: core("title"),
+        body: core("body"),
+        description: core("description"),
+        name: core("name"),
+        extra: extra.join(" "),
     }
 }
 
@@ -3127,20 +3145,19 @@ mod tests {
     #[test]
     fn a_changed_catalog_indexes_every_held_row_again() {
         let conn = conn();
-        let photo = |thumbnail: bool| {
-            let mut wire = wire_type("acme.photo", None, Some("title"));
-            if thumbnail {
-                wire.rest.insert(
-                    "fields".into(),
-                    json!({ "thumbnail": { "type": "thumbnail" } }),
-                );
-            }
+        let photo = |cover: &str| {
+            let mut wire = wire_type("acme.photo", None, None);
+            wire.rest.insert(
+                "fields".into(),
+                json!({ "cover": { "type": cover, "searchable": cover == "string" } }),
+            );
             wire
         };
-        replace_types(&conn, &[photo(false)]).unwrap();
+        replace_types(&conn, &[photo("string")]).unwrap();
         let properties = json!({
             "title": "Holiday",
-            "thumbnail": "data:image/png;base64,iVBORw0KGgoA/unicornsXYZ",
+            "cover": "unicornsXYZ",
+            "undeclared": "narwhalsABC",
         });
         let indexing = crate::catalog::Catalog::load(&conn)
             .unwrap()
@@ -3157,24 +3174,27 @@ mod tests {
         }
         let entry = |id: &str| -> Option<(String, String)> {
             conn.query_row(
-                "SELECT body, tags FROM items_fts WHERE rowid = (SELECT seq FROM items WHERE id = ?1)",
+                "SELECT extra, tags FROM items_fts WHERE rowid = (SELECT seq FROM items WHERE id = ?1)",
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .unwrap()
         };
-        let (body, tags) = entry("held").expect("the held row has no entry");
-        assert!(body.contains("unicornsXYZ"), "{body}");
+        let (extra, tags) = entry("held").expect("the held row has no entry");
+        assert_eq!(
+            extra, "unicornsXYZ",
+            "a declared string is indexed, an undeclared one is not"
+        );
         assert_eq!(tags, "summer");
         assert_eq!(entry("binned"), None);
 
-        replace_types(&conn, &[photo(true)]).unwrap();
-        let (body, tags) =
+        replace_types(&conn, &[photo("thumbnail")]).unwrap();
+        let (extra, tags) =
             entry("held").expect("the catalog changed and the held row lost its entry");
-        assert!(
-            !body.contains("unicornsXYZ"),
-            "the catalog named the thumbnail and the entry still holds its base64: {body}"
+        assert_eq!(
+            extra, "",
+            "the type no longer declares a string there and the entry still holds it"
         );
         assert_eq!(
             tags, "summer",
@@ -3210,7 +3230,7 @@ mod tests {
             updated_at: "2031-03-03T03:03:03Z".into(),
             edges: None,
         };
-        upsert_item(&conn, &row, None, &Indexing::titled("title")).unwrap();
+        upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
 
         let item = item_by_id(&conn, "positional-1").unwrap().unwrap();
         assert_eq!(item.id, "positional-1");
@@ -3238,7 +3258,7 @@ mod tests {
             &conn,
             &note,
             Some(&["a".into(), "b".into()]),
-            &Indexing::titled("title"),
+            &Indexing::default(),
         )
         .unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
@@ -3252,7 +3272,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        upsert_item(&conn, &renamed, None, &Indexing::titled("title")).unwrap();
+        upsert_item(&conn, &renamed, None, &Indexing::default()).unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.title(None), Some("Renamed"));
         assert_eq!(item.tags, vec!["a", "b"]);
@@ -3262,7 +3282,7 @@ mod tests {
     #[test]
     fn a_create_answered_with_another_id_moves_everything_onto_it() {
         let conn = conn();
-        let indexing = Indexing::titled("title");
+        let indexing = Indexing::default();
         for id in ["local", "server", "other"] {
             upsert_item(
                 &conn,
@@ -3406,19 +3426,40 @@ mod tests {
     }
 
     #[test]
-    fn the_index_text_splits_the_title_from_every_other_string() {
+    fn the_index_text_is_the_core_four_and_the_declared_strings() {
         let properties = json!({
             "title": "T",
             "body": "B",
-            "nested": { "deep": ["x", 1, true, "y"] },
-            "n": 5
+            "name": 5,
+            "blurb": "X",
+            "empty": "",
+            "later": "Y",
+            "count": 5,
+            "undeclared": "Z",
+            "nested": { "deep": ["x"] }
         });
-        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("title"));
-        assert_eq!(title, "T");
-        assert_eq!(body, "B\nx\ny");
-        let (title, body) = fts_text(properties.as_object().unwrap(), &Indexing::titled("body"));
-        assert_eq!(title, "B");
-        assert_eq!(body, "T\nx\ny");
+        let indexing = Indexing {
+            opted_out: vec!["body".into()],
+            extra: vec!["blurb".into(), "empty".into(), "later".into()],
+        };
+        assert_eq!(
+            fts_text(properties.as_object().unwrap(), &indexing),
+            FtsText {
+                title: "T".into(),
+                body: String::new(),
+                description: String::new(),
+                name: String::new(),
+                extra: "X Y".into(),
+            }
+        );
+        assert_eq!(
+            fts_text(properties.as_object().unwrap(), &Indexing::default()),
+            FtsText {
+                title: "T".into(),
+                body: "B".into(),
+                ..FtsText::default()
+            }
+        );
     }
 
     #[test]
@@ -3748,7 +3789,7 @@ mod tests {
             &conn,
             &server_row,
             Some(&["kept".into()]),
-            &Indexing::titled("title"),
+            &Indexing::default(),
         )
         .unwrap();
         let queue = |kind: WriteKind, payload: &str, tag: Option<&str>| {
@@ -3796,7 +3837,7 @@ mod tests {
         )
         .unwrap();
 
-        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.title(Some("title")), Some("edited"));
         assert_eq!(
@@ -3809,12 +3850,12 @@ mod tests {
         assert_eq!(item.tags, vec!["b", "c"]);
 
         queue(WriteKind::DeleteItem, "{}", None);
-        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Trashed);
 
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
-        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
     }
@@ -4355,6 +4396,33 @@ mod tests {
     }
 
     #[test]
+    fn a_store_with_the_older_index_is_refused_with_its_queue_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch(
+                "DROP TABLE items_fts;
+                 CREATE VIRTUAL TABLE items_fts USING fts5 (
+                   title, body, tags, tokenize = 'unicode61 remove_diacritics 2'
+                 );",
+            )
+            .unwrap();
+        }
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(reason.contains("items_fts"), "{reason}");
+        assert_eq!(unsent, Some(1));
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "refusing the old index took the write beside it"
+        );
+    }
+
+    #[test]
     fn a_store_without_folder_presentation_is_refused_without_losing_its_queue() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
@@ -4416,7 +4484,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "af336545eb8382f7",
+            "23d6a905c0141c7b",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

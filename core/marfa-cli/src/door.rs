@@ -50,7 +50,7 @@ impl Answer {
             body: body.to_string(),
             headers: vec![(
                 marfa_core::http::CONTRACT_HEADER,
-                marfa_client::CONTRACT_VERSION.to_string(),
+                marfa_core::contract::CONTRACT_VERSION.to_string(),
             )],
         }
     }
@@ -122,7 +122,7 @@ impl Door {
     }
 }
 
-fn read_request(stream: &mut std::net::TcpStream) -> Received {
+pub fn read_request(stream: &mut std::net::TcpStream) -> Received {
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 4096];
     let head_end;
@@ -201,5 +201,5 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
 }
 
 pub fn another_contract() -> String {
-    (marfa_client::CONTRACT_VERSION + 1).to_string()
+    (marfa_core::contract::CONTRACT_VERSION + 1).to_string()
 }

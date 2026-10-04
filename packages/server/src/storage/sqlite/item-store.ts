@@ -804,15 +804,6 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async findBySourceId(source: string, sourceId: string): Promise<Item | null> {
-    const item = await this.findBySourceIdIncludingTrashed(source, sourceId);
-    if (item?.state === "trashed") return null;
-    return item;
-  }
-
-  async findBySourceIdIncludingTrashed(
-    source: string,
-    sourceId: string,
-  ): Promise<Item | null> {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),

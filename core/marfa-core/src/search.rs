@@ -53,11 +53,11 @@ pub(crate) fn search(
         .collect();
     values.push(Value::from(limit as i64));
     let mut statement = conn.prepare(&format!(
-        "SELECT items.id, bm25(items_fts, 5.0, 1.0, 2.0), snippet(items_fts, 1, '<mark>', '</mark>', '…', 12)
+        "SELECT items.id, bm25(items_fts), snippet(items_fts, -1, '<mark>', '</mark>', '...', 32)
          FROM items_fts
          JOIN items ON items.seq = items_fts.rowid
          WHERE items_fts MATCH ?{narrowing}
-         ORDER BY bm25(items_fts, 5.0, 1.0, 2.0)
+         ORDER BY bm25(items_fts), items.id
          LIMIT ?"
     ))?;
     let params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
@@ -85,20 +85,41 @@ pub(crate) fn search(
         .collect())
 }
 
-/// Every whitespace-separated token as a quoted prefix term, implicitly
-/// ANDed, so nothing a person types is read as FTS5 syntax.
+/// The server's reading of a query, which `search-and-filters.md` states: a
+/// query wholly inside double quotes is one phrase; otherwise each
+/// whitespace-separated word is quoted, so nothing a person types is read as
+/// FTS5 syntax, and the last word also matches as a prefix.
 fn fts_expression(query: &str) -> Option<String> {
-    let terms: Vec<String> = query
-        .split_whitespace()
-        .map(|token| token.replace('"', ""))
-        .filter(|token| !token.is_empty())
-        .map(|token| format!("\"{token}\"*"))
-        .collect();
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" "))
+    let query = query.trim_matches(is_query_whitespace);
+    if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
+        let inner = &query[1..query.len() - 1];
+        return Some(format!("\"{}\"", inner.replace('"', "\"\"")));
     }
+    let words: Vec<&str> = query
+        .split(is_query_whitespace)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let last = words.len().checked_sub(1)?;
+    Some(
+        words
+            .iter()
+            .enumerate()
+            .map(|(at, word)| {
+                let quoted = format!("\"{}\"", word.replace('"', "\"\""));
+                if at == last {
+                    format!("{quoted}*")
+                } else {
+                    quoted
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+// Match JavaScript's trim and \s rules on the server, including pasted BOMs.
+fn is_query_whitespace(character: char) -> bool {
+    (character.is_whitespace() && character != '\u{0085}') || character == '\u{feff}'
 }
 
 #[cfg(test)]
@@ -110,7 +131,7 @@ mod tests {
     use crate::store::testing::*;
 
     #[test]
-    fn titles_outrank_bodies_and_only_the_active_state_answers() {
+    fn hits_rank_by_bm25_then_id_and_only_the_active_state_answers() {
         let conn = conn();
         store::upsert_item(
             &conn,
@@ -121,40 +142,43 @@ mod tests {
                 "2026-01-01T00:00:00Z",
             ),
             None,
-            &Indexing::titled("title"),
+            &Indexing::default(),
         )
         .unwrap();
         store::upsert_item(
             &conn,
             &note("title", "Zebra", "nothing here", "2026-01-01T00:00:00Z"),
             None,
-            &Indexing::titled("title"),
+            &Indexing::default(),
         )
         .unwrap();
         store::upsert_item(
             &conn,
             &note("tag", "Plain", "plain", "2026-01-01T00:00:00Z"),
             Some(&["zebras".into()]),
-            &Indexing::titled("title"),
+            &Indexing::default(),
         )
         .unwrap();
         let mut trashed = note("gone", "Zebra too", "zebra", "2026-01-01T00:00:00Z");
         trashed.state = "trashed".into();
-        store::upsert_item(&conn, &trashed, None, &Indexing::titled("title")).unwrap();
+        store::upsert_item(&conn, &trashed, None, &Indexing::default()).unwrap();
         let mut archived = note("filed", "Zebra filed", "zebra", "2026-01-01T00:00:00Z");
         archived.state = "archived".into();
-        store::upsert_item(&conn, &archived, None, &Indexing::titled("title")).unwrap();
+        store::upsert_item(&conn, &archived, None, &Indexing::default()).unwrap();
 
         let default = SearchFilters::default();
         let hits = search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 10).unwrap();
         let ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
-        assert_eq!(ids, vec!["title", "tag", "body"]);
+        // The title and the tag hold one match in three words each, so they
+        // tie and the id breaks it; the body's is one in four.
+        assert_eq!(ids, vec!["tag", "title", "body"]);
         assert_eq!(
             search(&conn, &Catalog::load(&conn).unwrap(), "zeb", &default, 2)
                 .unwrap()
                 .len(),
             2
         );
+        assert_eq!(hits[0].score, hits[1].score);
         assert!(hits[0].score > hits[2].score);
         assert!(hits[2].snippet.contains("<mark>zebra</mark>"));
         assert!(
@@ -205,11 +229,38 @@ mod tests {
     }
 
     #[test]
-    fn tokens_are_quoted_prefixes() {
+    fn surrounding_whitespace_keeps_a_quoted_query_a_phrase() {
+        for query in [
+            " \"quiet landscape\" ",
+            "\t\"quiet land\"\n",
+            "\u{feff}\"quiet landscape\"\u{feff}",
+        ] {
+            let expected = if query.contains("land\"") {
+                "\"quiet land\""
+            } else {
+                "\"quiet landscape\""
+            };
+            assert_eq!(fts_expression(query), Some(expected.into()));
+        }
+    }
+
+    #[test]
+    fn only_the_last_word_is_a_prefix_and_a_quoted_query_is_a_phrase() {
         assert_eq!(
             fts_expression("  hello  wor\"ld OR"),
-            Some("\"hello\"* \"world\"* \"OR\"*".into())
+            Some("\"hello\" \"wor\"\"ld\" \"OR\"*".into())
         );
-        assert_eq!(fts_expression("  \"  "), None);
+        assert_eq!(fts_expression("  "), None);
+        assert_eq!(fts_expression(""), None);
+        assert_eq!(
+            fts_expression("\"exact phrase\""),
+            Some("\"exact phrase\"".into())
+        );
+        // Not wholly inside quotes, and a lone pair of quotes: words.
+        assert_eq!(
+            fts_expression("\"exact\" phrase"),
+            Some("\"\"\"exact\"\"\" \"phrase\"*".into())
+        );
+        assert_eq!(fts_expression("\"\""), Some("\"\"\"\"\"\"*".into()));
     }
 }

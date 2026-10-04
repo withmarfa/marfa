@@ -73,13 +73,15 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
+import { jsonDepthLimit } from "./middleware/json-depth.js";
 import { CONTRACT_VERSION } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import { healthRoutes } from "./routes/health.js";
+import { healthRoutes, operatorCaller } from "./routes/health.js";
+import { storageProbes } from "./routes/health-probes.js";
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
@@ -281,6 +283,7 @@ export function createApp(
       return requestBodyLimit(c, next);
     }),
   );
+  app.use("*", jsonDepthLimit);
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues.
   //
@@ -329,7 +332,22 @@ export function createApp(
       features,
     }),
   );
-  app.route("/health", healthRoutes(storage, blobs, config));
+  // Ahead of the credential and the limiter, as the probe of a container
+  // must be. It looks the operator key up for itself, because that key is
+  // the one caller told what a failing component said.
+  app.route(
+    "/health",
+    healthRoutes(
+      storage,
+      blobs,
+      config,
+      storageProbes(storage, {
+        sqlitePath: config.sqlitePath,
+        blobPath: config.blobPath,
+      }),
+      operatorCaller(storage, config.apiKeySalt),
+    ),
+  );
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE

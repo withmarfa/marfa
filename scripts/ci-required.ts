@@ -34,6 +34,8 @@ export const JOBS = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  // The shipped image, built and booted through its entrypoint.
+  "image",
   "types-freshness",
   "openapi-freshness",
   "version-fields",
@@ -54,6 +56,7 @@ const SERVER: readonly Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "openapi-freshness",
 ];
 
@@ -71,6 +74,7 @@ const WORKSPACE: readonly Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "types-freshness",
   "openapi-freshness",
   "version-fields",
@@ -98,7 +102,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // by the version check. A fixture is test input and a generated tree is
   // checked file by file, so those fall through to their folder's rule.
   [
-    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/|core\/marfa-client\/).*\.md$/i,
+    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
   [/^(LICENSE|\.env\.example|\.infisical\.json)$/, []],
@@ -106,8 +110,14 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   // The drill installs the image's Litestream and runs its configuration,
   // which the offline lane's own test reads too.
-  [/^deploy\/Dockerfile$/, ["restore-drill"]],
-  [/^deploy\/litestream\.yml$/, ["restore-drill", "conformance"]],
+  [/^deploy\/Dockerfile$/, ["restore-drill", "image"]],
+  [/^deploy\/litestream\.yml$/, ["restore-drill", "conformance", "image"]],
+  // The image copies the entrypoint and the ignore file into its build, and
+  // `ci/entrypoint.test.ts` runs the entrypoint.
+  [
+    /^deploy\/(entrypoint\.sh|Dockerfile\.dockerignore)$/,
+    ["workspace", "image"],
+  ],
   [/^deploy\//, []],
 
   // The core's catalog is written from the shipped types, the registry that
@@ -154,12 +164,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-core\/src\/builtin_catalog\.json$/,
     [...RUST, "clients-freshness", "workspace"],
   ],
-  [/^core\/marfa-client\/(src\/|Cargo\.toml$)/, [...RUST, "clients-freshness"]],
-  // The generator's configuration and templates make the client's source,
-  // and the freshness check regenerates it from them.
-  [/^core\/marfa-client\//, ["clients-freshness"]],
-  [/^core\/Cargo\.toml$/, [...RUST, "clients-freshness", "workspace"]],
-  [/^core\/Cargo\.lock$/, [...RUST, "clients-freshness"]],
+  [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
+  [/^core\/Cargo\.lock$/, RUST],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
   [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
   [/^core\/\.gitignore$/, []],
@@ -200,6 +206,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ],
   ],
 
+  [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
   [/^ci\//, ["workspace"]],
   [
     /^scripts\/generate-core-(contract|catalog)\.ts$/,

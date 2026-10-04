@@ -122,4 +122,23 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.throws(() => core.createItem({ type: "acme.recipe", properties: {} }), /^Error: validation: \(invalid_properties\) servings: Required field is missing$/);
   assert.equal(core.queue().length, 0);
   assert.throws(() => core.itemType("acme.absent"), /^Error: not_found: .*acme\.absent/);
+  // The error carries the core's name for it and the server's own code beside
+  // it, as properties, so a caller need not read them out of the message.
+  assert.throws(
+    () => core.itemType("acme.absent"),
+    (/** @type {any} */ error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.code, "not_found");
+      assert.equal(error.serverCode, "type_not_found");
+      return true;
+    },
+  );
+  assert.throws(
+    () => core.createItem({ type: "acme.absent", properties: {} }),
+    (/** @type {any} */ error) => {
+      assert.equal(error.code, "unknown_type");
+      assert.equal(error.serverCode, "unknown_type");
+      return true;
+    },
+  );
 });

@@ -154,7 +154,7 @@ const ApiKeySchema = z
       .string()
       .nullable()
       .describe(
-        "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
+        "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. The key listing omits it, and the change and revoke doors answer `404 api_key_not_found` for it.",
       ),
     last_used_at: z.string().nullable(),
   })
@@ -363,7 +363,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key past its `expires_at` receives the same response, including when the caller is the operator key. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {

@@ -41,6 +41,7 @@ const SERVER: Job[] = [
   "conformance",
   "cli-scenarios",
   "restore-drill",
+  "image",
   "openapi-freshness",
 ];
 const RUST: Job[] = ["core-checks", "conformance", "cli-scenarios", "core"];
@@ -146,14 +147,24 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "restore-drill"],
     ],
     [
-      "the image's Litestream",
+      "the image's Litestream, and the image itself",
       ["deploy/Dockerfile"],
-      ["ci-sqlite", "restore-drill"],
+      ["ci-sqlite", "restore-drill", "image"],
     ],
     [
       "the Litestream configuration, which the offline lane also reads",
       ["deploy/litestream.yml"],
-      ["ci-sqlite", "conformance", "restore-drill"],
+      ["ci-sqlite", "conformance", "restore-drill", "image"],
+    ],
+    [
+      "the entrypoint, which the image runs and a ci/ test runs",
+      ["deploy/entrypoint.sh"],
+      ["ci-sqlite", "workspace", "image"],
+    ],
+    [
+      "the script that boots the image",
+      ["scripts/check-image.sh"],
+      ["ci-sqlite", "workspace", "image"],
     ],
     [
       "JavaScript that ESLint reads",
@@ -162,7 +173,7 @@ describe("what a change runs", () => {
     ],
     [
       "Markdown in a generated tree, which its freshness check refuses",
-      ["core/marfa-client/NOTES.md", "packages/types/generated/NOTES.md"],
+      ["packages/types/generated/NOTES.md"],
       [...SERVER, "types-freshness", "clients-freshness"],
     ],
     ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
@@ -180,6 +191,7 @@ describe("what a change runs", () => {
         "conformance",
         "cli-scenarios",
         "restore-drill",
+        "image",
         "types-freshness",
         "openapi-freshness",
         "version-fields",
@@ -636,11 +648,7 @@ describe("what a job reads reaches it", () => {
         }
       }
     }
-    expect([...crates].sort()).toEqual([
-      "marfa-cli",
-      "marfa-client",
-      "marfa-core",
-    ]);
+    expect([...crates].sort()).toEqual(["marfa-cli", "marfa-core"]);
 
     const { jobs } = workflow("ci.yml");
     for (const job of ["conformance", "cli-scenarios"]) {

@@ -109,7 +109,7 @@ The document's `info.description` holds the rules that apply everywhere, each un
 - An operation's summary, description and responses: its `createRoute` definition in `packages/server/src/routes/`. The operations served as plain Hono handlers, such as `GET /` and `GET /events`, are written out in `EXTRA_PATHS` in `packages/server/src/openapi-finalize.ts`.
 - A field's or parameter's description: `.describe()` on its schema. A code comment never reaches the document.
 - The general sections, the shared responses and the shared header parameters: `packages/server/src/openapi-finalize.ts`. `limit` and `cursor`: `packages/server/src/page-limits.ts`.
-- After any change, run `pnpm generate` and commit everything it writes in the same pull request: `openapi.json` and the clients generated from it. The Rust client's generator needs Java 17 or later on your `PATH`.
+- After any change, run `pnpm generate` and commit everything it writes in the same pull request: `openapi.json`, the TypeScript client generated from it and the core's contract version.
 
 ## Before you open a pull request
 

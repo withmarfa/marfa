@@ -2,18 +2,18 @@
 
 The Rust engine every native client embeds: a local SQLite working copy of a slice of one Marfa server, kept current from its event log, read locally, and written to through a queue that holds each write until the server answers it. `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md` say what it does; the fixtures under `conformance/src/suites/device/` hold the `marfa` binary to them.
 
-| Crate            | What it is                                                                                                       |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `marfa-core`     | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                                  |
-| `marfa-client`   | The Rust client, generated from `openapi.json` by `pnpm generate` (needs Java 11 or later); never edited by hand |
-| `marfa-cli`      | The `marfa` binary                                                                                               |
-| `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own     |
-| `bindings/node`  | The napi-rs module `@withmarfa/core`                                                                             |
+| Crate            | What it is                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `marfa-core`     | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                              |
+| `marfa-cli`      | The `marfa` binary                                                                                           |
+| `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
+| `bindings/node`  | The napi-rs module `@withmarfa/core`                                                                         |
 
 ## The binary
 
 `marfa --help` lists every command, the exit codes and the `--json` error shape; `marfa operations` maps each published operation to its command. `marfa device --db PATH` is a working copy, and `marfa folders` a folder on disk that carries its own store.
 
+- **Requests:** every command sends through `marfa_core::http::Http`, the stack the working copy uses: it follows no redirect, reads the contract header on every answer, and renews a refused credential once. A command waits up to 90 seconds for an answer to begin and as long again to read it, which a door that works before it answers needs; an upload waits on the server's work, and a streamed answer fails after 45 seconds of silence. The binary writes each path, query name, body key and enum value by hand. `commands/driven.rs` runs each command in this process against a local server that refuses every request but the root, and holds each request a command sends, up to that refusal, to `openapi.json`: the method and path, each query name, each key of a JSON body, and each enum value a flag names. A flag that takes any text leaves its value to the server. A rename in the document fails that test.
 - **Server:** `--url`, then `MARFA_API_URL`, then the server a kept credential made current.
 - **Credential:** `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` and `marfa login` put one. Never a plain file. With both variables set, a command reads and writes no keychain, which is how an agent runs it.
 - **Unattended runs:** `MARFA_KEYCHAIN` names a keychain file to use instead of the person's, on macOS, and refuses every prompt. Tests and CI use it; CI fails a run that changed the login keychain's `marfa` entries.
@@ -41,8 +41,8 @@ Reading commands on an absent store, including `--reader` and `device changes`, 
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-cargo nextest run --locked --workspace --exclude marfa-client
+cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+cargo nextest run --locked --workspace
 cargo build -p marfa-cli   # the device fixtures refuse a binary older than its source
 ```
 
@@ -63,5 +63,7 @@ pnpm --ignore-workspace run build
 pnpm --ignore-workspace run check
 pnpm --ignore-workspace run test
 ```
+
+Every surface names a core error by `CoreError::code`: the `code` in the binary's `--json` envelope, and `code` on an error the Node module throws or rejects with. The Node error is an `Error` whose message starts `code: `, with the properties the Swift error carries as fields: `serverCode`, `status`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it. `onEnd` of a `follow` receives that same error, or one coded `listener_threw` where an `onChange` threw. The Swift error answers `code()` with the same word, held by a test that crosses every `CoreError`.
 
 `scripts/binding-proof.sh` drives the built Node binding through an offline write and its verdict against a real server.

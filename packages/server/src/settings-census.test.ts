@@ -10,7 +10,8 @@ const REPO = resolve(SRC, "../../..");
 /**
  * The files outside `config.ts` that may touch the environment, and why.
  * None of them is the server: each is a test that switches itself on, runs
- * itself under another zone, or stubs the process.
+ * itself under another zone, stubs the process, or starts a process of its
+ * own, or the fixture such a test starts.
  */
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "enrichment/ocr.real.test.ts":
@@ -20,6 +21,14 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
+  "storage/sqlite/backup-copy.test.ts":
+    "starts a writer process with the node that runs the test",
+  "storage/sqlite/backup-writer.ts":
+    "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
+  "refused-database-exit.test.ts":
+    "starts the server as a child process, which needs the test's own environment to run",
+  "shutdown-stream.test.ts":
+    "starts the server as a child process, which needs the test's own environment to run",
 };
 
 /** Names in the docs that look like settings and are not the server's. */

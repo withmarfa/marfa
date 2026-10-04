@@ -393,23 +393,20 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
     })
 }
 
-/// What the local index reads from an item's properties.
+/// The four properties search reads whether or not a type declares them,
+/// as the server's index does. A thumbnail may not take one of these names.
+pub const CORE_TEXT_FIELDS: [&str; 4] = ["title", "body", "description", "name"];
+
+/// What the local index reads from an item's properties: the server's rule,
+/// which `search-and-filters.md` states.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Indexing {
-    pub title_field: Option<String>,
-    /// Never indexed: its base64 matches nothing a person would search for,
-    /// and the server leaves it out of its own index too.
-    pub thumbnail_field: Option<String>,
-}
-
-#[cfg(test)]
-impl Indexing {
-    pub fn titled(field: &str) -> Indexing {
-        Indexing {
-            title_field: Some(field.to_string()),
-            thumbnail_field: None,
-        }
-    }
+    /// Core properties the type declares as strings and marks
+    /// `searchable: false`.
+    pub opted_out: Vec<String>,
+    /// The string properties the type declares or inherits beyond the core
+    /// four, not marked `searchable: false`, in name order.
+    pub extra: Vec<String>,
 }
 
 /// The server's type catalog as last hydrated, answering the same subtree
@@ -609,11 +606,49 @@ impl Catalog {
         self.nearest(type_id, |entry| entry.thumbnail_field.as_deref())
     }
 
+    /// A type the catalog does not hold, or one whose parent it does not,
+    /// resolves as far as the catalog reaches: a row of an unknown type
+    /// contributes its core properties alone.
     pub fn indexing(&self, type_id: &str) -> Indexing {
-        Indexing {
-            title_field: self.title_field(type_id).map(str::to_string),
-            thumbnail_field: self.thumbnail_field(type_id).map(str::to_string),
+        let mut chain: Vec<&Entry> = Vec::new();
+        let mut current = type_id;
+        for _ in 0..MAX_PARENT_WALK {
+            let Some(entry) = self.entries.get(current) else {
+                break;
+            };
+            chain.push(entry);
+            match entry.parent.as_deref() {
+                Some(parent) => current = parent,
+                None => break,
+            }
         }
+        // A nearer declaration replaces the definition and keeps the place
+        // the farther one gave the name.
+        let mut resolved: Vec<(&String, &Value)> = Vec::new();
+        for entry in chain.into_iter().rev() {
+            for (name, definition) in &entry.definitions {
+                match resolved.iter_mut().find(|(held, _)| *held == name) {
+                    Some(held) => held.1 = definition,
+                    None => resolved.push((name, definition)),
+                }
+            }
+        }
+        let mut indexing = Indexing::default();
+        for (name, definition) in resolved {
+            let string = definition.get("type").and_then(Value::as_str) == Some("string");
+            let searchable = definition.get("searchable").and_then(Value::as_bool) != Some(false);
+            if CORE_TEXT_FIELDS.contains(&name.as_str()) {
+                if string && !searchable {
+                    indexing.opted_out.push(name.clone());
+                }
+            } else if string && searchable {
+                indexing.extra.push(name.clone());
+            }
+        }
+        // In name order, the server's: a phrase that crosses two fields
+        // then matches on both or on neither.
+        indexing.extra.sort();
+        indexing
     }
 
     fn nearest<'a>(
@@ -807,7 +842,6 @@ mod tests {
             (None, Some("comment")),
             "a subtype naming only its body took its title from its parent's hints"
         );
-        assert_eq!(catalog.indexing("acme.leaf").title_field, None);
         // The witness: a subtype with no hints of its own takes its parent's.
         assert_eq!(catalog.title_field("acme.bare"), Some("name"));
         let leaf = item_type(&conn, "acme.leaf").unwrap();
@@ -815,6 +849,59 @@ mod tests {
             (leaf.title_field, leaf.body_field.as_deref()),
             (None, Some("comment"))
         );
+    }
+
+    #[test]
+    fn indexing_resolves_declared_string_fields_through_the_parents() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base",
+                  "fields": {
+                    "blurb": { "type": "string" },
+                    "secret": { "type": "string", "searchable": false },
+                    "title": { "type": "string", "searchable": false },
+                    "count": { "type": "integer" },
+                    "cover": { "type": "thumbnail" }
+                  },
+                  "display_hints": { "title_field": "blurb" } },
+                { "id": "acme.leaf", "parent": "acme.base",
+                  "fields": {
+                    "secret": { "type": "string" },
+                    "blurb": { "type": "string", "searchable": false },
+                    "note": { "type": "string" },
+                    "body": { "type": "string", "searchable": false }
+                  } },
+                { "id": "acme.orphan", "parent": "acme.absent",
+                  "fields": { "own": { "type": "string" } } }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        assert_eq!(
+            catalog.indexing("acme.base"),
+            Indexing {
+                opted_out: vec!["title".into()],
+                extra: vec!["blurb".into()],
+            }
+        );
+        // The nearer declaration replaces the farther and keeps its place:
+        // `secret` is searchable again, `blurb` is not, and the display hint
+        // that named `blurb` the title changes nothing.
+        assert_eq!(
+            catalog.indexing("acme.leaf"),
+            Indexing {
+                opted_out: vec!["title".into(), "body".into()],
+                extra: vec!["note".into(), "secret".into()],
+            }
+        );
+        assert_eq!(
+            catalog.indexing("acme.orphan"),
+            Indexing {
+                opted_out: Vec::new(),
+                extra: vec!["own".into()],
+            }
+        );
+        assert_eq!(catalog.indexing("acme.unknown"), Indexing::default());
     }
 
     #[test]

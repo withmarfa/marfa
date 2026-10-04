@@ -730,8 +730,8 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
     (Some(verdict), false)
 }
 
-fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
-    let (verdict, waiting) = crossed(write.outcome().map_err(failure)?);
+fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
+    let (verdict, waiting) = crossed(write.outcome().map_err(|error| failure(env, error))?);
     Ok(QueuedWrite {
         verdict,
         waiting,
@@ -755,11 +755,11 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
     })
 }
 
-fn drained(report: marfa_core::DrainReport) -> Result<DrainReport> {
+fn drained(env: Env, report: marfa_core::DrainReport) -> Result<DrainReport> {
     let mut verdicts = Vec::with_capacity(report.verdicts.len());
     for entry in report.verdicts {
         verdicts.push(DrainVerdict {
-            verdict: crossed(entry.outcome().map_err(failure)?).0,
+            verdict: crossed(entry.outcome().map_err(|error| failure(env, error))?).0,
             id: entry.id,
             kind: entry.kind.into(),
             item_id: entry.item_id,
@@ -862,66 +862,174 @@ fn sort(sort: Option<Sort>) -> marfa_core::Sort {
     }
 }
 
-/// A core error as a JS error whose message starts with the variant's code,
-/// `not_found: …`, `wrong_server: …`; the code cannot ride on `code`, which
-/// napi reserves for its own status.
-fn failure(error: marfa_core::CoreError) -> Error {
-    use marfa_core::CoreError as E;
-    if let E::RenewalFailed(cause) = error {
-        return failure(*cause);
+/// A core error as a JS error. The message starts with the error's code,
+/// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
+/// binding's carries as properties: `code`, the core's own name for it, and
+/// whichever of `serverCode`, `status`, `retryAfterSeconds`, `origin`,
+/// `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`,
+/// `writeSent` and `hash` it has.
+fn failure(env: Env, error: marfa_core::CoreError) -> Error {
+    match error_value(&env, &error) {
+        Ok(thrown) => Error::from(thrown),
+        Err(failed) => failed,
     }
-    let (code, detail) = match &error {
+}
+
+/// The JS error `failure` throws, for a callback that is handed one.
+fn error_value<'env>(env: &'env Env, error: &marfa_core::CoreError) -> Result<Unknown<'env>> {
+    let (message, fields) = describe(error);
+    let mut thrown = env.create_error(Error::new(napi::Status::GenericFailure, message))?;
+    // The core's name replaces napi's own status in `code`.
+    thrown.set_named_property("code", error.code())?;
+    for (name, value) in fields {
+        thrown.set_named_property(name, value)?;
+    }
+    thrown.into_unknown(env)
+}
+
+/// In `compute`, on a thread that cannot make a JS value: the core's error is
+/// kept for `reject`, which can, and the plain message goes meanwhile.
+fn record(slot: &mut Option<marfa_core::CoreError>, error: marfa_core::CoreError) -> Error {
+    let plain = Error::new(napi::Status::GenericFailure, describe(&error).0);
+    *slot = Some(error);
+    plain
+}
+
+fn rethrown(env: Env, recorded: Option<marfa_core::CoreError>, plain: Error) -> Error {
+    match recorded {
+        Some(error) => failure(env, error),
+        None => plain,
+    }
+}
+
+/// The message of a core error, and the fields that ride on the error beside it.
+fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_json::Value)>) {
+    use marfa_core::CoreError as E;
+    use serde_json::json;
+    if let E::RenewalFailed(cause) = error {
+        return describe(cause);
+    }
+    let code = error.code();
+    let detail = match error {
         E::RenewalFailed(_) => unreachable!("renewal cause was unwrapped"),
-        E::NotFound { code, message, .. } => {
-            ("not_found", server_detail("not_found", Some(code), message))
-        }
-        E::Unauthorized { code, message, .. } => (
-            "unauthorized",
-            server_detail("unauthorized", Some(code), message),
-        ),
-        E::Forbidden { code, message, .. } => {
-            ("forbidden", server_detail("forbidden", Some(code), message))
-        }
-        E::Validation { code, message, .. } => (
-            "validation",
-            server_detail("validation", Some(code), message),
-        ),
-        E::UnknownType { message } => {
-            ("unknown_type", server_detail("unknown_type", None, message))
-        }
-        E::RateLimited { code, message, .. } => (
-            "rate_limited",
-            server_detail("rate_limited", Some(code), message),
-        ),
+        E::NotFound { code, message }
+        | E::Unauthorized { code, message }
+        | E::Forbidden { code, message }
+        | E::Validation { code, message }
+        | E::RateLimited { code, message, .. } => server_detail(error.code(), Some(code), message),
+        E::UnknownType { message } => server_detail(error.code(), None, message),
         E::Server {
             status,
             code,
             message,
-        } => ("server", format!("answered {status} ({code}): {message}")),
-        E::Io(message) => ("io", message.clone()),
-        E::Network(message) => ("network", message.clone()),
-        E::Unnamed { .. } => ("unnamed_answer", error.to_string()),
-        E::Decoding(message) => ("decoding", message.clone()),
-        E::Store(message) => ("store", message.clone()),
-        E::Redirected { .. } => ("redirect", error.to_string()),
-        E::StorageFull(message) => ("storage_full", message.clone()),
-        E::SignedOut { .. } => ("signed_out", error.to_string()),
-        E::NoKeychain(message) => ("no_keychain", message.clone()),
-        E::NoServer => ("no_server", error.to_string()),
-        E::NoCursor => ("no_cursor", error.to_string()),
-        E::HydrationIncomplete => ("hydration_incomplete", error.to_string()),
-        E::NoCatalog => ("no_catalog", error.to_string()),
-        E::WrongSchema { .. } => ("wrong_schema", error.to_string()),
-        E::ReadingHandle => ("reading_handle", error.to_string()),
-        E::CopyExpired { .. } => ("copy_expired", error.to_string()),
-        E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
-        E::WrongServer { .. } => ("wrong_server", error.to_string()),
-        E::BytesAbsent { .. } => ("bytes_absent", error.to_string()),
-        E::ContractMismatch { .. } => ("contract_mismatch", error.to_string()),
-        E::Canceled => ("canceled", error.to_string()),
-        E::Invalid(message) => ("invalid", message.clone()),
+        } => format!("answered {status} ({code}): {message}"),
+        E::Io(message)
+        | E::Network(message)
+        | E::Decoding(message)
+        | E::Store(message)
+        | E::StorageFull(message)
+        | E::NoKeychain(message)
+        | E::Invalid(message) => message.clone(),
+        E::Unnamed { .. }
+        | E::Redirected { .. }
+        | E::SignedOut { .. }
+        | E::NoServer
+        | E::NoCursor
+        | E::HydrationIncomplete
+        | E::NoCatalog
+        | E::WrongSchema { .. }
+        | E::ReadingHandle
+        | E::CopyExpired { .. }
+        | E::StreamIncomplete { .. }
+        | E::WrongServer { .. }
+        | E::BytesAbsent { .. }
+        | E::ContractMismatch { .. }
+        | E::Canceled => error.to_string(),
     };
-    Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
+    let fields = match error {
+        E::NotFound { code, .. }
+        | E::Unauthorized { code, .. }
+        | E::Forbidden { code, .. }
+        | E::Validation { code, .. } => vec![("serverCode", json!(code))],
+        E::UnknownType { .. } => vec![("serverCode", json!("unknown_type"))],
+        E::RateLimited {
+            code,
+            retry_after_seconds,
+            ..
+        } => vec![
+            ("serverCode", json!(code)),
+            ("status", json!(429)),
+            ("retryAfterSeconds", json!(retry_after_seconds)),
+        ],
+        E::Server { status, code, .. } => {
+            vec![("status", json!(status)), ("serverCode", json!(code))]
+        }
+        E::Unnamed {
+            origin,
+            status,
+            retry_after_seconds,
+        } => vec![
+            ("origin", json!(origin)),
+            ("status", json!(status)),
+            ("retryAfterSeconds", json!(retry_after_seconds)),
+        ],
+        E::Redirected {
+            origin,
+            status,
+            location,
+        } => vec![
+            ("origin", json!(origin)),
+            ("status", json!(status)),
+            ("location", json!(location)),
+        ],
+        E::SignedOut { origin } => vec![("origin", json!(origin))],
+        E::WrongSchema {
+            path,
+            reason,
+            unsent,
+        } => vec![
+            ("path", json!(path)),
+            ("reason", json!(reason)),
+            ("unsent", json!(unsent)),
+        ],
+        E::CopyExpired { reason } | E::StreamIncomplete { reason } => {
+            vec![("reason", json!(reason))]
+        }
+        E::WrongServer { expected, got } => {
+            vec![("expected", json!(expected)), ("got", json!(got))]
+        }
+        E::BytesAbsent { hash, reason } => {
+            vec![("hash", json!(hash)), ("reason", json!(reason))]
+        }
+        E::ContractMismatch {
+            origin,
+            served,
+            expected,
+            status,
+            write_sent,
+        } => vec![
+            ("origin", json!(origin)),
+            ("served", json!(served)),
+            ("expected", json!(expected)),
+            ("status", json!(status)),
+            ("writeSent", json!(write_sent)),
+        ],
+        E::RenewalFailed(_)
+        | E::Io(_)
+        | E::Network(_)
+        | E::Decoding(_)
+        | E::Store(_)
+        | E::StorageFull(_)
+        | E::NoKeychain(_)
+        | E::NoServer
+        | E::NoCursor
+        | E::HydrationIncomplete
+        | E::NoCatalog
+        | E::ReadingHandle
+        | E::Canceled
+        | E::Invalid(_) => Vec::new(),
+    };
+    (format!("{code}: {detail}"), fields)
 }
 
 fn server_detail(kind: &str, code: Option<&str>, message: &str) -> String {
@@ -964,7 +1072,7 @@ pub struct Change {
 
 enum Told {
     Change(Change),
-    End(Option<String>),
+    End(Option<marfa_core::CoreError>),
 }
 
 /// A held stream, stopped by `stop` or by being collected. The follow ends
@@ -1042,6 +1150,7 @@ pub struct Hydrate {
     tier: marfa_core::Tier,
     edge_types: Vec<String>,
     stop: Arc<AtomicBool>,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1049,10 +1158,14 @@ impl Task for Hydrate {
     type Output = marfa_core::HydrateReport;
     type JsValue = HydrateReport;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
             .hydrate_until(&self.types, self.tier, &self.edge_types, &self.stop)
-            .map_err(failure)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
@@ -1081,6 +1194,7 @@ impl Task for Hydrate {
 pub struct Pin {
     core: Arc<marfa_core::Core>,
     id: String,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1088,8 +1202,14 @@ impl Task for Pin {
     type Output = bool;
     type JsValue = PinReport;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core.pin(&self.id).map_err(failure)
+        self.core
+            .pin(&self.id)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
     fn resolve(&mut self, _: Env, was_pinned: Self::Output) -> Result<Self::JsValue> {
@@ -1103,6 +1223,7 @@ impl Task for Pin {
 pub struct CatchUp {
     core: Arc<marfa_core::Core>,
     stop: Arc<AtomicBool>,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1110,8 +1231,14 @@ impl Task for CatchUp {
     type Output = marfa_core::CatchUpReport;
     type JsValue = CatchUpReport;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core.catch_up_until(&self.stop).map_err(failure)
+        self.core
+            .catch_up_until(&self.stop)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
@@ -1127,12 +1254,14 @@ impl Task for CatchUp {
 pub struct Drain {
     core: Arc<marfa_core::Core>,
     stop: Arc<AtomicBool>,
+    failed: Option<marfa_core::CoreError>,
 }
 
 pub struct PutBlob {
     core: Arc<marfa_core::Core>,
     path: String,
     mime_type: Option<String>,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1140,14 +1269,18 @@ impl Task for PutBlob {
     type Output = marfa_core::QueuedWrite;
     type JsValue = QueuedWrite;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
             .put_blob(std::path::Path::new(&self.path), self.mime_type.as_deref())
-            .map_err(failure)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
-    fn resolve(&mut self, _: Env, write: Self::Output) -> Result<Self::JsValue> {
-        queued(write)
+    fn resolve(&mut self, env: Env, write: Self::Output) -> Result<Self::JsValue> {
+        queued(env, write)
     }
 }
 
@@ -1156,6 +1289,7 @@ pub struct Attach {
     id: String,
     path: String,
     attachment: marfa_core::Attachment,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1163,17 +1297,21 @@ impl Task for Attach {
     type Output = marfa_core::Attached;
     type JsValue = Attached;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
             .attach(&self.id, std::path::Path::new(&self.path), &self.attachment)
-            .map_err(failure)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
-    fn resolve(&mut self, _: Env, attached: Self::Output) -> Result<Self::JsValue> {
+    fn resolve(&mut self, env: Env, attached: Self::Output) -> Result<Self::JsValue> {
         Ok(Attached {
-            upload: queued(attached.upload)?,
-            item: queued(attached.item)?,
-            edge: queued(attached.edge)?,
+            upload: queued(env, attached.upload)?,
+            item: queued(env, attached.item)?,
+            edge: queued(env, attached.edge)?,
         })
     }
 }
@@ -1181,6 +1319,7 @@ impl Task for Attach {
 pub struct FetchBlob {
     core: Arc<marfa_core::Core>,
     hash: String,
+    failed: Option<marfa_core::CoreError>,
 }
 
 #[napi]
@@ -1188,8 +1327,14 @@ impl Task for FetchBlob {
     type Output = std::path::PathBuf;
     type JsValue = String;
 
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core.blob(&self.hash).map_err(failure)
+        self.core
+            .blob(&self.hash)
+            .map_err(|error| record(&mut self.failed, error))
     }
 
     fn resolve(&mut self, _: Env, path: Self::Output) -> Result<Self::JsValue> {
@@ -1202,12 +1347,18 @@ impl Task for Drain {
     type Output = marfa_core::DrainReport;
     type JsValue = DrainReport;
 
-    fn compute(&mut self) -> Result<Self::Output> {
-        self.core.drain_until(&self.stop).map_err(failure)
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
     }
 
-    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
-        drained(report)
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .drain_until(&self.stop)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, env: Env, report: Self::Output) -> Result<Self::JsValue> {
+        drained(env, report)
     }
 }
 
@@ -1216,8 +1367,8 @@ impl MarfaCore {
     /// Opens a store another process writes, to read it only: never the
     /// writer, never a write, and a path with no store is refused.
     #[napi(factory)]
-    pub fn open_reader(path: String) -> Result<MarfaCore> {
-        let core = marfa_core::Core::open_reader(path).map_err(failure)?;
+    pub fn open_reader(env: Env, path: String) -> Result<MarfaCore> {
+        let core = marfa_core::Core::open_reader(path).map_err(|error| failure(env, error))?;
         Ok(MarfaCore {
             inner: Arc::new(core),
         })
@@ -1225,21 +1376,26 @@ impl MarfaCore {
 
     /// A number that moves each time another process saves to the store.
     #[napi]
-    pub fn data_version(&self) -> Result<i64> {
-        self.inner.data_version().map_err(failure)
+    pub fn data_version(&self, env: Env) -> Result<i64> {
+        self.inner
+            .data_version()
+            .map_err(|error| failure(env, error))
     }
 
     /// Holds the event stream open on a thread of its own and applies each
     /// event as it arrives: `onChange` for each change, then `onEnd` once,
-    /// with the error that ended it or null where it was stopped. Neither
-    /// callback keeps the process alive. An `onChange` that throws ends the
-    /// follow, and `onEnd` is told what it threw, as `listener_threw: …`.
-    #[napi]
+    /// with the error that ended it, the same error as any call throws, or
+    /// null where it was stopped. Neither callback keeps the process alive. An
+    /// `onChange` that throws ends the follow, and `onEnd` is given an error
+    /// whose `code` is `listener_threw` and whose message says what it threw.
+    #[napi(
+        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
+    )]
     pub fn follow(
         &self,
         env: Env,
         on_change: Function<Change, ()>,
-        on_end: Function<Option<String>, ()>,
+        on_end: Function<Option<Unknown<'static>>, ()>,
     ) -> Result<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
         let on_change = on_change.create_ref()?;
@@ -1266,13 +1422,20 @@ impl MarfaCore {
                         }
                     }
                     Told::End(error) => {
-                        let error = match threw.take() {
-                            Some(thrown) => {
-                                Some(format!("listener_threw: onChange threw {thrown}"))
+                        let env = &context.env;
+                        let error = match (threw.take(), error) {
+                            (Some(thrown), _) => {
+                                let mut made = env.create_error(Error::new(
+                                    napi::Status::GenericFailure,
+                                    format!("listener_threw: onChange threw {thrown}"),
+                                ))?;
+                                made.set_named_property("code", "listener_threw")?;
+                                Some(made.into_unknown(env)?)
                             }
-                            None => error,
+                            (None, Some(error)) => Some(error_value(env, &error)?),
+                            (None, None) => None,
                         };
-                        on_end.borrow_back(&context.env)?.call(error)?;
+                        on_end.borrow_back(env)?.call(error)?;
                     }
                 }
                 Ok(())
@@ -1296,7 +1459,7 @@ impl MarfaCore {
             // again must find the writer's role free.
             drop(core);
             tell.call(
-                Told::End(result.err().map(|error| failure(error).reason)),
+                Told::End(result.err()),
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         });
@@ -1306,7 +1469,12 @@ impl MarfaCore {
     /// Opens the file at `path`, creating it when absent. `url` and `key` go
     /// together; without them only local reads work.
     #[napi(factory)]
-    pub fn open(path: String, url: Option<String>, key: Option<String>) -> Result<MarfaCore> {
+    pub fn open(
+        env: Env,
+        path: String,
+        url: Option<String>,
+        key: Option<String>,
+    ) -> Result<MarfaCore> {
         let server = match (url, key) {
             (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
             (None, None) => None,
@@ -1317,7 +1485,7 @@ impl MarfaCore {
                 ));
             }
         };
-        let core = marfa_core::Core::open(path, server).map_err(failure)?;
+        let core = marfa_core::Core::open(path, server).map_err(|error| failure(env, error))?;
         Ok(MarfaCore {
             inner: Arc::new(core),
         })
@@ -1346,6 +1514,7 @@ impl MarfaCore {
     ) -> AsyncTask<Hydrate> {
         AsyncTask::new(Hydrate {
             core: Arc::clone(&self.inner),
+            failed: None,
             types,
             tier: tier.into(),
             edge_types,
@@ -1358,6 +1527,7 @@ impl MarfaCore {
     pub fn pin(&self, id: String) -> AsyncTask<Pin> {
         AsyncTask::new(Pin {
             core: Arc::clone(&self.inner),
+            failed: None,
             id,
         })
     }
@@ -1365,10 +1535,10 @@ impl MarfaCore {
     /// Stops holding a row by id; one the slice does not take goes, unless
     /// writes to it still wait.
     #[napi]
-    pub fn unpin(&self, id: String) -> Result<PinReport> {
+    pub fn unpin(&self, env: Env, id: String) -> Result<PinReport> {
         Ok(PinReport {
             pinned: false,
-            was_pinned: self.inner.unpin(&id).map_err(failure)?,
+            was_pinned: self.inner.unpin(&id).map_err(|error| failure(env, error))?,
         })
     }
 
@@ -1377,52 +1547,62 @@ impl MarfaCore {
     pub fn catch_up(&self, stop: Option<&Stop>) -> AsyncTask<CatchUp> {
         AsyncTask::new(CatchUp {
             core: Arc::clone(&self.inner),
+            failed: None,
             stop: flag_of(stop),
         })
     }
 
     #[napi]
-    pub fn list(&self, filters: Option<ListFilters>, sort: Option<Sort>) -> Result<Vec<Item>> {
+    pub fn list(
+        &self,
+        env: Env,
+        filters: Option<ListFilters>,
+        sort: Option<Sort>,
+    ) -> Result<Vec<Item>> {
         let items = self
             .inner
             .list(&self::filters(filters), self::sort(sort))
-            .map_err(failure)?;
+            .map_err(|error| failure(env, error))?;
         Ok(items.into_iter().map(item).collect())
     }
 
     #[napi]
-    pub fn get(&self, id: String) -> Result<Option<Item>> {
-        Ok(self.inner.get(&id).map_err(failure)?.map(item))
+    pub fn get(&self, env: Env, id: String) -> Result<Option<Item>> {
+        Ok(self
+            .inner
+            .get(&id)
+            .map_err(|error| failure(env, error))?
+            .map(item))
     }
 
     #[napi]
-    pub fn edges_from(&self, id: String) -> Result<Vec<Edge>> {
+    pub fn edges_from(&self, env: Env, id: String) -> Result<Vec<Edge>> {
         Ok(self
             .inner
             .edges_from(&id)
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
             .map(edge)
             .collect())
     }
 
     #[napi]
-    pub fn edges_to(&self, id: String) -> Result<Vec<Edge>> {
+    pub fn edges_to(&self, env: Env, id: String) -> Result<Vec<Edge>> {
         Ok(self
             .inner
             .edges_to(&id)
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
             .map(edge)
             .collect())
     }
 
     #[napi]
-    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>> {
+    pub fn edges_of_type(&self, env: Env, edge_type: String) -> Result<Vec<Edge>> {
         Ok(self
             .inner
             .edges_of_type(&edge_type)
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
             .map(edge)
             .collect())
@@ -1431,6 +1611,7 @@ impl MarfaCore {
     #[napi]
     pub fn search(
         &self,
+        env: Env,
         query: String,
         filters: Option<SearchFilters>,
         limit: Option<u32>,
@@ -1439,7 +1620,7 @@ impl MarfaCore {
         let hits = self
             .inner
             .search(&query, &filters.into(), limit.unwrap_or(20) as usize)
-            .map_err(failure)?;
+            .map_err(|error| failure(env, error))?;
         Ok(hits
             .into_iter()
             .map(|hit| SearchHit {
@@ -1451,8 +1632,8 @@ impl MarfaCore {
     }
 
     #[napi]
-    pub fn status(&self) -> Result<Status> {
-        let status = self.inner.status().map_err(failure)?;
+    pub fn status(&self, env: Env) -> Result<Status> {
+        let status = self.inner.status().map_err(|error| failure(env, error))?;
         Ok(Status {
             server_origin: status.server_origin,
             instance_id: status.instance_id,
@@ -1476,26 +1657,31 @@ impl MarfaCore {
     #[napi]
     pub fn declare_types(
         &self,
+        env: Env,
         #[napi(ts_arg_type = "Record<string, unknown>[]")] types: Vec<serde_json::Value>,
     ) -> Result<()> {
-        self.inner.declare_types(&types).map_err(failure)
+        self.inner
+            .declare_types(&types)
+            .map_err(|error| failure(env, error))
     }
 
     /// The declarations this copy holds, by id, with the empty `fields` and
     /// the `version` a registration needs filled in where the app left them
     /// out.
     #[napi(ts_return_type = "Record<string, unknown>[]")]
-    pub fn declared_types(&self) -> Result<Vec<serde_json::Value>> {
-        self.inner.declared_types().map_err(failure)
+    pub fn declared_types(&self, env: Env) -> Result<Vec<serde_json::Value>> {
+        self.inner
+            .declared_types()
+            .map_err(|error| failure(env, error))
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
     #[napi]
-    pub fn item_types(&self) -> Result<Vec<ItemType>> {
+    pub fn item_types(&self, env: Env) -> Result<Vec<ItemType>> {
         Ok(self
             .inner
             .item_types()
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
             .map(item_type)
             .collect())
@@ -1503,17 +1689,21 @@ impl MarfaCore {
 
     /// `not_found` where the catalog holds no such type.
     #[napi]
-    pub fn item_type(&self, id: String) -> Result<ItemType> {
-        Ok(item_type(self.inner.item_type(&id).map_err(failure)?))
+    pub fn item_type(&self, env: Env, id: String) -> Result<ItemType> {
+        Ok(item_type(
+            self.inner
+                .item_type(&id)
+                .map_err(|error| failure(env, error))?,
+        ))
     }
 
     /// Every edge type the copy holds, by id, read from the copy alone.
     #[napi]
-    pub fn edge_types(&self) -> Result<Vec<EdgeType>> {
+    pub fn edge_types(&self, env: Env) -> Result<Vec<EdgeType>> {
         Ok(self
             .inner
             .edge_types()
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
             .map(edge_type)
             .collect())
@@ -1521,8 +1711,12 @@ impl MarfaCore {
 
     /// `not_found` where the catalog holds no such edge type.
     #[napi]
-    pub fn edge_type(&self, id: String) -> Result<EdgeType> {
-        Ok(edge_type(self.inner.edge_type(&id).map_err(failure)?))
+    pub fn edge_type(&self, env: Env, id: String) -> Result<EdgeType> {
+        Ok(edge_type(
+            self.inner
+                .edge_type(&id)
+                .map_err(|error| failure(env, error))?,
+        ))
     }
 
     /// Which handle this process holds: the one that may write, or a second
@@ -1537,7 +1731,7 @@ impl MarfaCore {
 
     /// Writes a new item into the local copy and queues it for the server.
     #[napi]
-    pub fn create_item(&self, draft: Draft) -> Result<QueuedWrite> {
+    pub fn create_item(&self, env: Env, draft: Draft) -> Result<QueuedWrite> {
         let draft = marfa_core::Draft {
             r#type: draft.type_,
             id: draft.id,
@@ -1549,26 +1743,36 @@ impl MarfaCore {
             occurred_at: draft.occurred_at,
             base_version: draft.base_version,
         };
-        queued(self.inner.create_item(&draft).map_err(failure)?)
+        queued(
+            env,
+            self.inner
+                .create_item(&draft)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Changes an item in the local copy and queues the change.
     #[napi]
-    pub fn update_item(&self, id: String, edit: Edit) -> Result<QueuedWrite> {
+    pub fn update_item(&self, env: Env, id: String, edit: Edit) -> Result<QueuedWrite> {
         let edit = marfa_core::Edit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
             source_id: edit.source_id,
             ..Default::default()
         };
-        queued(self.inner.update_item(&id, &edit).map_err(failure)?)
+        queued(
+            env,
+            self.inner
+                .update_item(&id, &edit)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Changes an item in the local copy and queues the change, based on a
     /// version read before the one the copy holds now, which the server
     /// merges the change against.
     #[napi]
-    pub fn update_item_as_read(&self, id: String, edit: Edit) -> Result<QueuedWrite> {
+    pub fn update_item_as_read(&self, env: Env, id: String, edit: Edit) -> Result<QueuedWrite> {
         let edit = marfa_core::Edit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
@@ -1576,37 +1780,49 @@ impl MarfaCore {
             ..Default::default()
         };
         queued(
+            env,
             self.inner
                 .update_item_as_read(&id, &edit)
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
     /// Moves an item to the bin locally and queues the delete.
     #[napi]
-    pub fn delete_item(&self, id: String) -> Result<QueuedWrite> {
-        queued(self.inner.delete_item(&id).map_err(failure)?)
+    pub fn delete_item(&self, env: Env, id: String) -> Result<QueuedWrite> {
+        queued(
+            env,
+            self.inner
+                .delete_item(&id)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Takes an item out of the bin locally and queues the restore.
     #[napi]
-    pub fn restore_item(&self, id: String) -> Result<QueuedWrite> {
-        queued(self.inner.restore_item(&id).map_err(failure)?)
+    pub fn restore_item(&self, env: Env, id: String) -> Result<QueuedWrite> {
+        queued(
+            env,
+            self.inner
+                .restore_item(&id)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Moves an item to another lifecycle state.
     #[napi]
-    pub fn transition_item(&self, id: String, state: ItemState) -> Result<QueuedWrite> {
+    pub fn transition_item(&self, env: Env, id: String, state: ItemState) -> Result<QueuedWrite> {
         queued(
+            env,
             self.inner
                 .transition_item(&id, state.into())
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
     /// Links two items. An edge is its own write.
     #[napi]
-    pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite> {
+    pub fn create_edge(&self, env: Env, draft: EdgeDraft) -> Result<QueuedWrite> {
         let draft = marfa_core::EdgeDraft {
             source_id: draft.source_id,
             target_id: draft.target_id,
@@ -1614,54 +1830,81 @@ impl MarfaCore {
             properties: object(draft.properties)?,
             id: draft.id,
         };
-        queued(self.inner.create_edge(&draft).map_err(failure)?)
+        queued(
+            env,
+            self.inner
+                .create_edge(&draft)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     #[napi]
-    pub fn update_edge(&self, id: String, edit: EdgeEdit) -> Result<QueuedWrite> {
+    pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<QueuedWrite> {
         let edit = marfa_core::EdgeEdit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
             ..Default::default()
         };
-        queued(self.inner.update_edge(&id, &edit).map_err(failure)?)
+        queued(
+            env,
+            self.inner
+                .update_edge(&id, &edit)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     #[napi]
-    pub fn delete_edge(&self, id: String) -> Result<QueuedWrite> {
-        queued(self.inner.delete_edge(&id).map_err(failure)?)
+    pub fn delete_edge(&self, env: Env, id: String) -> Result<QueuedWrite> {
+        queued(
+            env,
+            self.inner
+                .delete_edge(&id)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Puts one tag on an item, as its own write.
     #[napi]
-    pub fn add_tag(&self, id: String, tag: String) -> Result<QueuedWrite> {
-        queued(self.inner.add_tag(&id, &tag).map_err(failure)?)
+    pub fn add_tag(&self, env: Env, id: String, tag: String) -> Result<QueuedWrite> {
+        queued(
+            env,
+            self.inner
+                .add_tag(&id, &tag)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     #[napi]
-    pub fn remove_tag(&self, id: String, tag: String) -> Result<QueuedWrite> {
-        queued(self.inner.remove_tag(&id, &tag).map_err(failure)?)
+    pub fn remove_tag(&self, env: Env, id: String, tag: String) -> Result<QueuedWrite> {
+        queued(
+            env,
+            self.inner
+                .remove_tag(&id, &tag)
+                .map_err(|error| failure(env, error))?,
+        )
     }
 
     /// Writes the item's tags whole, dropping any not named.
     #[napi]
-    pub fn replace_metadata(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
+    pub fn replace_metadata(&self, env: Env, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
         let write = marfa_core::MetadataWrite { tags };
         queued(
+            env,
             self.inner
                 .write_metadata(&id, &write, true)
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
     /// Adds the named tags, leaving the rest.
     #[napi]
-    pub fn merge_metadata(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
+    pub fn merge_metadata(&self, env: Env, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
         let write = marfa_core::MetadataWrite { tags };
         queued(
+            env,
             self.inner
                 .write_metadata(&id, &write, false)
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
@@ -1669,35 +1912,38 @@ impl MarfaCore {
     #[napi]
     pub fn write_extension(
         &self,
+        env: Env,
         id: String,
         namespace: String,
         #[napi(ts_arg_type = "Record<string, unknown>")] body: serde_json::Value,
     ) -> Result<QueuedWrite> {
         let body = serde_json::Value::Object(object(Some(body))?).to_string();
         queued(
+            env,
             self.inner
                 .write_extension(&id, &namespace, &body)
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
     #[napi]
-    pub fn delete_extension(&self, id: String, namespace: String) -> Result<QueuedWrite> {
+    pub fn delete_extension(&self, env: Env, id: String, namespace: String) -> Result<QueuedWrite> {
         queued(
+            env,
             self.inner
                 .delete_extension(&id, &namespace)
-                .map_err(failure)?,
+                .map_err(|error| failure(env, error))?,
         )
     }
 
     /// Every queued write and what became of it.
     #[napi]
-    pub fn queue(&self) -> Result<Vec<QueuedWrite>> {
+    pub fn queue(&self, env: Env) -> Result<Vec<QueuedWrite>> {
         self.inner
             .queue()
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .into_iter()
-            .map(queued)
+            .map(|write| queued(env, write))
             .collect()
     }
 
@@ -1706,6 +1952,7 @@ impl MarfaCore {
     pub fn drain(&self, stop: Option<&Stop>) -> AsyncTask<Drain> {
         AsyncTask::new(Drain {
             core: Arc::clone(&self.inner),
+            failed: None,
             stop: flag_of(stop),
         })
     }
@@ -1717,6 +1964,7 @@ impl MarfaCore {
     pub fn put_blob(&self, path: String, mime_type: Option<String>) -> AsyncTask<PutBlob> {
         AsyncTask::new(PutBlob {
             core: Arc::clone(&self.inner),
+            failed: None,
             path,
             mime_type,
         })
@@ -1735,6 +1983,7 @@ impl MarfaCore {
         let attachment = attachment.unwrap_or_default();
         AsyncTask::new(Attach {
             core: Arc::clone(&self.inner),
+            failed: None,
             id,
             path,
             attachment: marfa_core::Attachment {
@@ -1753,14 +2002,17 @@ impl MarfaCore {
     pub fn blob(&self, hash: String) -> AsyncTask<FetchBlob> {
         AsyncTask::new(FetchBlob {
             core: Arc::clone(&self.inner),
+            failed: None,
             hash,
         })
     }
 
     /// Whether a blob's bytes are held beside the store, with no request.
     #[napi]
-    pub fn blob_held(&self, hash: String) -> Result<bool> {
-        self.inner.blob_held(&hash).map_err(failure)
+    pub fn blob_held(&self, env: Env, hash: String) -> Result<bool> {
+        self.inner
+            .blob_held(&hash)
+            .map_err(|error| failure(env, error))
     }
 
     /// The thumbnail an item carries, from the copy with no request; null
@@ -1768,11 +2020,11 @@ impl MarfaCore {
     /// not hold throws `not_found` naming `not_held`, and a held value that is
     /// not a thumbnail throws `decoding` naming the item.
     #[napi]
-    pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>> {
+    pub fn thumbnail(&self, env: Env, id: String) -> Result<Option<Thumbnail>> {
         Ok(self
             .inner
             .thumbnail(&id)
-            .map_err(failure)?
+            .map_err(|error| failure(env, error))?
             .map(|thumbnail| Thumbnail {
                 mime_type: thumbnail.mime_type,
                 bytes: thumbnail.bytes.into(),
@@ -1782,14 +2034,17 @@ impl MarfaCore {
     /// Sends a blocked or dead write again, under a fresh idempotency key.
     /// Answers whether the row was one a release applies to.
     #[napi]
-    pub fn release(&self, id: String) -> Result<bool> {
-        self.inner.release(&id).map_err(failure)
+    pub fn release(&self, env: Env, id: String) -> Result<bool> {
+        self.inner.release(&id).map_err(|error| failure(env, error))
     }
 
     /// Releases every write blocked for one reason, and says how many.
     #[napi]
-    pub fn release_reason(&self, reason: BlockedReason) -> Result<i64> {
-        let released = self.inner.release_reason(reason.into()).map_err(failure)?;
+    pub fn release_reason(&self, env: Env, reason: BlockedReason) -> Result<i64> {
+        let released = self
+            .inner
+            .release_reason(reason.into())
+            .map_err(|error| failure(env, error))?;
         Ok(count(released as u64))
     }
 
@@ -1798,23 +2053,29 @@ impl MarfaCore {
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes.
     #[napi]
-    pub fn withdraw(&self, id: String) -> Result<bool> {
-        self.inner.withdraw(&id).map_err(failure)
+    pub fn withdraw(&self, env: Env, id: String) -> Result<bool> {
+        self.inner
+            .withdraw(&id)
+            .map_err(|error| failure(env, error))
     }
 
     /// Clears the writes the server has answered, and says how many went. A
     /// refused write that carried content stays until it is discarded.
     #[napi]
-    pub fn forget_answered(&self) -> Result<i64> {
-        Ok(count(self.inner.forget_answered().map_err(failure)? as u64))
+    pub fn forget_answered(&self, env: Env) -> Result<i64> {
+        Ok(count(
+            self.inner
+                .forget_answered()
+                .map_err(|error| failure(env, error))? as u64,
+        ))
     }
 
     /// Takes a refused write out of the queue, with the content it carried.
     /// Answers whether the row was one a discard takes: refused, and with no
     /// write still waiting on it.
     #[napi]
-    pub fn discard(&self, id: String) -> Result<bool> {
-        self.inner.discard(&id).map_err(failure)
+    pub fn discard(&self, env: Env, id: String) -> Result<bool> {
+        self.inner.discard(&id).map_err(|error| failure(env, error))
     }
 }
 
@@ -1826,28 +2087,85 @@ mod tests {
     fn refusal_messages_keep_one_classification_and_distinct_detail_codes() {
         use marfa_core::CoreError as E;
         assert_eq!(
-            failure(E::Unauthorized {
+            describe(&E::Unauthorized {
                 code: "unauthorized".into(),
                 message: "Authentication required".into()
             })
-            .reason,
+            .0,
             "unauthorized: Authentication required"
         );
         assert_eq!(
-            failure(E::UnknownType {
+            describe(&E::UnknownType {
                 message: "Unknown type: acme.absent".into()
             })
-            .reason,
+            .0,
             "unknown_type: acme.absent"
         );
         assert_eq!(
-            failure(E::Validation {
+            describe(&E::Validation {
                 code: "invalid_properties".into(),
                 message: "read: Expected boolean".into()
             })
-            .reason,
+            .0,
             "validation: (invalid_properties) read: Expected boolean"
         );
+    }
+
+    #[test]
+    fn an_error_carries_the_fields_the_swift_binding_carries() {
+        use marfa_core::CoreError as E;
+        use serde_json::json;
+        let fields = |error: E| describe(&error).1;
+        assert_eq!(
+            fields(E::RateLimited {
+                code: "rate_limited".into(),
+                message: String::new(),
+                retry_after_seconds: Some(7),
+            }),
+            vec![
+                ("serverCode", json!("rate_limited")),
+                ("status", json!(429)),
+                ("retryAfterSeconds", json!(7)),
+            ]
+        );
+        assert_eq!(
+            fields(E::WrongSchema {
+                path: "/store".into(),
+                reason: "its table queue".into(),
+                unsent: Some(2),
+            }),
+            vec![
+                ("path", json!("/store")),
+                ("reason", json!("its table queue")),
+                ("unsent", json!(2)),
+            ]
+        );
+        assert_eq!(
+            fields(E::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("4".into()),
+                expected: 3,
+                status: Some(201),
+                write_sent: true,
+            }),
+            vec![
+                ("origin", json!("https://marfa.example")),
+                ("served", json!("4")),
+                ("expected", json!(3)),
+                ("status", json!(201)),
+                ("writeSent", json!(true)),
+            ]
+        );
+        // A failed renewal carries its cause's fields, as it carries its code.
+        let cause = E::BytesAbsent {
+            hash: "sha256:a".into(),
+            reason: "none".into(),
+        };
+        assert_eq!(
+            fields(E::RenewalFailed(Box::new(cause.clone()))),
+            fields(cause)
+        );
+        assert!(fields(E::NoServer).is_empty());
     }
 
     #[test]
@@ -1911,8 +2229,8 @@ mod tests {
             ),
         ] {
             assert!(
-                failure(E::RenewalFailed(Box::new(cause)))
-                    .reason
+                describe(&E::RenewalFailed(Box::new(cause)))
+                    .0
                     .starts_with(&format!("{code}: "))
             );
         }
@@ -1920,18 +2238,14 @@ mod tests {
 
     #[test]
     fn a_contract_refusal_crosses_under_its_own_code() {
-        let error = failure(marfa_core::CoreError::ContractMismatch {
+        let error = describe(&marfa_core::CoreError::ContractMismatch {
             origin: "https://marfa.example".into(),
             served: Some("4".into()),
             expected: 3,
             status: Some(200),
             write_sent: false,
         });
-        assert!(
-            error.reason.starts_with("contract_mismatch: "),
-            "{}",
-            error.reason
-        );
+        assert!(error.0.starts_with("contract_mismatch: "), "{}", error.0);
     }
 
     #[test]

@@ -31,7 +31,12 @@ import type { ItemWriteResult } from "../storage/item-write.js";
 import { depthInsideFolder } from "../folder-path.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { ItemWithMetadataSchema, TierEnum } from "./_schemas.js";
+import {
+  ItemWithMetadataSchema,
+  TagSchema,
+  TierEnum,
+  WrittenPropertiesSchema,
+} from "./_schemas.js";
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { requestBlobProof } from "./_blob-reach.js";
@@ -78,8 +83,8 @@ const FolderDefaultsSchema = z
   .strictObject({
     type: z.string().optional(),
     tier: TierEnum.optional(),
-    properties: z.record(z.string(), z.unknown()).optional(),
-    tags: z.array(z.string()).max(MAX_TAGS_PER_ITEM).optional(),
+    properties: WrittenPropertiesSchema.optional(),
+    tags: z.array(TagSchema).max(MAX_TAGS_PER_ITEM).optional(),
     edges: z
       .record(z.string(), z.array(z.string()).max(MAX_DEFAULT_EDGE_TARGETS))
       .optional()

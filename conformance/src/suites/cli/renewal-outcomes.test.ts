@@ -64,6 +64,15 @@ describe("renewal CLI outcomes", () => {
             }),
           ),
         ],
+        read: [
+          answers.updated(
+            wireItem({
+              id,
+              version: 4,
+              properties: { title: "edit", body: "held" },
+            }),
+          ),
+        ],
         create: [answers.unauthorized()],
       });
       h.server.answer(

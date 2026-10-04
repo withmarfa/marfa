@@ -85,7 +85,10 @@ pub enum DeviceCommand {
     },
     /// Full-text search over the local copy, best match first.
     Search {
-        /// Words to look for; each is a prefix, all must match.
+        /// Words to look for, matched as the server matches them: all must
+        /// match, the last as a prefix, and a query in double quotes is a
+        /// phrase.
+        #[arg(allow_hyphen_values = true)]
         query: String,
         /// Exactly one state. Unset answers the active state.
         #[arg(long)]

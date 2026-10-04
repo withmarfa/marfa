@@ -16,6 +16,8 @@ import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
+import { sourceFilterToRawSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import { liftOrphanReports } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
@@ -38,6 +40,7 @@ export class SqliteMetadataStore implements MetadataStore {
   async listTags(filters: {
     allowedTypes?: string[];
     excludedTypes?: string[];
+    source_filter?: SourceFilterSettings;
   }): Promise<{ tag: string; count: number }[]> {
     const conditions: string[] = ["i.state = 'active'"];
     const params: unknown[] = [];
@@ -76,6 +79,11 @@ export class SqliteMetadataStore implements MetadataStore {
       conditions.push(
         typeClauses.length > 0 ? `(${typeClauses.join(" OR ")})` : "1=0",
       );
+    }
+    const sourceLever = sourceFilterToRawSql(filters.source_filter, "i");
+    if (sourceLever) {
+      conditions.push(`(${sourceLever.clause})`);
+      params.push(...sourceLever.params);
     }
     const where = conditions.join(" AND ");
     const sqlText = `

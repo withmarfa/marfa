@@ -168,7 +168,7 @@ it.each([false, true])(
       restore();
       if (holder) await holder.rollback();
       other.close();
-      owner.stop();
+      await owner.stop();
     }
   },
 );
@@ -209,7 +209,7 @@ it("starts and retries failed idle recovery at the sweep cadence", async () => {
   });
   try {
     await owner.start();
-    owner.stop();
+    await owner.stop();
     expect(sweep).toHaveBeenCalledTimes(1);
     expect(await owner.runOnce()).toBe(false);
     now += 5000;
@@ -236,6 +236,6 @@ it("starts and retries failed idle recovery at the sweep cadence", async () => {
       processed_count: 0,
     });
   } finally {
-    owner.stop();
+    await owner.stop();
   }
 });

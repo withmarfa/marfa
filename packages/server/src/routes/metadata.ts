@@ -1,5 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { resolveEnforcement } from "@withmarfa/shared";
 import { pageOf } from "./_schemas.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -73,9 +75,14 @@ export function metadataRoutes(storage: Storage) {
   router.openapi(listTagsRoute, async (c) => {
     requireAuth(c);
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+    const enforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
     const tags = await storage.metadata.listTags({
       allowedTypes,
       excludedTypes,
+      source_filter: enforcement.source_filter,
     });
     return c.json({ data: tags, next_cursor: null }, 200);
   });

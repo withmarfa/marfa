@@ -9,11 +9,3 @@ packages/types/generated/** linguist-generated=true
 packages/server/src/storage/sqlite/schema.sql linguist-generated=true
 core/marfa-core/src/contract.rs linguist-generated=true
 core/marfa-core/src/builtin_catalog.json linguist-generated=true
-
-# The Rust client is generated whole, but for its Cargo manifest and its
-# generator's configuration and templates, which are written by hand.
-core/marfa-client/** linguist-generated=true
-core/marfa-client/Cargo.toml -linguist-generated
-core/marfa-client/openapitools.json -linguist-generated
-core/marfa-client/.openapi-generator-ignore -linguist-generated
-core/marfa-client/templates/** -linguist-generated

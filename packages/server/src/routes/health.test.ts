@@ -1,5 +1,15 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
+import { healthRoutes, operatorCaller, PROBE_TIMEOUT_MS } from "./health.js";
+import {
+  DISK_DEGRADED_BELOW_BYTES,
+  DISK_DOWN_BELOW_BYTES,
+  storageProbes,
+  WRITE_PROBE_REUSE_MS,
+  type HealthProbes,
+} from "./health-probes.js";
+import { hashApiKey } from "../middleware/auth.js";
 import { loadConfig } from "../config.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { Storage } from "../storage/interface.js";
@@ -48,10 +58,25 @@ function buildBlobs(
   return { disk: { has } } as unknown as BlobLayer;
 }
 
+/** Probes that answer well: a write that commits and a volume with room. */
+function okProbes(overrides: Partial<HealthProbes> = {}): HealthProbes {
+  return {
+    write: () => Promise.resolve(),
+    availableBytes: () => Promise.resolve(10 * DISK_DEGRADED_BELOW_BYTES),
+    ...overrides,
+  };
+}
+
+/** Who asked, as the app would have found out from the key table. */
+const nobody = () => Promise.resolve(false);
+const theOperator = () => Promise.resolve(true);
+
 interface HealthBody {
   status: string;
   components: {
     database?: { status: string; error?: string };
+    database_write?: { status: string; error?: string };
+    disk?: { status: string; error?: string };
     blob_storage?: { status: string; error?: string };
   };
   placement?: { region?: string; location?: string; country?: string };
@@ -67,6 +92,8 @@ describe("GET /health", () => {
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(null)),
       {},
+      okProbes(),
+      nobody,
     );
 
     const res = await app.request("/");
@@ -83,6 +110,8 @@ describe("GET /health", () => {
       buildStorage(() => never),
       buildBlobs(() => Promise.resolve(null)),
       {},
+      okProbes(),
+      theOperator,
     );
 
     const started = Date.now();
@@ -106,6 +135,8 @@ describe("GET /health", () => {
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => never),
       {},
+      okProbes(),
+      nobody,
     );
 
     const res = await app.request("/");
@@ -123,6 +154,8 @@ describe("GET /health", () => {
       buildStorage(() => Promise.reject(new Error("connection refused"))),
       buildBlobs(() => Promise.resolve(null)),
       {},
+      okProbes(),
+      theOperator,
     );
 
     const res = await app.request("/");
@@ -133,6 +166,301 @@ describe("GET /health", () => {
     // not answering at all.
     expect(body.components.database?.status).toBe("down");
     expect(body.components.database?.error).toContain("connection refused");
+  });
+});
+
+describe("GET /health failing status", () => {
+  const healthy = () =>
+    healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(null)),
+      {},
+      okProbes(),
+      nobody,
+    );
+
+  async function answer(
+    router: ReturnType<typeof healthRoutes>,
+  ): Promise<{ status: number; body: HealthBody }> {
+    const res = await router.request("/");
+    return { status: res.status, body: (await res.json()) as HealthBody };
+  }
+
+  it("answers 200 and ok while every component answers", async () => {
+    const { status, body } = await answer(healthy());
+    expect(status).toBe(200);
+    expect(body.status).toBe("ok");
+    expect(Object.keys(body.components).sort()).toEqual([
+      "blob_storage",
+      "database",
+      "database_write",
+      "disk",
+    ]);
+  });
+
+  it("answers 503 and down when the database refuses a read", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.reject(new Error("SQLITE_IOERR"))),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes(),
+        nobody,
+      ),
+    );
+    expect(status).toBe(503);
+    expect(body.status).toBe("down");
+    expect(body.components.database?.status).toBe("down");
+  });
+
+  it("answers 503 and down when a write is refused although reads answer", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes({ write: () => Promise.reject(new Error("SQLITE_READONLY")) }),
+      ),
+    );
+    expect(status).toBe(503);
+    expect(body.status).toBe("down");
+    expect(body.components.database?.status).toBe("ok");
+    expect(body.components.database_write?.status).toBe("down");
+  });
+
+  it("answers 200 and degraded when a write has not committed within the budget", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes({ write: () => never }),
+        nobody,
+      ),
+    );
+    expect(status).toBe(200);
+    expect(body.status).toBe("degraded");
+    expect(body.components.database_write?.status).toBe("degraded");
+  }, 15_000);
+
+  it.each([
+    ["less than the floor", DISK_DOWN_BELOW_BYTES - 1, 503, "down"],
+    ["exactly the floor", DISK_DOWN_BELOW_BYTES, 200, "degraded"],
+    [
+      "less than the warning level",
+      DISK_DEGRADED_BELOW_BYTES - 1,
+      200,
+      "degraded",
+    ],
+    ["exactly the warning level", DISK_DEGRADED_BELOW_BYTES, 200, "ok"],
+  ])("reads %s of free space as %s", async (_name, bytes, code, verdict) => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes({ availableBytes: () => Promise.resolve(bytes) }),
+        nobody,
+      ),
+    );
+    expect(status).toBe(code);
+    expect(body.components.disk?.status).toBe(verdict);
+  });
+
+  it("calls free space it could not read degraded, never down", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        {},
+        okProbes({
+          availableBytes: () => Promise.reject(new Error("statfs unsupported")),
+        }),
+        theOperator,
+      ),
+    );
+    expect(status).toBe(200);
+    expect(body.components.disk?.status).toBe("degraded");
+    expect(body.components.disk?.error).toContain("statfs unsupported");
+  });
+
+  it("answers 503 when blob storage refuses", async () => {
+    const { status, body } = await answer(
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.reject(new Error("EIO"))),
+        {},
+        okProbes(),
+        nobody,
+      ),
+    );
+    expect(status).toBe(503);
+    expect(body.components.blob_storage?.status).toBe("down");
+  });
+});
+
+describe("GET /health error text", () => {
+  // Every failing component at once, so one answer carries every message.
+  const failing = (isOperator: () => Promise<boolean>) =>
+    healthRoutes(
+      buildStorage(() =>
+        Promise.reject(new Error("unable to open /data/marfa.db")),
+      ),
+      buildBlobs(() => Promise.reject(new Error("EACCES /data/blobs"))),
+      {},
+      okProbes({
+        write: () => Promise.reject(new Error("SQLITE_FULL")),
+        availableBytes: () => Promise.resolve(0),
+      }),
+      isOperator,
+    );
+
+  async function components(
+    isOperator: () => Promise<boolean>,
+  ): Promise<Record<string, { status: string; error?: string }>> {
+    const res = await failing(isOperator).request("/");
+    return ((await res.json()) as { components: Record<string, never> })
+      .components;
+  }
+
+  it("tells the operator key what each component said", async () => {
+    // The witness for the case below: the same answer, producible.
+    const seen = await components(theOperator);
+    expect(seen.database?.error).toContain("/data/marfa.db");
+    expect(seen.database_write?.error).toContain("SQLITE_FULL");
+    expect(seen.disk?.error).toContain("bytes available");
+    expect(seen.blob_storage?.error).toContain("EACCES");
+  });
+
+  it("tells a caller that is not the operator key no error text, though every component is down", async () => {
+    const seen = await components(nobody);
+    expect(Object.values(seen).map((one) => one.status)).toEqual([
+      "down",
+      "down",
+      "down",
+      "down",
+    ]);
+    for (const one of Object.values(seen)) {
+      expect(one).not.toHaveProperty("error");
+    }
+  });
+});
+
+describe("GET /health error text from a wrapped failure", () => {
+  it("names the driver's failure rather than the statement the query layer wraps it in", async () => {
+    const wrapped = new Error('Failed query: insert into "settings"', {
+      cause: new Error("SQLITE_FULL: database or disk is full"),
+    });
+    const res = await healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(null)),
+      {},
+      okProbes({ write: () => Promise.reject(wrapped) }),
+      theOperator,
+    ).request("/");
+
+    const body = (await res.json()) as HealthBody;
+
+    expect(body.components.database_write?.error).toBe(
+      "SQLITE_FULL: database or disk is full",
+    );
+  });
+});
+
+describe("operatorCaller", () => {
+  const SALT = "a-salt-for-this-test";
+  const keys = (is_operator: boolean) =>
+    ({
+      validate: (hash: string) =>
+        Promise.resolve(
+          hash === hashApiKey("marfa_k1_known", SALT) ? { is_operator } : null,
+        ),
+    }) as unknown as Parameters<typeof operatorCaller>[0]["keys"];
+
+  it("says yes to the operator key, and only to it", async () => {
+    const asked = (storageKeys: ReturnType<typeof keys>, header?: string) =>
+      operatorCaller({ keys: storageKeys }, SALT)(header);
+
+    expect(await asked(keys(true), "Bearer marfa_k1_known")).toBe(true);
+    expect(await asked(keys(false), "Bearer marfa_k1_known")).toBe(false);
+    expect(await asked(keys(true), "Bearer marfa_k1_unknown")).toBe(false);
+    expect(await asked(keys(true), "marfa_k1_known")).toBe(false);
+    expect(await asked(keys(true), undefined)).toBe(false);
+  });
+
+  it("says no, and does not throw, when the database cannot look the key up", async () => {
+    const asked = operatorCaller(
+      {
+        keys: {
+          validate: () => Promise.reject(new Error("unreadable")),
+        },
+      } as unknown as Parameters<typeof operatorCaller>[0],
+      SALT,
+    );
+
+    expect(await asked("Bearer marfa_k1_known")).toBe(false);
+  });
+});
+
+describe("the probes the app mounts", () => {
+  function settingsThat(set: () => Promise<void>) {
+    const calls: string[] = [];
+    return {
+      calls,
+      storage: {
+        settings: {
+          set: (key: string) => {
+            calls.push(key);
+            return set();
+          },
+        },
+      } as unknown as Parameters<typeof storageProbes>[0],
+    };
+  }
+
+  const paths = { sqlitePath: ":memory:", blobPath: "." };
+
+  it("commits one write and answers the callers that follow it within the reuse window from that one", async () => {
+    let clock = 1_000_000;
+    const { calls, storage } = settingsThat(() => Promise.resolve());
+    const probes = storageProbes(storage, paths, () => clock);
+
+    await Promise.all([probes.write(), probes.write(), probes.write()]);
+    await probes.write();
+    expect(calls).toHaveLength(1);
+
+    clock += WRITE_PROBE_REUSE_MS;
+    await probes.write();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("answers a refused write with the refusal until the reuse window ends, and then tries again", async () => {
+    let clock = 1_000_000;
+    let refuse = true;
+    const { calls, storage } = settingsThat(() =>
+      refuse ? Promise.reject(new Error("SQLITE_FULL")) : Promise.resolve(),
+    );
+    const probes = storageProbes(storage, paths, () => clock);
+
+    await expect(probes.write()).rejects.toThrow("SQLITE_FULL");
+    await expect(probes.write()).rejects.toThrow("SQLITE_FULL");
+    expect(calls).toHaveLength(1);
+
+    refuse = false;
+    clock += WRITE_PROBE_REUSE_MS;
+    await expect(probes.write()).resolves.toBeUndefined();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("measures real room on the volumes it is given", async () => {
+    const { storage } = settingsThat(() => Promise.resolve());
+
+    const bytes = await storageProbes(storage, {
+      sqlitePath: join(tmpdir(), "marfa.db"),
+      blobPath: tmpdir(),
+    }).availableBytes();
+
+    expect(bytes).toBeGreaterThan(0);
   });
 });
 
@@ -150,6 +478,8 @@ describe("GET /health placement", () => {
       buildStorage(() => Promise.resolve(1)),
       buildBlobs(() => Promise.resolve(null)),
       loadConfig(env),
+      okProbes(),
+      nobody,
     );
 
   it("reports what the deployment states about itself", async () => {
@@ -194,6 +524,8 @@ describe("GET /health unrecognized stored values", () => {
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(null)),
       {},
+      okProbes(),
+      nobody,
     );
   }
 

@@ -111,6 +111,80 @@ pub enum CoreError {
     Invalid(String),
 }
 
+/// One list drives the match and the set of codes, so a variant added to
+/// `CoreError` fails to compile until it has a code, and the code then joins
+/// `CODES`, which the command line's help is held to list.
+macro_rules! codes {
+    ($($kind:ident: $pattern:pat => $code:literal,)*) => {
+        /// Every code `CoreError::code` answers, each once.
+        pub const CODES: &[&str] = &[$($code),*];
+
+        /// The classification a binding retains when it carries different
+        /// fields from `CoreError`. Its code comes from the core's one list.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum CoreErrorKind {
+            $($kind,)*
+        }
+
+        impl CoreErrorKind {
+            pub fn code(self) -> &'static str {
+                match self {
+                    $(Self::$kind => $code,)*
+                }
+            }
+        }
+
+        impl CoreError {
+            pub fn kind(&self) -> CoreErrorKind {
+                match self {
+                    CoreError::RenewalFailed(cause) => cause.kind(),
+                    $($pattern => CoreErrorKind::$kind,)*
+                }
+            }
+
+            /// What a surface names the error by: the same word in the command
+            /// line's envelope, in a Node error and anywhere else one is named.
+            /// A failed renewal answers the code of its cause, as it carries
+            /// the cause's refusal.
+            pub fn code(&self) -> &'static str {
+                self.kind().code()
+            }
+        }
+    };
+}
+
+codes! {
+    NotFound: CoreError::NotFound { .. } => "not_found",
+    Unauthorized: CoreError::Unauthorized { .. } => "unauthorized",
+    Forbidden: CoreError::Forbidden { .. } => "forbidden",
+    Validation: CoreError::Validation { .. } => "validation",
+    UnknownType: CoreError::UnknownType { .. } => "unknown_type",
+    RateLimited: CoreError::RateLimited { .. } => "rate_limited",
+    Server: CoreError::Server { .. } => "server",
+    Io: CoreError::Io(_) => "io",
+    Network: CoreError::Network(_) => "network",
+    Unnamed: CoreError::Unnamed { .. } => "unnamed_answer",
+    Decoding: CoreError::Decoding(_) => "decoding",
+    Store: CoreError::Store(_) => "store",
+    StorageFull: CoreError::StorageFull(_) => "storage_full",
+    SignedOut: CoreError::SignedOut { .. } => "signed_out",
+    NoKeychain: CoreError::NoKeychain(_) => "no_keychain",
+    Redirected: CoreError::Redirected { .. } => "redirect",
+    NoServer: CoreError::NoServer => "no_server",
+    NoCursor: CoreError::NoCursor => "no_cursor",
+    HydrationIncomplete: CoreError::HydrationIncomplete => "hydration_incomplete",
+    NoCatalog: CoreError::NoCatalog => "no_catalog",
+    ReadingHandle: CoreError::ReadingHandle => "reading_handle",
+    WrongSchema: CoreError::WrongSchema { .. } => "wrong_schema",
+    CopyExpired: CoreError::CopyExpired { .. } => "copy_expired",
+    StreamIncomplete: CoreError::StreamIncomplete { .. } => "stream_incomplete",
+    WrongServer: CoreError::WrongServer { .. } => "wrong_server",
+    BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
+    ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
+    Canceled: CoreError::Canceled => "canceled",
+    Invalid: CoreError::Invalid(_) => "invalid",
+}
+
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
     if message.to_lowercase().starts_with(&format!("{kind}:")) {
         return message.into();
@@ -230,6 +304,32 @@ impl From<url::ParseError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_error_has_a_code_and_every_code_is_listed_once() {
+        assert_eq!(CoreError::Canceled.code(), "canceled");
+        assert_eq!(CoreError::Canceled.kind(), CoreErrorKind::Canceled);
+        let renewal = CoreError::RenewalFailed(Box::new(CoreError::NoServer));
+        assert_eq!(renewal.code(), "no_server");
+        let mut seen = std::collections::HashSet::new();
+        for code in CODES {
+            assert!(seen.insert(*code), "{code} is listed twice");
+            assert!(
+                code.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{code} is not snake case"
+            );
+        }
+        // The witness: a code a variant answers is in the list.
+        assert!(
+            CODES.contains(
+                &CoreError::BytesAbsent {
+                    hash: String::new(),
+                    reason: String::new()
+                }
+                .code()
+            )
+        );
+    }
 
     #[test]
     fn server_refusal_display_does_not_repeat_its_classification() {

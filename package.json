@@ -9,8 +9,7 @@
   },
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 run build",
-    "generate": "pnpm --filter @withmarfa/server run generate:openapi && pnpm --filter @withmarfa/client run generate && pnpm run generate:rust && pnpm run generate:core",
-    "generate:rust": "cd core/marfa-client && openapi-generator-cli generate --generator-key marfa-client && cargo fmt -p marfa-client",
+    "generate": "pnpm --filter @withmarfa/server run generate:openapi && pnpm --filter @withmarfa/client run generate && pnpm run generate:core",
     "generate:core": "tsx scripts/generate-core-contract.ts && tsx scripts/generate-core-catalog.ts",
     "typecheck": "pnpm -r run typecheck && tsc -p ci --noEmit && tsc -p scripts --noEmit",
     "test": "vitest run",
@@ -34,7 +33,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@openapitools/openapi-generator-cli": "2.41.0",
     "@types/node": "^26.2.0",
     "eslint": "^10.11.0",
     "prettier": "^3.9.9",

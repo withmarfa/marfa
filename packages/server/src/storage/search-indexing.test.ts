@@ -4,6 +4,7 @@
  * what text contributes to FTS for an item.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { shippedPlatformTypes } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -217,5 +218,278 @@ describe("what reaches the full-text index", () => {
     expect((await search("ephemeral")).map((h) => h.item.id)).not.toContain(
       item.id,
     );
+  });
+});
+
+describe("what a change to a type does to rows already stored", () => {
+  async function registerType(
+    id: string,
+    fields: Record<string, unknown>,
+    parent?: string,
+  ): Promise<void> {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id, version: 1, fields, ...(parent ? { parent } : {}) },
+    });
+    expect(res.status).toBe(201);
+  }
+
+  async function replaceType(
+    id: string,
+    fields: Record<string, unknown>,
+    parent?: string,
+  ): Promise<void> {
+    const res = await request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: { id, version: 2, fields, ...(parent ? { parent } : {}) },
+    });
+    expect(res.status).toBe(200);
+  }
+
+  async function create(
+    type: string,
+    properties: Record<string, unknown>,
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type, properties },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { item: { id: string } }).item.id;
+  }
+
+  async function found(query: string): Promise<string[]> {
+    return (await search(query)).map((hit) => hit.item.id);
+  }
+
+  it("stops matching a field a type now marks searchable: false, and matches it again once it is not", async () => {
+    await registerType("demo.flip", { blurb: { type: "string" } });
+    const id = await create("demo.flip", { blurb: "Quokka sanctuary" });
+    // The witness: the row was matchable by the field before the change.
+    expect(await found("quokka")).toContain(id);
+
+    await replaceType("demo.flip", {
+      blurb: { type: "string", searchable: false },
+    });
+    expect(await found("quokka")).not.toContain(id);
+
+    await replaceType("demo.flip", { blurb: { type: "string" } });
+    expect(await found("quokka")).toContain(id);
+  });
+
+  it("matches a core field a type opts out of no longer, and again when it opts back in", async () => {
+    await registerType("demo.flip_core", { title: { type: "string" } });
+    const id = await create("demo.flip_core", { title: "Wombat burrow" });
+    expect(await found("wombat")).toContain(id);
+
+    await replaceType("demo.flip_core", {
+      title: { type: "string", searchable: false },
+    });
+    expect(await found("wombat")).not.toContain(id);
+
+    await replaceType("demo.flip_core", { title: { type: "string" } });
+    expect(await found("wombat")).toContain(id);
+  });
+
+  it("matches a field the type gains, for rows that already held a value in it", async () => {
+    await registerType("demo.gain", { note: { type: "string" } });
+    const id = await create("demo.gain", {
+      note: "present",
+      tagline: "Numbat termites",
+    });
+    expect(await found("numbat")).not.toContain(id);
+
+    await replaceType("demo.gain", {
+      note: { type: "string" },
+      tagline: { type: "string" },
+    });
+    expect(await found("numbat")).toContain(id);
+  });
+
+  it("stops matching a field the type drops", async () => {
+    await registerType("demo.drop", {
+      note: { type: "string" },
+      tagline: { type: "string" },
+    });
+    const id = await create("demo.drop", {
+      note: "present",
+      tagline: "Bilby burrow",
+    });
+    expect(await found("bilby")).toContain(id);
+
+    await replaceType("demo.drop", { note: { type: "string" } });
+    expect(await found("bilby")).not.toContain(id);
+  });
+
+  it("re-indexes the rows of a subtype when its parent changes a field it inherits", async () => {
+    await registerType("demo.parent", { blurb: { type: "string" } });
+    await registerType(
+      "demo.child",
+      { other: { type: "string" } },
+      "demo.parent",
+    );
+    const id = await create("demo.child", { blurb: "Dingo pack" });
+    expect(await found("dingo")).toContain(id);
+
+    await replaceType("demo.parent", {
+      blurb: { type: "string", searchable: false },
+    });
+    expect(await found("dingo")).not.toContain(id);
+  });
+
+  it("re-indexes a row left by a forced delete under the fields nobody declares, and again on re-registration", async () => {
+    await registerType("demo.orphaned", {
+      blurb: { type: "string" },
+      title: { type: "string" },
+    });
+    const id = await create("demo.orphaned", {
+      title: "Kakapo",
+      blurb: "Takahe wetland",
+    });
+    expect(await found("takahe")).toContain(id);
+
+    const removed = await request(
+      ctx.app,
+      "DELETE",
+      "/types/demo.orphaned?force=true",
+      { key: ctx.workingKey },
+    );
+    expect(removed.status).toBe(200);
+    expect(await found("takahe")).not.toContain(id);
+    // The row is still held and still matched by what a type-less row
+    // contributes: a core field.
+    expect(await found("kakapo")).toContain(id);
+
+    await registerType("demo.orphaned", { blurb: { type: "string" } });
+    expect(await found("takahe")).toContain(id);
+  });
+
+  it("leaves a trashed row out of the index when its type changes", async () => {
+    await registerType("demo.binned", { blurb: { type: "string" } });
+    const id = await create("demo.binned", { blurb: "Echidna spines" });
+    // The witness: the row is matchable before it is trashed.
+    expect(await found("echidna")).toContain(id);
+    const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: ctx.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+
+    await replaceType("demo.binned", {
+      blurb: { type: "string" },
+      extra: { type: "string" },
+    });
+    const all = await request(ctx.app, "GET", "/search?q=echidna&state=any", {
+      key: ctx.workingKey,
+    });
+    expect(all.status).toBe(200);
+    expect(((await all.json()) as { data: unknown[] }).data).toEqual([]);
+  });
+
+  /** A word nothing wrote, put into a row's index text directly, so it
+   *  survives exactly as long as the row is not indexed again. */
+  async function markIndexed(id: string, word: string): Promise<void> {
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    await run(
+      "UPDATE items_fts SET extra = ? WHERE rowid = (SELECT seq FROM item_search_keys WHERE item_id = ?)",
+      [word, id],
+    );
+  }
+
+  it("leaves the rows of a type as they are when a change does not touch what it contributes", async () => {
+    await registerType("demo.shape", { blurb: { type: "string" } });
+    const id = await create("demo.shape", { blurb: "Cassowary" });
+    await markIndexed(id, "markerzero");
+    expect(await found("markerzero")).toContain(id);
+
+    // A label and a description change what no row contributes.
+    const labelled = await request(ctx.app, "PUT", "/types/demo.shape", {
+      key: ctx.workingKey,
+      body: {
+        id: "demo.shape",
+        version: 2,
+        label: "A shape",
+        description: "Changed",
+        fields: { blurb: { type: "string", description: "A blurb" } },
+      },
+    });
+    expect(labelled.status).toBe(200);
+    expect(await found("markerzero")).toContain(id);
+
+    // The witness: a change to what it contributes indexes the row again.
+    await replaceType("demo.shape", {
+      blurb: { type: "string" },
+      extra: { type: "string" },
+    });
+    expect(await found("markerzero")).not.toContain(id);
+    expect(await found("cassowary")).toContain(id);
+  });
+
+  it("indexes rows again when a build ships a changed schema for their platform type", async () => {
+    const note = shippedPlatformTypes().find(
+      (entry) => entry.schema.id === "core.note",
+    );
+    if (!note) throw new Error("core.note is not shipped");
+    const id = await create("core.note", {
+      title: "Plain",
+      body: "Wallaroo grassland",
+    });
+    expect(await found("wallaroo")).toContain(id);
+
+    const optedOut = {
+      ...note,
+      schema: {
+        ...note.schema,
+        fields: {
+          ...note.schema.fields,
+          body: {
+            ...note.schema.fields.body,
+            type: "string",
+            searchable: false,
+          },
+        },
+      },
+    };
+    await ctx.storage.types.seedPlatformTypes([optedOut as typeof note]);
+    expect(await found("wallaroo")).not.toContain(id);
+    expect(await found("plain")).toContain(id);
+
+    await ctx.storage.types.seedPlatformTypes([note]);
+    expect(await found("wallaroo")).toContain(id);
+  });
+
+  it("indexes the tags and the extra fields in one order, whatever order they were written in", async () => {
+    await registerType("demo.order", {
+      zeta: { type: "string" },
+      alpha: { type: "string" },
+    });
+    const made = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "demo.order",
+        properties: { zeta: "zetaword", alpha: "alphaword" },
+        tags: ["zulutag", "alphatag"],
+      },
+    });
+    expect(made.status).toBe(201);
+    const id = ((await made.json()) as { item: { id: string } }).item.id;
+    for (const [query, matches] of [
+      ['"alphaword zetaword"', true],
+      ['"zetaword alphaword"', false],
+      ['"alphatag zulutag"', true],
+      ['"zulutag alphatag"', false],
+    ] as const)
+      expect((await found(query)).includes(id), query).toBe(matches);
+
+    // A tag written after the row is held in the same order.
+    const tagged = await request(ctx.app, "POST", `/items/${id}/tags`, {
+      key: ctx.workingKey,
+      body: { tags: ["mikotag"] },
+    });
+    expect(tagged.status).toBe(200);
+    expect(await found('"alphatag mikotag zulutag"')).toContain(id);
   });
 });

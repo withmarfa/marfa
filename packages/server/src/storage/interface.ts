@@ -700,21 +700,11 @@ export interface ItemStore {
   getIncludingTrashed(id: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
   /**
-   * Look up a single non-trashed item by `(source, source_id)`. Returns
-   * null if no row matches. Used by `/items/bulk` upsert
-   * to decide create-vs-update without round-tripping a full `list`.
+   * The item holding `(source, source_id)` in any state, or null. A trashed
+   * row holds its natural key, as the unique index counts it, so a caller
+   * asking whether a key is taken must see it.
    */
   findBySourceId(source: string, sourceId: string): Promise<Item | null>;
-  /**
-   * Internal natural-key lookup that also returns a soft-deleted row. Use
-   * this only when a caller must reconcile against the database uniqueness
-   * constraint itself; normal API reads and upserts must keep using
-   * `findBySourceId`, which hides trashed items.
-   */
-  findBySourceIdIncludingTrashed(
-    source: string,
-    sourceId: string,
-  ): Promise<Item | null>;
   /** The rows of `type` holding each link value, in any state, by value. */
   findByLinks(
     type: string,
@@ -892,6 +882,9 @@ export interface MetadataStore {
     /** Mirrors `ItemFilters.excluded_types`, and travels with
      *  `allowedTypes` for the same reason. */
     excludedTypes?: string[];
+    /** The instance's `source_filter` lever, decided per row from the
+     *  row's own type, as `ItemFilters.source_filter` is. */
+    source_filter?: SourceFilterSettings;
   }): Promise<{ tag: string; count: number }[]>;
   getExtensions(
     itemId: string,
