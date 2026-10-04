@@ -121,7 +121,7 @@ const lookupRoute = createRoute({
   path: "/lookup",
   operationId: "lookupItems",
   tags: ["Items"],
-  summary: "Look items up by link, natural key or id",
+  summary: "Look up items",
   description:
     "Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.\n\n" +
     "- `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link.\n" +
@@ -170,7 +170,7 @@ const tombstonesRoute = createRoute({
   path: "/tombstones",
   operationId: "settleTombstones",
   tags: ["Items"],
-  summary: "Move tombstones' settled time later",
+  summary: "Move tombstones' settled time",
   description:
     "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.",
   security: [{ bearerAuth: [] }],
