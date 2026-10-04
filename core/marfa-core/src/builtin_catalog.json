@@ -1817,5 +1817,24 @@
   "array",
   "object",
   "thumbnail"
+ ],
+ "reserved_type_roots": [
+  "app",
+  "audit",
+  "config",
+  "content",
+  "core",
+  "edge",
+  "grants",
+  "items",
+  "keys",
+  "marfa",
+  "metadata",
+  "profile",
+  "schema",
+  "space",
+  "system",
+  "user",
+  "webhooks"
  ]
 }

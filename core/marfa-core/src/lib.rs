@@ -2121,7 +2121,7 @@ mod tests {
         ));
         assert!(matches!(
             core.create_item(&Draft {
-                r#type: "app.unheard-of".into(),
+                r#type: "app.unheard-of.entry".into(),
                 ..Default::default()
             }),
             Err(CoreError::UnknownType { .. })
@@ -2135,7 +2135,7 @@ mod tests {
     fn a_copy_checks_what_it_queues_against_the_types_the_app_declares() {
         let core = Core::open_in_memory(None).unwrap();
         let recipe = serde_json::json!({
-            "id": "app.recipe",
+            "id": "app.recipe.entry",
             "fields": {
                 "title": { "type": "string", "required": true },
                 "servings": { "type": "number" },
@@ -2143,7 +2143,7 @@ mod tests {
         });
         let create = |value: serde_json::Value| {
             core.create_item(&Draft {
-                r#type: "app.recipe".into(),
+                r#type: "app.recipe.entry".into(),
                 properties: properties(value),
                 ..Default::default()
             })
@@ -2166,7 +2166,7 @@ mod tests {
         // Declared again, it is the new declaration; declared types survive a
         // reopen, which is how an app that declares at launch finds them.
         let renumbered = serde_json::json!({
-            "id": "app.recipe",
+            "id": "app.recipe.entry",
             "fields": { "title": { "type": "number", "required": true } },
         });
         core.declare_types(&[renumbered]).unwrap();
@@ -2190,32 +2190,111 @@ mod tests {
                 .clone(),
             ..Default::default()
         };
-        core.declare_types(&[serde_json::json!({ "id": "app.recipe", "fields": {} })])
+        core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
             .unwrap();
-        assert!(core.create_item(&draft("app.recipe")).is_ok());
+        assert!(core.create_item(&draft("app.recipe.entry")).is_ok());
         // The app renames its type: the old one is no longer one it holds a
         // write to, and no longer one a hydration would register.
-        core.declare_types(&[serde_json::json!({ "id": "app.dish", "fields": {} })])
+        core.declare_types(&[serde_json::json!({ "id": "app.dish.entry", "fields": {} })])
             .unwrap();
         assert!(matches!(
-            core.create_item(&draft("app.recipe")),
+            core.create_item(&draft("app.recipe.entry")),
             Err(CoreError::UnknownType { .. })
         ));
-        assert!(core.create_item(&draft("app.dish")).is_ok());
+        assert!(core.create_item(&draft("app.dish.entry")).is_ok());
         let held: Vec<String> = core
             .declared_types()
             .unwrap()
             .iter()
             .filter_map(|held| held["id"].as_str().map(str::to_string))
             .collect();
-        assert_eq!(held, ["app.dish"]);
+        assert_eq!(held, ["app.dish.entry"]);
+    }
+
+    #[test]
+    fn a_declaration_refuses_app_names_without_exactly_three_segments() {
+        let core = Core::open_in_memory(None).unwrap();
+        for id in ["app.recipe", "app.recipe.entry.child"] {
+            assert!(
+                matches!(
+                    core.declare_types(&[serde_json::json!({ "id": id, "fields": {} })]),
+                    Err(CoreError::Invalid(_))
+                ),
+                "{id} cannot register but was declared"
+            );
+        }
+        assert!(core.declared_types().unwrap().is_empty());
+        core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
+            .unwrap();
+    }
+
+    #[test]
+    fn a_declaration_refuses_reserved_type_roots() {
+        let core = Core::open_in_memory(None).unwrap();
+        let mut taken = Vec::new();
+        for root in [
+            "schema", "keys", "items", "webhooks", "config", "audit", "grants", "content",
+            "metadata", "edge", "profile", "space", "marfa",
+        ] {
+            let id = format!("{root}.entry");
+            if !matches!(
+                core.declare_types(&[serde_json::json!({ "id": id, "fields": {} })]),
+                Err(CoreError::Invalid(_))
+            ) {
+                taken.push(id);
+            }
+        }
+        assert!(
+            taken.is_empty(),
+            "unregisterable roots were declared: {taken:?}"
+        );
+        assert!(core.declared_types().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_declaration_accepts_publisher_prefixes_depth_and_the_identifier_boundary() {
+        let core = Core::open_in_memory(None).unwrap();
+        let boundary = format!("acme.{}", "a".repeat(123));
+        let ids = [
+            "app.recipe.entry",
+            "user.recipe.entry",
+            "acme-publisher.recipe",
+            "acme.calendar.event",
+            "keys-publisher.entry",
+            "schema_tools.entry",
+            boundary.as_str(),
+        ];
+        let definitions: Vec<_> = ids
+            .iter()
+            .map(|id| serde_json::json!({ "id": id, "fields": {} }))
+            .collect();
+        core.declare_types(&definitions).unwrap();
+        let before = core.declared_types().unwrap();
+        assert_eq!(before.len(), ids.len());
+        for id in [
+            format!("{boundary}a"),
+            "app.recipe".into(),
+            "keys.entry".into(),
+        ] {
+            assert!(
+                matches!(
+                    core.declare_types(&[
+                        definitions[0].clone(),
+                        serde_json::json!({ "id": id, "fields": {} })
+                    ]),
+                    Err(CoreError::Invalid(_))
+                ),
+                "{id} was declared"
+            );
+            assert_eq!(core.declared_types().unwrap(), before);
+        }
     }
 
     #[test]
     fn a_declaration_is_refused_when_it_names_marfas_types_or_breaks_the_rules() {
         let core = Core::open_in_memory(None).unwrap();
         for (declaration, said) in [
-            (serde_json::json!("app.x"), "an object"),
+            (serde_json::json!("app.x.entry"), "an object"),
             (serde_json::json!({ "fields": {} }), "names its id"),
             (
                 serde_json::json!({ "id": "recipe" }),
@@ -2229,19 +2308,19 @@ mod tests {
             (serde_json::json!({ "id": "core.mine" }), "Marfa's"),
             (serde_json::json!({ "id": "system.mine" }), "Marfa's"),
             (
-                serde_json::json!({ "id": "app.x", "fields": [] }),
+                serde_json::json!({ "id": "app.x.entry", "fields": [] }),
                 "an object by name",
             ),
             (
-                serde_json::json!({ "id": "app.x", "fields": { "a": { "required": true } } }),
+                serde_json::json!({ "id": "app.x.entry", "fields": { "a": { "required": true } } }),
                 "no type",
             ),
             (
-                serde_json::json!({ "id": "app.x", "fields": { "a": { "type": "nonsense" } } }),
+                serde_json::json!({ "id": "app.x.entry", "fields": { "a": { "type": "nonsense" } } }),
                 "not a field type",
             ),
             (
-                serde_json::json!({ "id": "app.x", "parent": "app.absent" }),
+                serde_json::json!({ "id": "app.x.entry", "parent": "app.absent.entry" }),
                 "neither a type Marfa ships nor one declared",
             ),
         ] {
@@ -2256,8 +2335,8 @@ mod tests {
         // A parent may be declared in the same call, after its child, or be one
         // Marfa ships.
         core.declare_types(&[
-            serde_json::json!({ "id": "app.child", "parent": "app.parent" }),
-            serde_json::json!({ "id": "app.parent", "parent": "core.note" }),
+            serde_json::json!({ "id": "app.child.entry", "parent": "app.parent.entry" }),
+            serde_json::json!({ "id": "app.parent.entry", "parent": "core.note" }),
         ])
         .unwrap();
         assert_eq!(core.declared_types().unwrap().len(), 2);

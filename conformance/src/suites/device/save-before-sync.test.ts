@@ -29,7 +29,7 @@ async function offline(label: string): Promise<CliDevice> {
 }
 
 const RECIPE = {
-  id: "app.recipe",
+  id: "app.recipe.entry",
   fields: {
     title: { type: "string", required: true },
     servings: { type: "number" },
@@ -78,14 +78,14 @@ describe("a copy no server has been named for", () => {
     const types = value(await device.itemTypes());
     expect(types.map((held) => held.id)).toContain("core.note");
     expect(value(await device.edgeType("parent-of")).id).toBe("parent-of");
-    const absent = await device.itemType("app.recipe");
+    const absent = await device.itemType("app.recipe.entry");
     expect(absent.ok ? "answered" : absent.refusal.code).toBe("not_found");
   });
 
   it("checks a write against the types the app declares, and holds an unknown one back", async () => {
     const device = await offline("save-declared");
     const unknown = await device.create({
-      type: "app.recipe",
+      type: "app.recipe.entry",
       properties: { title: "Soup" },
     });
     expect(
@@ -95,19 +95,22 @@ describe("a copy no server has been named for", () => {
 
     value(await device.declareTypes([RECIPE]));
     expect(
-      value(await device.itemType("app.recipe")).fields.map(
+      value(await device.itemType("app.recipe.entry")).fields.map(
         (field) => field.name,
       ),
     ).toEqual(["servings", "title"]);
     const queued = value(
       await device.create({
-        type: "app.recipe",
+        type: "app.recipe.entry",
         properties: { title: "Soup", servings: 4 },
       }),
     );
     expect(queued.kind).toBe("create_item");
     for (const properties of [{}, { title: "Soup", servings: "four" }]) {
-      const refused = await device.create({ type: "app.recipe", properties });
+      const refused = await device.create({
+        type: "app.recipe.entry",
+        properties,
+      });
       expect(
         refused.ok ? "queued" : refused.refusal.code,
         `${JSON.stringify(properties)} was queued against a type that refuses it`,
@@ -118,20 +121,20 @@ describe("a copy no server has been named for", () => {
     value(
       await device.declareTypes([
         {
-          id: "app.recipe",
+          id: "app.recipe.entry",
           fields: { title: { type: "number", required: true } },
         },
       ]),
     );
     const renumbered = await device.create({
-      type: "app.recipe",
+      type: "app.recipe.entry",
       properties: { title: "Soup" },
     });
     expect(renumbered.ok ? "queued" : renumbered.refusal.code).toBe(
       "validation",
     );
     expect(value(await device.declaredTypes()).map((held) => held.id)).toEqual([
-      "app.recipe",
+      "app.recipe.entry",
     ]);
   });
 
@@ -141,26 +144,26 @@ describe("a copy no server has been named for", () => {
     expect(
       value(
         await device.create({
-          type: "app.recipe",
+          type: "app.recipe.entry",
           properties: { title: "Soup" },
         }),
       ).kind,
     ).toBe("create_item");
     // The app renames its type. A declaration is the whole set, so the old
     // name is no longer one the copy holds a write to.
-    value(await device.declareTypes([{ id: "app.dish", fields: {} }]));
+    value(await device.declareTypes([{ id: "app.dish.entry", fields: {} }]));
     expect(
       value(await device.declaredTypes()).map((held) => held.id),
       "a type the app no longer declares was still held",
-    ).toEqual(["app.dish"]);
+    ).toEqual(["app.dish.entry"]);
     const stale = await device.create({
-      type: "app.recipe",
+      type: "app.recipe.entry",
       properties: { title: "Soup" },
     });
     expect(stale.ok ? "queued" : stale.refusal.code).toBe("unknown_type");
-    expect((await device.create({ type: "app.dish", properties: {} })).ok).toBe(
-      true,
-    );
+    expect(
+      (await device.create({ type: "app.dish.entry", properties: {} })).ok,
+    ).toBe(true);
   });
 
   it("refuses a declaration that names a type of Marfa's, one it cannot read, or a parent it does not know", async () => {
@@ -169,8 +172,8 @@ describe("a copy no server has been named for", () => {
       { id: "core.note", fields: {} },
       { id: "system.thing", fields: {} },
       { id: "NotAType" },
-      { id: "app.thing", fields: { n: { type: "nonsense" } } },
-      { id: "app.child", parent: "app.absent", fields: {} },
+      { id: "app.thing.entry", fields: { n: { type: "nonsense" } } },
+      { id: "app.child.entry", parent: "app.absent.entry", fields: {} },
     ]) {
       const refused = await device.declareTypes([definition]);
       expect(

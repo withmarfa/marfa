@@ -2328,12 +2328,12 @@ mod tests {
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = MarfaCore::open(path, None, None).unwrap();
         core.declare_types(vec![
-            r#"{"id":"app.recipe","fields":{"title":{"type":"string","required":true}}}"#.into(),
+            r#"{"id":"app.recipe.entry","fields":{"title":{"type":"string","required":true}}}"#.into(),
         ])
         .unwrap();
         let held = core.declared_types().unwrap();
         assert_eq!(held.len(), 1);
-        assert!(held[0].contains("app.recipe"));
+        assert!(held[0].contains("app.recipe.entry"));
         assert!(matches!(
             core.declare_types(vec!["not json".into()]),
             Err(MarfaError::Invalid { .. })

@@ -9,6 +9,7 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   FIELD_TYPES,
+  RESERVED_ROOTS,
   listEdgeTypes,
   listTypes,
 } from "../packages/shared/src/index.js";
@@ -32,7 +33,12 @@ writeFileSync(
     new URL("../core/marfa-core/src/builtin_catalog.json", import.meta.url),
   ),
   `${JSON.stringify(
-    { types, edge_types: edgeTypes, field_types: FIELD_TYPES },
+    {
+      types,
+      edge_types: edgeTypes,
+      field_types: FIELD_TYPES,
+      reserved_type_roots: [...RESERVED_ROOTS].sort(),
+    },
     null,
     1,
   )}\n`,

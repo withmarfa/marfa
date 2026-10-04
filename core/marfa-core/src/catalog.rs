@@ -139,7 +139,7 @@ fn refuse_unless_held(conn: &Connection) -> Result<(), CoreError> {
 }
 
 /// The roots a type of the app's own can never be registered under: Marfa's.
-const SHIPPED_ROOTS: [&str; 2] = ["core", "system"];
+const SHIPPED_ROOTS: [&str; 3] = ["core", "system", "marfa"];
 
 /// A type the app declares, read as the server reads a registration: an
 /// object naming an identifier outside Marfa's, whose fields each have a type
@@ -158,15 +158,28 @@ pub(crate) fn declaration(
     let Some(id) = row.get("id").and_then(Value::as_str) else {
         return Err(invalid("a type to declare names its id".into()));
     };
-    if id.ends_with(".*") || !crate::hydrate::type_pattern(id) {
+    let root = id.split('.').next().unwrap_or_default();
+    if id.ends_with(".*")
+        || !crate::hydrate::type_pattern(id)
+        || (root == "app" && id.split('.').count() != 3)
+    {
         return Err(invalid(format!(
-            "not a type to declare: {id:?}; a type is two or more lowercase dotted segments"
+            "not a type to declare: {id:?}; a type is app.<app-name>.<type>, user.<type>, or <publisher>.<type>, with lowercase dotted segments and at most 128 characters; app names have exactly three segments"
         )));
     }
-    let root = id.split('.').next().unwrap_or_default();
     if SHIPPED_ROOTS.contains(&root) || crate::builtin::ships(id)? {
         return Err(invalid(format!(
             "{id} is Marfa's, and an app declares types under its own namespace: `app.`, `user.` or a name of its own"
+        )));
+    }
+    if root != "app"
+        && root != "user"
+        && crate::builtin::reserved_type_roots()?
+            .iter()
+            .any(|reserved| reserved == root)
+    {
+        return Err(invalid(format!(
+            "not a type to declare: {id:?}; {root} is a reserved type root"
         )));
     }
     let mut row = row.clone();

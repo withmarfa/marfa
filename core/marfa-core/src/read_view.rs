@@ -686,7 +686,7 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         let server = Scripted::start();
         let (_dir, core) = core(&server);
-        core.declare_types(&[serde_json::json!({ "id": "app.note", "fields": {} })])
+        core.declare_types(&[serde_json::json!({ "id": "app.note.entry", "fields": {} })])
             .unwrap();
         let saved = core
             .create_item(&crate::Draft {
@@ -742,7 +742,7 @@ mod tests {
             "/events",
             vec![stream(vec![copy_marker("stream_cursor", "10")], Then::End)],
         );
-        core.declare_types(&[serde_json::json!({ "id": "app.note", "fields": {} })])
+        core.declare_types(&[serde_json::json!({ "id": "app.note.entry", "fields": {} })])
             .unwrap();
         server.on("/types", vec![refusal(503, "unavailable")]);
         let failed = core

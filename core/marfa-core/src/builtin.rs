@@ -44,3 +44,15 @@ pub(crate) fn field_types() -> Result<Vec<String>, CoreError> {
 pub(crate) fn ships(id: &str) -> Result<bool, CoreError> {
     Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
 }
+
+pub(crate) fn reserved_type_roots() -> Result<Vec<String>, CoreError> {
+    static PARSED: OnceLock<Result<Vec<String>, String>> = OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let document: Value = serde_json::from_str(CATALOG).map_err(|e| e.to_string())?;
+            serde_json::from_value(document["reserved_type_roots"].clone())
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map_err(|error| CoreError::Decoding(format!("the reserved type roots: {error}")))
+}

@@ -143,17 +143,17 @@ test("an app saves with no server, is checked against its declared types, and jo
     assert.equal(copy.status().hydration, Hydration.Never);
     copy.declareTypes([
       {
-        id: "app.recipe",
+        id: "app.recipe.entry",
         fields: { title: { type: "string", required: true } },
       },
     ]);
     assert.deepEqual(
       copy.declaredTypes().map((held) => held.id),
-      ["app.recipe"],
+      ["app.recipe.entry"],
     );
     const refused = (() => {
       try {
-        copy.createItem({ type: "app.recipe", properties: {} });
+        copy.createItem({ type: "app.recipe.entry", properties: {} });
       } catch (error) {
         return /** @type {Error} */ (error);
       }
@@ -162,7 +162,7 @@ test("an app saves with no server, is checked against its declared types, and jo
     assert.ok(refused, "a write missing a required field was queued");
     assert.match(refused.message, /^validation/);
     // The witness: the same write with the field is taken.
-    copy.createItem({ type: "app.recipe", properties: { title: "Soup" } });
+    copy.createItem({ type: "app.recipe.entry", properties: { title: "Soup" } });
     assert.equal(copy.queue().length, 1);
   })();
   const server = await serving();
@@ -182,12 +182,12 @@ test("an app saves with no server, is checked against its declared types, and jo
   }
   assert.ok(joined, "the store was never let go of");
   const report = await joined
-    .hydrate(["app.recipe"], Tier.Library)
+    .hydrate(["app.recipe.entry"], Tier.Library)
     .catch((e) => {
       console.log(server.seen);
       throw e;
     });
-  assert.deepEqual(report.registeredTypes, ["app.recipe"]);
+  assert.deepEqual(report.registeredTypes, ["app.recipe.entry"]);
   assert.equal(server.registered.length, 1);
   assert.equal(joined.queue().length, 1);
 });
