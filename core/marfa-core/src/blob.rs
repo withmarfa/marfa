@@ -295,6 +295,12 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
 /// has stopped sending would otherwise hold the call for good.
 const LINK_IDLE: Duration = Duration::from_secs(60);
 
+/// A bound on the whole body, far past any fetch that is going on. The reader
+/// that watches for silence leaves its thread behind when it gives up, and a
+/// connection that stays silent for good would hold that thread for good; this
+/// ends it.
+const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
+
 /// What a link sends is bounded by what the cache holds: a body past it would
 /// be trimmed the moment it was kept.
 fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<PathBuf> {
@@ -313,7 +319,8 @@ fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Res
 
 /// A reader whose reads fail once the source has sent nothing for `idle`. The
 /// HTTP client bounds a phase of a call, not a silence in one. The source is
-/// read on a thread of its own, which is left behind when a read gives up.
+/// read on a thread of its own, which is left behind when a read gives up and
+/// ends when the source does, which `LINK_BODY_MOST` makes certain of.
 struct Idle {
     chunks: std::sync::mpsc::Receiver<io::Result<Vec<u8>>>,
     idle: Duration,
@@ -400,6 +407,7 @@ fn open(link: &str) -> std::result::Result<impl Read + Send + 'static, String> {
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(LINK_BODY_MOST))
         .build()
         .into();
     let response = agent

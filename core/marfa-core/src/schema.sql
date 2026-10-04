@@ -99,7 +99,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
 
 -- The types an app declares for itself, as the server lists a type. What a
 -- copy that has never reached a server checks its writes against beside the
--- types Marfa ships, and what the first hydration registers on the instance.
+-- types Marfa ships, and what a hydration registers on the instance.
 -- Apart from `types`, which a hydration replaces whole.
 CREATE TABLE IF NOT EXISTS declared_types (
   id TEXT PRIMARY KEY,

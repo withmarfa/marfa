@@ -1256,12 +1256,21 @@ fn stop_on_interrupt() {
         libc::sigaddset(&mut set, libc::SIGINT);
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         std::thread::spawn(move || {
-            let mut signal = 0;
-            if libc::sigwait(&set, &mut signal) != 0 {
+            // Where the platform lets `sigwait` fail with `EINTR`, a wait that
+            // gave up would leave the signal blocked for good.
+            let wait = || loop {
+                let mut signal = 0;
+                match libc::sigwait(&set, &mut signal) {
+                    0 => return true,
+                    libc::EINTR => continue,
+                    _ => return false,
+                }
+            };
+            if !wait() {
                 return;
             }
             STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-            if libc::sigwait(&set, &mut signal) == 0 {
+            if wait() {
                 libc::_exit(130);
             }
         });

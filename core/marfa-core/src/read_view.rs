@@ -749,7 +749,7 @@ mod tests {
             .hydrate(&["core.note".into()], crate::Tier::Library)
             .unwrap_err();
         assert!(failed.is_environmental(), "{failed:?}");
-        assert!(store::hydrated(&core.conn().unwrap()).is_ok());
+        assert!(!store::hydrated(&core.conn().unwrap()).unwrap());
         assert_eq!(core.status().unwrap().hydration, crate::Hydration::Never);
     }
 
