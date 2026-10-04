@@ -864,7 +864,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List occurrences",
   description:
-    "Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated. That is worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read, not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.",
+    "Returns the events that overlap a time window, with each recurring event expanded into one entry per occurrence. Marfa computes occurrences when you read them and doesn't store them.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -872,18 +872,18 @@ const occurrencesRoute = createRoute({
       from: z
         .string()
         .describe(
-          "Window start, ISO 8601. An event ending at or before it is outside the window; one with no length starting at it is inside.",
+          "Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. An event's end is its `ends_at`, else its start plus `duration`, else, for a whole-day event, the next day.",
         ),
       to: z
         .string()
         .describe(
-          "Window end, ISO 8601. An event starting at or after it is outside the window.",
+          "Window end, ISO 8601. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
         ),
       type: z
         .string()
         .optional()
         .describe(
-          "Restrict to one event type, or to the event types a wildcard matches. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it.",
+          "Only return events of this type, or of the event types a wildcard matches.",
         ),
     }),
   },
@@ -892,7 +892,8 @@ const occurrencesRoute = createRoute({
       content: {
         "application/json": { schema: OccurrencesResponseSchema },
       },
-      description: "Occurrences overlapping the window, ordered by start time",
+      description:
+        "Returns occurrences ordered by start time. A recurring event gives an entry per occurrence, with `series_id`. A stored exception replaces its occurrence and carries `replaces`. A rule Marfa can't read or fully apply is listed in `series_errors`, and `expansion_incomplete` is `true` if an expansion didn't finish.",
     },
     400: {
       content: {
@@ -905,7 +906,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` when `from` or `to` is absent; `unknown_type` when `type` names nothing registered; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
+        "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`; if it has `expansion_incomplete`, narrow by `type`.",
     },
     401: {
       content: {
@@ -922,7 +923,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads.",
+        "- `type_not_permitted`: your credential reaches no type, or `type` is a registered type you can't read with none readable under it.",
     },
   },
 });

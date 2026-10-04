@@ -110,7 +110,7 @@ const runHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "Run a housekeeping job",
   description:
-    "Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.",
+    "Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: NameParam },

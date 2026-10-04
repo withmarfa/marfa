@@ -52,15 +52,14 @@ const INCLUDE_TOKENS = ["edges", "metadata", "extensions", "system"] as const;
 // ---------------------------------------------------------------------------
 
 const BulkGetRequestSchema = z.object({
-  ids: z.array(z.string()).describe("Item ids to fetch (max 100)."),
+  ids: z
+    .array(z.string())
+    .describe("The IDs of the items to read, at most 100."),
   include: z
     .array(z.enum(INCLUDE_TOKENS))
     .optional()
     .describe(
-      "`edges`, `metadata` and `extensions` hydrate those extras inline on the " +
-        "items already being returned. `system` is different in kind: it widens " +
-        "the result to include `system.*` items, which are omitted by default. " +
-        "Mirrors the GET /items `include` tokens.",
+      "`edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default.",
     ),
 });
 
@@ -68,13 +67,18 @@ const BulkGetResponseSchema = z.object({
   items: z
     .array(ItemSchema)
     .describe(
-      "The items the caller may read, in the order `ids` named them, an id named twice answered once. Ids that do not resolve, or name a trashed item or one whose type the caller may not read, are left out.",
+      "The items you can read, in the order `ids` named them, each once. IDs that name nothing, a trashed item or an item whose type you can't read are left out.",
     ),
   /**
    * Present only when `include` carries `metadata`. One entry per returned
    * item, keyed by `item_id`, filtered to what the caller may see.
    */
-  metadata: z.array(MetadataSchema).optional(),
+  metadata: z
+    .array(MetadataSchema)
+    .optional()
+    .describe(
+      "The metadata of each item returned, in the same order. Present only when `include` has `metadata`.",
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -88,19 +92,7 @@ const bulkGetRoute = createRoute({
   tags: ["Items"],
   summary: "Get items in bulk",
   description:
-    "Reads up to 100 items by id in one round-trip, permission-filtered " +
-    "exactly like the single-item GET: ids the caller " +
-    "cannot read (type not permitted, trashed, or missing) " +
-    "are silently omitted rather than erroring the whole request, and the " +
-    "rest come back in the order the request named them, each once. Optional " +
-    "`include` takes the same tokens as GET /items: `edges`, `metadata` and " +
-    "`extensions` hydrate an extra inline, while `system` widens the result " +
-    "to include `system.*` items, which are omitted by default.\n\n" +
-    "Every edge carried on a response is held to the two permissions " +
-    "`GET /edges/{id}` asks for: read on the source item's type, and read " +
-    "on the edge type. A block whose edges all fail is left out rather " +
-    "than returned empty, so a response can carry fewer kinds of " +
-    "relationship than the item has.",
+    "Returns up to 100 items by ID in one call, in the order you named them, each once. Items you can't read, trashed items and IDs that name nothing are left out.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -117,7 +109,8 @@ const bulkGetRoute = createRoute({
       content: {
         "application/json": { schema: BulkGetResponseSchema },
       },
-      description: "The readable subset of the requested items",
+      description:
+        "Returns the items you can read, and `metadata` if you asked for it.",
     },
     400: {
       content: {
@@ -130,7 +123,7 @@ const bulkGetRoute = createRoute({
         },
       },
       description:
-        "Validation error: `ids` absent (`missing_required_field`), too many ids, or a malformed id",
+        "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list, or has more than 100 IDs.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
     },
     401: {
       content: {
@@ -147,7 +140,7 @@ const bulkGetRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types is served the ids it may read and the rest are omitted rather than refused.",
+        "- `type_not_permitted`: your credential reaches no type. If it reaches some types, items of the others are left out instead.",
     },
   },
 });

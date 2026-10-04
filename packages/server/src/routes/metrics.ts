@@ -47,7 +47,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped, so a working credential is refused.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {

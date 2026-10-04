@@ -379,7 +379,7 @@ const createFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Create a folder",
   description:
-    "Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map; the item doors refuse every `system.*` write whatever the credential holds. Each setting is validated before the write, and a refusal names it.",
+    "Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map. Each setting is validated before the write.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: {
@@ -405,7 +405,7 @@ const updateFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Update a folder",
   description:
-    "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.",
+    "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: {
@@ -430,7 +430,7 @@ const updateFolderRoute = createRoute({
         },
       },
       description:
-        "`version_conflict`: a setting this change names was changed since `version`. `ancestor_unavailable`: no snapshot of `version` is held.",
+        "`version_conflict`: a setting this change names was changed since `version`, whatever the query says. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held.",
     },
   },
 });

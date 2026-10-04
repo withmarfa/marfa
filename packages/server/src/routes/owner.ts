@@ -71,7 +71,7 @@ const getOwnerRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. `404 owner_not_found` on an instance that has none yet, which is the state every instance boots in; `POST /owner` is what changes it. Operator key only.",
+    "Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. An instance boots with no owner, and `POST /owner` creates one. Operator key only.",
   responses: {
     200: {
       content: { "application/json": { schema: OwnerSchema } },
@@ -99,7 +99,7 @@ const createOwnerRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, for any body the schema accepts; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
+    "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. The password is judged by the sign-in surface's own length rule. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
   request: {
     body: {
       content: { "application/json": { schema: CreateOwnerBodySchema } },
@@ -121,7 +121,7 @@ const createOwnerRoute = createRoute({
         },
       },
       description:
-        "The body is malformed, or the password is outside the sign-in surface's length rule",
+        "- `validation_error`: the body is malformed, or the password is outside the sign-in surface's length rule. For the password, the error names `password` and the bound.",
     },
     401: unauthorized,
     403: notTheOperator,
@@ -131,7 +131,8 @@ const createOwnerRoute = createRoute({
           schema: makeErrorResponseSchema(["owner_exists"]),
         },
       },
-      description: "This instance already has an owner",
+      description:
+        "- `owner_exists`: this instance already has an owner, whatever the body.",
     },
   },
 });

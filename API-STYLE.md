@@ -49,7 +49,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 - **The first sentence starts with the summary's verb in the third person** ("Creates"), or "Returns" for Get and List, and says what the operation does and what it returns. Where that verb would mislead, use the verb for what happens: "Moves the item to the trash".
 - **Often that sentence is enough.** Add at most two more, only for what you need to call it correctly: a default you wouldn't expect, an effect beyond the obvious, or a common mistake.
 - **(checked: at most 250 characters)** If you need more, the detail belongs on a field, a parameter or a response, in a general section, or in a guide in the docs.
-- Don't repeat the parameters, the response codes or a rule that applies everywhere.
+- Leave refusals to the responses, which list each code. **(checked)** Don't repeat the parameters or a rule that applies everywhere.
 - Name another operation only when you need it next, by its method and path: `GET /items/{id}/versions`.
 
 ## Parameters
