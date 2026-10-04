@@ -2,7 +2,9 @@ pub mod request;
 
 use std::fs::File;
 use std::io::Read;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use marfa_core::contract::CONTRACT_VERSION;
 use marfa_core::http::{Call, CallBody, Http, Renew, Reply, ReplyBody};
@@ -40,6 +42,16 @@ pub struct Remote {
     credential: Option<CredentialSource>,
     held: Arc<Held>,
 }
+
+/// How long a command waits for a server to answer, and to send an answer
+/// whole. Some doors do their work before they answer: a restore, a bulk
+/// write, a housekeeping job run on the spot.
+const ANSWER_BUDGET: Duration = Duration::from_secs(90);
+
+/// How long a streamed answer may stay silent before a read of it fails. The
+/// event stream's keepalive comes well inside it, so a connection that has
+/// dropped without a word ends the command instead of holding it.
+const STREAM_IDLE: Duration = Duration::from_secs(45);
 
 /// The credential in hand, which a renewal replaces while a command runs, so
 /// what the command reports afterward is the credential that was sent last.
@@ -254,7 +266,12 @@ impl Remote {
         bearer: Option<String>,
         kept: Option<Kept>,
     ) -> Result<Remote, CliError> {
-        let http = Http::new(url, bearer.as_deref().unwrap_or_default())?;
+        let http = Http::with_timeouts(
+            url,
+            bearer.as_deref().unwrap_or_default(),
+            ANSWER_BUDGET,
+            ANSWER_BUDGET,
+        )?;
         let remote = Remote {
             http,
             url: url.to_string(),
@@ -370,7 +387,21 @@ impl Remote {
         })
     }
 
+    /// A file is opened afresh for each send, so one refused for an expired
+    /// token is sent again once it has been renewed, as a JSON body is.
     fn send(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
+        let before = self.bearer();
+        let reply = self.send_once(request, held)?;
+        if matches!(request.body, Body::File { .. })
+            && reply.status == 401
+            && self.bearer() != before
+        {
+            return self.send_once(request, held);
+        }
+        Ok(reply)
+    }
+
+    fn send_once(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
         if request.credential && self.bearer().is_none() {
             return Err(CliError::NoCredential {
                 origin: self.origin.clone(),
@@ -414,18 +445,20 @@ impl Remote {
                 CallBody::Text(&form_text)
             }
         };
-        Ok(self.http.fetch(
-            Call {
-                method: request.method,
-                segments: &segments,
-                params: &params,
-                headers: &headers,
-                body,
-                credential: request.credential,
-                stream: request.stream,
-            },
-            held,
-        )?)
+        self.http
+            .fetch(
+                Call {
+                    method: request.method,
+                    segments: &segments,
+                    params: &params,
+                    headers: &headers,
+                    body,
+                    credential: request.credential,
+                    stream: request.stream,
+                },
+                held,
+            )
+            .map_err(CliError::direct)
     }
 
     pub fn json(&self, request: &Request) -> Result<Value, CliError> {
@@ -468,11 +501,82 @@ impl Remote {
     }
 
     pub fn stream(&self, request: &Request) -> Result<(String, Box<dyn Read + Send>), CliError> {
+        self.stream_within(request, STREAM_IDLE)
+    }
+
+    fn stream_within(
+        &self,
+        request: &Request,
+        idle: Duration,
+    ) -> Result<(String, Box<dyn Read + Send>), CliError> {
         let reply = self.call(request)?;
         match reply.body {
-            ReplyBody::Stream(reader) => Ok((reply.content_type, reader)),
+            ReplyBody::Stream(reader) => {
+                Ok((reply.content_type, Box::new(Watched::new(reader, idle))))
+            }
             ReplyBody::Text(text) => Err(refused(reply.status, &text, reply.retry_after_seconds)),
         }
+    }
+}
+
+/// A reader whose reads fail once the source has said nothing for `idle`. The
+/// HTTP client bounds a phase, not a silence, and a stream that is meant to
+/// outlast any phase has none. The source is read on a thread of its own, left
+/// behind when a read gives up on it.
+struct Watched {
+    chunks: mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    idle: Duration,
+    held: Vec<u8>,
+    at: usize,
+}
+
+impl Watched {
+    fn new(mut source: Box<dyn Read + Send>, idle: Duration) -> Watched {
+        let (sender, chunks) = mpsc::sync_channel(4);
+        std::thread::spawn(move || {
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                let chunk = match source.read(&mut buffer) {
+                    Ok(0) => Ok(Vec::new()),
+                    Ok(n) => Ok(buffer[..n].to_vec()),
+                    Err(error) => Err(error),
+                };
+                let last = !matches!(&chunk, Ok(bytes) if !bytes.is_empty());
+                if sender.send(chunk).is_err() || last {
+                    return;
+                }
+            }
+        });
+        Watched {
+            chunks,
+            idle,
+            held: Vec::new(),
+            at: 0,
+        }
+    }
+}
+
+impl Read for Watched {
+    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
+        if self.at == self.held.len() {
+            match self.chunks.recv_timeout(self.idle) {
+                Ok(chunk) => {
+                    self.held = chunk?;
+                    self.at = 0;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "the server went silent",
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+            }
+        }
+        let n = into.len().min(self.held.len() - self.at);
+        into[..n].copy_from_slice(&self.held[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
     }
 }
 
@@ -987,6 +1091,102 @@ mod tests {
             .collect();
         assert_eq!(types, vec!["image/png"]);
         assert_eq!(received[0].body, "PNG raw bytes");
+    }
+
+    #[test]
+    fn a_file_refused_for_an_expired_token_is_sent_again_once_renewed() {
+        let dir = std::env::temp_dir().join(format!("marfa-resend-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bytes.bin");
+        std::fs::write(&path, b"PNG raw bytes").unwrap();
+        let door = Door::open(vec![
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+            ),
+            Answer::json("201 Created", r#"{"hash":"sha256:h"}"#),
+        ]);
+        let remote = Remote::with_http(
+            Http::new(&door.url, "marfa_at_old").unwrap(),
+            Some("marfa_at_old"),
+        );
+        let held = Arc::clone(&remote.held);
+        remote.http.renew_with(Box::new(move |_| {
+            *lock(&held.bearer) = Some("marfa_at_new".into());
+            Ok("marfa_at_new".into())
+        }));
+        remote
+            .json(&Request::post(&["blobs"]).file(path, "image/png"))
+            .unwrap();
+        let received = door.received();
+        let sent: Vec<(&str, &str)> = received
+            .iter()
+            .map(|request| {
+                let bearer = request
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name == "authorization")
+                    .map_or("", |(_, value)| value.as_str());
+                (bearer, request.body.as_str())
+            })
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                ("Bearer marfa_at_old", "PNG raw bytes"),
+                ("Bearer marfa_at_new", "PNG raw bytes"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stream_gone_silent_fails_a_read_and_one_with_gaps_does_not() {
+        let silent = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            std::thread::spawn(move || {
+                if let Ok((mut socket, _)) = listener.accept() {
+                    let mut chunk = [0u8; 4096];
+                    let _ = Read::read(&mut socket, &mut chunk);
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n{}: {}\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n:\n\n\r\n",
+                        marfa_core::http::CONTRACT_HEADER,
+                        marfa_core::contract::CONTRACT_VERSION,
+                    );
+                    let _ = std::io::Write::write_all(&mut socket, head.as_bytes());
+                    std::thread::sleep(Duration::from_secs(10));
+                }
+            });
+            url
+        };
+        let (_, mut reader) = Remote::with_http(
+            Http::new(&silent, "marfa_k1_x").unwrap(),
+            Some("marfa_k1_x"),
+        )
+        .stream_within(
+            &Request::get(&["events"]).streamed(),
+            Duration::from_millis(400),
+        )
+        .unwrap();
+        let mut first = [0u8; 3];
+        reader.read_exact(&mut first).unwrap();
+        assert_eq!(&first, b":\n\n");
+        let error = reader.read(&mut first).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        // The witness: a source that pauses for less than the limit between
+        // bytes is read to its end.
+        let (_, mut reader) = Remote::with_http(
+            Http::new(&trickling(true), "marfa_k1_x").unwrap(),
+            Some("marfa_k1_x"),
+        )
+        .stream_within(
+            &Request::get(&["export"]).streamed(),
+            Duration::from_millis(700),
+        )
+        .unwrap();
+        let mut text = String::new();
+        reader.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "0123456789");
     }
 
     fn root(contract: &str) -> Answer {

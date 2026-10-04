@@ -82,6 +82,30 @@ pub enum CliError {
     },
 }
 
+impl CliError {
+    /// For an error from a request the command itself sent, where a mismatch
+    /// is worded for the command. A device command keeps the core's own
+    /// words, which say what became of a queued write.
+    pub fn direct(error: CoreError) -> Self {
+        match error {
+            CoreError::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
+            } => Self::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
+            },
+            other => Self::from(other),
+        }
+    }
+}
+
 impl From<CoreError> for CliError {
     fn from(error: CoreError) -> Self {
         match error {
@@ -108,20 +132,9 @@ impl From<CoreError> for CliError {
                     retry_after_seconds,
                     details: None,
                 },
-                other => Self::from(other),
-            },
-            CoreError::ContractMismatch {
-                origin,
-                served,
-                expected,
-                write_sent,
-                status,
-            } => Self::ContractMismatch {
-                origin,
-                served,
-                expected,
-                write_sent,
-                status,
+                CoreError::SignedOut { origin } => Self::SignedOut { origin },
+                CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
+                other => Self::direct(other),
             },
             CoreError::Redirected {
                 origin,
@@ -443,6 +456,43 @@ mod tests {
             assert_eq!(error.exit(), exit);
             assert!(error.envelope()["error"]["server"].is_null());
         }
+    }
+
+    #[test]
+    fn a_mismatch_keeps_the_core_words_unless_the_command_sent_the_request() {
+        let mismatch = || CoreError::ContractMismatch {
+            origin: "https://marfa.example".into(),
+            served: Some("other".into()),
+            expected: 1,
+            write_sent: true,
+            status: Some(200),
+        };
+        let carried = CliError::from(mismatch());
+        assert!(matches!(
+            &carried,
+            CliError::Core(CoreError::ContractMismatch { .. })
+        ));
+        assert_eq!(carried.to_string(), mismatch().to_string());
+        assert!(matches!(
+            CliError::direct(mismatch()),
+            CliError::ContractMismatch { .. }
+        ));
+        assert_ne!(
+            CliError::direct(mismatch()).to_string(),
+            mismatch().to_string()
+        );
+    }
+
+    #[test]
+    fn a_renewal_that_finds_the_grant_dead_says_to_sign_in_with_the_command() {
+        let signed_out = CliError::from(CoreError::RenewalFailed(Box::new(CoreError::SignedOut {
+            origin: "https://marfa.example".into(),
+        })));
+        assert!(matches!(signed_out, CliError::SignedOut { .. }));
+        let no_keychain = CliError::from(CoreError::RenewalFailed(Box::new(
+            CoreError::NoKeychain("locked".into()),
+        )));
+        assert!(matches!(no_keychain, CliError::NoKeychain(_)));
     }
 
     /// The codes in the help, as an agent reads them.

@@ -737,6 +737,46 @@ impl MarfaError {
     }
 }
 
+#[uniffi::export]
+impl MarfaError {
+    /// The core's name for this error, the `code` the command line's envelope
+    /// and a Node error carry. `serverCode` on the variants is the server's
+    /// own word, which is not it.
+    pub fn code(&self) -> String {
+        match self {
+            MarfaError::NotFound { .. } => "not_found",
+            MarfaError::Unauthorized { .. } => "unauthorized",
+            MarfaError::Forbidden { .. } => "forbidden",
+            MarfaError::Validation { .. } => "validation",
+            MarfaError::UnknownType { .. } => "unknown_type",
+            MarfaError::RateLimited { .. } => "rate_limited",
+            MarfaError::Server { .. } => "server",
+            MarfaError::Io { .. } => "io",
+            MarfaError::Network { .. } => "network",
+            MarfaError::Unnamed { .. } => "unnamed_answer",
+            MarfaError::Decoding { .. } => "decoding",
+            MarfaError::Store { .. } => "store",
+            MarfaError::StorageFull { .. } => "storage_full",
+            MarfaError::SignedOut { .. } => "signed_out",
+            MarfaError::NoKeychain { .. } => "no_keychain",
+            MarfaError::Redirected { .. } => "redirect",
+            MarfaError::NoServer { .. } => "no_server",
+            MarfaError::NoCursor { .. } => "no_cursor",
+            MarfaError::HydrationIncomplete { .. } => "hydration_incomplete",
+            MarfaError::NoCatalog { .. } => "no_catalog",
+            MarfaError::ReadingHandle { .. } => "reading_handle",
+            MarfaError::WrongSchema { .. } => "wrong_schema",
+            MarfaError::CopyExpired { .. } => "copy_expired",
+            MarfaError::StreamIncomplete { .. } => "stream_incomplete",
+            MarfaError::WrongServer { .. } => "wrong_server",
+            MarfaError::BytesAbsent { .. } => "bytes_absent",
+            MarfaError::ContractMismatch { .. } => "contract_mismatch",
+            MarfaError::Invalid { .. } => "invalid",
+        }
+        .to_string()
+    }
+}
+
 impl std::fmt::Display for MarfaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.message())
@@ -1640,6 +1680,99 @@ impl MarfaCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_error_crosses_with_the_code_the_core_names_it_by() {
+        use marfa_core::CoreError as E;
+        let text = || "text".to_string();
+        let all = vec![
+            E::NotFound {
+                code: text(),
+                message: text(),
+            },
+            E::Unauthorized {
+                code: text(),
+                message: text(),
+            },
+            E::Forbidden {
+                code: text(),
+                message: text(),
+            },
+            E::Validation {
+                code: text(),
+                message: text(),
+            },
+            E::UnknownType { message: text() },
+            E::RateLimited {
+                code: text(),
+                message: text(),
+                retry_after_seconds: None,
+            },
+            E::Server {
+                status: 500,
+                code: text(),
+                message: text(),
+            },
+            E::Io(text()),
+            E::Network(text()),
+            E::Unnamed {
+                origin: text(),
+                status: 502,
+                retry_after_seconds: None,
+            },
+            E::Decoding(text()),
+            E::SignedOut { origin: text() },
+            E::NoKeychain(text()),
+            E::StorageFull(text()),
+            E::Store(text()),
+            E::Redirected {
+                origin: text(),
+                status: 302,
+                location: None,
+            },
+            E::NoServer,
+            E::NoCursor,
+            E::HydrationIncomplete,
+            E::NoCatalog,
+            E::ReadingHandle,
+            E::WrongSchema {
+                path: text(),
+                reason: text(),
+                unsent: None,
+            },
+            E::CopyExpired { reason: text() },
+            E::StreamIncomplete { reason: text() },
+            E::WrongServer {
+                expected: text(),
+                got: text(),
+            },
+            E::BytesAbsent {
+                hash: text(),
+                reason: text(),
+            },
+            E::ContractMismatch {
+                origin: text(),
+                served: None,
+                expected: 1,
+                status: None,
+                write_sent: false,
+            },
+            E::Invalid(text()),
+        ];
+        for error in &all {
+            assert_eq!(MarfaError::from(error.clone()).code(), error.code());
+        }
+        let mut named: Vec<&str> = all.iter().map(E::code).collect();
+        named.sort_unstable();
+        let mut listed: Vec<&str> = marfa_core::ERROR_CODES.to_vec();
+        listed.sort_unstable();
+        assert_eq!(named, listed, "a code of the core's has no case here");
+        let wrapped = E::RenewalFailed(Box::new(E::Forbidden {
+            code: text(),
+            message: text(),
+        }));
+        assert_eq!(MarfaError::from(wrapped.clone()).code(), wrapped.code());
+    }
 
     #[test]
     fn every_blocked_reason_crosses_as_itself_both_ways() {

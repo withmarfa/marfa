@@ -155,8 +155,7 @@ fn skipped(words: &[String]) -> bool {
         || matches!(first, Some("login" | "logout"))
         // A password, on a terminal.
         || words == ["owner", "create"]
-        // The keychain.
-        || words == ["keys", "keep"]
+        // Removes this machine's stored key and sends nothing.
         || words == ["keys", "forget"]
 }
 

@@ -70,6 +70,9 @@ type Response = ureq::http::Response<ureq::Body>;
 enum Budget {
     Whole,
     Stream,
+    /// A file is sent whole and the server may work on all of it before it
+    /// answers, as a restore does.
+    Upload,
 }
 
 pub struct ItemsQuery<'a> {
@@ -658,6 +661,8 @@ impl Http {
         let json = matches!(call.body, CallBody::Json(_));
         let budget = if call.stream {
             Budget::Stream
+        } else if matches!(call.body, CallBody::Reader(_)) {
+            Budget::Upload
         } else {
             Budget::Whole
         };
@@ -712,6 +717,8 @@ impl Http {
                         budget,
                     )
                     .map_err(network)?;
+                // The reader is spent, so the caller sends again, with a
+                // reader it opens afresh, once the credential is renewed.
                 if let Some(sent) = &sent
                     && response.status().as_u16() == 401
                     && header(&response, CONTRACT_HEADER).as_deref()
@@ -765,7 +772,9 @@ impl Http {
     }
 
     /// The agent's budgets are for an answer read whole. A streamed answer
-    /// lasts as long as the server keeps it.
+    /// lasts as long as the server keeps it, and a caller that must not wait
+    /// on a stream gone silent bounds its reads itself. An upload's answer
+    /// waits on the server's work.
     fn dispatch<S: ureq::AsSendBody>(
         &self,
         request: ureq::http::Request<S>,
@@ -776,6 +785,13 @@ impl Http {
             Budget::Stream => self.agent.run(
                 self.agent
                     .configure_request(request)
+                    .timeout_recv_body(None)
+                    .build(),
+            ),
+            Budget::Upload => self.agent.run(
+                self.agent
+                    .configure_request(request)
+                    .timeout_recv_response(None)
                     .timeout_recv_body(None)
                     .build(),
             ),
@@ -1450,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn an_upload_is_not_cut_off_while_it_sends_and_a_late_answer_still_is() {
+    fn an_upload_is_not_cut_off_while_it_sends_or_while_the_server_works_on_it() {
         let serving = |wait: Duration| {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1497,9 +1513,25 @@ mod tests {
         };
         // Sending takes 1.5 seconds against budgets of half of one.
         assert_eq!(upload(&serving(Duration::ZERO)).unwrap().status, 201);
-        // The witness: a server that takes as long to answer runs out.
+        // A server that works on the file as long again before it answers.
+        assert_eq!(
+            upload(&serving(Duration::from_millis(1_500)))
+                .unwrap()
+                .status,
+            201
+        );
+        // The witness: the same late answer to a call that sends no file runs out.
+        let late = serving(Duration::from_millis(1_500));
         assert!(matches!(
-            upload(&serving(Duration::from_millis(1_500))),
+            late.call(Call {
+                method: Method::Post,
+                segments: &["blobs"],
+                params: &[],
+                headers: &[],
+                body: CallBody::Json("{}"),
+                credential: true,
+                stream: false,
+            }),
             Err(CoreError::Network(_))
         ));
     }

@@ -856,17 +856,22 @@ fn sort(sort: Option<Sort>) -> marfa_core::Sort {
 /// `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`,
 /// `writeSent` and `hash` it has.
 fn failure(env: Env, error: marfa_core::CoreError) -> Error {
-    let built = || -> Result<Error> {
-        let (message, fields) = describe(&error);
-        let mut thrown = env.create_error(Error::new(napi::Status::GenericFailure, message))?;
-        // The core's name replaces napi's own status in `code`.
-        thrown.set_named_property("code", error.code())?;
-        for (name, value) in fields {
-            thrown.set_named_property(name, value)?;
-        }
-        Ok(Error::from(thrown.into_unknown(&env)?))
-    };
-    built().unwrap_or_else(|failed| failed)
+    match error_value(&env, &error) {
+        Ok(thrown) => Error::from(thrown),
+        Err(failed) => failed,
+    }
+}
+
+/// The JS error `failure` throws, for a callback that is handed one.
+fn error_value<'env>(env: &'env Env, error: &marfa_core::CoreError) -> Result<Unknown<'env>> {
+    let (message, fields) = describe(error);
+    let mut thrown = env.create_error(Error::new(napi::Status::GenericFailure, message))?;
+    // The core's name replaces napi's own status in `code`.
+    thrown.set_named_property("code", error.code())?;
+    for (name, value) in fields {
+        thrown.set_named_property(name, value)?;
+    }
+    thrown.into_unknown(env)
 }
 
 /// In `compute`, on a thread that cannot make a JS value: the core's error is
@@ -1052,7 +1057,7 @@ pub struct Change {
 
 enum Told {
     Change(Change),
-    End(Option<String>),
+    End(Option<marfa_core::CoreError>),
 }
 
 /// A held stream, stopped by `stop` or by being collected. The follow ends
@@ -1313,15 +1318,18 @@ impl MarfaCore {
 
     /// Holds the event stream open on a thread of its own and applies each
     /// event as it arrives: `onChange` for each change, then `onEnd` once,
-    /// with the error that ended it or null where it was stopped. Neither
-    /// callback keeps the process alive. An `onChange` that throws ends the
-    /// follow, and `onEnd` is told what it threw, as `listener_threw: …`.
-    #[napi]
+    /// with the error that ended it, the same error as any call throws, or
+    /// null where it was stopped. Neither callback keeps the process alive. An
+    /// `onChange` that throws ends the follow, and `onEnd` is given an error
+    /// whose `code` is `listener_threw` and whose message says what it threw.
+    #[napi(
+        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
+    )]
     pub fn follow(
         &self,
         env: Env,
         on_change: Function<Change, ()>,
-        on_end: Function<Option<String>, ()>,
+        on_end: Function<Option<Unknown<'static>>, ()>,
     ) -> Result<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
         let on_change = on_change.create_ref()?;
@@ -1348,13 +1356,20 @@ impl MarfaCore {
                         }
                     }
                     Told::End(error) => {
-                        let error = match threw.take() {
-                            Some(thrown) => {
-                                Some(format!("listener_threw: onChange threw {thrown}"))
+                        let env = &context.env;
+                        let error = match (threw.take(), error) {
+                            (Some(thrown), _) => {
+                                let mut made = env.create_error(Error::new(
+                                    napi::Status::GenericFailure,
+                                    format!("listener_threw: onChange threw {thrown}"),
+                                ))?;
+                                made.set_named_property("code", "listener_threw")?;
+                                Some(made.into_unknown(env)?)
                             }
-                            None => error,
+                            (None, Some(error)) => Some(error_value(env, &error)?),
+                            (None, None) => None,
                         };
-                        on_end.borrow_back(&context.env)?.call(error)?;
+                        on_end.borrow_back(env)?.call(error)?;
                     }
                 }
                 Ok(())
@@ -1378,7 +1393,7 @@ impl MarfaCore {
             // again must find the writer's role free.
             drop(core);
             tell.call(
-                Told::End(result.err().map(|error| describe(&error).0)),
+                Told::End(result.err()),
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         });
