@@ -15,7 +15,7 @@ import {
   refusal,
   wireItem,
 } from "../../device/marfa-answers.js";
-import type { Responder } from "../../device/scripted-server.js";
+import type { Answer, Responder } from "../../device/scripted-server.js";
 import type { ScriptedServer } from "../../device/scripted-server.js";
 
 /**
@@ -69,6 +69,80 @@ function accepting(
 }
 
 describe("stopping a hydration", () => {
+  it("reports canceled after a stopped head read ends or is refused, without retrying or changing the queue", async () => {
+    for (const failure of [
+      { kind: "sse", frames: [connected] },
+      refusal(503, "unavailable", "try again"),
+    ] satisfies Answer[]) {
+      harness = await startHarness(`stop-head-${failure.kind}`);
+      const { server, device } = harness;
+      expect((await device.status()).ok).toBe(true);
+      expect(
+        (
+          await device.create({
+            type: "core.note",
+            properties: { title: "saved before stop", body: "kept" },
+          })
+        ).ok,
+      ).toBe(true);
+      const queued = await device.queue();
+      let release = (): void => {};
+      const until = new Promise<void>((resolve) => (release = resolve));
+      let gated = false;
+      server.copyAnswer("GET", "/events", () =>
+        gated ? { kind: "gated", until, then: failure } : failure,
+      );
+      const heads = () =>
+        server.requests.filter((request) => request.pathname === "/events")
+          .length;
+
+      // The unstopped read meets the same failure; EOF retries three times.
+      const failed = await device.hydrate(["core.note"], "library");
+      expect(failed.ok ? "answered" : failed.refusal.code).toBe(
+        failure.kind === "sse" ? "stream_incomplete" : "server",
+      );
+      expect(heads()).toBe(failure.kind === "sse" ? 3 : 1);
+      const before = heads();
+      gated = true;
+      const hydrating = device.hold([
+        "hydrate",
+        "--types",
+        "core.note",
+        "--tier",
+        "library",
+      ]);
+      try {
+        await vi.waitFor(() => expect(heads()).toBe(before + 1), {
+          timeout: 5_000,
+          interval: 25,
+        });
+        hydrating.interrupt();
+        // Give the signal waiter its delivery window before releasing the failure.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(hydrating.exitCode(), hydrating.stderr).toBeNull();
+        release();
+        await vi.waitFor(() => expect(hydrating.exitCode()).not.toBeNull(), {
+          timeout: 5_000,
+          interval: 25,
+        });
+        await hydrating.exited();
+        expect(hydrating.exitCode(), hydrating.stderr).toBe(UNFINISHED);
+        expect(JSON.parse(hydrating.stderr).error.code).toBe("canceled");
+      } finally {
+        release();
+        await hydrating.stop();
+      }
+      expect(heads(), "a stopped head read retried its failure").toBe(
+        before + 1,
+      );
+      expect(await device.queue()).toEqual(queued);
+      const status = await device.status();
+      expect(status.ok && status.value.event_cursor).toBeNull();
+      await harness.stop();
+      harness = undefined;
+    }
+  });
+
   it("ends it between pages, leaving a copy that refuses reads and a queue that is as it was", async () => {
     harness = await startHarness("stop-hydrate");
     const { server, device } = harness;
@@ -156,6 +230,64 @@ describe("stopping a hydration", () => {
 });
 
 describe("stopping a catch-up", () => {
+  it("reports canceled after a stopped stream opening is refused, keeping its cursor and queue", async () => {
+    harness = await hydratedHarness("stop-refused-catch-up", { head: "10" });
+    const { server, device } = harness;
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "kept through stop", body: "kept" },
+        })
+      ).ok,
+    ).toBe(true);
+    const queued = await device.queue();
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    const failure = refusal(503, "unavailable", "try again");
+    let gated = false;
+    server.copyAnswer("GET", "/events", () =>
+      gated ? { kind: "gated", until, then: failure } : failure,
+    );
+    // Spend the hydration's remaining replay answer before the failed read.
+    expect((await device.catchUp()).ok).toBe(true);
+    const failed = await device.catchUp();
+    expect(failed.ok ? "answered" : failed.refusal.code).toBe("server");
+    const events = () =>
+      server.requests.filter((request) => request.pathname === "/events")
+        .length;
+    const before = events();
+    gated = true;
+    const catching = device.hold(["catch-up"]);
+    try {
+      await vi.waitFor(() => expect(events()).toBe(before + 1), {
+        timeout: 5_000,
+        interval: 25,
+      });
+      catching.interrupt();
+      // Give the signal waiter its delivery window before releasing the 503.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(catching.exitCode(), catching.stderr).toBeNull();
+      release();
+      await vi.waitFor(() => expect(catching.exitCode()).not.toBeNull(), {
+        timeout: 5_000,
+        interval: 25,
+      });
+      await catching.exited();
+      expect(catching.exitCode(), catching.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(catching.stderr).error.code).toBe("canceled");
+    } finally {
+      release();
+      await catching.stop();
+    }
+    expect(events()).toBe(before + 1);
+    const status = await device.status();
+    expect(
+      status.ok && [status.value.hydration, status.value.event_cursor],
+    ).toEqual(["complete", "10"]);
+    expect(await device.queue()).toEqual(queued);
+  });
+
   it("ends it while it waits on a stream, keeping the cursor it had", async () => {
     harness = await hydratedHarness("stop-catch-up", { head: "10" });
     const { server, device } = harness;

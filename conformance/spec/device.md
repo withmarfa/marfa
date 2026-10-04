@@ -140,7 +140,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Reason:** A failed response or an ended stream must not replace an explicit stop with a network or replay failure. A stopped head read must not start another attempt. An attributed credential ending still expires the copy before the call reports cancellation (53).
 
-**Tests:** Core `stop_tests::a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame`, `a_stopped_hydration_reports_canceled_after_a_failed_read`, `a_stopped_catch_up_reports_canceled_after_a_failed_read`, `a_stopped_drain_records_the_in_flight_answer_before_ending`, `a_stopped_read_still_expires_a_copy_when_the_credential_ended`.
+**Tests:** `device/stop.test.ts › reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`. Core `stop_tests::a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame`, `a_stopped_hydration_reports_canceled_after_a_failed_read`, `a_stopped_catch_up_reports_canceled_after_a_failed_read`, `a_stopped_drain_records_the_in_flight_answer_before_ending`, `a_stopped_read_still_expires_a_copy_when_the_credential_ended`.
 
 ## What the real server cannot be made to produce
 

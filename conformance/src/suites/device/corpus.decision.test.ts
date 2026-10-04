@@ -12,7 +12,8 @@ import { fixtureTitles } from "../../utils/fixture-titles.js";
  * a device statement with no citation is a rule nothing asserts, and it would
  * read exactly like a rule everything asserts.
  *
- * So: every device statement is cited, every citation reaches a device
+ * A rule's explicitly labelled test metadata carries its citations too.
+ * Every device statement is cited, every citation reaches a device
  * fixture, and every fixture of the device's behavior is cited.
  */
 
@@ -54,10 +55,18 @@ function orphanedContinuations(chapter: string): string[] {
 }
 
 function read(chapter: string): { found: Statement[]; orphans: string[] } {
-  const lines = readFileSync(resolve(specDir, chapter), "utf8").split("\n");
+  return readText(chapter, readFileSync(resolve(specDir, chapter), "utf8"));
+}
+
+function readText(
+  chapter: string,
+  text: string,
+): { found: Statement[]; orphans: string[] } {
+  const lines = text.split("\n");
   const found: Statement[] = [];
   const orphans: string[] = [];
   let current: Statement | undefined;
+  let numbered: Statement | undefined;
   // The statement a blank line just ended, kept only until the next
   // non-blank line says whether that line meant to continue it.
   let ended: Statement | undefined;
@@ -65,6 +74,7 @@ function read(chapter: string): { found: Statement[]; orphans: string[] } {
     const start = /^(\d+)\. (.*)$/.exec(line);
     if (start) {
       current = { chapter, number: start[1], text: start[2] };
+      numbered = current;
       ended = undefined;
       found.push(current);
       continue;
@@ -72,6 +82,15 @@ function read(chapter: string): { found: Statement[]; orphans: string[] } {
     if (/^\s*$/.test(line)) {
       ended = ended ?? current;
       current = undefined;
+      continue;
+    }
+    if (numbered && /^\*\*Tests:\*\*/.test(line)) {
+      numbered.text += ` ${line}`;
+      ended = undefined;
+      continue;
+    }
+    if (numbered && /^\*\*Reason:\*\*/.test(line)) {
+      ended = undefined;
       continue;
     }
     // A statement prettier left wrapped continues on an indented line.
@@ -83,6 +102,7 @@ function read(chapter: string): { found: Statement[]; orphans: string[] } {
       orphans.push(`${chapter} ${ended.number}: ${line.trim().slice(0, 60)}`);
     }
     ended = undefined;
+    numbered = undefined;
   }
   return { found, orphans };
 }
@@ -123,6 +143,38 @@ const allStatements = CHAPTERS.flatMap(statements);
 const fixtureFiles = readdirSync(here).filter(
   (name) => name.endsWith(".test.ts") && !name.endsWith(".decision.test.ts"),
 );
+
+describe("separate rule metadata", () => {
+  const cited = "`device/stop.test.ts › a stopped call`";
+
+  it("associates Tests after Reason with the immediately preceding rule", () => {
+    const parsed = readText(
+      "device.md",
+      `1. A rule.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
+    );
+    expect(parsed.found[0].text).toBe(`A rule. **Tests:** ${cited}`);
+    expect(parsed.orphans).toEqual([]);
+  });
+
+  it("does not associate Tests across a heading or unrelated paragraph", () => {
+    for (const boundary of ["## Another chapter", "An unrelated paragraph."]) {
+      const parsed = readText(
+        "device.md",
+        `1. A rule.\n\n${boundary}\n\n**Tests:** ${cited}\n`,
+      );
+      expect(parsed.found[0].text, boundary).toBe("A rule.");
+    }
+  });
+
+  it("still refuses an indented rule continuation after a blank line", () => {
+    const parsed = readText(
+      "device.md",
+      `1. A rule.\n\n  A second rule paragraph.\n\n**Tests:** ${cited}\n`,
+    );
+    expect(parsed.orphans).toEqual(["device.md 1: A second rule paragraph."]);
+    expect(parsed.found[0].text).toBe("A rule.");
+  });
+});
 
 describe("every device statement is asserted by something", () => {
   it("finds the device chapters and their statements", () => {

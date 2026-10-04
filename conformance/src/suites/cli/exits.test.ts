@@ -181,21 +181,22 @@ describe("the exit codes", () => {
   });
 
   it("leaves by 4 when the working copy refuses under the device rules", async () => {
-    // The same command answers from a hydrated copy in the folder scenario;
-    // here the copy has never been hydrated.
     const store = join(dir, "copy");
     const made = await c.cli.run(["--json", "device", "--db", store, "status"]);
     expect(made.code, made.stderr).toBe(0);
+    // A never-hydrated copy answers local reads, but has no cursor to catch up.
+    expect(
+      await c.cli.json(["device", "--db", store, "items", "list"]),
+    ).toEqual([]);
     const unhydrated = await c.cli.refused([
       "device",
       "--db",
       store,
-      "items",
-      "list",
+      "catch-up",
     ]);
     expect(unhydrated.code).toBe(4);
     expect(unhydrated.envelope.exit).toBe(4);
-    expect(unhydrated.envelope.error.code).toBe("hydration_incomplete");
+    expect(unhydrated.envelope.error.code).toBe("no_cursor");
   });
 
   it("leaves by 5 with no credential, and by 5 again when the server refuses the one given", async () => {
