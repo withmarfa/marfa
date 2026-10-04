@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
+mod folders;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Tier {
     Library,
@@ -923,6 +925,30 @@ impl From<marfa_core::CoreError> for MarfaError {
     }
 }
 
+impl From<marfa_core::HydrateReport> for HydrateReport {
+    fn from(report: marfa_core::HydrateReport) -> Self {
+        HydrateReport {
+            types: report.types,
+            tier: report.tier.into(),
+            edge_types: report.edge_types,
+            items: report.items,
+            edges: report.edges,
+            pages: report.pages,
+            cursor: report.cursor,
+            registered_types: report.registered_types,
+            unregistered_types: report
+                .unregistered_types
+                .into_iter()
+                .map(|held| UnregisteredType {
+                    id: held.id,
+                    code: held.code,
+                    message: held.message,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl From<Tier> for marfa_core::Tier {
     fn from(tier: Tier) -> Self {
         match tier {
@@ -1258,8 +1284,9 @@ pub trait ChangeListener: Send + Sync {
     fn ended(&self, error: Option<MarfaError>);
 }
 
-/// A held stream, stopped by `stop` or by letting it go. The follow ends
-/// within a quarter second of either, and `ended` is called once it has.
+/// A held stream or a folder's watch, stopped by `stop` or by letting it go.
+/// A follow ends within a quarter second of either; a watch within about a
+/// second, or once the pass under way is done. `ended` is called once it has.
 #[derive(uniffi::Object)]
 pub struct Subscription {
     stop: Arc<AtomicBool>,
@@ -1272,8 +1299,8 @@ impl Subscription {
     }
 }
 
-/// The follow's thread holds the core, and with it the writer's claim on
-/// the store, so a subscription nobody holds any more must end it.
+/// The thread holds the core, and with it the writer's claim on the store,
+/// so a subscription nobody holds any more must end it.
 impl Drop for Subscription {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -1353,28 +1380,10 @@ impl Core {
         edge_types: Vec<String>,
         stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
-        let report = self
+        Ok(self
             .inner
-            .hydrate_until(&types, tier.into(), &edge_types, &flag_of(stop))?;
-        Ok(HydrateReport {
-            types: report.types,
-            tier: report.tier.into(),
-            edge_types: report.edge_types,
-            items: report.items,
-            edges: report.edges,
-            pages: report.pages,
-            cursor: report.cursor,
-            registered_types: report.registered_types,
-            unregistered_types: report
-                .unregistered_types
-                .into_iter()
-                .map(|held| UnregisteredType {
-                    id: held.id,
-                    code: held.code,
-                    message: held.message,
-                })
-                .collect(),
-        })
+            .hydrate_until(&types, tier.into(), &edge_types, &flag_of(stop))?
+            .into())
     }
 
     /// Declares the types this app saves, each a JSON object with its `id`,

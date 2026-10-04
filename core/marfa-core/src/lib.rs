@@ -41,8 +41,9 @@ pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
-    Confirmed, Drained, FOLDER_TYPE, FileStatus, Folder, Paused, PullReport, Restored, ScanReport,
-    Settings, SettingsFileReport, StatusReport,
+    CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, Folder, Paused, PullReport, Restored,
+    ScanReport, Settings, SettingsFileReport, StatusReport, SyncReport, WatchError, WatchEvent,
+    WatchPass,
 };
 pub use lock::Handle;
 pub use model::{
@@ -85,7 +86,7 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
 }
 
 /// For the calls that cannot be stopped.
-static NEVER_STOPPED: AtomicBool = AtomicBool::new(false);
+pub(crate) static NEVER_STOPPED: AtomicBool = AtomicBool::new(false);
 
 struct StreamClaim<'a>(&'a AtomicBool);
 
@@ -307,18 +308,11 @@ impl Core {
         types: &[String],
         tier: Tier,
         edge_types: &[String],
+        stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(
-            self,
-            self.http()?,
-            types,
-            tier,
-            edge_types,
-            true,
-            &NEVER_STOPPED,
-        )
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)
     }
 
     /// Refused where neither the server nor the copy holds `id`. Answers
@@ -3201,7 +3195,7 @@ mod tests {
             (
                 "hydrate_every_type_or",
                 reader
-                    .hydrate_every_type_or(&[], Tier::Library, &[])
+                    .hydrate_every_type_or(&[], Tier::Library, &[], &NEVER_STOPPED)
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),

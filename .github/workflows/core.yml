@@ -111,6 +111,7 @@ jobs:
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
           cargo nextest run --locked --workspace --run-ignored only
+          (cd bindings/swift && cargo nextest run --locked --run-ignored only)
 
       # marfa-swift builds the framework itself, at the commit it pins.
       - name: Build the Swift FFI crate

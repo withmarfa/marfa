@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #   seed.sh note  <title> <body> [tag,tag]   prints the new item's id
 #   seed.sh file  <title> <description>      prints the new item's id
+#   seed.sh folder <title> <settings JSON>   prints the new folder's id
 #   seed.sh trash <id>                       soft-deletes
 #   seed.sh purge <id>                       removes for good
 #
@@ -74,6 +75,9 @@ if command == "note":
 elif command == "file":
     title, description = args
     print(file_item(title, description))
+elif command == "folder":
+    title, settings = args
+    print(call("POST", "/folders", {**json.loads(settings), "title": title})["item"]["id"])
 elif command == "trash":
     call("DELETE", f"/items/{args[0]}")
 elif command == "purge":
