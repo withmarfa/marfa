@@ -62,4 +62,6 @@ pnpm --ignore-workspace run check
 pnpm --ignore-workspace run test
 ```
 
+Every surface names a core error by `CoreError::code`: the `code` in the binary's `--json` envelope, and `code` on an error the Node module throws or rejects with. The Node error is an `Error` whose message starts `code: `, with the properties the Swift error carries as fields: `serverCode`, `status`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it. `onEnd` of a `follow` still receives the message alone.
+
 `scripts/binding-proof.sh` drives the built Node binding through an offline write and its verdict against a real server.
