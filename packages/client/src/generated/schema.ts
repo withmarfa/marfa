@@ -2892,23 +2892,6 @@ export interface components {
             series_id?: string;
             replaces?: string;
         };
-        /** @description An error response. */
-        MissingRequiredFieldOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "missing_required_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         TagCountPage: {
             data: components["schemas"]["TagCount"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
@@ -3112,6 +3095,23 @@ export interface components {
             summary: string | null;
             error: string | null;
             reported_at: string;
+        };
+        /** @description An error response. */
+        MissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         ConnectorPage: {
             data: components["schemas"]["Connector"][];
@@ -10028,7 +10028,7 @@ export interface operations {
                     "application/json": components["schemas"]["OccurrencePage"];
                 };
             };
-            /** @description `missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
+            /** @description `missing_required_field` when `from` or `to` is absent; `unknown_type` when `type` names nothing registered; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10040,7 +10040,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
