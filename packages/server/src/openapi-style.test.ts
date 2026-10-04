@@ -75,27 +75,27 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
   for (const { key, operation } of operations()) {
     const summary = text(operation.summary) ?? "";
     if (
-      summary.length > 50 ||
+      summary.length > 32 ||
       summary.endsWith(".") ||
       !/^[A-Z]/.test(summary)
     ) {
       found.summaryForm.push(key);
     }
-    if ((text(operation.description) ?? "").length > 400) {
+    if ((text(operation.description) ?? "").length > 250) {
       found.descriptionLength.push(key);
     }
     for (const parameter of (operation.parameters ?? []) as Json[]) {
       const description = text(parameter.description);
       if (description === undefined) {
         found.parameterUndescribed.push(`${key} ${String(parameter.name)}`);
-      } else if (description.length > 350) {
+      } else if (description.length > 250) {
         found.parameterLength.push(`${key} ${String(parameter.name)}`);
       }
     }
     for (const [status, response] of Object.entries(
       (operation.responses ?? {}) as Record<string, Json>,
     )) {
-      if ((text(response.description) ?? "").length > 600) {
+      if ((text(response.description) ?? "").length > 400) {
         found.responseLength.push(`${key} ${status}`);
       }
     }
@@ -109,7 +109,7 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
   for (const { name, field } of namedFields()) {
     const description = text(field.description);
     if (description === undefined) found.fieldUndescribed.push(name);
-    else if (description.length > 350) found.fieldLength.push(name);
+    else if (description.length > 250) found.fieldLength.push(name);
   }
   return found;
 }
@@ -119,14 +119,14 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  * of the document are rewritten, and a rule at zero stays there.
  */
 const CEILINGS = {
-  summaryForm: 3,
-  descriptionLength: 55,
+  summaryForm: 0,
+  descriptionLength: 76,
   parameterUndescribed: 3,
-  parameterLength: 10,
+  parameterLength: 26,
   schemaUndescribed: 97,
   fieldUndescribed: 362,
-  fieldLength: 8,
-  responseLength: 5,
+  fieldLength: 10,
+  responseLength: 12,
 };
 
 describe("the API description follows API-STYLE.md", () => {
@@ -207,10 +207,9 @@ describe("the API description follows API-STYLE.md", () => {
     }
   });
 
-  it("uses none of the glossary's banned words", () => {
-    const banned =
-      /\b(integrations?|substrates?|hosted mode|cancell(ed|ing))\b/i;
-    const prose: string[] = [];
+  /** Every summary and description in the document, general sections included. */
+  function prose(): string[] {
+    const out: string[] = [];
     const visit = (value: unknown, key?: string) => {
       if (Array.isArray(value)) {
         for (const entry of value) visit(entry);
@@ -220,11 +219,21 @@ describe("the API description follows API-STYLE.md", () => {
         typeof value === "string" &&
         (key === "description" || key === "summary")
       ) {
-        prose.push(value);
+        out.push(value);
       }
     };
     visit(document);
-    expect(prose.length).toBeGreaterThan(0);
-    expect(prose.filter((value) => banned.test(value))).toEqual([]);
+    return out;
+  }
+
+  it("uses none of the glossary's banned words", () => {
+    const banned =
+      /\b(integrations?|substrates?|hosted mode|cancell(ed|ing))\b/i;
+    expect(prose().length).toBeGreaterThan(0);
+    expect(prose().filter((value) => banned.test(value))).toEqual([]);
+  });
+
+  it("uses no em dashes", () => {
+    expect(prose().filter((value) => value.includes("\u2014"))).toEqual([]);
   });
 });

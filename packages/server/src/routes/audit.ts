@@ -36,9 +36,9 @@ const listAuditRoute = createRoute({
   operationId: "listAuditLog",
   method: "get",
   path: "/",
-  tags: ["Audit"],
+  tags: ["Instance"],
   summary: "List audit log entries",
-  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("audit.read"),
   request: {

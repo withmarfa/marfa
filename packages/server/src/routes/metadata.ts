@@ -33,7 +33,7 @@ const listTagsRoute = createRoute({
   method: "get",
   path: "/tags",
   tags: ["Metadata"],
-  summary: "List distinct tags in use",
+  summary: "List tags",
   description:
     "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.",
   security: [{ bearerAuth: [] }],

@@ -204,7 +204,7 @@ const UpdatedItemSchema = ItemWithMetadataSchema.extend({
     .describe(
       "What the server did, present only when this write resolved a " +
         "conflict. `conflicted_copy_id` names the sibling carrying the " +
-        "losing values — the only place it is reported, since no route " +
+        "losing values, the only place it is reported, since no route " +
         "says what a write created.",
     ),
 });
@@ -260,7 +260,7 @@ const createItemRoute = createRoute({
               .min(0)
               .optional()
               .describe(
-                "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
+                "Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten: a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written.",
               ),
             tier: TierEnum.optional(),
             capture_latitude: z.number().optional(),
@@ -286,7 +286,7 @@ const createItemRoute = createRoute({
         "`source` (the credential's own, or one its key claims that the " +
         "body names) and request `source_id` " +
         "resolve a live item, and it is updated in " +
-        "place — an idempotent re-sync of the upstream entry. " +
+        "place, an idempotent re-sync of the upstream entry. " +
         "**Acknowledged re-sync:** the same natural key resolves an item " +
         "the user has trashed, so the response carries `acknowledged: true` " +
         "and nothing is written; the deletion stands rather than the " +
@@ -378,7 +378,7 @@ const createItemRoute = createRoute({
         "`POST /edges` answers the same code for an id naming a different " +
         "triple. `type_mismatch`: the request resolved an existing item by " +
         "the `(source, source_id)` natural key and declared a type that " +
-        "row is not — the id was never in question, the declaration was. " +
+        "row is not: the id was never in question, the declaration was. " +
         "Re-typing an item is a deliberate " +
         "operation, not something a re-sync does in passing. `conflict`: " +
         "the `id` is held by an item this caller cannot read, so the " +
@@ -427,8 +427,8 @@ const listingNarrowingKeys = {
     .optional()
     .describe(
       "Filter expression in the query grammar. A term naming an edge " +
-        "type — `edge[<type>]` or `backref[<type>]`, in this " +
-        "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
+        "type (`edge[<type>]` or `backref[<type>]`, in this " +
+        "parameter or as the `edge[<type>]=<id>` shorthand) asks " +
         "about a relationship, so it is held to the edge read " +
         "permission: one naming a type the credential may not read is " +
         "refused `403 edge_permission_denied`. A `backref` term " +
@@ -445,14 +445,14 @@ const listingBoundKeys = {
     .min(1)
     .optional()
     .describe(
-      "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+      "Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
     ),
   occurred_before: z
     .string()
     .min(1)
     .optional()
     .describe(
-      "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+      "Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive).",
     ),
   updated_after: z
     .string()
@@ -464,7 +464,7 @@ const listingBoundKeys = {
     .min(1)
     .optional()
     .describe(
-      "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+      "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
     ),
   updated_before: z
     .string()
@@ -560,7 +560,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default; use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -574,7 +574,7 @@ const listItemsRoute = createRoute({
         )
         .optional()
         .describe(
-          "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
+          "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here; their order is semantic, not lexical.",
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
       ...listingBoundKeys,
@@ -899,7 +899,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict: a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -909,7 +909,7 @@ const deleteItemRoute = createRoute({
   method: "delete",
   path: "/{id}",
   tags: ["Items"],
-  summary: "Soft delete an item",
+  summary: "Trash an item",
   description:
     "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
@@ -1048,7 +1048,7 @@ const putMetadataRoute = createRoute({
   method: "put",
   path: "/{id}/metadata",
   tags: ["Metadata"],
-  summary: "Replace item metadata tags",
+  summary: "Replace an item's tags",
   description:
     "Replaces the item's tag set with the supplied array, where an empty array clears all tags. Only tags are touched; tier and state are unaffected and change through their own endpoints.",
   security: [{ bearerAuth: [] }],
@@ -1111,7 +1111,7 @@ const patchMetadataRoute = createRoute({
   method: "patch",
   path: "/{id}/metadata",
   tags: ["Metadata"],
-  summary: "Merge item metadata",
+  summary: "Update an item's tags",
   description:
     "Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.",
   security: [{ bearerAuth: [] }],
@@ -1176,7 +1176,7 @@ const addTagsRoute = createRoute({
   tags: ["Items"],
   summary: "Add tags to an item",
   description:
-    "Adds one or more tags to the item. Idempotent — tags already present are not duplicated.",
+    "Adds one or more tags to the item. Idempotent: tags already present are not duplicated.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1241,7 +1241,7 @@ const removeTagRoute = createRoute({
   tags: ["Items"],
   summary: "Remove a tag from an item",
   description:
-    "Removes one tag from the item. Idempotent — removing a tag the item doesn't carry returns 200 with the unchanged metadata.",
+    "Removes one tag from the item. Idempotent: removing a tag the item doesn't carry returns 200 with the unchanged metadata.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -1292,8 +1292,8 @@ const purgeItemRoute = createRoute({
   method: "delete",
   path: "/{id}/purge",
   tags: ["Items"],
-  summary: "Permanently delete an item",
-  description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
+  summary: "Purge an item",
+  description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references. It can't be undone. Requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("items.purge"),
   request: {
@@ -1327,7 +1327,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
+        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection`; revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
     },
     401: {
       content: {

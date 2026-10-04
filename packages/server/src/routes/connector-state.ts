@@ -168,7 +168,7 @@ const holdRoute = createRoute({
   method: "post",
   path: "/{id}/hold",
   tags: ["Connectors"],
-  summary: "Take or renew the hold on a registration",
+  summary: "Take or renew a hold",
   description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers \`409 connector_held\` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -212,7 +212,7 @@ const releaseHoldRoute = createRoute({
   method: "delete",
   path: "/{id}/hold",
   tags: ["Connectors"],
-  summary: "Release the hold on a registration",
+  summary: "Release a hold",
   description: `Releases the hold if \`process\` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -234,7 +234,7 @@ const getStateRoute = createRoute({
   method: "get",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Read what a connector keeps on the instance",
+  summary: "Get connector state",
   description: `The state document of the registration's source, which a later key with the same source reads too. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
@@ -252,7 +252,7 @@ const putStateRoute = createRoute({
   method: "put",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Replace what a connector keeps on the instance",
+  summary: "Replace connector state",
   description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -279,7 +279,7 @@ const clearStateRoute = createRoute({
   method: "delete",
   path: "/{id}/state",
   tags: ["Connectors"],
-  summary: "Clear what a connector keeps on the instance",
+  summary: "Delete connector state",
   description:
     "Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
@@ -298,7 +298,7 @@ const writeAgreementsRoute = createRoute({
   method: "post",
   path: "/{id}/agreements",
   tags: ["Connectors"],
-  summary: "Write a connector's agreements about rows",
+  summary: "Write agreements",
   description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. ${UNDECLARED_REFUSED} A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
@@ -333,7 +333,7 @@ const findAgreementsRoute = createRoute({
   method: "post",
   path: "/{id}/agreements/find",
   tags: ["Connectors"],
-  summary: "Read a connector's agreements about named rows",
+  summary: "Look up agreements",
   description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
