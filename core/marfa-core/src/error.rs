@@ -106,6 +106,60 @@ pub enum CoreError {
     Invalid(String),
 }
 
+/// One list drives the match and the set of codes, so a variant added to
+/// `CoreError` fails to compile until it has a code, and the code then joins
+/// `CODES`, which the command line's help is held to list.
+macro_rules! codes {
+    ($($pattern:pat => $code:literal,)*) => {
+        /// Every code `CoreError::code` answers, each once.
+        pub const CODES: &[&str] = &[$($code),*];
+
+        impl CoreError {
+            /// What a surface names the error by: the same word in the command
+            /// line's envelope, in a Node error and anywhere else one is named.
+            /// A failed renewal answers the code of its cause, as it carries
+            /// the cause's refusal.
+            pub fn code(&self) -> &'static str {
+                match self {
+                    CoreError::RenewalFailed(cause) => cause.code(),
+                    $($pattern => $code,)*
+                }
+            }
+        }
+    };
+}
+
+codes! {
+    CoreError::NotFound { .. } => "not_found",
+    CoreError::Unauthorized { .. } => "unauthorized",
+    CoreError::Forbidden { .. } => "forbidden",
+    CoreError::Validation { .. } => "validation",
+    CoreError::UnknownType { .. } => "unknown_type",
+    CoreError::RateLimited { .. } => "rate_limited",
+    CoreError::Server { .. } => "server",
+    CoreError::Io(_) => "io",
+    CoreError::Network(_) => "network",
+    CoreError::Unnamed { .. } => "unnamed_answer",
+    CoreError::Decoding(_) => "decoding",
+    CoreError::Store(_) => "store",
+    CoreError::StorageFull(_) => "storage_full",
+    CoreError::SignedOut { .. } => "signed_out",
+    CoreError::NoKeychain(_) => "no_keychain",
+    CoreError::Redirected { .. } => "redirect",
+    CoreError::NoServer => "no_server",
+    CoreError::NoCursor => "no_cursor",
+    CoreError::HydrationIncomplete => "hydration_incomplete",
+    CoreError::NoCatalog => "no_catalog",
+    CoreError::ReadingHandle => "reading_handle",
+    CoreError::WrongSchema { .. } => "wrong_schema",
+    CoreError::CopyExpired { .. } => "copy_expired",
+    CoreError::StreamIncomplete { .. } => "stream_incomplete",
+    CoreError::WrongServer { .. } => "wrong_server",
+    CoreError::BytesAbsent { .. } => "bytes_absent",
+    CoreError::ContractMismatch { .. } => "contract_mismatch",
+    CoreError::Invalid(_) => "invalid",
+}
+
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
     if message.to_lowercase().starts_with(&format!("{kind}:")) {
         return message.into();
@@ -225,6 +279,30 @@ impl From<url::ParseError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_error_has_a_code_and_every_code_is_listed_once() {
+        let renewal = CoreError::RenewalFailed(Box::new(CoreError::NoServer));
+        assert_eq!(renewal.code(), "no_server");
+        let mut seen = std::collections::HashSet::new();
+        for code in CODES {
+            assert!(seen.insert(*code), "{code} is listed twice");
+            assert!(
+                code.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{code} is not snake case"
+            );
+        }
+        // The witness: a code a variant answers is in the list.
+        assert!(
+            CODES.contains(
+                &CoreError::BytesAbsent {
+                    hash: String::new(),
+                    reason: String::new()
+                }
+                .code()
+            )
+        );
+    }
 
     #[test]
     fn server_refusal_display_does_not_repeat_its_classification() {
