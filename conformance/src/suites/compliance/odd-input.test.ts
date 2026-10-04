@@ -73,6 +73,11 @@ describe("odd input is refused, never answered 500", () => {
         `{"version":1,"properties":{"deep":${nested(1000)}}}`,
       ),
       await send("PUT", `/items/${id}/extensions/odd`, nested(1200)),
+      await send(
+        "POST",
+        "/items/bulk",
+        `{"items":[{"type":"core.note","source":"${ctx.source}","properties":{"body":"x","deep":${nested(1000)}}}]}`,
+      ),
     ];
     for (const r of refused) {
       expect(r.status).toBe(400);
@@ -146,5 +151,31 @@ describe("odd input is refused, never answered 500", () => {
     );
     expect(patch.status).toBe(400);
     expect(patch.code).toBe("validation_error");
+  });
+});
+
+describe("the bulk-action door", () => {
+  it("refuses a tag or property name the item doors refuse", async () => {
+    const act = (body: object) =>
+      send(
+        "POST",
+        "/items/bulk-actions",
+        JSON.stringify({
+          filter: { type: "core.note" },
+          dry_run: true,
+          ...body,
+        }),
+      );
+    expect((await act({ action: "update_tags", add: ["fine"] })).status).toBe(
+      200,
+    );
+    for (const add of [[""], ["   "], ["a".repeat(129)]]) {
+      const r = await act({ action: "update_tags", add });
+      expect(r.status).toBe(400);
+      expect(r.code).toBe("validation_error");
+    }
+    const named = await act({ action: "update_properties", patch: { "": 1 } });
+    expect(named.status).toBe(400);
+    expect(named.code).toBe("validation_error");
   });
 });

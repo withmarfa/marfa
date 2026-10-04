@@ -177,3 +177,29 @@ describe("property names", () => {
     }
   });
 });
+
+describe("the bulk-action door", () => {
+  it("refuses a tag or property name the item doors refuse, and takes the ones they take", async () => {
+    await newItem();
+    const act = (body: Record<string, unknown>) =>
+      request(ctx.app, "POST", "/items/bulk-actions", {
+        key: ctx.workingKey,
+        body: { filter: { type: "core.note" }, dry_run: true, ...body },
+      });
+    expect((await act({ action: "update_tags", add: ["fine"] })).status).toBe(
+      200,
+    );
+    expect(
+      (await act({ action: "update_properties", patch: { body: "y" } })).status,
+    ).toBe(200);
+
+    for (const add of [[""], ["   "], ["a".repeat(MAX_TAG_LENGTH + 1)]]) {
+      const res = await act({ action: "update_tags", add });
+      expect(res.status).toBe(400);
+      expect(await code(res)).toBe("validation_error");
+    }
+    const named = await act({ action: "update_properties", patch: { "": 1 } });
+    expect(named.status).toBe(400);
+    expect(await code(named)).toBe("validation_error");
+  });
+});
