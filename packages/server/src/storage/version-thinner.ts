@@ -18,6 +18,11 @@ import { log } from "../middleware/logger.js";
 const PAGE_SIZE = 100;
 const DELETE_CHUNK_SIZE = 200;
 
+type Decision =
+  | { kind: "keep" }
+  | { kind: "unresolvable"; type: string }
+  | { kind: "delete"; ids: string[] };
+
 interface Step {
   deleted: number;
   versionIds: string[];
@@ -73,13 +78,29 @@ export class VersionThinner {
     return { pruned, items };
   }
 
-  /** Each transaction reads the item's type and snapshots again, so a type
-   *  replaced or an item retyped while the sweep runs is judged as it now
-   *  stands, and removes one bounded chunk. */
+  /** A read outside any transaction decides whether a write is worth opening.
+   *  Each transaction then reads the item's type and snapshots again, so a
+   *  type replaced or an item retyped while the sweep runs is judged as it
+   *  now stands, and removes one bounded chunk. An item wrongly passed over
+   *  by the first read keeps its history until the next run. */
   private async thinItem(
     itemId: string,
     unresolvable: Set<string>,
   ): Promise<number> {
+    const note = (type: string): void => {
+      if (unresolvable.has(type)) return;
+      unresolvable.add(type);
+      log(
+        "warn",
+        `Version thinning skipped the items of type "${type}": its inheritance chain cannot be resolved`,
+        { type_id: type },
+      );
+    };
+
+    const first = await this.decide(itemId);
+    if (first.kind === "unresolvable") note(first.type);
+    if (first.kind !== "delete") return 0;
+
     let deleted = 0;
     for (;;) {
       const step = await runAuditedTransaction(
@@ -100,14 +121,7 @@ export class VersionThinner {
             : null,
       );
       if (step.unresolvable !== undefined) {
-        if (!unresolvable.has(step.unresolvable)) {
-          unresolvable.add(step.unresolvable);
-          log(
-            "warn",
-            `Version thinning skipped the items of type "${step.unresolvable}": its inheritance chain cannot be resolved`,
-            { type_id: step.unresolvable },
-          );
-        }
+        note(step.unresolvable);
         return deleted;
       }
       deleted += step.deleted;
@@ -116,10 +130,9 @@ export class VersionThinner {
     }
   }
 
-  private async thinStep(itemId: string): Promise<Step> {
-    const none: Step = { deleted: 0, versionIds: [], done: true };
+  private async decide(itemId: string): Promise<Decision> {
     const item = await this.storage.items.getIncludingTrashed(itemId);
-    if (!item) return none;
+    if (!item) return { kind: "keep" };
 
     let typePolicy: VersionPolicy | undefined;
     try {
@@ -131,22 +144,31 @@ export class VersionThinner {
         error instanceof MarfaError &&
         error.code === ErrorCode.TYPE_CHAIN_UNRESOLVABLE
       ) {
-        return { ...none, unresolvable: item.type };
+        return { kind: "unresolvable", type: item.type };
       }
       throw error;
     }
     const policy = resolvePolicy(typePolicy, this.globalDefaults);
 
     const versions = await this.storage.versions.all(itemId);
-    const idsToDelete = computeVersionsToDelete(versions, policy);
-    const chunk = idsToDelete.slice(0, DELETE_CHUNK_SIZE);
-    if (chunk.length === 0) return none;
+    const ids = computeVersionsToDelete(versions, policy);
+    return ids.length > 0 ? { kind: "delete", ids } : { kind: "keep" };
+  }
 
+  private async thinStep(itemId: string): Promise<Step> {
+    const none: Step = { deleted: 0, versionIds: [], done: true };
+    const decision = await this.decide(itemId);
+    if (decision.kind === "unresolvable") {
+      return { ...none, unresolvable: decision.type };
+    }
+    if (decision.kind !== "delete") return none;
+
+    const chunk = decision.ids.slice(0, DELETE_CHUNK_SIZE);
     const deleted = await this.storage.versions.deleteByIds(chunk);
     return {
       deleted,
       versionIds: chunk,
-      done: deleted === 0 || idsToDelete.length <= chunk.length,
+      done: deleted === 0 || decision.ids.length <= chunk.length,
     };
   }
 }

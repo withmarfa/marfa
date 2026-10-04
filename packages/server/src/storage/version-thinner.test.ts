@@ -39,12 +39,6 @@ const SHORT: ResolvedPolicy = {
   weeklySnapshotDays: 3,
   maxVersions: 100,
 };
-const LONG: ResolvedPolicy = {
-  recentDays: 365,
-  dailySnapshotDays: 365,
-  weeklySnapshotDays: 365,
-  maxVersions: 100,
-};
 const SHORT_POLICY = {
   recent_days: 1,
   daily_snapshot_days: 2,
@@ -261,7 +255,7 @@ describe("thinning honors a type changed after the run began", () => {
     expect(await versionNumbers(id)).toEqual([1, 2, 3]);
   });
 
-  it("removes what a policy shortened in the meantime no longer retains", async () => {
+  it("removes on the next run what a policy shortened since no longer retains", async () => {
     const parent = uniqueType("cut_parent");
     const child = uniqueType("cut_child");
     await register(parent, { version_policy: YEAR });
@@ -269,15 +263,12 @@ describe("thinning honors a type changed after the run began", () => {
     const id = await itemWithHistory(child);
     await ageVersion(id, 1, 10);
 
-    const race = raceTheNextTransaction(() =>
-      replacePolicy(parent, SHORT_POLICY),
-    );
-    try {
-      await new VersionThinner(ctx.storage, LONG).runOnce();
-    } finally {
-      race.restore();
-    }
-    expect(race.fired()).toBe(true);
+    const thinner = new VersionThinner(ctx.storage, SHORT);
+    await thinner.runOnce();
+    expect(await versionNumbers(id)).toEqual([1, 2, 3]);
+
+    await replacePolicy(parent, SHORT_POLICY);
+    await thinner.runOnce();
     expect(await versionNumbers(id)).toEqual([2, 3]);
   });
 });

@@ -205,7 +205,7 @@ export class SqliteVersionStore implements VersionStore {
       .from(versions)
       .innerJoin(items, eq(versions.item_id, items.id))
       .where(afterItemId ? gt(versions.item_id, afterItemId) : undefined)
-      .groupBy(versions.item_id, items.type)
+      .groupBy(versions.item_id)
       .having(sql`count(*) > ${threshold}`)
       .orderBy(asc(versions.item_id))
       .limit(limit)
