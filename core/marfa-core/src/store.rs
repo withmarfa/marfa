@@ -27,6 +27,9 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 /// Absent until a catalog is first held, which is how a copy that has never
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";
+/// Set while the catalog the copy holds is its own, the types Marfa ships and
+/// the ones the app declared, and cleared by the first catalog a server gives.
+pub const META_LOCAL_CATALOG: &str = "local_catalog";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
@@ -342,6 +345,24 @@ pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError
 
 pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {
     if hydrated(conn)? {
+        Ok(())
+    } else {
+        Err(CoreError::HydrationIncomplete)
+    }
+}
+
+/// A copy that has never reached a server: no hydration has declared a slice.
+/// It keeps what its app saves, which a hydration later sends.
+pub fn never_synced(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(hydration_complete(conn)? && !holds_slice(conn)?)
+}
+
+/// For what a copy can do on its own: read what it holds and queue writes. A
+/// copy part way through a hydration, or one whose cursor has gone, is refused,
+/// since what it holds is a piece of a copy or a copy that cannot be kept
+/// current.
+pub fn refuse_unless_usable(conn: &Connection) -> Result<(), CoreError> {
+    if hydrated(conn)? || never_synced(conn)? {
         Ok(())
     } else {
         Err(CoreError::HydrationIncomplete)
@@ -1252,14 +1273,65 @@ pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool,
     catalog_scope(conn, |conn| {
         let types = replace_types(conn, &catalog.types)?;
         let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
+        // A server's catalog replaces the copy's own, which is a change
+        // whether or not the rows differ.
+        let local = meta_get(conn, META_LOCAL_CATALOG)?.is_some();
+        meta_delete(conn, META_LOCAL_CATALOG)?;
         let held = catalog_version(conn)?;
-        if !types && !edge_types && held.is_some() {
+        if !types && !edge_types && !local && held.is_some() {
             return Ok(false);
         }
         let next = held.map_or(1, |version| version + 1);
         meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
         Ok(true)
     })
+}
+
+/// Whether the copy holds a catalog to read: a server's, or its own.
+pub fn catalog_held(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(catalog_version(conn)?.is_some() || meta_get(conn, META_LOCAL_CATALOG)?.is_some())
+}
+
+/// The catalog of a copy that has never held a server's: the types and edge
+/// types Marfa ships, and the types the app declared. The same tables a
+/// server's catalog goes in, so every read of a type reads this the same way
+/// until a hydration replaces it. Left alone where a server's is held.
+pub fn hold_local_catalog(conn: &Connection) -> Result<(), CoreError> {
+    if catalog_version(conn)?.is_some() {
+        return Ok(());
+    }
+    let shipped = crate::builtin::catalog()?;
+    let mut types = shipped.types;
+    for (id, json) in declared_type_rows(conn)? {
+        types.push(serde_json::from_str(&json).map_err(|error| {
+            CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
+        })?);
+    }
+    catalog_scope(conn, |conn| {
+        replace_types(conn, &types)?;
+        replace_edge_types(conn, &shipped.edge_types)?;
+        meta_set(conn, META_LOCAL_CATALOG, "1")
+    })
+}
+
+/// The types the app declared, by id, each as the JSON the server lists a
+/// type as.
+pub fn declared_type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    rows_of(conn, "SELECT id, json FROM declared_types ORDER BY id")
+}
+
+pub fn declare_type(conn: &Connection, id: &str, json: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO declared_types (id, json) VALUES (?1, ?2)
+         ON CONFLICT (id) DO UPDATE SET json = excluded.json",
+        params![id, json],
+    )?;
+    Ok(())
+}
+
+pub fn clear_declared_types(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM declared_types", [])?;
+    Ok(())
 }
 
 /// Both reads and replacements nest inside a caller's transaction. The
@@ -4412,7 +4484,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "ff45312e7c7cfee3",
+            "23d6a905c0141c7b",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

@@ -8,4 +8,4 @@ packages/client/src/generated/** linguist-generated=true
 packages/types/generated/** linguist-generated=true
 packages/server/src/storage/sqlite/schema.sql linguist-generated=true
 core/marfa-core/src/contract.rs linguist-generated=true
-
+core/marfa-core/src/builtin_catalog.json linguist-generated=true

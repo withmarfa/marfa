@@ -287,18 +287,127 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
             "the link door answered a link that is not an absolute URL ({error}): {link}"
         ))
     })?;
-    let bytes = open(link).map_err(absent)?;
-    cache.keep(hash, bytes)
+    pull(cache, hash, link, CACHE_MOST, LINK_IDLE)
+}
+
+/// How long a link may send nothing before the fetch is given up on. A blob
+/// can be large and a link slow, so silence has a shorter bound than the
+/// whole body. A stalled link must not hold the caller for the body's limit.
+const LINK_IDLE: Duration = Duration::from_secs(60);
+
+/// A bound on the whole body, far past any fetch that is going on. The reader
+/// that watches for silence leaves its thread behind when it gives up, and a
+/// connection that stays silent for good would hold that thread for good; this
+/// ends it.
+const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// What a link sends is bounded by what the cache holds: a body past it would
+/// be trimmed the moment it was kept.
+fn pull(cache: &Cache, hash: &str, link: &str, most: u64, idle: Duration) -> Result<PathBuf> {
+    let bytes = open(link).map_err(|reason| CoreError::BytesAbsent {
+        hash: hash.to_string(),
+        reason,
+    })?;
+    cache.keep(
+        hash,
+        Bounded {
+            inner: Idle::watching(bytes, idle),
+            left: most,
+        },
+    )
+}
+
+/// A reader whose reads fail once the source has sent nothing for `idle`. The
+/// HTTP client bounds a phase of a call, not a silence in one. The source is
+/// read on a thread of its own, which is left behind when a read gives up and
+/// ends when the source does, which `LINK_BODY_MOST` makes certain of.
+struct Idle {
+    chunks: std::sync::mpsc::Receiver<io::Result<Vec<u8>>>,
+    idle: Duration,
+    held: Vec<u8>,
+    at: usize,
+}
+
+impl Idle {
+    fn watching(mut source: impl Read + Send + 'static, idle: Duration) -> Idle {
+        let (sender, chunks) = std::sync::mpsc::sync_channel(4);
+        std::thread::spawn(move || {
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                let chunk = match source.read(&mut buffer) {
+                    Ok(read) => Ok(buffer[..read].to_vec()),
+                    Err(error) => Err(error),
+                };
+                let last = !matches!(&chunk, Ok(bytes) if !bytes.is_empty());
+                if sender.send(chunk).is_err() || last {
+                    return;
+                }
+            }
+        });
+        Idle {
+            chunks,
+            idle,
+            held: Vec::new(),
+            at: 0,
+        }
+    }
+}
+
+impl Read for Idle {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        if self.at == self.held.len() {
+            match self.chunks.recv_timeout(self.idle) {
+                Ok(chunk) => {
+                    self.held = chunk?;
+                    self.at = 0;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "the link went silent",
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+            }
+        }
+        let n = into.len().min(self.held.len() - self.at);
+        into[..n].copy_from_slice(&self.held[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+struct Bounded<R> {
+    inner: R,
+    left: u64,
+}
+
+impl<R: Read> Read for Bounded<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        // One more than is left, so a body of exactly the limit ends cleanly
+        // and a longer one is seen to be longer.
+        let allowed = (self.left + 1).min(into.len() as u64) as usize;
+        let read = self.inner.read(&mut into[..allowed])?;
+        if read as u64 > self.left {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the link sent more than the cache holds",
+            ));
+        }
+        self.left -= read as u64;
+        Ok(read)
+    }
 }
 
 /// Not through `Http`: it rebuilds a URL from segments and re-encodes them,
 /// which breaks an object store's signature, and it carries the bearer,
 /// which an object store's host must never see.
-fn open(link: &str) -> std::result::Result<impl Read, String> {
+fn open(link: &str) -> std::result::Result<impl Read + Send + 'static, String> {
     let agent: Agent = Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(LINK_BODY_MOST))
         .build()
         .into();
     let response = agent
@@ -365,6 +474,68 @@ pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A link on a port of its own that sends `body` and then, if asked,
+    /// goes quiet with the connection open.
+    fn linking(body: Vec<u8>, then_silent: bool) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bytes", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = Read::read(&mut socket, &mut request);
+                let length = if then_silent {
+                    body.len() + 1000
+                } else {
+                    body.len()
+                };
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(&body);
+                if then_silent {
+                    std::thread::sleep(Duration::from_secs(20));
+                }
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_link_that_sends_more_than_the_cache_holds_is_cut_off() {
+        let bytes = vec![7u8; 1000];
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let within = Duration::from_secs(10);
+        // The witness: a limit of exactly the body keeps it.
+        let url = linking(bytes.clone(), false);
+        assert!(pull(&cache, &hash, &url, 1000, within).is_ok());
+        let url = linking(bytes, false);
+        let refused = pull(&cache, &hash, &url, 999, within).unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::BytesAbsent { reason, .. } if reason.contains("more than")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_link_that_goes_quiet_is_given_up_on() {
+        let bytes = vec![7u8; 100];
+        let hash = name_of(&bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let url = linking(bytes, true);
+        let started = std::time::Instant::now();
+        let refused =
+            pull(&cache, &hash, &url, CACHE_MOST, Duration::from_millis(500)).unwrap_err();
+        assert!(
+            matches!(refused, CoreError::BytesAbsent { .. }),
+            "{refused:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     #[test]
     fn a_link_refused_naming_no_contract_is_the_network() {

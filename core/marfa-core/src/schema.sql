@@ -102,6 +102,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
   tokenize = 'porter unicode61'
 );
 
+-- The types an app declares for itself, as the server lists a type. What a
+-- copy that has never reached a server checks its writes against beside the
+-- types Marfa ships, and what a hydration registers on the instance.
+-- Apart from `types`, which a hydration replaces whole.
+CREATE TABLE IF NOT EXISTS declared_types (
+  id TEXT PRIMARY KEY,
+  json TEXT NOT NULL
+) WITHOUT ROWID;
+
 -- Not a child of `items`: a hydration clears the copy and the queue survives
 -- it, so a foreign key here would delete rows a caller was told were queued.
 CREATE TABLE IF NOT EXISTS queue (

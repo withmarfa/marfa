@@ -1,4 +1,5 @@
 mod blob;
+mod builtin;
 mod catalog;
 mod catch_up;
 pub mod contract;
@@ -18,6 +19,8 @@ mod read_view;
 mod scripted;
 mod search;
 mod sse;
+#[cfg(test)]
+mod stop_tests;
 mod store;
 mod time;
 mod validation;
@@ -46,7 +49,8 @@ pub use model::{
     Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,
     Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
-    SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, Verdict, WriteKind,
+    SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType, Verdict,
+    WriteKind,
 };
 pub use store::CEILING;
 
@@ -79,6 +83,9 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
     let _ = path;
     Ok(())
 }
+
+/// For the calls that cannot be stopped.
+static NEVER_STOPPED: AtomicBool = AtomicBool::new(false);
 
 struct StreamClaim<'a>(&'a AtomicBool);
 
@@ -190,6 +197,14 @@ impl Core {
                 got: http.origin(),
             });
         }
+        // A copy that has never reached a server holds the types Marfa ships,
+        // so an app can save before it has connected.
+        if lock.handle() == Handle::Writer
+            && store::never_synced(&conn)?
+            && store::catalog_version(&conn)?.is_none()
+        {
+            store::hold_local_catalog(&conn)?;
+        }
         Ok(Core {
             conn: Mutex::new(conn),
             http,
@@ -201,11 +216,78 @@ impl Core {
         })
     }
 
+    /// Declares the types the app saves under, each as the JSON a server
+    /// lists a type as: its `id`, its `fields`, and whatever else a type
+    /// carries. The call is the app's whole set: it replaces every earlier
+    /// declaration, so a type the app no longer declares is no longer held to
+    /// or registered. A copy that has never reached a server checks what it
+    /// queues against these and the types Marfa ships, and a hydration
+    /// registers on the instance the ones it does not hold, where the key may.
+    /// On a copy that holds a server's catalog the set waits for the next
+    /// hydration.
+    pub fn declare_types(&self, types: &[Value]) -> Result<()> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        // The ids of the whole set are known to each other, so a parent may
+        // come after its child.
+        let declared: Vec<String> = types
+            .iter()
+            .filter_map(|definition| definition.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let known = |id: &str| {
+            declared.iter().any(|held| held == id) || builtin::ships(id).unwrap_or(false)
+        };
+        let mut rows = Vec::new();
+        for definition in types {
+            rows.push(catalog::declaration(definition, &known)?);
+        }
+        store::clear_declared_types(&tx)?;
+        for (id, json) in &rows {
+            store::declare_type(&tx, id, json)?;
+        }
+        if store::never_synced(&tx)? {
+            store::hold_local_catalog(&tx)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The types the app declared, by id, with the empty `fields` and the
+    /// `version` a registration needs filled in where the app left them out.
+    pub fn declared_types(&self) -> Result<Vec<Value>> {
+        let conn = self.conn()?;
+        store::declared_type_rows(&conn)?
+            .into_iter()
+            .map(|(id, json)| {
+                serde_json::from_str(&json).map_err(|error| {
+                    CoreError::Store(format!("the declared type {id} cannot be read: {error}"))
+                })
+            })
+            .collect()
+    }
+
     /// Refused while a catch-up or a follow runs on this handle: a follow
     /// left running across a hydration would apply events read against the
     /// old slice to the new copy. A caller stops its follow first.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
+    }
+
+    /// `hydrate_with`, ended with `Canceled` soon after `stop` is raised. The
+    /// copy is then unfinished and refuses reads, as after any hydration that
+    /// failed part way; the queue is untouched.
+    pub fn hydrate_until(
+        &self,
+        types: &[String],
+        tier: Tier,
+        edge_types: &[String],
+        stop: &AtomicBool,
+    ) -> Result<HydrateReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)
     }
 
     /// Holds every edge of `edge_types` the key reads, whichever ends the
@@ -216,9 +298,7 @@ impl Core {
         tier: Tier,
         edge_types: &[String],
     ) -> Result<HydrateReport> {
-        self.lock.refuse_unless_writer()?;
-        let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false)
+        self.hydrate_until(types, tier, edge_types, &NEVER_STOPPED)
     }
 
     /// No types is every type the key reads, held as `store::EVERY_TYPE`.
@@ -230,7 +310,15 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, true)
+        hydrate::hydrate(
+            self,
+            self.http()?,
+            types,
+            tier,
+            edge_types,
+            true,
+            &NEVER_STOPPED,
+        )
     }
 
     /// Refused where neither the server nor the copy holds `id`. Answers
@@ -309,9 +397,15 @@ impl Core {
     }
 
     pub fn catch_up(&self) -> Result<CatchUpReport> {
+        self.catch_up_until(&NEVER_STOPPED)
+    }
+
+    /// Ended with `Canceled` soon after `stop` is raised, keeping the cursor
+    /// of the last event applied.
+    pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        catch_up::catch_up(self, self.http()?, self.catch_up_idle)
+        catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)
     }
 
     /// `on_change` is called with no lock on the store held, so it may read
@@ -340,14 +434,14 @@ impl Core {
 
     pub fn list(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<Item>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         query::list(&conn, &catalog, filters, sort)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Item>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         store::item_by_id(&conn, id)
     }
 
@@ -356,7 +450,7 @@ impl Core {
     /// type declared the property) is refused `Decoding`, naming the item.
     pub fn thumbnail(&self, id: &str) -> Result<Option<Thumbnail>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let Some(item) = store::item_by_id(&conn, id)? else {
             return Err(CoreError::NotFound {
                 code: "not_held".into(),
@@ -395,20 +489,20 @@ impl Core {
 
     pub fn edges_from(&self, id: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         store::edges_from(&conn, id)
     }
 
     pub fn edges_to(&self, id: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         store::edges_to(&conn, id)
     }
 
     /// Answered or still queued, oldest first.
     pub fn edges_of_type(&self, edge_type: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         store::edges_of_type(&conn, edge_type)
     }
 
@@ -420,7 +514,7 @@ impl Core {
         limit: usize,
     ) -> Result<Vec<SearchHit>> {
         let conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         search::search(&conn, &catalog, query, filters, limit)
     }
@@ -436,8 +530,24 @@ impl Core {
     /// cannot be reached. A drain called while another runs on this store
     /// waits for it to end, then sends only what is still unanswered.
     pub fn drain(&self) -> Result<DrainReport> {
-        let one = self.one_drain();
-        self.drain_held(&one)
+        self.drain_until(&NEVER_STOPPED)
+    }
+
+    /// Ended with `Canceled` before the next write is sent once `stop` is
+    /// raised. A write already sent keeps its key and is settled by this or
+    /// a later drain; answers already recorded remain in the queue.
+    pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
+        let _one = loop {
+            catch_up::refuse_if_stopped(stop)?;
+            match self.draining.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        };
+        drain::drain(self, stop)
     }
 
     pub(crate) fn one_drain(&self) -> MutexGuard<'_, ()> {
@@ -449,7 +559,7 @@ impl Core {
     }
 
     pub(crate) fn drain_held(&self, _one: &MutexGuard<'_, ()>) -> Result<DrainReport> {
-        drain::drain(self)
+        drain::drain(self, &NEVER_STOPPED)
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
@@ -574,7 +684,7 @@ impl Core {
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_create(&tx, &catalog, draft, &[])?;
@@ -585,7 +695,7 @@ impl Core {
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_update(&tx, &catalog, id, edit, &[], Based::OnHeld)?;
@@ -599,7 +709,7 @@ impl Core {
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
         let queued = queue_update(&tx, &catalog, id, edit, &[], Based::AsRead)?;
@@ -636,7 +746,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
@@ -680,7 +790,7 @@ impl Core {
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let queued = queue_edge(&tx, draft)?;
         tx.commit()?;
@@ -692,7 +802,7 @@ impl Core {
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let Some(held) = store::edge_by_id(&conn, id)? else {
             return Err(CoreError::NotFound {
                 code: "edge_not_found".into(),
@@ -755,7 +865,7 @@ impl Core {
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = queue_edge_delete(&tx, &held)?;
@@ -786,7 +896,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         if !store::item_held(&conn, id)? {
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
@@ -857,7 +967,7 @@ impl Core {
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
+        store::refuse_unless_usable(&conn)?;
         if namespace.is_empty() {
             return Err(CoreError::Invalid(
                 "an extension write names no namespace, and the namespace is where it goes".into(),
@@ -954,7 +1064,7 @@ impl Core {
         then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &str) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_hydrated(&*self.conn()?)?;
+        store::refuse_unless_usable(&*self.conn()?)?;
         let cache = self.cache()?;
         let queued = {
             // Until the upload is queued, nothing but this hold keeps its
@@ -980,7 +1090,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         {
             let conn = self.conn()?;
-            store::refuse_unless_hydrated(&conn)?;
+            store::refuse_unless_usable(&conn)?;
             // A row in the bin reads as absent, and a file attached to it
             // would be linked to something nobody can open.
             if store::item_by_id(&conn, target)?.is_none() {
@@ -1014,7 +1124,7 @@ impl Core {
 
     pub fn add_file(&self, path: &Path, attachment: &Attachment, tags: &[String]) -> Result<Added> {
         self.lock.refuse_unless_writer()?;
-        store::refuse_unless_hydrated(&*self.conn()?)?;
+        store::refuse_unless_usable(&*self.conn()?)?;
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         self.refuse_unknown_type(&draft.r#type)?;
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
@@ -1261,10 +1371,13 @@ fn queue_create(
     // default, and a row shown at one tier would come back at another.
     let mut draft = draft.clone();
     if draft.tier.is_none() {
-        let Some((_, tier)) = store::slice(tx)? else {
-            return Err(CoreError::HydrationIncomplete);
-        };
-        draft.tier = Some(tier);
+        draft.tier = Some(match store::slice(tx)? {
+            Some((_, tier)) => tier,
+            // Nothing has named a tier yet, so the copy saves at the one an
+            // app is reading unless it says otherwise.
+            None if store::never_synced(tx)? => Tier::Library,
+            None => return Err(CoreError::HydrationIncomplete),
+        });
     }
     let draft = &draft;
     let id = draft
@@ -1952,6 +2065,305 @@ mod tests {
         core
     }
 
+    fn properties(value: serde_json::Value) -> serde_json::Map<String, Value> {
+        value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn a_copy_that_has_never_reached_a_server_saves_against_the_types_marfa_ships() {
+        let core = Core::open_in_memory(None).unwrap();
+        let note = core
+            .create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: properties(
+                    serde_json::json!({ "title": "First", "body": "Saved offline" }),
+                ),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(note.kind, WriteKind::CreateItem);
+        assert_eq!(note.outcome().unwrap(), None);
+        // Held, read and found, at the tier an app reads unless it says.
+        let id = note.item_id.clone().unwrap();
+        let held = core.get(&id).unwrap().unwrap();
+        assert_eq!(held.tier, Some(Tier::Library));
+        assert_eq!(
+            core.list(&ListFilters::default(), Sort::default())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            core.search("offline", &SearchFilters::default(), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(core.queue().unwrap().len(), 1);
+        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+        // The catalog is Marfa's own, and the server's is not held.
+        assert!(
+            core.item_types()
+                .unwrap()
+                .iter()
+                .any(|held| held.id == "core.note")
+        );
+        assert!(!core.edge_types().unwrap().is_empty());
+        assert_eq!(core.status().unwrap().catalog_version, None);
+        // What the type refuses is refused here, before anything is queued.
+        assert!(matches!(
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: properties(serde_json::json!({ "title": 7 })),
+                ..Default::default()
+            }),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(matches!(
+            core.create_item(&Draft {
+                r#type: "app.unheard-of.entry".into(),
+                ..Default::default()
+            }),
+            Err(CoreError::UnknownType { .. })
+        ));
+        assert_eq!(core.queue().unwrap().len(), 1);
+        // Nothing here can send it: a drain waits for a server and a copy.
+        assert!(core.drain().is_err());
+    }
+
+    #[test]
+    fn a_copy_checks_what_it_queues_against_the_types_the_app_declares() {
+        let core = Core::open_in_memory(None).unwrap();
+        let recipe = serde_json::json!({
+            "id": "app.recipe.entry",
+            "fields": {
+                "title": { "type": "string", "required": true },
+                "servings": { "type": "number" },
+            },
+        });
+        let create = |value: serde_json::Value| {
+            core.create_item(&Draft {
+                r#type: "app.recipe.entry".into(),
+                properties: properties(value),
+                ..Default::default()
+            })
+        };
+        // The witness: the type is refused until it is declared.
+        assert!(matches!(
+            create(serde_json::json!({ "title": "Soup" })),
+            Err(CoreError::UnknownType { .. })
+        ));
+        core.declare_types(std::slice::from_ref(&recipe)).unwrap();
+        assert!(create(serde_json::json!({ "title": "Soup", "servings": 4 })).is_ok());
+        assert!(matches!(
+            create(serde_json::json!({ "servings": 4 })),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(matches!(
+            create(serde_json::json!({ "title": "Soup", "servings": "four" })),
+            Err(CoreError::Validation { .. })
+        ));
+        // Declared again, it is the new declaration; declared types survive a
+        // reopen, which is how an app that declares at launch finds them.
+        let renumbered = serde_json::json!({
+            "id": "app.recipe.entry",
+            "fields": { "title": { "type": "number", "required": true } },
+        });
+        core.declare_types(&[renumbered]).unwrap();
+        assert!(matches!(
+            create(serde_json::json!({ "title": "Soup" })),
+            Err(CoreError::Validation { .. })
+        ));
+        assert!(create(serde_json::json!({ "title": 3 })).is_ok());
+        assert_eq!(core.declared_types().unwrap().len(), 1);
+        assert_eq!(core.declared_types().unwrap()[0]["version"], 0);
+    }
+
+    #[test]
+    fn a_declaration_is_the_whole_set_the_app_holds() {
+        let core = Core::open_in_memory(None).unwrap();
+        let draft = |kind: &str| Draft {
+            r#type: kind.into(),
+            properties: serde_json::json!({ "title": "t" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..Default::default()
+        };
+        core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
+            .unwrap();
+        assert!(core.create_item(&draft("app.recipe.entry")).is_ok());
+        // The app renames its type: the old one is no longer one it holds a
+        // write to, and no longer one a hydration would register.
+        core.declare_types(&[serde_json::json!({ "id": "app.dish.entry", "fields": {} })])
+            .unwrap();
+        assert!(matches!(
+            core.create_item(&draft("app.recipe.entry")),
+            Err(CoreError::UnknownType { .. })
+        ));
+        assert!(core.create_item(&draft("app.dish.entry")).is_ok());
+        let held: Vec<String> = core
+            .declared_types()
+            .unwrap()
+            .iter()
+            .filter_map(|held| held["id"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(held, ["app.dish.entry"]);
+    }
+
+    #[test]
+    fn a_declaration_refuses_app_names_without_exactly_three_segments() {
+        let core = Core::open_in_memory(None).unwrap();
+        for id in ["app.recipe", "app.recipe.entry.child"] {
+            assert!(
+                matches!(
+                    core.declare_types(&[serde_json::json!({ "id": id, "fields": {} })]),
+                    Err(CoreError::Invalid(_))
+                ),
+                "{id} cannot register but was declared"
+            );
+        }
+        assert!(core.declared_types().unwrap().is_empty());
+        core.declare_types(&[serde_json::json!({ "id": "app.recipe.entry", "fields": {} })])
+            .unwrap();
+    }
+
+    #[test]
+    fn a_declaration_refuses_reserved_type_roots() {
+        let core = Core::open_in_memory(None).unwrap();
+        let mut taken = Vec::new();
+        for root in [
+            "schema", "keys", "items", "webhooks", "config", "audit", "grants", "content",
+            "metadata", "edge", "profile", "space", "marfa",
+        ] {
+            let id = format!("{root}.entry");
+            if !matches!(
+                core.declare_types(&[serde_json::json!({ "id": id, "fields": {} })]),
+                Err(CoreError::Invalid(_))
+            ) {
+                taken.push(id);
+            }
+        }
+        assert!(
+            taken.is_empty(),
+            "unregisterable roots were declared: {taken:?}"
+        );
+        assert!(core.declared_types().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_declaration_accepts_publisher_prefixes_depth_and_the_identifier_boundary() {
+        let core = Core::open_in_memory(None).unwrap();
+        let boundary = format!("acme.{}", "a".repeat(123));
+        let ids = [
+            "app.recipe.entry",
+            "user.recipe.entry",
+            "acme-publisher.recipe",
+            "acme.calendar.event",
+            "keys-publisher.entry",
+            "schema_tools.entry",
+            boundary.as_str(),
+        ];
+        let definitions: Vec<_> = ids
+            .iter()
+            .map(|id| serde_json::json!({ "id": id, "fields": {} }))
+            .collect();
+        core.declare_types(&definitions).unwrap();
+        let before = core.declared_types().unwrap();
+        assert_eq!(before.len(), ids.len());
+        for id in [
+            format!("{boundary}a"),
+            "app.recipe".into(),
+            "keys.entry".into(),
+        ] {
+            assert!(
+                matches!(
+                    core.declare_types(&[
+                        definitions[0].clone(),
+                        serde_json::json!({ "id": id, "fields": {} })
+                    ]),
+                    Err(CoreError::Invalid(_))
+                ),
+                "{id} was declared"
+            );
+            assert_eq!(core.declared_types().unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_refused_when_it_names_marfas_types_or_breaks_the_rules() {
+        let core = Core::open_in_memory(None).unwrap();
+        for (declaration, said) in [
+            (serde_json::json!("app.x.entry"), "an object"),
+            (serde_json::json!({ "fields": {} }), "names its id"),
+            (
+                serde_json::json!({ "id": "recipe" }),
+                "not a type to declare",
+            ),
+            (
+                serde_json::json!({ "id": "app.*" }),
+                "not a type to declare",
+            ),
+            (serde_json::json!({ "id": "core.note" }), "Marfa's"),
+            (serde_json::json!({ "id": "core.mine" }), "Marfa's"),
+            (serde_json::json!({ "id": "system.mine" }), "Marfa's"),
+            (
+                serde_json::json!({ "id": "app.x.entry", "fields": [] }),
+                "an object by name",
+            ),
+            (
+                serde_json::json!({ "id": "app.x.entry", "fields": { "a": { "required": true } } }),
+                "no type",
+            ),
+            (
+                serde_json::json!({ "id": "app.x.entry", "fields": { "a": { "type": "nonsense" } } }),
+                "not a field type",
+            ),
+            (
+                serde_json::json!({ "id": "app.x.entry", "parent": "app.absent.entry" }),
+                "neither a type Marfa ships nor one declared",
+            ),
+        ] {
+            match core.declare_types(std::slice::from_ref(&declaration)) {
+                Err(CoreError::Invalid(message)) => {
+                    assert!(message.contains(said), "{declaration}: {message}")
+                }
+                other => panic!("{declaration} was taken: {other:?}"),
+            }
+        }
+        assert!(core.declared_types().unwrap().is_empty());
+        // A parent may be declared in the same call, after its child, or be one
+        // Marfa ships.
+        core.declare_types(&[
+            serde_json::json!({ "id": "app.child.entry", "parent": "app.parent.entry" }),
+            serde_json::json!({ "id": "app.parent.entry", "parent": "core.note" }),
+        ])
+        .unwrap();
+        assert_eq!(core.declared_types().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_hydration_in_progress_or_expired_still_refuses_what_it_holds_and_what_is_saved() {
+        let core = Core::open_in_memory(None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        // A slice and no cursor is a copy that cannot be kept current.
+        for refusal in [
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                ..Default::default()
+            })
+            .map(|_| ())
+            .unwrap_err(),
+            core.get("x").map(|_| ()).unwrap_err(),
+        ] {
+            assert_eq!(refusal, CoreError::HydrationIncomplete);
+        }
+    }
+
     #[test]
     fn a_full_store_refuses_a_local_edit_without_losing_the_queue() {
         let core = held_copy();
@@ -2266,10 +2678,21 @@ mod tests {
     #[test]
     fn every_edge_of_one_type_is_read_at_once() {
         let core = Core::open_in_memory(None).unwrap();
+        // A copy that has never reached a server answers from what it holds,
+        // which is nothing yet.
+        assert_eq!(core.edges_of_type("in-thread"), Ok(Vec::new()));
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS).unwrap();
+        }
         assert_eq!(
             core.edges_of_type("in-thread"),
             Err(CoreError::HydrationIncomplete)
         );
+        {
+            let conn = core.conn().unwrap();
+            store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
+        }
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -2782,6 +3205,30 @@ mod tests {
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),
+            (
+                "catch_up_until",
+                reader
+                    .catch_up_until(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap_err(),
+            ),
+            (
+                "hydrate_until",
+                reader
+                    .hydrate_until(
+                        &["core.note".into()],
+                        Tier::Library,
+                        &[],
+                        &std::sync::atomic::AtomicBool::new(false),
+                    )
+                    .unwrap_err(),
+            ),
+            (
+                "drain_until",
+                reader
+                    .drain_until(&std::sync::atomic::AtomicBool::new(false))
+                    .unwrap_err(),
+            ),
+            ("declare_types", reader.declare_types(&[]).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
@@ -2806,7 +3253,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            33,
+            37,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

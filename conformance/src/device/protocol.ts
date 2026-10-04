@@ -45,6 +45,10 @@ export interface HydrateReport {
   edges: number;
   pages: number;
   cursor: string;
+  /** Types the app declared that the instance did not hold and now does. */
+  registered_types: string[];
+  /** Declared types the instance did not hold and would not take. */
+  unregistered_types: Array<{ id: string; code: string; message: string }>;
 }
 
 export interface CatchUpReport {

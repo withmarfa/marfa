@@ -1712,59 +1712,47 @@ describe("the working copy says what it is", () => {
     ).toEqual([0, 0]);
   });
 
-  it("refuses a read before any hydration", async () => {
+  it("answers a read before any hydration from what the copy holds", async () => {
     harness = await startHarness("read-before-hydration");
     const { device } = harness;
     // A store made and never hydrated: a path with no store at all is
     // refused before any slice is asked about (45).
     expect((await device.status()).ok).toBe(true);
 
-    // Every read door, because a refusal on one and an empty page on
-    // another is the same wrong answer with a smaller blast radius.
+    // Every read door answers, because a refusal on one and an empty page on
+    // another would be two answers to one question. Nothing has been saved,
+    // so each answers that it holds nothing.
     const listed = await device.list();
     expect(
-      listed.ok,
-      "a store that has never hydrated answered a listing, so a caller cannot tell an empty slice from a copy that was never pulled",
-    ).toBe(false);
-    if (!listed.ok) {
-      expect(
-        listed.refusal.code,
-        `the read was refused for some other reason, so a caller is told to fix the wrong thing and never learns a hydration is owed: ${listed.refusal.raw}`,
-      ).toBe("hydration_incomplete");
-    }
-
+      listed.ok && listed.value,
+      `a store that has never hydrated refused a listing, so a copy no server was named for cannot show what its app saved: ${JSON.stringify(listed)}`,
+    ).toEqual([]);
     const found = await device.search("anything");
-    expect(
-      found.ok,
-      "a store that has never hydrated answered a search, so an empty result set reads as a corpus with nothing in it",
-    ).toBe(false);
-
+    expect(found.ok && found.value).toEqual([]);
+    for (const edges of [
+      await device.edgesFrom("whatever"),
+      await device.edgesTo("whatever"),
+    ]) {
+      expect(edges.ok && edges.value).toEqual([]);
+    }
     const got = await device.get("whatever");
     expect(
-      got.ok,
-      "a store that has never hydrated answered a read by id, so an absent row and a copy that was never pulled read the same",
-    ).toBe(false);
+      got.ok ? "answered" : got.refusal.code,
+      "a row the copy does not hold was answered or refused for a reason other than that it is not held",
+    ).toBe("not_held");
 
-    for (const [end, edges] of [
-      ["from", await device.edgesFrom("whatever")],
-      ["to", await device.edgesTo("whatever")],
-    ] as const) {
-      expect(
-        edges.ok,
-        `a store that has never hydrated answered the edges ${end} an item, so an item with no links and a copy that was never pulled read the same`,
-      ).toBe(false);
-      if (!edges.ok) expect(edges.refusal.code).toBe("hydration_incomplete");
-    }
-
-    // The control: the device answers about itself before it has hydrated,
-    // which is how a caller learns a hydration is owed (`device.md` 5). A
-    // device that refused everything would satisfy the reads above for a
-    // reason that has nothing to do with the slice.
-    const status = await device.status();
-    expect(
-      status.ok,
-      "a device that has not hydrated could not report its own state, so the refusals above are a broken binary rather than the rule",
-    ).toBe(true);
+    // The witness: what the app saves is what a read then answers, so the
+    // empty answers above were of a copy that holds nothing and not of one
+    // that answers nothing.
+    const saved = await device.create({
+      type: "core.note",
+      properties: { title: "saved", body: "saved" },
+    });
+    expect(saved.ok, JSON.stringify(saved)).toBe(true);
+    const after = await device.list();
+    expect(after.ok && after.value.map((row) => row.id)).toEqual([
+      saved.ok ? saved.value.item_id : undefined,
+    ]);
   });
 
   it("makes a store only to hydrate or to report its state, and refuses a path with none to every other command", async () => {

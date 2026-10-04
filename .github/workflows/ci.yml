@@ -584,12 +584,16 @@ jobs:
             echo "@withmarfa/client's generated sources are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
             exit 1
           fi
-      - name: Regenerate the core's contract and check for drift
+      # The core's catalog is written from the registry the server lists,
+      # which is read from the built packages.
+      - run: pnpm build
+      - name: Regenerate what the core is built from and check for drift
         run: |
-          rm -f core/marfa-core/src/contract.rs
+          rm -f core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json
           pnpm run generate:core
-          if [ -n "$(git status --porcelain core/marfa-core/src/contract.rs)" ]; then
-            git status --porcelain core/marfa-core/src/contract.rs
-            echo "The core's contract is out of date with openapi.json, or was edited by hand. Run 'pnpm generate' and commit."
+          generated="core/marfa-core/src/contract.rs core/marfa-core/src/builtin_catalog.json"
+          if [ -n "$(git status --porcelain $generated)" ]; then
+            git status --porcelain $generated
+            echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."
             exit 1
           fi

@@ -83,7 +83,7 @@ async function scripted() {
   };
 }
 
-test("refuses a catalog read before a catalog is held, then reads it offline", async (t) => {
+test("holds the types Marfa ships before a server's catalog is read, then reads that offline", async (t) => {
   const server = await scripted();
   t.after(server.close);
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
@@ -92,8 +92,9 @@ test("refuses a catalog read before a catalog is held, then reads it offline", a
 
   const core = MarfaCore.open(path, server.url, "k");
   assert.equal(core.status().catalogVersion, undefined);
-  assert.throws(() => core.itemTypes(), /^Error: no_catalog: /);
-  assert.throws(() => core.edgeType("mentor-of"), /^Error: no_catalog: /);
+  assert.ok(core.itemTypes().some((held) => held.id === "core.note"));
+  assert.throws(() => core.itemType("acme.recipe"), /^Error: not_found: /);
+  assert.throws(() => core.edgeType("mentor-of"), /^Error: not_found: /);
 
   await core.hydrate(["core.note"], Tier.Library);
   assert.equal(typeof core.status().catalogVersion, "number");

@@ -352,6 +352,23 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<ItemType[]>(["types", "list"]);
   }
 
+  /** The types this app saves, which the copy checks a write against. */
+  async declareTypes(
+    definitions: Array<Record<string, unknown>>,
+  ): Promise<Outcome<{ declared: number }>> {
+    return this.json<{ declared: number }>([
+      "types",
+      "declare",
+      "--definitions",
+      JSON.stringify(definitions),
+    ]);
+  }
+
+  /** The declarations the copy holds, as they were made. */
+  async declaredTypes(): Promise<Outcome<Array<{ id: string }>>> {
+    return this.json<Array<{ id: string }>>(["types", "declared"]);
+  }
+
   async itemType(id: string): Promise<Outcome<ItemType>> {
     return this.json<ItemType>(["types", "get", id]);
   }

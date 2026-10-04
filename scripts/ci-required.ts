@@ -131,8 +131,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [/^deploy\//, []],
 
-  [/^packages\/types\//, [...SERVER, "types-freshness"]],
-  [/^packages\/(server|shared)\//, SERVER],
+  // The core's catalog is written from the shipped types, the registry that
+  // lists them and the server's role resolution.
+  [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
+  [/^packages\/shared\//, [...SERVER, "clients-freshness"]],
+  [
+    /^packages\/server\/src\/storage\/policy\.ts$/,
+    [...SERVER, "clients-freshness"],
+  ],
+  [/^packages\/server\//, SERVER],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
@@ -162,6 +169,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // budget.
   [
     /^core\/marfa-core\/src\/contract\.rs$/,
+    [...RUST, "clients-freshness", "workspace"],
+  ],
+  [
+    /^core\/marfa-core\/src\/builtin_catalog\.json$/,
     [...RUST, "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
@@ -210,7 +221,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
   [/^ci\//, ["workspace"]],
-  [/^scripts\/generate-core-contract\.ts$/, ["workspace", "clients-freshness"]],
+  [
+    /^scripts\/generate-core-(contract|catalog)\.ts$/,
+    ["workspace", "clients-freshness"],
+  ],
   [/^scripts\//, ["workspace"]],
 
   [

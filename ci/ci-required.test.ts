@@ -127,9 +127,19 @@ describe("what a change runs", () => {
     ],
     ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
     [
-      "a type definition",
+      "a type definition, which the core's catalog is written from",
       ["packages/types/core/note.json"],
-      [...SERVER, "types-freshness"],
+      [...SERVER, "types-freshness", "clients-freshness"],
+    ],
+    [
+      "the registry that lists the types",
+      ["packages/shared/src/type-registry.ts"],
+      [...SERVER, "clients-freshness"],
+    ],
+    [
+      "the catalog the core carries",
+      ["core/marfa-core/src/builtin_catalog.json"],
+      [...RUST, "clients-freshness", "workspace", "ci-sqlite"],
     ],
     [
       "a client-only change",
@@ -214,7 +224,7 @@ describe("what a change runs", () => {
     [
       "Markdown in a generated tree, which its freshness check refuses",
       ["packages/types/generated/NOTES.md"],
-      [...SERVER, "types-freshness"],
+      [...SERVER, "types-freshness", "clients-freshness"],
     ],
     ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
     [

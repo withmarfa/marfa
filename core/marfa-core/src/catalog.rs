@@ -131,10 +131,90 @@ impl EdgeType {
 }
 
 fn refuse_unless_held(conn: &Connection) -> Result<(), CoreError> {
-    match store::catalog_version(conn)? {
-        Some(_) => Ok(()),
-        None => Err(CoreError::NoCatalog),
+    if store::catalog_held(conn)? {
+        Ok(())
+    } else {
+        Err(CoreError::NoCatalog)
     }
+}
+
+/// The roots a type of the app's own can never be registered under: Marfa's.
+const SHIPPED_ROOTS: [&str; 3] = ["core", "system", "marfa"];
+
+/// A type the app declares, read as the server reads a registration: an
+/// object naming an identifier outside Marfa's, whose fields each have a type
+/// and whose parent is one this copy knows. Answers its id and the JSON it is
+/// kept as, with what a registration requires and the app left out filled in.
+pub(crate) fn declaration(
+    definition: &Value,
+    known: &dyn Fn(&str) -> bool,
+) -> Result<(String, String), CoreError> {
+    let invalid = |message: String| CoreError::Invalid(message);
+    let Some(row) = definition.as_object() else {
+        return Err(invalid(
+            "a type to declare is an object naming its id and its fields".into(),
+        ));
+    };
+    let Some(id) = row.get("id").and_then(Value::as_str) else {
+        return Err(invalid("a type to declare names its id".into()));
+    };
+    let root = id.split('.').next().unwrap_or_default();
+    if id.ends_with(".*")
+        || !crate::hydrate::type_pattern(id)
+        || (root == "app" && id.split('.').count() != 3)
+    {
+        return Err(invalid(format!(
+            "not a type to declare: {id:?}; a type is app.<app-name>.<type>, user.<type>, or <publisher>.<type>, with lowercase dotted segments and at most 128 characters; app names have exactly three segments"
+        )));
+    }
+    if SHIPPED_ROOTS.contains(&root) || crate::builtin::ships(id)? {
+        return Err(invalid(format!(
+            "{id} is Marfa's, and an app declares types under its own namespace: `app.`, `user.` or a name of its own"
+        )));
+    }
+    if root != "app"
+        && root != "user"
+        && crate::builtin::reserved_type_roots()?
+            .iter()
+            .any(|reserved| reserved == root)
+    {
+        return Err(invalid(format!(
+            "not a type to declare: {id:?}; {root} is a reserved type root"
+        )));
+    }
+    let mut row = row.clone();
+    match row.get("fields") {
+        None => {
+            row.insert("fields".into(), Value::Object(Map::new()));
+        }
+        Some(Value::Object(fields)) => {
+            let kinds = crate::builtin::field_types()?;
+            for (name, definition) in fields {
+                let held =
+                    field(name, definition, id).map_err(|error| invalid(error.to_string()))?;
+                if !kinds.contains(&held.r#type) {
+                    return Err(invalid(format!(
+                        "{id} declares {name} as {:?}, which is not a field type: one of {}",
+                        held.r#type,
+                        kinds.join(", ")
+                    )));
+                }
+            }
+        }
+        Some(_) => return Err(invalid(format!("the fields of {id} are an object by name"))),
+    }
+    if !row.contains_key("version") {
+        row.insert("version".into(), Value::from(0));
+    }
+    if let Some(parent) = row.get("parent").and_then(Value::as_str)
+        && parent != id
+        && !known(parent)
+    {
+        return Err(invalid(format!(
+            "{id} names the parent {parent}, which is neither a type Marfa ships nor one declared"
+        )));
+    }
+    Ok((id.to_string(), Value::Object(row).to_string()))
 }
 
 fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {

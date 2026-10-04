@@ -1,10 +1,11 @@
 use std::io::BufReader;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Http, ItemsQuery};
-use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
+use crate::http::{Http, ItemsQuery, Registration};
+use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, UnregisteredType, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -20,13 +21,15 @@ pub(crate) fn hydrate(
     tier: Tier,
     edge_types: &[String],
     every_type: bool,
+    stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let previous = crate::read_view::Context::capture_build(&*core.conn()?).ok();
-    let result = hydrate_inner(core, http, types, tier, edge_types, every_type);
-    result.map_err(|error| match previous {
+    let result = hydrate_inner(core, http, types, tier, edge_types, every_type, stop);
+    let result = result.map_err(|error| match previous {
         Some(context) => context.failed(core, error).unwrap_or_else(|error| error),
         None => error,
-    })
+    });
+    crate::catch_up::unless_stopped(result, stop)
 }
 
 fn hydrate_inner(
@@ -36,6 +39,7 @@ fn hydrate_inner(
     tier: Tier,
     edge_types: &[String],
     every_type: bool,
+    stop: &AtomicBool,
 ) -> Result<HydrateReport> {
     let types = if every_type && types.is_empty() {
         vec![store::EVERY_TYPE.to_string()]
@@ -55,8 +59,22 @@ fn hydrate_inner(
         }
     }
 
-    let (instance, cursor, fence) = read_head(http)?;
-    let http = &http.for_view(&fence);
+    // Nothing is cleared until the copy is about to be replaced, so a stop
+    // raised before then leaves it as it was.
+    crate::catch_up::refuse_if_stopped(stop)?;
+    let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
+    let mut view = http.for_view(&fence);
+    crate::catch_up::refuse_if_stopped(stop)?;
+    let (mut catalog_rows, registered_types, unregistered_types, registered_any) =
+        register_declared(core, &view, view.catalog()?, stop)?;
+    if registered_any {
+        // A registration changes what the instance's read view certifies, so
+        // the head and the catalog read before it are of a view that has gone.
+        (instance, cursor, fence) = read_head(http, stop)?;
+        view = http.for_view(&fence);
+        catalog_rows = view.catalog()?;
+    }
+    let http = &view;
     {
         let mut conn = core.conn()?;
         if store::hydrated(&conn)?
@@ -68,9 +86,9 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
-    let catalog_rows = http.catalog()?;
     refuse_unreadable(http, &types)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
+    crate::catch_up::refuse_if_stopped(stop)?;
     {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
@@ -111,6 +129,7 @@ fn hydrate_inner(
             let mut page_cursor: Option<String> = None;
             let mut seen = std::collections::HashSet::new();
             loop {
+                crate::catch_up::refuse_if_stopped(stop)?;
                 let page = http.items_page(&ItemsQuery {
                     r#type: declared,
                     tier,
@@ -163,6 +182,7 @@ fn hydrate_inner(
             let mut page_cursor: Option<String> = None;
             let mut seen = std::collections::HashSet::new();
             loop {
+                crate::catch_up::refuse_if_stopped(stop)?;
                 let page = http.edges_page(edge_type, page_cursor.as_deref())?;
                 pages += 1;
                 let mut conn = core.conn()?;
@@ -185,6 +205,7 @@ fn hydrate_inner(
 
         let pinned = store::pins(&*core.conn()?)?;
         for id in pinned {
+            crate::catch_up::refuse_if_stopped(stop)?;
             if store::item_held(&*core.conn()?, &id)? {
                 continue;
             }
@@ -211,7 +232,7 @@ fn hydrate_inner(
             tx.commit()?;
         }
 
-        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle)?;
+        let replay = crate::catch_up::replay_build(core, http, &context, core.catch_up_idle, stop)?;
         let cursor = replay.cursor;
         let (items, edges) = {
             let mut conn = core.conn()?;
@@ -233,6 +254,8 @@ fn hydrate_inner(
             edges,
             pages,
             cursor,
+            registered_types: registered_types.clone(),
+            unregistered_types: unregistered_types.clone(),
         })
     })();
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
@@ -301,12 +324,60 @@ pub(crate) fn lay_queue_over(
     Ok(())
 }
 
+/// Registers on the instance the types the app declared that it does not
+/// hold, parents before their children, and says whether any registration
+/// changed what the instance holds, which leaves the catalog and the head the
+/// caller read stale. A key that may not register is no reason to refuse the
+/// hydration: what it queued waits for the server's verdict like any write.
+fn register_declared(
+    core: &Core,
+    http: &Http,
+    catalog: WireCatalog,
+    stop: &AtomicBool,
+) -> Result<(WireCatalog, Vec<String>, Vec<UnregisteredType>, bool)> {
+    let mut missing: Vec<(String, String)> = {
+        let conn = core.conn()?;
+        store::declared_type_rows(&conn)?
+    };
+    missing.retain(|(id, _)| !catalog.types.iter().any(|held| &held.id == id));
+    let mut registered = Vec::new();
+    let mut refused: Vec<UnregisteredType> = Vec::new();
+    let mut taken = false;
+    while !missing.is_empty() {
+        crate::catch_up::refuse_if_stopped(stop)?;
+        // A type whose parent is still to come waits for it. Only parents
+        // that name each other leave none to go, and then the first goes and
+        // the server answers it.
+        let next = missing
+            .iter()
+            .position(|(_, json)| {
+                let parent = serde_json::from_str::<serde_json::Value>(json)
+                    .ok()
+                    .and_then(|row| row.get("parent")?.as_str().map(str::to_string));
+                parent.is_none_or(|parent| !missing.iter().any(|(id, _)| *id == parent))
+            })
+            .unwrap_or(0);
+        let (id, json) = missing.remove(next);
+        match http.register_type(&json)? {
+            Registration::Registered => {
+                registered.push(id);
+                taken = true;
+            }
+            Registration::Held => taken = true,
+            Registration::Refused { code, message } => {
+                refused.push(UnregisteredType { id, code, message })
+            }
+        }
+    }
+    Ok((catalog, registered, refused, taken))
+}
+
 /// The shape the server's type patterns take: two or more lowercase dotted
 /// segments, each a letter then letters, digits, hyphens and underscores, at
 /// most 128 characters, or a root of one or more such segments under `.*`.
 /// The server's rules for each root go further, and a name that passes here
 /// and breaks them is one the catalog does not hold.
-fn type_pattern(name: &str) -> bool {
+pub(crate) fn type_pattern(name: &str) -> bool {
     let segment = |part: &str| {
         let mut characters = part.chars();
         characters
@@ -491,12 +562,16 @@ pub(crate) fn fetch_overflow(
 
 /// Read before the first page so the snapshot has a resume point from before
 /// it.
-fn read_head(http: &Http) -> Result<(String, String, String)> {
+fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
+        crate::catch_up::refuse_if_stopped(stop)?;
         let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
-            match frames.next_frame() {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let frame = frames.next_frame();
+            crate::catch_up::refuse_if_stopped(stop)?;
+            match frame {
                 Ok(Some(Frame::Comment(_))) => continue,
                 Ok(Some(Frame::Event { id, name, data })) => {
                     let payload =

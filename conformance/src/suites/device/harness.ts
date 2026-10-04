@@ -93,7 +93,11 @@ function refuseIfStale(binary: string): void {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
-      } else if (entry.name.endsWith(".rs") || entry.name === "schema.sql") {
+      } else if (
+        entry.name.endsWith(".rs") ||
+        entry.name === "schema.sql" ||
+        entry.name === "builtin_catalog.json"
+      ) {
         const at = statSync(full).mtimeMs;
         if (at > newest) {
           newest = at;

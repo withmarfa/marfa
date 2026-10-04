@@ -160,10 +160,11 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     Status,
-    /// The item types the copy holds, read from it alone.
+    /// The item types the copy holds, read from it alone, and the ones an app
+    /// declares for it.
     Types {
         #[command(subcommand)]
-        command: CatalogCommand,
+        command: TypesCommand,
     },
     /// The edge types the copy holds, read from it alone.
     #[command(name = "edge-types")]
@@ -361,6 +362,39 @@ pub enum EdgesCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum TypesCommand {
+    /// Every one the copy holds, by id.
+    List,
+    /// One by id; a type inherits the fields of the types above it.
+    Get {
+        /// The id, such as `core.note`.
+        id: String,
+    },
+    /// Declare the types this app saves, so a copy with no server checks what
+    /// it queues against them and a hydration registers the ones the
+    /// instance lacks, where the key may.
+    ///
+    /// Marfa's own types need no declaring. The call is the app's whole set,
+    /// so it replaces every earlier declaration.
+    Declare {
+        /// A type definition, or an array of them, as JSON.
+        #[arg(
+            long,
+            value_name = "JSON",
+            conflicts_with = "file",
+            required_unless_present = "file"
+        )]
+        definitions: Option<String>,
+        /// A file holding the same.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
+    /// The declarations this copy holds, with the empty `fields` and the
+    /// `version` a registration needs filled in.
+    Declared,
+}
+
+#[derive(Debug, Subcommand)]
 pub enum CatalogCommand {
     /// Every one the copy holds, by id.
     List,
@@ -554,17 +588,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             tier,
             edge_types,
         } => {
-            let report =
-                store
-                    .open_with_server(named)?
-                    .hydrate_with(&types, tier.into(), &edge_types)?;
+            stop_on_interrupt();
+            let core = store.open_with_server(named)?;
+            let report = core.hydrate_until(&types, tier.into(), &edge_types, stop_after(None))?;
             output::report(&report, json, || {
                 let whole = if report.edge_types.is_empty() {
                     String::new()
                 } else {
                     format!(", {} held whole", report.edge_types.join(","))
                 };
-                format!(
+                let mut line = format!(
                     "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {} page(s); cursor {}",
                     report.items,
                     report.edges,
@@ -572,7 +605,20 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     report.tier,
                     report.pages,
                     report.cursor
-                )
+                );
+                if !report.registered_types.is_empty() {
+                    line.push_str(&format!(
+                        "\nregistered {} on the server",
+                        report.registered_types.join(",")
+                    ));
+                }
+                for held in &report.unregistered_types {
+                    line.push_str(&format!(
+                        "\nnot registered: {} ({}): {}",
+                        held.id, held.code, held.message
+                    ));
+                }
+                line
             })
         }
         DeviceCommand::Pin { id } => {
@@ -604,9 +650,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             )
         }
         DeviceCommand::Follow { r#for } => {
+            stop_on_interrupt();
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
-            stop_on_interrupt();
             let mut unwritten: Option<CliError> = None;
             let report = core.follow(stop, |change| {
                 if unwritten.is_some() {
@@ -684,7 +730,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             Ok(())
         }
         DeviceCommand::CatchUp => {
-            let report = store.open_with_server(named)?.catch_up()?;
+            stop_on_interrupt();
+            let core = store.open_with_server(named)?;
+            let report = core.catch_up_until(stop_after(None))?;
             output::report(&report, json, || {
                 format!(
                     "applied {} event(s), skipped {}; cursor {}{}",
@@ -948,7 +996,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Drain => {
-            let report = store.open_with_server(named)?.drain()?;
+            stop_on_interrupt();
+            let core = store.open_with_server(named)?;
+            let report = core.drain_until(stop_after(None))?;
             output::drained(&report, json)?;
             return Ok(output::drain_exit(&report));
         }
@@ -1019,13 +1069,49 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         DeviceCommand::Types { command } => {
             let core = store.open(None)?;
             match command {
-                CatalogCommand::List => {
+                TypesCommand::Declare { definitions, file } => {
+                    let text = match (definitions, file) {
+                        (Some(text), _) => text,
+                        (None, Some(path)) => std::fs::read_to_string(&path).map_err(|error| {
+                            CliError::Invalid(format!("cannot read {}: {error}", path.display()))
+                        })?,
+                        (None, None) => unreachable!("one of the two is required"),
+                    };
+                    let parsed: serde_json::Value = serde_json::from_str(&text)
+                        .map_err(|error| CliError::Invalid(format!("not JSON: {error}")))?;
+                    let definitions = match parsed {
+                        serde_json::Value::Array(all) => all,
+                        one @ serde_json::Value::Object(_) => vec![one],
+                        _ => {
+                            return Err(CliError::Invalid(
+                                "a type definition is a JSON object, or an array of them".into(),
+                            ));
+                        }
+                    };
+                    core.declare_types(&definitions)?;
+                    output::report(
+                        &serde_json::json!({ "declared": definitions.len() }),
+                        json,
+                        || format!("declared {} type(s)", definitions.len()),
+                    )
+                }
+                TypesCommand::Declared => {
+                    let declared = core.declared_types()?;
+                    output::report(&declared, json, || {
+                        declared
+                            .iter()
+                            .filter_map(|held| held["id"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
+                TypesCommand::List => {
                     let types = core.item_types()?;
                     output::report(&types, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
                 }
-                CatalogCommand::Get { id } => {
+                TypesCommand::Get { id } => {
                     let held = core.item_type(&id)?;
                     output::report(&held, json, || {
                         let mut lines = vec![type_line(&held)];
@@ -1143,7 +1229,7 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
 
 const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// A static, because a signal handler can reach nothing else.
+/// Shared by the signal-waiting thread and the command it stops.
 static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
@@ -1156,21 +1242,41 @@ fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
     &STOP
 }
 
-extern "C" fn interrupted(_: libc::c_int) {
-    STOP.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// `SA_RESETHAND`: a second Ctrl-C ends the process at once.
+/// Ctrl-C raises the stop and does not interrupt what the process is doing: a
+/// handler would fail a request in flight with `EINTR`, which reads as the
+/// network failing rather than as a stop. The signal is blocked here, which
+/// every thread made afterwards inherits, and one thread waits for it. That
+/// makes this the first thing a command does, before any thread is made.
+///
+/// A second Ctrl-C ends the process at once, with the status a shell gives
+/// one that died of it.
 fn stop_on_interrupt() {
-    // SAFETY: the handler only stores to an atomic, which is safe inside a
-    // signal handler, and the action is fully initialized before it is
-    // installed.
+    // SAFETY: the set is initialized before it is used, and the waiting thread
+    // only stores to an atomic and then exits the process.
     unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        action.sa_flags = libc::SA_RESETHAND;
-        libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        std::thread::spawn(move || {
+            // Where the platform lets `sigwait` fail with `EINTR`, a wait that
+            // gave up would leave the signal blocked for good.
+            let wait = || loop {
+                let mut signal = 0;
+                match libc::sigwait(&set, &mut signal) {
+                    0 => return true,
+                    libc::EINTR => continue,
+                    _ => return false,
+                }
+            };
+            if !wait() {
+                return;
+            }
+            STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+            if wait() {
+                libc::_exit(130);
+            }
+        });
     }
 }
 

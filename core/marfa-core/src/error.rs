@@ -102,6 +102,11 @@ pub enum CoreError {
         /// another contract.
         write_sent: bool,
     },
+    /// The caller's stop was raised. What had been taken is consistent: a
+    /// hydration left unfinished refuses reads, a catch-up keeps the cursor
+    /// it reached, and a drain leaves what it had not sent queued.
+    #[error("the operation was stopped before it finished")]
+    Canceled,
     #[error("{0}")]
     Invalid(String),
 }
@@ -176,6 +181,7 @@ codes! {
     WrongServer: CoreError::WrongServer { .. } => "wrong_server",
     BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
     ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
+    Canceled: CoreError::Canceled => "canceled",
     Invalid: CoreError::Invalid(_) => "invalid",
 }
 
@@ -301,6 +307,8 @@ mod tests {
 
     #[test]
     fn every_error_has_a_code_and_every_code_is_listed_once() {
+        assert_eq!(CoreError::Canceled.code(), "canceled");
+        assert_eq!(CoreError::Canceled.kind(), CoreErrorKind::Canceled);
         let renewal = CoreError::RenewalFailed(Box::new(CoreError::NoServer));
         assert_eq!(renewal.code(), "no_server");
         let mut seen = std::collections::HashSet::new();

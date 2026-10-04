@@ -210,7 +210,7 @@ describe("The type catalog a working copy holds", () => {
     ).toEqual(["child-of", "target", true]);
   });
 
-  it("refuses every catalog read on a copy that has never held a catalog, rather than answering no types", async () => {
+  it("answers every catalog read on a copy that has never reached a server with the types Marfa ships", async () => {
     harness = await startHarness("catalog-never");
     const { server, device } = harness;
     // The state report makes the store without hydrating it (45).
@@ -218,29 +218,32 @@ describe("The type catalog a working copy holds", () => {
     expect(status.hydration).toBe("never");
     expect(
       status.catalog_version,
-      "a copy that has never read a catalog reports a version of one",
+      "a copy that has never read a server's catalog reports a version of one",
     ).toBeNull();
 
-    for (const [what, read] of [
-      ["the item types", () => device.itemTypes()],
-      ["core.note", () => device.itemType("core.note")],
-      ["the edge types", () => device.edgeTypes()],
-      ["parent-of", () => device.edgeType("parent-of")],
-    ] as const) {
-      const refused = await read();
-      expect(
-        refused.ok ? "answered" : refused.refusal.code,
-        `a read of ${what} on a copy with no catalog answered as if the instance had none`,
-      ).toBe("no_catalog");
-    }
+    const shipped = value(await device.itemTypes(), "the item types");
+    expect(
+      shipped.map((held) => held.id),
+      "a copy with no server answered no types, which reads as an instance with none",
+    ).toEqual(expect.arrayContaining(["core.note", "core.file"]));
+    expect(value(await device.itemType("core.note"), "core.note").id).toBe(
+      "core.note",
+    );
+    expect(value(await device.edgeTypes(), "the edge types")).not.toEqual([]);
+    expect(value(await device.edgeType("parent-of"), "parent-of").shipped).toBe(
+      true,
+    );
+    // A type nobody told the copy of is not one it knows.
+    const absent = await device.itemType("acme.recipe");
+    expect(absent.ok ? "answered" : absent.refusal.code).toBe("not_found");
 
-    // The witness: the same reads answer once a hydration has read one.
+    // The witness: a hydration replaces them with the server's.
     scriptHydration(server, { head: "1" });
     value(await device.hydrate(["core.note"], "library"), "the hydration");
     expect(value(await device.itemTypes(), "the item types")).not.toEqual([]);
-    expect(value(await device.edgeType("parent-of"), "parent-of").id).toBe(
-      "parent-of",
-    );
+    expect(
+      value(await device.status(), "the state report").catalog_version,
+    ).not.toBeNull();
   });
 
   it("refuses a type the copy's catalog does not hold, naming it", async () => {

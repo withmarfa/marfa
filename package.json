@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 run build",
     "generate": "pnpm --filter @withmarfa/server run generate:openapi && pnpm --filter @withmarfa/client run generate && pnpm run generate:core",
-    "generate:core": "tsx scripts/generate-core-contract.ts",
+    "generate:core": "tsx scripts/generate-core-contract.ts && tsx scripts/generate-core-catalog.ts",
     "typecheck": "pnpm -r run typecheck && tsc -p ci --noEmit && tsc -p scripts --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -281,12 +281,52 @@ fn pass_withheld(
     Ok(Some(live.to_string()))
 }
 
-pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
+pub(crate) fn refuse_if_stopped(stop: &AtomicBool) -> Result<()> {
+    if stop.load(Ordering::Relaxed) {
+        Err(CoreError::Canceled)
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn unless_stopped<T>(result: Result<T>, stop: &AtomicBool) -> Result<T> {
+    refuse_if_stopped(stop)?;
+    result
+}
+
+/// A wait for the next frame that looks at `stop` every `PACE.stop_poll`.
+fn next_frame<T>(
+    frames: &Receiver<T>,
+    wait: Duration,
+    stop: &AtomicBool,
+) -> Result<std::result::Result<T, RecvTimeoutError>> {
+    let started = Instant::now();
+    loop {
+        refuse_if_stopped(stop)?;
+        let left = wait.saturating_sub(started.elapsed());
+        match frames.recv_timeout(left.min(PACE.stop_poll)) {
+            Err(RecvTimeoutError::Timeout) if !left.is_zero() => {}
+            other => {
+                refuse_if_stopped(stop)?;
+                return Ok(other);
+            }
+        }
+    }
+}
+
+pub(crate) fn catch_up(
+    core: &Core,
+    http: &Http,
+    idle: Duration,
+    stop: &AtomicBool,
+) -> Result<CatchUpReport> {
+    refuse_if_stopped(stop)?;
     start(core)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);
-    replay_build(core, &scoped, &context, idle)
-        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+    let result = replay_build(core, &scoped, &context, idle, stop)
+        .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
+    unless_stopped(result, stop)
 }
 
 pub(crate) fn replay_build(
@@ -294,10 +334,14 @@ pub(crate) fn replay_build(
     http: &Http,
     context: &Context,
     idle: Duration,
+    stop: &AtomicBool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
-    let (mut catalog, _) = adopt(core, context, &http.catalog()?)?;
+    let catalog = http.catalog()?;
+    refuse_if_stopped(stop)?;
+    let (mut catalog, _) = adopt(core, context, &catalog)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+    refuse_if_stopped(stop)?;
     // So a type the server will not describe costs one read of the catalog
     // rather than one for every event naming it.
     let mut refreshed = HashSet::new();
@@ -320,7 +364,7 @@ pub(crate) fn replay_build(
         } else {
             FIRST_FRAME_WAIT
         };
-        let frame = match frames.recv_timeout(wait) {
+        let frame = match next_frame(&frames, wait, stop)? {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) => match error.kind() {
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock if connected => break,
@@ -396,7 +440,9 @@ pub(crate) fn replay_build(
                             unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
                         {
                             refreshed.insert(named);
-                            catalog = adopt(core, context, &http.catalog()?)?.0;
+                            let refreshed_catalog = http.catalog()?;
+                            refuse_if_stopped(stop)?;
+                            catalog = adopt(core, context, &refreshed_catalog)?.0;
                         }
                         if take(core, context, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
@@ -1818,7 +1864,7 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
         assert!(matches!(
-            catch_up(&core, &http, MS(200)),
+            catch_up(&core, &http, MS(200), &AtomicBool::new(false)),
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
@@ -1849,7 +1895,7 @@ mod tests {
         );
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(1000)).unwrap();
+        let report = catch_up(&core, &http, MS(1000), &AtomicBool::new(false)).unwrap();
         assert!(report.reached_head);
         assert_eq!(report.cursor, "14");
     }
@@ -1881,7 +1927,7 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
         assert!(matches!(
-            catch_up(&core, &http, MS(1000)),
+            catch_up(&core, &http, MS(1000), &AtomicBool::new(false)),
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));

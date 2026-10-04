@@ -2,12 +2,12 @@
 
 The Rust engine every native client embeds: a local SQLite working copy of a slice of one Marfa server, kept current from its event log, read locally, and written to through a queue that holds each write until the server answers it. `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md` say what it does; the fixtures under `conformance/src/suites/device/` hold the `marfa` binary to them.
 
-| Crate | What it is |
-| --- | --- |
-| `marfa-core` | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate` |
-| `marfa-cli` | The `marfa` binary |
+| Crate            | What it is                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `marfa-core`     | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                              |
+| `marfa-cli`      | The `marfa` binary                                                                                           |
 | `bindings/swift` | The UniFFI crate and `build.sh`, which packages it for `withmarfa/marfa-swift`; a cargo workspace of its own |
-| `bindings/node` | The napi-rs module `@withmarfa/core` |
+| `bindings/node`  | The napi-rs module `@withmarfa/core`                                                                         |
 
 ## The binary
 
@@ -22,16 +22,18 @@ Refresh, `logout` and `keys forget` coordinate through one private lock per stor
 
 ### Process outcomes
 
-| Exit | Meaning |
-| --- | --- |
-| 0 | Completed, including a completed drain containing refused writes |
-| 1 | Request refused or invalid, including another contract |
-| 2 | Invalid command line, missing store, or missing server |
-| 3 | Environmental failure, including network failure, rate limits, and full local storage |
-| 4 | Working-copy or queue rule, other store fault, or unavailable credential storage |
-| 5 | Missing or refused credential, or ended sign-in |
+| Exit | Meaning                                                                               |
+| ---- | ------------------------------------------------------------------------------------- |
+| 0    | Completed, including a completed drain containing refused writes                      |
+| 1    | Request refused or invalid, including another contract                                |
+| 2    | Invalid command line, missing store, or missing server                                |
+| 3    | Environmental failure, including network failure, rate limits, and full local storage |
+| 4    | Working-copy or queue rule, other store fault, or unavailable credential storage      |
+| 5    | Missing or refused credential, or ended sign-in                                       |
 
 `device drain` preserves its complete stdout report when it exits 3 for an unavailable pass or undelivered writes, or 5 for a credential-stopped pass. It prints no second error envelope for these report outcomes. Credential stop takes precedence if both occur. A completed pass with refused writes exits 0 and its plain output separately counts refused verdicts; JSON retains each typed verdict. Held writes alone do not make an environmental failure. A direct renewal error prints its typed error on stderr with empty stdout; earlier answers remain committed and the current queued request, idempotency key, and refusal count stay unchanged. Local renewal failures carry no invented server status. An environmental renewal failure while sending a queued request returns the unavailable report; a renewal failure during a follow-up read can end the call with its typed error.
+
+A copy saves before it has reached a server. `device types declare` takes the types an app saves, as one JSON object or an array, and `device types declared` lists them; until it hydrates the copy checks each write against them and the types Marfa ships, and a hydration registers the ones the instance lacks where the key may, and says which it could not. `hydrate`, `catch-up` and `drain` stop on Ctrl-C and exit 3 with the code `canceled`, leaving the store consistent: a stopped hydration refuses reads, a stopped catch-up keeps its cursor, and a stopped drain leaves unsent writes queued. Each binding takes a `Stop`; the caller raises it when its language's cancellation is requested.
 
 Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
 

@@ -144,6 +144,19 @@ pub struct HydrateReport {
     pub edges: i64,
     pub pages: i64,
     pub cursor: String,
+    /// Types the app declared that the instance did not hold and now does.
+    pub registered_types: Vec<String>,
+    /// Declared types the instance did not hold and would not take.
+    pub unregistered_types: Vec<UnregisteredType>,
+}
+
+/// A declared type the instance refused to register, and why.
+#[napi(object)]
+pub struct UnregisteredType {
+    pub id: String,
+    /// The server's code for the refusal.
+    pub code: String,
+    pub message: String,
 }
 
 /// What a pin or an unpin answers.
@@ -930,7 +943,8 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::StreamIncomplete { .. }
         | E::WrongServer { .. }
         | E::BytesAbsent { .. }
-        | E::ContractMismatch { .. } => error.to_string(),
+        | E::ContractMismatch { .. }
+        | E::Canceled => error.to_string(),
     };
     let fields = match error {
         E::NotFound { code, .. }
@@ -1012,6 +1026,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::HydrationIncomplete
         | E::NoCatalog
         | E::ReadingHandle
+        | E::Canceled
         | E::Invalid(_) => Vec::new(),
     };
     (format!("{code}: {detail}"), fields)
@@ -1091,11 +1106,50 @@ pub struct MarfaCore {
     inner: Arc<marfa_core::Core>,
 }
 
+/// Raised to end a `hydrate`, `catchUp` or `drain` it was given to, soon
+/// after, with an error coded `canceled`. What the call had taken is
+/// consistent: a hydration left unfinished refuses reads, a catch-up keeps
+/// the cursor it reached, and a drain leaves what it had not sent queued. A
+/// raised `Stop` stays raised, so a call given one afterwards ends at once.
+#[napi]
+pub struct Stop {
+    flag: Arc<AtomicBool>,
+}
+
+#[napi]
+impl Stop {
+    #[napi(constructor)]
+    pub fn new() -> Stop {
+        Stop {
+            flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[napi]
+    pub fn raise(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Default for Stop {
+    fn default() -> Self {
+        Stop::new()
+    }
+}
+
+fn flag_of(stop: Option<&Stop>) -> Arc<AtomicBool> {
+    stop.map_or_else(
+        || Arc::new(AtomicBool::new(false)),
+        |stop| Arc::clone(&stop.flag),
+    )
+}
+
 pub struct Hydrate {
     core: Arc<marfa_core::Core>,
     types: Vec<String>,
     tier: marfa_core::Tier,
     edge_types: Vec<String>,
+    stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
 }
 
@@ -1110,7 +1164,7 @@ impl Task for Hydrate {
 
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
-            .hydrate_with(&self.types, self.tier, &self.edge_types)
+            .hydrate_until(&self.types, self.tier, &self.edge_types, &self.stop)
             .map_err(|error| record(&mut self.failed, error))
     }
 
@@ -1123,6 +1177,16 @@ impl Task for Hydrate {
             edges: count(report.edges),
             pages: count(report.pages),
             cursor: report.cursor,
+            registered_types: report.registered_types,
+            unregistered_types: report
+                .unregistered_types
+                .into_iter()
+                .map(|held| UnregisteredType {
+                    id: held.id,
+                    code: held.code,
+                    message: held.message,
+                })
+                .collect(),
         })
     }
 }
@@ -1158,6 +1222,7 @@ impl Task for Pin {
 
 pub struct CatchUp {
     core: Arc<marfa_core::Core>,
+    stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
 }
 
@@ -1172,7 +1237,7 @@ impl Task for CatchUp {
 
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
-            .catch_up()
+            .catch_up_until(&self.stop)
             .map_err(|error| record(&mut self.failed, error))
     }
 
@@ -1188,6 +1253,7 @@ impl Task for CatchUp {
 
 pub struct Drain {
     core: Arc<marfa_core::Core>,
+    stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
 }
 
@@ -1287,7 +1353,7 @@ impl Task for Drain {
 
     fn compute(&mut self) -> Result<Self::Output> {
         self.core
-            .drain()
+            .drain_until(&self.stop)
             .map_err(|error| record(&mut self.failed, error))
     }
 
@@ -1427,8 +1493,13 @@ impl MarfaCore {
 
     /// Replaces the local copy with the declared types at `tier`.
     #[napi]
-    pub fn hydrate(&self, types: Vec<String>, tier: Tier) -> AsyncTask<Hydrate> {
-        self.hydrate_with(types, tier, Vec::new())
+    pub fn hydrate(
+        &self,
+        types: Vec<String>,
+        tier: Tier,
+        stop: Option<&Stop>,
+    ) -> AsyncTask<Hydrate> {
+        self.hydrate_with(types, tier, Vec::new(), stop)
     }
 
     /// A hydration that also holds every edge of `edgeTypes` the key reads,
@@ -1439,6 +1510,7 @@ impl MarfaCore {
         types: Vec<String>,
         tier: Tier,
         edge_types: Vec<String>,
+        stop: Option<&Stop>,
     ) -> AsyncTask<Hydrate> {
         AsyncTask::new(Hydrate {
             core: Arc::clone(&self.inner),
@@ -1446,6 +1518,7 @@ impl MarfaCore {
             types,
             tier: tier.into(),
             edge_types,
+            stop: flag_of(stop),
         })
     }
 
@@ -1471,10 +1544,11 @@ impl MarfaCore {
 
     /// Applies every event since the stored cursor.
     #[napi]
-    pub fn catch_up(&self) -> AsyncTask<CatchUp> {
+    pub fn catch_up(&self, stop: Option<&Stop>) -> AsyncTask<CatchUp> {
         AsyncTask::new(CatchUp {
             core: Arc::clone(&self.inner),
             failed: None,
+            stop: flag_of(stop),
         })
     }
 
@@ -1573,6 +1647,32 @@ impl MarfaCore {
             edges: count(status.edges),
             catalog_version: status.catalog_version.map(count),
         })
+    }
+
+    /// Declares the types this app saves, each an object with its `id`, its
+    /// `fields` and whatever else a type carries. A copy that has never
+    /// reached a server checks what it queues against them and the types
+    /// Marfa ships, and a hydration registers the ones the instance
+    /// lacks, where the key may. The call is the app's whole set and replaces every earlier declaration.
+    #[napi]
+    pub fn declare_types(
+        &self,
+        env: Env,
+        #[napi(ts_arg_type = "Record<string, unknown>[]")] types: Vec<serde_json::Value>,
+    ) -> Result<()> {
+        self.inner
+            .declare_types(&types)
+            .map_err(|error| failure(env, error))
+    }
+
+    /// The declarations this copy holds, by id, with the empty `fields` and
+    /// the `version` a registration needs filled in where the app left them
+    /// out.
+    #[napi(ts_return_type = "Record<string, unknown>[]")]
+    pub fn declared_types(&self, env: Env) -> Result<Vec<serde_json::Value>> {
+        self.inner
+            .declared_types()
+            .map_err(|error| failure(env, error))
     }
 
     /// Every item type the copy holds, by id, read from the copy alone.
@@ -1849,10 +1949,11 @@ impl MarfaCore {
 
     /// Sends what the queue holds and records what came back. One pass.
     #[napi]
-    pub fn drain(&self) -> AsyncTask<Drain> {
+    pub fn drain(&self, stop: Option<&Stop>) -> AsyncTask<Drain> {
         AsyncTask::new(Drain {
             core: Arc::clone(&self.inner),
             failed: None,
+            stop: flag_of(stop),
         })
     }
 

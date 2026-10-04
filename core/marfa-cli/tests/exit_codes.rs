@@ -184,20 +184,32 @@ fn a_refusal_under_the_device_rules_leaves_by_four() {
         "status",
     ]);
     assert_eq!(code, 0, "{stderr}");
-    let (code, _, stderr) = run(&[
-        "--json",
-        "device",
-        "--db",
-        store.to_str().unwrap(),
-        "items",
-        "list",
-    ]);
+    let saving = |json: bool| {
+        let mut words = Vec::new();
+        if json {
+            words.push("--json");
+        }
+        words.extend([
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "--reader",
+            "items",
+            "create",
+            "--type",
+            "core.note",
+            "--properties",
+            r#"{"title":"t","body":"b"}"#,
+        ]);
+        run(&words)
+    };
+    let (code, _, stderr) = saving(true);
     assert_eq!(code, 4, "{stderr}");
     let envelope = read_envelope(&stderr);
-    assert_eq!(envelope["error"]["code"], "hydration_incomplete");
+    assert_eq!(envelope["error"]["code"], "reading_handle");
     assert_eq!(envelope["exit"], 4);
 
-    let (code, stdout, stderr) = run(&["device", "--db", store.to_str().unwrap(), "items", "list"]);
+    let (code, stdout, stderr) = saving(false);
     assert_eq!(code, 4, "{stderr}");
     assert_eq!(stdout, "");
     assert!(stderr.starts_with("marfa: "), "{stderr}");

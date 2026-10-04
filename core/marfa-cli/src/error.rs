@@ -260,7 +260,8 @@ impl CliError {
                 | CoreError::Unnamed { .. }
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. }
-                | CoreError::BytesAbsent { .. } => Exit::Environment,
+                | CoreError::BytesAbsent { .. }
+                | CoreError::Canceled => Exit::Environment,
                 CoreError::NoKeychain(_)
                 | CoreError::Store(_)
                 | CoreError::NoServer
