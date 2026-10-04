@@ -205,7 +205,7 @@ describe("key management", () => {
     expect(minted.error?.error.details?.required_scope).toBe("keys.mint");
   });
 
-  it("a mint naming no maps takes the creator's whole set", async () => {
+  it("a mint naming no permissions, maps or claims takes the creator's whole set", async () => {
     const label = `km-inherit-${ctx.runId}`;
     const minted = await client.createKey({
       label,
@@ -370,6 +370,97 @@ describe("key management", () => {
       child!.permissions ?? [],
       "a key minted for one type took its creator's permissions, keys.mint and items.purge among them",
     ).toEqual([]);
+  });
+
+  it("a mint naming only permissions holds those permissions and no reach", async () => {
+    const label = `km-perms-only-${ctx.runId}`;
+    const witness = await client.createItem({
+      type: "core.note",
+      properties: { title: "permissions-only witness", body: "a" },
+    });
+    expect(witness.ok).toBe(true);
+    trackItem(ctx, witness.data.item.id);
+
+    // The witness is the creator, which holds every permission and every map,
+    // so a key that copied from it would not be empty.
+    const creator = (await client.listKeys()).data.data.find(
+      (k) => k.id === ownKeyId,
+    );
+    expect(creator!.permissions).toContain("audit.read");
+    expect(Object.keys(creator!.type_permissions ?? {}).length).toBeGreaterThan(
+      0,
+    );
+
+    for (const [who, tag, minter] of [
+      ["a working key", "working", client],
+      ["the operator key", "operator", getOperatorClient()],
+    ] as const) {
+      const minted = await minter.createKey({
+        label: `${label}-${tag}`,
+        source: `${ctx.source}-${label}-${tag}`,
+        permissions: ["audit.read"],
+      });
+      expect(minted.ok, who).toBe(true);
+      trackKey(ctx, minted.data.id);
+      expect(minted.data.permissions, who).toEqual(["audit.read"]);
+      expect(minted.data.sources, who).toEqual([]);
+      for (const map of [
+        minted.data.type_permissions,
+        minted.data.edge_permissions,
+        minted.data.extension_permissions,
+        minted.data.metadata_permissions,
+        minted.data.profile_permissions,
+      ]) {
+        expect(map, who).toEqual({});
+      }
+
+      const holder = new MarfaClient({
+        baseUrl: apiUrl,
+        apiKey: minted.data.key,
+      });
+      const audit = await holder.listAudit({ limit: 1 });
+      expect(audit.status, `${who}: the permission it named`).toBe(200);
+
+      const write = await holder.createItem({
+        type: "core.note",
+        properties: { title: "refused", body: "a" },
+      });
+      expect(write.status, `${who}: an item write`).toBe(403);
+      const read = await holder.getItem(witness.data.item.id);
+      expect(read.status, `${who}: an item read`).toBe(403);
+      const register = await holder.registerType({
+        id: `user.km-perms-only-${ctx.runId}`,
+        fields: { title: { type: "string", required: true } },
+      });
+      expect(register.status, `${who}: a type registration`).toBe(403);
+    }
+
+    // The same writes by a key that holds the reach, so the refusals above
+    // are the lack of it and not a door that refuses everyone.
+    const registered = await client.registerType({
+      id: `user.km-perms-only-${ctx.runId}`,
+      fields: { title: { type: "string", required: true } },
+    });
+    expect(registered.ok).toBe(true);
+  });
+
+  it("a mint naming permissions and one map holds exactly those", async () => {
+    const label = `km-perms-map-${ctx.runId}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      permissions: ["audit.read"],
+      type_permissions: { "core.note": "read" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    expect(minted.data.permissions).toEqual(["audit.read"]);
+    expect(minted.data.type_permissions).toEqual({ "core.note": "read" });
+    expect(minted.data.edge_permissions).toEqual({});
+    expect(minted.data.extension_permissions).toEqual({});
+    expect(minted.data.metadata_permissions).toEqual({});
+    expect(minted.data.profile_permissions).toEqual({});
+    expect(minted.data.sources).toEqual([]);
   });
 
   it("refuses a mint reaching past what the caller holds", async () => {
@@ -696,7 +787,7 @@ describe("key management", () => {
     try {
       // The widening rule holds for a working key and not for this one: the
       // operator holds no content families and no permissions, and the
-      // key it mints naming no maps holds every one of them.
+      // key it mints naming nothing holds every one of them.
       expect(minted.data.is_operator).toBe(false);
       expect(minted.data.type_permissions).toEqual({ "*": "write" });
       expect(minted.data.edge_permissions).toEqual({ "*": "write" });

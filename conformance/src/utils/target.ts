@@ -59,7 +59,8 @@ export interface TargetCredentials {
  *
  * The bootstrap mint answers with one key, the operator key. It holds no
  * content permissions of its own, and it still provisions the run, because a
- * key it mints naming no permission maps carries the whole dataset.
+ * key it mints naming no permissions, maps or claims carries the whole
+ * dataset.
  */
 export function chooseCredentials(response: MintedKey): TargetCredentials {
   if (typeof response.key !== "string" || response.key.length === 0) {
