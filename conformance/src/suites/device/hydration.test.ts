@@ -131,13 +131,42 @@ describe("what a hydration declares", () => {
     // above is the unreadable type's and not the key's.
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
-    // A credential that is not a key cannot read its own map, and its
-    // slice is taken as declared.
+    // A credential that is not a key cannot read its own map, so the device
+    // asks the listing for the first page of each named type, and the
+    // listing's refusal is taken before anything is cleared.
+    server.copyAnswer("GET", "/items", (request) =>
+      request.query.get("type") === "core.bookmark"
+        ? refusal(
+            403,
+            "type_not_permitted",
+            'No access to type "core.bookmark"',
+          )
+        : itemsPage([{ item: wireItem({ id: "n1" }) }]),
+    );
     const signedIn = await device.hydrate(
       ["core.note", "core.bookmark"],
       "library",
     );
-    expect(signedIn.ok, JSON.stringify(signedIn)).toBe(true);
+    expect(
+      signedIn.ok,
+      "a signed-in app's slice naming a type its grant does not reach hydrated, so the copy holds none of that type and reports the slice as complete",
+    ).toBe(false);
+    if (!signedIn.ok) {
+      expect(signedIn.refusal.code).toBe("forbidden");
+      expect(
+        signedIn.refusal.raw,
+        "the refusal did not name the type the grant does not reach",
+      ).toContain("core.bookmark");
+    }
+    const keptAfter = await device.list();
+    expect(
+      keptAfter.ok ? keptAfter.value.map((item) => item.id) : keptAfter,
+      "the refused hydration cleared the copy a signed-in app had",
+    ).toEqual(["n1"]);
+    const statusAfter = await device.status();
+    expect(
+      statusAfter.ok ? statusAfter.value.slice_types : statusAfter,
+    ).toEqual(["core.note"]);
   });
 
   it("refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had", async () => {

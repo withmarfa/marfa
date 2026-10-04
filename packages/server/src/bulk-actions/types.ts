@@ -28,7 +28,12 @@ import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
  */
 export const BulkActionFilterShape = z
   .object({
-    type: z.string().optional(),
+    type: z
+      .string()
+      .optional()
+      .describe(
+        "Restrict to one type, subtypes included. A type the credential cannot read, with nothing readable under it, is refused `403 type_not_permitted`; one it can read and not write matches nothing. A type nothing registers is accepted.",
+      ),
     // The two doors agree structurally rather than by two literals: this
     // filter's `state` goes straight to the same item query `GET /items` uses
     // and neither sets the widening flag, so one default serves both. That

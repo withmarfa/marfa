@@ -101,19 +101,31 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:read"],
       });
-      // List reads use `getTypeFilter` to project allowed_types into
-      // the storage filter — out-of-scope types silently drop from the
-      // result. This is implicit-denial enforcement (status 200, empty
-      // data), not 403 — strict rejection on filter mismatch would
-      // force callers to know exactly what's in scope. The single-item
-      // GET path enforces explicitly via `requireTypeAccess` (next
-      // test).
-      const res = await request(ctx.app, "GET", "/items?type=core.task", {
+      // A listing without a `type` projects the scopes into the storage
+      // filter through `getTypeFilter`: out-of-scope rows drop silently,
+      // because strict rejection would force callers to know exactly what is
+      // in scope. A `type` that names an out-of-scope registered type is
+      // different: the caller named it, so it is refused, as it is on a
+      // write. The single-item GET path enforces through `requireTypeAccess`
+      // (next test).
+      const named = await request(ctx.app, "GET", "/items?type=core.task", {
         key: rawToken,
       });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { data: unknown[] };
-      expect(body.data).toEqual([]);
+      expect(named.status).toBe(403);
+      const refusal = (await named.json()) as { error?: { code?: string } };
+      expect(refusal.error?.code).toBe("type_not_permitted");
+
+      const unfiltered = await request(ctx.app, "GET", "/items", {
+        key: rawToken,
+      });
+      expect(unfiltered.status).toBe(200);
+      const body = (await unfiltered.json()) as { data: { type: string }[] };
+      // The witness: the in-scope row is listed, so an empty page here would
+      // have been the narrowing and not an empty instance.
+      expect(body.data.length).toBeGreaterThan(0);
+      expect(new Set(body.data.map((i) => i.type))).toEqual(
+        new Set(["core.note"]),
+      );
     });
 
     it("treats underscores in subtree scopes as literal identifier bytes", async () => {

@@ -402,7 +402,7 @@ const listingNarrowingKeys = {
     .string()
     .optional()
     .describe(
-      "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+      "Type identifier; matches subtypes. A concrete type nothing registers is refused `400 unknown_type`; one the credential cannot read, with nothing readable under it, `403 type_not_permitted`. A wildcard answers the readable types it matches.",
     ),
   state: z
     .string()
@@ -549,7 +549,7 @@ const getItemStatsRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
+        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read.",
     },
   },
 });
@@ -644,7 +644,7 @@ const listItemsRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
+        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to what it reads. `edge_permission_denied` when an `edge` or `backref` term names an edge type it cannot read.",
     },
   },
 });
@@ -1565,7 +1565,7 @@ export function itemRoutes(storage: Storage) {
     const type = query.type;
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(type);
+    assertTypeFilter(c, type);
 
     // `any` is a widening, not a state, so it never reaches the column
     // comparison. Shared with `GET /export`, which reads the same filter.

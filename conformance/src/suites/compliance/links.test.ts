@@ -1512,7 +1512,7 @@ describe("POST /items/lookup", () => {
     expect(hydrated.data.data[0]?.edges).toEqual(listedRow?.edges);
   });
 
-  it("leaves out a row the key may not read, and answers tombstones only to a key that may read the type", async () => {
+  it("leaves out a row the key may not read, and refuses a key that may not read the type", async () => {
     const link = v("unread");
     const key = v("unread-key");
     const kept = await row({ vendor_id: link }, { source_id: key });
@@ -1527,14 +1527,18 @@ describe("POST /items/lookup", () => {
     );
     await purge(purged.id);
 
-    const minted = await client.createKey({
-      label: `links-notes-${ctx.runId}`,
-      source: `${ctx.source}-notes`,
-      type_permissions: { "core.note": "read" },
-    });
-    expect(minted.ok).toBe(true);
-    trackKey(ctx, minted.data.id);
-    const notes = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    const mint = async (label: string, type: string) => {
+      const minted = await client.createKey({
+        label: `links-${label}-${ctx.runId}`,
+        source: `${ctx.source}-${label}`,
+        type_permissions: { [type]: "read" },
+      });
+      expect(minted.ok).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const reader = await mint("linked", linked);
+    const notes = await mint("notes", "core.note");
 
     const selector = {
       type: linked,
@@ -1546,19 +1550,25 @@ describe("POST /items/lookup", () => {
     expect(mine.data.tombstones.map((t) => t.key)).toEqual([
       v("unread-gone-key"),
     ]);
-    const theirs = await notes.lookupItems(selector);
+    // Reads the named type and not the note: the note is left out and the
+    // tombstones are answered.
+    const theirs = await reader.lookupItems(selector);
     expect(theirs.ok, JSON.stringify(theirs.error)).toBe(true);
-    expect(theirs.data.data.map((i) => i.id)).toEqual([note.id]);
-    expect(theirs.data.tombstones).toEqual([]);
+    expect(theirs.data.data.map((i) => i.id)).toEqual([kept.id]);
+    expect(theirs.data.tombstones).toEqual(mine.data.tombstones);
 
     const byLink = { type: linked, links: [link, gone] };
     const written = await client.lookupItems(byLink);
     expect(written.data.data.map((i) => i.id)).toEqual([kept.id]);
     expect(written.data.tombstones).toHaveLength(1);
-    expect(await notes.lookupItems(byLink)).toMatchObject({
-      status: 200,
-      data: { data: [], tombstones: [] },
-    });
+
+    // A key that may not read the type it names is refused, however it
+    // selects, rather than answered an empty page.
+    for (const body of [selector, byLink]) {
+      const refused = await notes.lookupItems(body);
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("type_not_permitted");
+    }
 
     // A key whose map reaches no type is refused rather than answered empty.
     const operator = getOperatorClient();

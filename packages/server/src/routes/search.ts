@@ -6,7 +6,6 @@ import { assertTypeFilter } from "./_type-filter.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import {
   requireAuth,
-  requireTypeAccess,
   getTypeFilter,
   readsSomeType,
 } from "../middleware/auth.js";
@@ -106,7 +105,7 @@ const searchRoute = createRoute({
       type: z
         .string()
         .describe(
-          "Restrict to a single type, subtypes included. A concrete identifier this instance does not know is refused with 400 `unknown_type`.",
+          "Restrict to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches.",
         )
         .optional(),
       state: z
@@ -209,7 +208,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
+        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. `edge_permission_denied` where a filter term names an edge type it cannot read: a term naming a relationship is a question, so it is refused rather than dropped.",
     },
   },
 });
@@ -241,9 +240,7 @@ export function searchRoutes(storage: Storage) {
 
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(type);
-
-    if (type) requireTypeAccess(c, type, "read");
+    assertTypeFilter(c, type);
 
     // This door takes the same grammar `GET /items` takes, and it
     // compiles an edge term rather than ignoring one, so it asks the same

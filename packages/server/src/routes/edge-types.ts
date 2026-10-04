@@ -319,7 +319,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge types"],
   summary: "List edge types",
   description:
-    "Returns every edge type this instance resolves (the shipped types plus any registered through `POST /edge-types`), each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.",
+    "Returns every edge type this instance resolves (the shipped types plus any registered through `POST /edge-types`), each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it. Every credential reads the whole list, whatever its edge map reaches: an edge type's existence is not secret, and a client resolves an edge's names from this list.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

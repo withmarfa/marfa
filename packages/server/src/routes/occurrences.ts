@@ -94,7 +94,12 @@
  *     does not order against a `Z` one as text.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { MarfaError, ErrorCode, matchesTypeFilter } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  matchesTypeFilter,
+  typeMatchesPattern,
+} from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -878,7 +883,7 @@ const occurrencesRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Restrict to one event type. Defaults to every event type the caller can read.",
+          "Restrict to one event type, or to the event types a wildcard matches. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it.",
         ),
     }),
   },
@@ -894,12 +899,13 @@ const occurrencesRoute = createRoute({
         "application/json": {
           schema: makeErrorResponseSchema([
             "missing_required_field",
+            "unknown_type",
             "validation_error",
           ]),
         },
       },
       description:
-        "`missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
+        "`missing_required_field` when `from` or `to` is absent; `unknown_type` when `type` names nothing registered; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either: the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
     },
     401: {
       content: {
@@ -916,7 +922,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads.",
     },
   },
 });
@@ -1019,10 +1025,9 @@ export function occurrenceRoutes(
         { from: query.from, to: query.to, max_days: MAX_WINDOW_DAYS },
       );
     }
-    // The same judgment `/items`, `/search` and `/export` make: the global
-    // wildcard and a malformed pattern are refused, and a concrete id nobody
-    // has registered is `unknown_type` rather than an empty window.
-    assertTypeFilter(query.type);
+    // The same judgment `/items`, `/search` and `/export` make, reasoned at
+    // `assertTypeFilter`.
+    assertTypeFilter(c, query.type);
 
     // The caller's own type permissions still decide what is readable;
     // this route narrows to event types on top of that rather than
@@ -1032,9 +1037,10 @@ export function occurrenceRoutes(
     // narrowing goes through the same predicate the SSE stream uses rather
     // than a membership test.
     const typeFilter = getTypeFilter(c);
+    const named = query.type;
     const wanted = (
-      query.type !== undefined
-        ? EVENT_TYPES.filter((t) => t === query.type)
+      named !== undefined
+        ? EVENT_TYPES.filter((t) => typeMatchesPattern(t, named))
         : EVENT_TYPES
     ).filter((t) => matchesTypeFilter(t, typeFilter));
     if (wanted.length === 0) {

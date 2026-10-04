@@ -86,7 +86,7 @@ fn hydrate_inner(
             tx.commit()?;
         }
     }
-    refuse_unreadable(http, &types)?;
+    refuse_unreadable(http, &types, tier, &catalog_rows)?;
     refuse_unheld(&catalog_rows, &types, &edge_types)?;
     crate::catch_up::refuse_if_stopped(stop)?;
     {
@@ -413,11 +413,23 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     Ok(declared)
 }
 
-/// The listing answers a type the key cannot read as one with no rows, so
-/// the slice would hold none of it and say nothing. A wildcard may match
-/// nothing, and a credential that is not a key cannot read its own map, so
-/// both are taken as declared.
-fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
+/// The listing refuses a type the credential cannot read `403
+/// type_not_permitted`, but only once the copy has been cleared, so it is
+/// refused here first, whatever the credential. A key's own map says which
+/// types it reads. A credential that is not a key cannot read its own map, so
+/// the first page of each named type is asked for instead and the listing's
+/// refusal is taken as the answer. A wildcard may match nothing, so it is
+/// taken as declared.
+///
+/// A named type is readable when the credential reads it or any type under
+/// it, because the server serves a named type's readable descendants and
+/// refuses it only when nothing it selects is readable.
+fn refuse_unreadable(
+    http: &Http,
+    types: &[String],
+    tier: Tier,
+    catalog: &WireCatalog,
+) -> Result<()> {
     let named: Vec<&str> = types
         .iter()
         .map(String::as_str)
@@ -426,23 +438,72 @@ fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
     if named.is_empty() {
         return Ok(());
     }
-    let Some(key) = http.current_key()? else {
-        return Ok(());
+    let unreadable: Vec<&str> = match http.current_key()? {
+        Some(key) => named
+            .into_iter()
+            .filter(|name| !reads_under(&key, name, catalog))
+            .collect(),
+        None => {
+            let mut refused = Vec::new();
+            for name in named {
+                let probe = http.items_page(&ItemsQuery {
+                    r#type: Some(name),
+                    tier,
+                    cursor: None,
+                });
+                match probe {
+                    Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => {
+                        refused.push(name);
+                    }
+                    Err(error) => return Err(error),
+                    Ok(_) => {}
+                }
+            }
+            refused
+        }
     };
-    let unreadable: Vec<&str> = named
-        .into_iter()
-        .filter(|name| !crate::folder::placement::reads(&key, name))
-        .collect();
     if unreadable.is_empty() {
         return Ok(());
     }
     Err(CoreError::Forbidden {
         code: "type_not_permitted".into(),
         message: format!(
-            "this key cannot read {}, so a slice naming it would hold none of it: hydrate with a key that reads it, or leave it out",
+            "this credential cannot read {}, nor any type under it, so a slice naming it would hold none of it: hydrate with a credential that reads it, or leave it out",
             unreadable.join(", ")
         ),
     })
+}
+
+/// Whether the key reads `name` or a type the catalog places under it, by
+/// its name or by a declared parent.
+fn reads_under(key: &serde_json::Value, name: &str, catalog: &WireCatalog) -> bool {
+    use crate::folder::placement::reads;
+    reads(key, name)
+        || catalog.types.iter().any(|candidate| {
+            candidate.id != name && under(catalog, &candidate.id, name) && reads(key, &candidate.id)
+        })
+}
+
+fn under(catalog: &WireCatalog, id: &str, root: &str) -> bool {
+    if id.starts_with(&format!("{root}.")) {
+        return true;
+    }
+    let mut current = id;
+    for _ in 0..64 {
+        let Some(parent) = catalog
+            .types
+            .iter()
+            .find(|entry| entry.id == current)
+            .and_then(|entry| entry.parent.as_deref())
+        else {
+            return false;
+        };
+        if parent == root {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Checked against the catalog just read, before the copy is cleared: the
@@ -611,4 +672,161 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
     Err(CoreError::StreamIncomplete {
         reason: "replay_failed".into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use crate::scripted::{self, Scripted};
+    use crate::stop_tests::copy;
+    use crate::{CoreError, Tier, store};
+
+    /// A credential that is not a key cannot read its own map, so the device
+    /// cannot tell before listing whether it may read a type. The listing's
+    /// refusal has to arrive before the copy is cleared, or the old slice,
+    /// its declaration and the queue are gone and the copy stays empty.
+    #[test]
+    fn a_type_a_non_key_credential_may_not_read_is_refused_before_anything_is_cleared() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[
+                ("core.note", None),
+                ("core.bookmark", None),
+            ]))],
+        );
+        server.on(
+            "/keys/current",
+            vec![scripted::certified(scripted::refusal(403, "forbidden"))],
+        );
+        server.on(
+            "/items",
+            vec![
+                scripted::certified(scripted::json(200, r#"{"data":[],"next_cursor":null}"#)),
+                scripted::certified(scripted::refusal(403, "type_not_permitted")),
+            ],
+        );
+        core.create_item(&crate::Draft {
+            r#type: "core.note".into(),
+            properties: serde_json::from_value(serde_json::json!({
+                "title": "queued before hydration",
+                "body": "keep this save"
+            }))
+            .unwrap(),
+            ..Default::default()
+        })
+        .unwrap();
+        let queue = core.queue().unwrap();
+        let before = core.status().unwrap();
+
+        let refused = core
+            .hydrate_until(
+                &["core.note".into(), "core.bookmark".into()],
+                Tier::Library,
+                &[],
+                &AtomicBool::new(false),
+            )
+            .unwrap_err();
+        match refused {
+            CoreError::Forbidden { code, message } => {
+                assert_eq!(code, "type_not_permitted");
+                assert!(message.contains("core.bookmark"), "{message}");
+                assert!(!message.contains("core.note,"), "{message}");
+            }
+            other => panic!("expected the listing's refusal, got {other:?}"),
+        }
+
+        assert_eq!(core.queue().unwrap(), queue, "the queue was touched");
+        let after = core.status().unwrap();
+        assert_eq!(after.slice_types, before.slice_types);
+        assert_eq!(after.hydration, before.hydration);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::meta_get(&conn, store::META_HYDRATE_STATE).unwrap(),
+            None,
+            "the copy was left mid-hydration"
+        );
+        assert_eq!(
+            store::meta_get(&conn, store::META_SLICE_TYPES)
+                .unwrap()
+                .as_deref(),
+            Some("[\"core.note\"]"),
+            "the slice declaration was overwritten"
+        );
+    }
+
+    /// The server serves a named type's readable descendants, so a key that
+    /// reads only a type under the one declared is not refused for it.
+    #[test]
+    fn a_key_that_reads_only_a_descendant_of_a_declared_type_hydrates_it() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[
+                ("core.note", None),
+                ("core.entity", None),
+                ("core.entity.person", Some("core.entity")),
+                ("acme.contact", Some("core.entity")),
+            ]))],
+        );
+        for readable in ["core.entity.person", "acme.contact"] {
+            server.on(
+                "/keys/current",
+                vec![scripted::certified(scripted::json(
+                    200,
+                    &format!(
+                        r#"{{"type_permissions":{{"core.note":"read","{readable}":"read"}}}}"#
+                    ),
+                ))],
+            );
+            server.on(
+                "/items",
+                vec![scripted::certified(scripted::json(
+                    200,
+                    r#"{"data":[],"next_cursor":null}"#,
+                ))],
+            );
+            let listed = server.seen("/items").len();
+            let hydrated = core.hydrate_until(
+                &["core.note".into(), "core.entity".into()],
+                Tier::Library,
+                &[],
+                &AtomicBool::new(false),
+            );
+            // Past the refusal: what the scripted stream does after that is
+            // not this test's subject, the listing being asked is.
+            assert!(
+                !matches!(hydrated, Err(CoreError::Forbidden { .. })),
+                "{readable}: {hydrated:?}"
+            );
+            assert!(
+                server.seen("/items").len() > listed,
+                "{readable}: no page was asked for"
+            );
+        }
+
+        server.on(
+            "/keys/current",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"type_permissions":{"core.note":"read"}}"#,
+            ))],
+        );
+        match core.hydrate_until(
+            &["core.note".into(), "core.entity".into()],
+            Tier::Library,
+            &[],
+            &AtomicBool::new(false),
+        ) {
+            Err(CoreError::Forbidden { code, message }) => {
+                assert_eq!(code, "type_not_permitted");
+                assert!(message.contains("core.entity"), "{message}");
+                assert!(!message.contains("core.note,"), "{message}");
+            }
+            other => panic!("a key reading nothing under the type was not refused: {other:?}"),
+        }
+    }
 }
