@@ -186,7 +186,9 @@ export class SqliteKeyStore implements KeyStore {
     const row = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+      .where(
+        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+      )
       .get();
     return row ? mapRow(row) : null;
   }
@@ -195,7 +197,9 @@ export class SqliteKeyStore implements KeyStore {
     const existing = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+      .where(
+        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+      )
       .get();
     if (!existing) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
@@ -274,7 +278,12 @@ export class SqliteKeyStore implements KeyStore {
       const result = await tx
         .update(apiKeys)
         .set({ revoked_at: new Date().toISOString() })
-        .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+        .where(
+          and(
+            eq(apiKeys.id, id),
+            notRevokedOrExpired(new Date().toISOString()),
+          ),
+        )
         .run();
       if (result.rowsAffected === 0) return false;
       // A key's webhook subscriptions go with it.
@@ -287,11 +296,13 @@ export class SqliteKeyStore implements KeyStore {
     if (revoked) return "revoked";
     // Read only on the miss, and only to say which miss it was.
     const row = await this.db
-      .select({ id: apiKeys.id })
+      .select({ revoked_at: apiKeys.revoked_at })
       .from(apiKeys)
       .where(eq(apiKeys.id, id))
       .get();
-    return row ? "already_revoked" : "not_found";
+    // A key past its expiry that nothing revoked does not exist to this door,
+    // as it does not to the listing.
+    return row?.revoked_at ? "already_revoked" : "not_found";
   }
 
   /**
