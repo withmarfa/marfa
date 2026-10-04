@@ -14,6 +14,7 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 
 `marfa --help` lists every command, the exit codes and the `--json` error shape; `marfa operations` maps each published operation to its command. `marfa device --db PATH` is a working copy, and `marfa folders` a folder on disk that carries its own store.
 
+- **Requests:** every command sends through `marfa_core::http::Http`, the stack the working copy uses: it follows no redirect, reads the contract header on every answer, renews a refused credential once and takes the same time limits. The binary does not mirror the document's schemas. `commands/driven.rs` runs each command in this process against a local server and holds every request it sends to `openapi.json`: the method and path, each query name, each key of a JSON body, and each enum value a flag names. A flag that takes any text leaves its value to the server. A rename in the document fails that test.
 - **Server:** `--url`, then `MARFA_API_URL`, then the server a kept credential made current.
 - **Credential:** `--key`, then `MARFA_API_KEY`, then the operating system's keychain, where `marfa keys keep` and `marfa login` put one. Never a plain file. With both variables set, a command reads and writes no keychain, which is how an agent runs it.
 - **Unattended runs:** `MARFA_KEYCHAIN` names a keychain file to use instead of the person's, on macOS, and refuses every prompt. Tests and CI use it; CI fails a run that changed the login keychain's `marfa` entries.
