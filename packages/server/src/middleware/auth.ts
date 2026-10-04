@@ -1241,17 +1241,7 @@ export function requirePermission(
   c: Context<AppEnv>,
   permission: Permission,
 ): void {
-  const key = checkAuth(c.get("apiKey"));
-  // **One question, asked of one list, whichever kind of credential arrived.**
-  // A key carries its permissions on its row and a sign-in carries them
-  // on its grant, and both are the literals themselves — so the door does not
-  // branch on what it is looking at, and there is no second implementation to
-  // drift.
-  const held =
-    c.get("authType") === "oauth"
-      ? (c.get("oauthGrant")?.scopes ?? [])
-      : (key.permissions ?? []);
-  if (hasPermission(held, permission)) {
+  if (holdsPermission(c, permission)) {
     rememberReplayRequirement({ kind: "permission", permission });
     return;
   }
@@ -1259,6 +1249,44 @@ export function requirePermission(
     ErrorCode.FORBIDDEN,
     `This credential does not hold ${permission}`,
     { required_scope: permission },
+  );
+}
+
+/**
+ * Whether the credential holds `permission`, asked without being refused for
+ * asking: a door that admits a credential on one of two grounds has to tell
+ * which it holds. {@link requirePermission} is the question with the refusal
+ * and the replay record, and a door that goes on to rely on the answer asks
+ * it too.
+ *
+ * **One question, asked of one list, whichever kind of credential arrived.**
+ * A key carries its permissions on its row and a sign-in carries them on its
+ * grant, and both are the literals themselves, so there is no second
+ * implementation to drift. A missing carrier fails closed.
+ */
+export function holdsPermission(
+  c: Context<AppEnv>,
+  permission: Permission,
+): boolean {
+  const key = checkAuth(c.get("apiKey"));
+  const held =
+    c.get("authType") === "oauth"
+      ? (c.get("oauthGrant")?.scopes ?? [])
+      : (key.permissions ?? []);
+  return hasPermission(held, permission);
+}
+
+/** Whether the credential's metadata map covers `subresource` at `level`,
+ *  asked without being refused for asking. */
+export function holdsMetadataPermission(
+  c: Context<AppEnv>,
+  subresource: string,
+  level: "read" | "write",
+): boolean {
+  return metadataPermissionCovers(
+    checkAuth(c.get("apiKey")).metadata_permissions,
+    subresource,
+    level,
   );
 }
 
