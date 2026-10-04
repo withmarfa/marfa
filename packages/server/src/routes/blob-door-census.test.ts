@@ -103,7 +103,8 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "enrichment/sweeper.ts":
     "reads a file's bytes for its own row, only where that row's blob_ref reference lends (listCandidates)",
   "routes/blobs.ts": "the doors this census walks",
-  "routes/export.ts":
+  "routes/export.ts": "hands the layer to the archive export below",
+  "routes/export-archive.ts":
     "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
   "routes/admin-archive.ts": "the restore, operator key only, writes bytes",
   "routes/health.ts": "a probe of the disk store under a fixed name",
@@ -136,7 +137,7 @@ describe("every blob door is held to the credential's reach", () => {
   it("names every module holding the blob layer, and the export asks the read rule", () => {
     expect(blobLayerHolders()).toEqual(Object.keys(BLOB_LAYER_HOLDERS).sort());
     const exporter = readFileSync(
-      join(import.meta.dirname, "export.ts"),
+      join(import.meta.dirname, "export-archive.ts"),
       "utf8",
     );
     expect(exporter).toContain("mayReadBlob(");

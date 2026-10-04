@@ -34,7 +34,7 @@ export const MAX_ARCHIVE_TEXT_BYTES = 64 * 1024 * 1024;
  * What the restore reads out of `manifest.json`, which is narrower than what
  * the export writes.
  *
- * `ArchiveManifest` in `routes/export.ts` is the writer's own declaration
+ * `ArchiveManifest` in `routes/export-archive.ts` is the writer's own declaration
  * and the authority on the format. This one stops at the fields the restore
  * consults: `version`, which it refuses, and `blobs`, whose mime type each
  * blob entry is stored under. Widening it to match the writer would have it
