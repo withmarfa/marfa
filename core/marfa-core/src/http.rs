@@ -197,8 +197,9 @@ impl Http {
 
     /// `recv_response` bounds the wait for an answer to begin, counted from
     /// when the request has been sent, and `recv_body` the reading of one. A
-    /// streamed answer is outside `recv_body`. Sending a body has no budget,
-    /// so a good upload on a slow link is not cut off.
+    /// streamed answer is outside `recv_body`, and an upload's answer outside
+    /// both. Sending a body has no budget, so a good upload on a slow link is
+    /// not cut off.
     pub fn with_timeouts(
         url: &str,
         key: &str,
