@@ -21,6 +21,7 @@ import { parse } from "yaml";
 import {
   affected,
   classify,
+  documentationOnly,
   DRAFT_JOBS,
   forDraft,
   JOBS,
@@ -70,6 +71,45 @@ describe("what a change runs", () => {
       ["ci-sqlite"],
     ],
     ["the licence alone", ["LICENSE"], []],
+    [
+      "agent instructions, settings and Git hooks, in any language",
+      [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "packages/server/AGENTS.md",
+        ".agents/skills/release/SKILL.md",
+        ".agents/skills/release/helper.py",
+        ".claude/settings.json",
+        ".codex/config.toml",
+        ".githooks/pre-push",
+        ".github/ISSUE_TEMPLATE/bug.yml",
+      ],
+      ["ci-sqlite"],
+    ],
+    [
+      "a path named like an agent folder that is not one",
+      [".codexrc", "githooks/pre-push"],
+      [...JOBS],
+    ],
+    [
+      "what only GitHub reads under .github/",
+      [
+        ".github/dependabot.yml",
+        ".github/SECURITY.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+      ],
+      ["ci-sqlite"],
+    ],
+    [
+      "an action a workflow could use",
+      [".github/actions/setup/action.yml"],
+      [...JOBS],
+    ],
+    [
+      "the settings example, which the settings census test reads",
+      [".env.example"],
+      ["ci-sqlite", "workspace"],
+    ],
     [
       "the contract's specification",
       ["conformance/spec/items.md"],
@@ -276,6 +316,28 @@ describe("what a change runs", () => {
     }
   });
 
+  it("calls an answer documentation only when nothing but the format check runs", () => {
+    for (const paths of [
+      ["AGENTS.md"],
+      ["LICENSE"],
+      ["README.md", ".agents/skills/release/helper.py", ".githooks/pre-push"],
+    ]) {
+      expect(documentationOnly(classify(paths)), paths.join(", ")).toBe(true);
+    }
+    for (const paths of [
+      [],
+      ["AGENTS.md", "packages/server/src/runtime.ts"],
+      ["packages/client/README.md"],
+      ["conformance/spec/items.md"],
+      [".env.example"],
+      [".github/workflows/release.yml"],
+      ["scripts/ci-required.ts"],
+      ["tools/new.ts"],
+    ]) {
+      expect(documentationOnly(classify(paths)), paths.join(", ")).toBe(false);
+    }
+  });
+
   it("holds Markdown in every generated tree to its freshness check", () => {
     const trees = readFileSync(join(ROOT, ".gitattributes"), "utf8")
       .split("\n")
@@ -354,6 +416,7 @@ interface Step {
   run?: string;
   uses?: string;
   with?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
 interface Workflow {
@@ -363,6 +426,7 @@ interface Workflow {
     {
       needs?: string;
       if?: string;
+      permissions?: Record<string, string>;
       outputs?: Record<string, string>;
       steps: Step[];
     }
@@ -426,6 +490,14 @@ describe("each job reads its own answer", () => {
       expect(jobs[name]?.needs, name).toBe("changes");
       expect(jobs[name]?.if, name).toBe(gate(name));
     }
+    // A push asks whether this workflow passed on the commit before it.
+    expect(jobs.changes?.permissions).toEqual({
+      contents: "read",
+      actions: "read",
+    });
+    expect(
+      jobs.changes?.steps.find((step) => step.id === "classify")?.env,
+    ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
   it("CI (SQLite) checks formatting and these rules for any change and the rest only for the workspace", () => {
@@ -518,7 +590,7 @@ function filterMatches(pattern: string, path: string): boolean {
 describe("CodeQL", () => {
   const { on, jobs } = workflow("codeql.yml") as unknown as {
     on: {
-      push?: unknown;
+      push?: { branches?: string[]; "paths-ignore"?: string[] };
       pull_request?: {
         branches?: string[];
         types?: string[];
@@ -532,12 +604,24 @@ describe("CodeQL", () => {
   const skips = (path: string) =>
     ignored.some((pattern) => filterMatches(pattern, path));
 
-  it("analyzes every push to main and once a week, and a pull request unless it changes only documentation or agent settings", () => {
-    expect(on.push).toEqual({ branches: ["main"] });
+  it("analyzes once a week, and a push to main or a pull request unless it changes only documentation or agent instructions", () => {
+    const documentation = [
+      "**/*.md",
+      "LICENSE",
+      ".agents/**",
+      ".claude/**",
+      ".codex/**",
+      ".githooks/**",
+      ".github/ISSUE_TEMPLATE/**",
+    ];
+    expect(on.push).toEqual({
+      branches: ["main"],
+      "paths-ignore": documentation,
+    });
     expect(on.pull_request).toEqual({
       branches: ["main"],
       types: ["opened", "synchronize", "reopened", "ready_for_review"],
-      "paths-ignore": ["**/*.md", "LICENSE", ".claude/**"],
+      "paths-ignore": documentation,
     });
     expect(on.schedule).toHaveLength(1);
     expect(on.schedule?.[0]?.cron).toMatch(/^\d{1,2} \d{1,2} \* \* [0-6]$/);
@@ -548,7 +632,15 @@ describe("CodeQL", () => {
   });
 
   it("skips what the classifier also reads as documentation, and no code in a language it analyzes", () => {
-    for (const path of ["README.md", "LICENSE", ".claude/settings.json"]) {
+    for (const path of [
+      "README.md",
+      "LICENSE",
+      ".agents/skills/release/helper.py",
+      ".claude/settings.json",
+      ".codex/config.toml",
+      ".githooks/pre-push",
+      ".github/ISSUE_TEMPLATE/bug.yml",
+    ]) {
       expect(skips(path), path).toBe(true);
       expect([...affected(path)].filter((job) => job !== "ci-sqlite")).toEqual(
         [],
@@ -683,6 +775,9 @@ describe("what a job reads reaches it", () => {
 describe("the classifier as CI runs it", () => {
   const script = resolve(ROOT, "scripts/ci-required.ts");
   const directory = mkdtempSync(join(tmpdir(), "marfa-ci-paths-"));
+  // Stands in for `gh` on PATH: it records each call and prints `response`,
+  // or fails when there is none.
+  const fake = mkdtempSync(join(tmpdir(), "marfa-ci-gh-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
   const commits: Record<string, string> = {};
@@ -712,33 +807,51 @@ describe("the classifier as CI runs it", () => {
     git("mv", "packages/server/src/runtime.ts", "packages/server/README.md");
     git("commit", "-qm", "rename");
     commits.rename = git("rev-parse", "HEAD");
+    commit("instructions", {
+      "AGENTS.md": "Words\n",
+      ".agents/skills/release/helper.py": "print()\n",
+      ".claude/settings.json": "{}\n",
+      ".codex/config.toml": "\n",
+      ".githooks/pre-push": "#!/bin/sh\n",
+    });
+    commit("workflow", { ".github/workflows/new.yml": "on: push\n" });
+    commit("unknown", { "tools/new.ts": "export {};\n" });
+    commit("hook", { ".githooks/check.ts": "export {};\n" });
+    git("mv", ".githooks/check.ts", "packages/server/src/check.ts");
+    git("commit", "-qm", "moved");
+    commits.moved = git("rev-parse", "HEAD");
+    writeFileSync(
+      join(fake, "gh"),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$(dirname "$0")/calls"\ncat "$(dirname "$0")/response"\n',
+      { mode: 0o755 },
+    );
   });
   afterAll(() => {
     rmSync(directory, { recursive: true, force: true });
+    rmSync(fake, { recursive: true, force: true });
   });
 
-  function outputs(
+  function run(
     event: string,
-    from: string,
-    to: string,
-    draft?: boolean,
+    payload: unknown,
+    env: Record<string, string | undefined> = {},
   ): Record<string, string> {
     const eventPath = join(directory, "event.json");
     const output = join(directory, "output");
-    writeFileSync(
-      eventPath,
-      JSON.stringify({
-        pull_request: { base: { sha: from }, head: { sha: to }, draft },
-      }),
-    );
+    writeFileSync(eventPath, JSON.stringify(payload));
     writeFileSync(output, "");
     execFileSync(process.execPath, [script], {
       cwd: directory,
       env: {
         ...process.env,
+        PATH: `${fake}:${process.env.PATH ?? ""}`,
         GITHUB_EVENT_NAME: event,
         GITHUB_EVENT_PATH: eventPath,
         GITHUB_OUTPUT: output,
+        GITHUB_REPOSITORY: "example/marfa",
+        GITHUB_WORKFLOW_REF:
+          "example/marfa/.github/workflows/ci.yml@refs/heads/main",
+        ...env,
       },
     });
     return Object.fromEntries(
@@ -747,6 +860,17 @@ describe("the classifier as CI runs it", () => {
         .split("\n")
         .map((line) => line.split("=") as [string, string]),
     );
+  }
+
+  function outputs(
+    event: string,
+    from: string,
+    to: string,
+    draft?: boolean,
+  ): Record<string, string> {
+    return run(event, {
+      pull_request: { base: { sha: from }, head: { sha: to }, draft },
+    });
   }
 
   const every = (value: string) => ({
@@ -827,7 +951,7 @@ describe("the classifier as CI runs it", () => {
     ).toEqual(every("true"));
   });
 
-  it.each(["push", "schedule", "workflow_dispatch"])(
+  it.each(["schedule", "workflow_dispatch"])(
     "runs every job on %s",
     (event) => {
       expect(outputs(event, commits.base ?? "", commits.docs ?? "")).toEqual(
@@ -835,4 +959,149 @@ describe("the classifier as CI runs it", () => {
       );
     },
   );
+
+  describe("on a push to main", () => {
+    interface Run {
+      event: string;
+      head_branch: string | null;
+      head_sha: string;
+      conclusion: string | null;
+    }
+    const green = (
+      sha: string,
+      event = "push",
+      branch: string | null = "main",
+    ): Run => ({
+      event,
+      head_branch: branch,
+      head_sha: sha,
+      conclusion: "success",
+    });
+
+    /**
+     * The push's outputs, with `gh` answering `runs` for the commit before
+     * it, or failing for `undefined`, or printing a string as it is.
+     */
+    function pushed(
+      before: string,
+      after: string,
+      runs: Run[] | string | undefined,
+      options: {
+        forced?: boolean;
+        env?: Record<string, string | undefined>;
+      } = {},
+    ): { output: Record<string, string>; calls: string[] } {
+      rmSync(join(fake, "calls"), { force: true });
+      rmSync(join(fake, "response"), { force: true });
+      if (runs !== undefined) {
+        writeFileSync(
+          join(fake, "response"),
+          typeof runs === "string"
+            ? runs
+            : JSON.stringify({ total_count: runs.length, workflow_runs: runs }),
+        );
+      }
+      const output = run(
+        "push",
+        { before, after, forced: options.forced ?? false },
+        options.env,
+      );
+      const calls = existsSync(join(fake, "calls"))
+        ? readFileSync(join(fake, "calls"), "utf8").trim().split("\n")
+        : [];
+      return { output, calls };
+    }
+
+    const skipped = {
+      ...every("false"),
+      "ci-sqlite": "true",
+      full: "true",
+    };
+
+    it("skips what documentation skips once ci.yml passed on the commit before", () => {
+      const before = commits.rename ?? "";
+      const { output, calls } = pushed(before, commits.instructions ?? "", [
+        green(before),
+      ]);
+      expect(output).toEqual(skipped);
+      expect(calls).toEqual([
+        `api repos/example/marfa/actions/workflows/ci.yml/runs?head_sha=${before}&status=success&per_page=100`,
+      ]);
+      // A dispatch on that commit is a run the release gate accepts too.
+      expect(
+        pushed(before, commits.instructions ?? "", [
+          green(before, "workflow_dispatch", "some-branch"),
+        ]).output,
+      ).toEqual(skipped);
+    });
+
+    it.each<[string, (before: string) => Run[] | string | undefined]>([
+      ["failed, is still running or never ran", () => []],
+      [
+        "only failed, whatever the query asked for",
+        (before) => [{ ...green(before), conclusion: "failure" }],
+      ],
+      [
+        "passed only as a pull request's head",
+        (before) => [green(before, "pull_request")],
+      ],
+      [
+        "passed only on a push to another branch",
+        (before) => [green(before, "push", "next")],
+      ],
+      ["passed only on another commit", () => [green("f".repeat(40))]],
+      ["cannot be asked about", () => undefined],
+      ["answers something that is not JSON", () => "not json"],
+      ["answers JSON without runs", () => "{}"],
+    ])("runs every job when ci.yml on the commit before %s", (_, runs) => {
+      const before = commits.rename ?? "";
+      expect(
+        pushed(before, commits.instructions ?? "", runs(before)).output,
+      ).toEqual(every("true"));
+    });
+
+    it("runs every job when it cannot tell which workflow or repository it is", () => {
+      const before = commits.rename ?? "";
+      for (const env of [
+        { GITHUB_WORKFLOW_REF: undefined },
+        { GITHUB_REPOSITORY: undefined },
+      ]) {
+        expect(
+          pushed(before, commits.instructions ?? "", [green(before)], { env })
+            .output,
+        ).toEqual(every("true"));
+      }
+    });
+
+    it.each<[string, string, string]>([
+      ["code", "docs", "server"],
+      ["a workflow", "instructions", "workflow"],
+      ["a path no rule names", "workflow", "unknown"],
+      ["code renamed into documentation", "server", "rename"],
+      ["code renamed out of an agent folder", "hook", "moved"],
+      ["nothing", "docs", "docs"],
+    ])(
+      "runs every job, and never asks, when the push changes %s",
+      (_, from, to) => {
+        const before = commits[from] ?? "";
+        const { output, calls } = pushed(before, commits[to] ?? "", [
+          green(before),
+        ]);
+        expect(output).toEqual(every("true"));
+        expect(calls).toEqual([]);
+      },
+    );
+
+    it("runs every job on a first or forced push, or a malformed one", () => {
+      const before = commits.rename ?? "";
+      const after = commits.instructions ?? "";
+      const runs = [green(before)];
+      expect(pushed("0".repeat(40), after, runs).output).toEqual(every("true"));
+      expect(pushed(before, after, runs, { forced: true }).output).toEqual(
+        every("true"),
+      );
+      expect(pushed("invalid", after, runs).output).toEqual(every("true"));
+      expect(pushed("a".repeat(40), after, runs).output).toEqual(every("true"));
+    });
+  });
 });

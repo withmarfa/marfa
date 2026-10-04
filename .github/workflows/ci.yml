@@ -36,16 +36,20 @@ permissions:
   contents: read
 
 jobs:
-  # Every job below runs only when `scripts/ci-required.ts` says the pull
-  # request can affect it. A skipped job satisfies its required check, where
-  # a `paths` filter on the workflow would leave the check pending. A draft
+  # Every job below runs only when `scripts/ci-required.ts` says the change
+  # can affect it. A skipped job satisfies its required check, where a
+  # `paths` filter on the workflow would leave the check pending. A draft
   # runs only the jobs `DRAFT_JOBS` names there, and `full` is `false` for it.
+  # A push to `main` that changes only documentation skips what a pull
+  # request would only once this workflow passed on the commit before it,
+  # which is what `actions: read` is for.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       ci-sqlite: ${{ steps.classify.outputs.ci-sqlite }}
       workspace: ${{ steps.classify.outputs.workspace }}
@@ -67,6 +71,8 @@ jobs:
         with:
           node-version: 24
       - id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/ci-required.ts
 
   ci-sqlite:
