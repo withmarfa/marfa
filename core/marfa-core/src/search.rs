@@ -90,11 +90,15 @@ pub(crate) fn search(
 /// whitespace-separated word is quoted, so nothing a person types is read as
 /// FTS5 syntax, and the last word also matches as a prefix.
 fn fts_expression(query: &str) -> Option<String> {
+    let query = query.trim_matches(is_query_whitespace);
     if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
         let inner = &query[1..query.len() - 1];
         return Some(format!("\"{}\"", inner.replace('"', "\"\"")));
     }
-    let words: Vec<&str> = query.split_whitespace().collect();
+    let words: Vec<&str> = query
+        .split(is_query_whitespace)
+        .filter(|word| !word.is_empty())
+        .collect();
     let last = words.len().checked_sub(1)?;
     Some(
         words
@@ -111,6 +115,11 @@ fn fts_expression(query: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" "),
     )
+}
+
+// Match JavaScript's trim and \s rules on the server, including pasted BOMs.
+fn is_query_whitespace(character: char) -> bool {
+    (character.is_whitespace() && character != '\u{0085}') || character == '\u{feff}'
 }
 
 #[cfg(test)]
@@ -217,6 +226,22 @@ mod tests {
         .collect();
         ids.sort();
         assert_eq!(ids, vec!["body", "filed", "tag", "title"]);
+    }
+
+    #[test]
+    fn surrounding_whitespace_keeps_a_quoted_query_a_phrase() {
+        for query in [
+            " \"quiet landscape\" ",
+            "\t\"quiet land\"\n",
+            "\u{feff}\"quiet landscape\"\u{feff}",
+        ] {
+            let expected = if query.contains("land\"") {
+                "\"quiet land\""
+            } else {
+                "\"quiet landscape\""
+            };
+            assert_eq!(fts_expression(query), Some(expected.into()));
+        }
     }
 
     #[test]

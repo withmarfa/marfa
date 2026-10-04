@@ -62,12 +62,9 @@ export function searchableShape(typeId: string): string {
  *
  * - Core fields (title, body, description, name) are always candidates, but
  *   a type may opt any of them out via `searchable: false` on its field
- *   definition. The opt-out flag defaults to `true` — existing types with no
- *   flag are unchanged.
+ *   definition. Fields without the flag are searchable.
  * - The `extra` slot collects every string field that isn't a core field and
- *   isn't `searchable: false`. Field ordering follows the
- *   `getSearchableStringFields` registry traversal, so the same input
- *   always indexes to the same text.
+ *   isn't `searchable: false`, in field-name byte order.
  * - Non-string property values are silently ignored (the store layer handles
  *   validation; FTS is opportunistic).
  */

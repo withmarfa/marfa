@@ -139,6 +139,21 @@ export const MATCHING_CASES: MatchingCase[] = [
     hits: [],
   },
   {
+    name: "surrounding whitespace preserves a phrase's order",
+    query: ' \t"landscape quiet"\n ',
+    hits: [],
+  },
+  {
+    name: "surrounding whitespace does not add a prefix to a phrase",
+    query: ' \t"quiet land"\n ',
+    hits: [],
+  },
+  {
+    name: "pasted byte-order marks around a phrase are trimmed",
+    query: '\uFEFF"quiet landscape"\uFEFF',
+    hits: set("marsh"),
+  },
+  {
     name: "a phrase matches stems",
     query: '"quiet landscapes"',
     hits: set("marsh"),
