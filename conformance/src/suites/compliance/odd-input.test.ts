@@ -125,6 +125,7 @@ describe("odd input is refused, never answered 500", () => {
         }),
       );
       expect(create.status).toBe(400);
+      expect(create.code).toBe("validation_error");
     }
   });
 
@@ -137,11 +138,13 @@ describe("odd input is refused, never answered 500", () => {
       `{"type":"core.note","source":"${ctx.source}","properties":${named}}`,
     );
     expect(create.status).toBe(400);
+    expect(create.code).toBe("validation_error");
     const patch = await send(
       "PATCH",
       `/items/${id}`,
       `{"version":1,"properties":${named}}`,
     );
     expect(patch.status).toBe(400);
+    expect(patch.code).toBe("validation_error");
   });
 });
