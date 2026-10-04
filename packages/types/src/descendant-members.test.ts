@@ -24,7 +24,7 @@ function parentWith(fields: Record<string, unknown>, keepFlag = true) {
   );
 }
 
-describe("a field named like an object's built-in member, judged against subtypes", () => {
+describe("a change to a parent, judged against the subtypes it has", () => {
   it("takes a field named like an object's built-in member", () => {
     // The witness: a field the subtype does not declare is taken.
     expect(parentWith({ cover: { type: "string" } }).success).toBe(true);
@@ -53,5 +53,36 @@ describe("a field named like an object's built-in member, judged against subtype
     if (!result.success) {
       expect(result.errors[0]?.code).toBe("inheritance_violation");
     }
+  });
+
+  it("refuses to drop a field a subtype's display hint or merge policy names", () => {
+    // The witness: the parent declaring the field is taken.
+    expect(parentWith({ other: { type: "string" } }).success).toBe(true);
+    const result = parentWith({ other: { type: "string" } }, false);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.errors.map((e) => `${e.field}: ${e.message}`);
+      expect(result.errors.every((e) => e.field === "fields.flag")).toBe(true);
+      expect(messages.join("\n")).toContain("acme.album.raw");
+      expect(messages.join("\n")).toContain("display_hints.title_field");
+      expect(messages.join("\n")).toContain("merge_policy.fields");
+    }
+  });
+
+  it("does not ask the parent for a field the subtype declares itself", () => {
+    const own: TypeSchema = {
+      ...child,
+      fields: { ...child.fields, flag: { type: "string" } },
+    };
+    const result = validateTypeSchema(
+      { id: "acme.album", fields: { other: { type: "string" } } },
+      {
+        resolveSchema: () => undefined,
+        descendantsOf: () => [own],
+      },
+    );
+    // "flag" is declared by the subtype itself, so dropping nothing from the
+    // parent leaves the hint valid.
+    expect(result.success).toBe(true);
   });
 });
