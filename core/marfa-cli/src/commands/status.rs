@@ -93,13 +93,13 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
 }
 
 pub fn speaks_this_contract(instance: &Value) -> bool {
-    instance.get("contract").and_then(Value::as_u64) == Some(marfa_client::CONTRACT_VERSION)
+    instance.get("contract").and_then(Value::as_u64) == Some(marfa_core::contract::CONTRACT_VERSION)
 }
 
 pub fn contract_report(instance: &Value) -> Value {
     json!({
         "served": instance.get("contract"),
-        "built_for": marfa_client::CONTRACT_VERSION,
+        "built_for": marfa_core::contract::CONTRACT_VERSION,
     })
 }
 
@@ -111,6 +111,6 @@ pub fn contract_line(instance: &Value) -> String {
     };
     format!(
         "contract {served}; this marfa was built for contract {}, so nothing past this description was read: use a marfa built for the server's contract",
-        marfa_client::CONTRACT_VERSION
+        marfa_core::contract::CONTRACT_VERSION
     )
 }

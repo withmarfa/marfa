@@ -1077,10 +1077,9 @@ mod dispatch {
     use crate::door::{Answer, Door};
     use crate::output::Printer;
     use crate::remote::Remote;
-    use crate::remote::Transport;
 
     fn remote_at(door: &Door) -> Remote {
-        Remote::with(Transport::new(&door.url, Some("marfa_k1_x")).unwrap())
+        Remote::keyed(&door.url, "marfa_k1_x").unwrap()
     }
 
     const QUIET: Printer = Printer { json: true };
@@ -1200,7 +1199,7 @@ mod dispatch {
                 "200 OK",
                 &format!(
                     r#"{{"name":"marfa","contract":{}}}"#,
-                    marfa_client::CONTRACT_VERSION
+                    marfa_core::contract::CONTRACT_VERSION
                 ),
             ),
             Answer::json(
@@ -1258,4 +1257,202 @@ fn the_key_doors_send_the_selector_they_were_given() {
         body(&moved),
         &json!({ "type": "t", "links": ["v"], "settled_at": "2026-01-01T00:00:00Z" })
     );
+}
+
+mod redirects {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    use clap::{CommandFactory, Parser};
+
+    use super::*;
+    use crate::error::CliError;
+
+    /// Answers every request `302`, for as many as come.
+    fn redirecting() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                std::thread::spawn(move || {
+                    // The body too: an answer written over an unread one is
+                    // a reset the caller sees instead of the answer.
+                    let _ = crate::door::read_request(&mut stream);
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\n{}: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        marfa_core::http::CONTRACT_HEADER,
+                        marfa_core::contract::CONTRACT_VERSION,
+                    );
+                });
+            }
+        });
+        url
+    }
+
+    const GUESSES: [&str; 4] = ["x", "1", "{}", "2026-01-01T00:00:00Z"];
+
+    /// The words after the command the operation names that make a command
+    /// line the parser takes: a leaf under a command that wants one, and
+    /// each argument the parser says is missing or refuses given the first
+    /// value it will take. Nothing is read from the document or the
+    /// commands, so a new command is driven without being listed.
+    fn arguments(command: &str, file: &std::path::Path) -> Result<Vec<String>, String> {
+        use clap::error::{ContextKind, ContextValue, ErrorKind};
+        let mut tree = crate::Cli::command();
+        let mut here = &mut tree;
+        let mut words: Vec<String> = Vec::new();
+        for word in command.split(' ') {
+            here = here.find_subcommand_mut(word).unwrap();
+        }
+        while here.has_subcommands() && here.is_subcommand_required_set()
+            || here.is_arg_required_else_help_set() && here.has_subcommands()
+        {
+            let leaf = here
+                .get_subcommands()
+                .map(|leaf| leaf.get_name().to_string())
+                .find(|name| name != "help")
+                .unwrap();
+            words.push(leaf.clone());
+            here = here.find_subcommand_mut(&leaf).unwrap();
+        }
+        let mut given: Vec<(String, usize, Option<String>)> = Vec::new();
+        let line = |given: &[(String, usize, Option<String>)]| -> Vec<String> {
+            let mut line: Vec<String> = ["marfa", "--json", "--url", "URL", "--key", "marfa_k1_x"]
+                .map(String::from)
+                .into();
+            line.extend(command.split(' ').map(String::from));
+            line.extend(words.iter().cloned());
+            for (spelling, guess, chosen) in given {
+                let name = spelling
+                    .trim_matches(|c| "<>-".contains(c))
+                    .to_ascii_lowercase();
+                let value = match chosen {
+                    Some(chosen) => chosen.clone(),
+                    None if name.contains("file") || name.contains("path") => {
+                        file.display().to_string()
+                    }
+                    None => GUESSES[*guess].to_string(),
+                };
+                if spelling.starts_with("--") {
+                    line.push(spelling.split(' ').next().unwrap().to_string());
+                    if spelling.contains('<') {
+                        line.push(value);
+                    }
+                } else {
+                    line.push(value);
+                }
+            }
+            line
+        };
+        for _ in 0..40 {
+            let attempt = line(&given);
+            let error = match crate::Cli::try_parse_from(&attempt) {
+                Ok(_) => return Ok(attempt[6..].to_vec()),
+                Err(error) => error,
+            };
+            let named = |kind| match error.get(kind) {
+                Some(ContextValue::Strings(names)) => names.clone(),
+                Some(ContextValue::String(name)) => vec![name.clone()],
+                _ => Vec::new(),
+            };
+            match error.kind() {
+                ErrorKind::MissingRequiredArgument => {
+                    for name in named(ContextKind::InvalidArg) {
+                        given.push((name, 0, None));
+                    }
+                }
+                ErrorKind::InvalidValue | ErrorKind::ValueValidation => {
+                    let refused = named(ContextKind::InvalidArg);
+                    let Some(refused) = refused.first() else {
+                        return Err(error.to_string());
+                    };
+                    let Some(entry) = given.iter_mut().find(|(name, ..)| name == refused) else {
+                        return Err(error.to_string());
+                    };
+                    // A closed set names its values, and the first is taken.
+                    if let Some(valid) = named(ContextKind::ValidValue).first() {
+                        entry.2 = Some(valid.clone());
+                    } else {
+                        entry.1 += 1;
+                        if entry.1 >= GUESSES.len() {
+                            return Err(error.to_string());
+                        }
+                    }
+                }
+                _ => return Err(error.to_string()),
+            }
+        }
+        Err("the arguments never settled".to_string())
+    }
+
+    #[test]
+    fn every_command_refuses_a_redirect_the_same_way() {
+        let url = redirecting();
+        let dir = std::env::temp_dir().join(format!("marfa-redirects-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("bytes.bin");
+        std::fs::write(
+            &file,
+            br#"{"items":[],"edges":[],"id":"user.x","fields":{}}"#,
+        )
+        .unwrap();
+        let mut refused = 0;
+        let mut elsewhere = Vec::new();
+        for operation in operations::OPERATIONS {
+            // Asks for the password on a terminal before anything is sent.
+            if operation.command == "owner create" {
+                continue;
+            }
+            let mut argv: Vec<String> = ["marfa", "--json", "--url", &url, "--key", "marfa_k1_x"]
+                .map(String::from)
+                .into();
+            argv.extend(operation.command.split(' ').map(String::from));
+            match arguments(operation.command, &file) {
+                Ok(rest) => {
+                    argv.extend(rest[operation.command.split(' ').count()..].iter().cloned())
+                }
+                Err(error) => {
+                    elsewhere.push(format!(
+                        "{}: no command line the parser takes: {error}",
+                        operation.id
+                    ));
+                    continue;
+                }
+            }
+            let cli = match crate::Cli::try_parse_from(&argv) {
+                Ok(cli) => cli,
+                Err(error) => {
+                    elsewhere.push(format!(
+                        "{}: {argv:?} does not parse: {error}",
+                        operation.id
+                    ));
+                    continue;
+                }
+            };
+            match crate::run(cli) {
+                Err(CliError::Redirected {
+                    status: 302,
+                    location,
+                    ..
+                }) => {
+                    assert_eq!(location.as_deref(), Some("https://elsewhere.example/"));
+                    refused += 1;
+                }
+                other => elsewhere.push(format!(
+                    "{}: `marfa {}` answered {:?}",
+                    operation.id,
+                    operation.command,
+                    other.map(|_| ())
+                )),
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(elsewhere.is_empty(), "{}", elsewhere.join("\n"));
+        assert!(
+            refused > 60,
+            "only {refused} commands were driven, which is too few to be every command"
+        );
+    }
 }

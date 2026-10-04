@@ -5,8 +5,8 @@ use super::{insert_opt, object, pairs};
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::output::Printer;
+use crate::remote::Remote;
 use crate::remote::request::Request;
-use crate::remote::{Remote, Transport};
 use crate::values::Tier;
 
 #[derive(Debug, Subcommand)]
@@ -333,8 +333,7 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
                 )?,
             };
             // Whatever key the environment holds: a fresh instance has none.
-            let http = Transport::new(remote.url(), Some(&secret))?;
-            let minted = Remote::with(http).json(&bootstrap_request())?;
+            let minted = Remote::keyed(remote.url(), &secret)?.json(&bootstrap_request())?;
             return print_minted(&minted, out);
         }
         KeysCommand::Create(args) => create_request(args)?,
@@ -379,7 +378,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             read_line("no key to keep: pass --key, set MARFA_API_KEY, or write the key on stdin")?
         }
     };
-    let checked = Remote::with(Transport::new(remote.url(), Some(&key))?);
+    let checked = Remote::keyed(remote.url(), &key)?;
     checked.json(&Request::get(&["items", "stats"]))?;
     credentials::keep(remote.origin(), &Kept::Key { key })?;
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {

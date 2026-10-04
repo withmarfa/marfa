@@ -5,7 +5,7 @@ use crate::commands::status;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::request::Request;
-use crate::remote::{CredentialSource, Remote, Transport};
+use crate::remote::{CredentialSource, Remote};
 
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.root()?;
@@ -37,7 +37,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 if !held {
                     record["person"] = json!(null);
                 } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {
-                    let door = Remote::with(Transport::new(&endpoint, Some(&bearer))?);
+                    let door = Remote::keyed(&endpoint, &bearer)?;
                     match door.json(&Request::get(&[])) {
                         Ok(person) => record["person"] = person,
                         Err(CliError::Refused {

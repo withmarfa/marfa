@@ -96,20 +96,31 @@ impl From<CoreError> for CliError {
                     retry_after_seconds: None,
                     details: None,
                 },
-                CoreError::ContractMismatch {
-                    origin,
-                    served,
-                    expected,
-                    write_sent,
-                    status,
-                } => Self::ContractMismatch {
-                    origin,
-                    served,
-                    expected,
-                    write_sent,
-                    status,
+                CoreError::RateLimited {
+                    code,
+                    message,
+                    retry_after_seconds,
+                } => Self::Refused {
+                    status: 429,
+                    code,
+                    message,
+                    retry_after_seconds,
+                    details: None,
                 },
                 other => Self::from(other),
+            },
+            CoreError::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
+            } => Self::ContractMismatch {
+                origin,
+                served,
+                expected,
+                write_sent,
+                status,
             },
             CoreError::Redirected {
                 origin,

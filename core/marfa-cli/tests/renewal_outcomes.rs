@@ -57,7 +57,10 @@ fn device_renewal_reports_signed_out_without_inventing_server_status() {
         ),
         door::Answer::json(
             "200 OK",
-            &format!(r#"{{"contract":{}}}"#, marfa_client::CONTRACT_VERSION),
+            &format!(
+                r#"{{"contract":{}}}"#,
+                marfa_core::contract::CONTRACT_VERSION
+            ),
         ),
         door::Answer::json(
             "400 Bad Request",
@@ -84,7 +87,7 @@ fn device_renewal_reports_local_keychain_failure_without_server_status() {
         assert!(stream.read(&mut buffer).unwrap() > 0);
         std::fs::remove_file(path).unwrap();
         let body = r#"{"error":{"code":"unauthorized","message":"expired"}}"#;
-        write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", marfa_client::CONTRACT_VERSION, body.len()).unwrap();
+        write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", marfa_core::contract::CONTRACT_VERSION, body.len()).unwrap();
     });
     hydrate(&keychain, &origin, "no_keychain", 4);
     server.join().unwrap();

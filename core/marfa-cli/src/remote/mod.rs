@@ -1,13 +1,11 @@
 pub mod request;
-#[cfg(test)]
-mod shapes;
-pub mod transport;
 
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
+use std::sync::{Arc, Mutex};
 
-use marfa_core::http::{Call, CallBody, Renew, Reply, ReplyBody};
+use marfa_core::contract::CONTRACT_VERSION;
+use marfa_core::http::{Call, CallBody, Http, Renew, Reply, ReplyBody};
 use marfa_core::{Core, CoreError, Server};
 use serde_json::Value;
 
@@ -17,7 +15,6 @@ use crate::error::CliError;
 #[cfg(test)]
 use crate::error::Exit;
 use request::{Body, Request};
-pub use transport::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialSource {
@@ -37,12 +34,52 @@ impl CredentialSource {
 }
 
 pub struct Remote {
-    http: RefCell<Transport>,
+    http: Http,
     url: String,
     origin: String,
     credential: Option<CredentialSource>,
-    bearer: RefCell<Option<String>>,
-    kept: RefCell<Option<Kept>>,
+    held: Arc<Held>,
+}
+
+/// The credential in hand, which a renewal replaces while a command runs, so
+/// what the command reports afterward is the credential that was sent last.
+#[derive(Default)]
+struct Held {
+    bearer: Mutex<Option<String>>,
+    kept: Mutex<Option<Kept>>,
+}
+
+impl Held {
+    fn of(bearer: Option<String>, kept: Option<Kept>) -> Arc<Held> {
+        Arc::new(Held {
+            bearer: Mutex::new(bearer),
+            kept: Mutex::new(kept),
+        })
+    }
+
+    fn bearer(&self) -> Option<String> {
+        lock(&self.bearer).clone()
+    }
+
+    fn kept(&self) -> Option<Kept> {
+        lock(&self.kept).clone()
+    }
+
+    fn refreshable(&self) -> bool {
+        matches!(
+            &*lock(&self.kept),
+            Some(Kept::Token {
+                refresh_token: Some(_),
+                ..
+            })
+        )
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -98,16 +135,20 @@ pub fn renewing(core: &Core, renew: Option<Renew>) {
 }
 
 /// Keyed by the bearer refused, so a token another process already rotated
-/// is taken as it is rather than refreshed again.
+/// is taken as it is rather than refreshed again. The one renewal path: the
+/// command's own calls and a session's both go through it.
 fn renewal(remote: &Remote) -> Option<Renew> {
-    if !remote.can_refresh() {
+    if !remote.held.refreshable() {
         return None;
     }
     let origin = remote.origin().to_string();
+    let held = Arc::clone(&remote.held);
     Some(Box::new(move |refused: &str| {
-        auth::refresh(&origin, Some(refused))
-            .map(|kept| kept.bearer().to_string())
-            .map_err(renewal_error)
+        let kept = auth::refresh(&origin, Some(refused)).map_err(renewal_error)?;
+        let bearer = kept.bearer().to_string();
+        *lock(&held.bearer) = Some(bearer.clone());
+        *lock(&held.kept) = Some(kept);
+        Ok(bearer)
     }))
 }
 
@@ -186,7 +227,7 @@ impl Remote {
                 Err(error) => return Err(error),
             },
         };
-        let origin = transport::origin_of(&url)?;
+        let origin = marfa_core::http::origin_of(&url)?;
         let mut kept = None;
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
@@ -203,15 +244,28 @@ impl Remote {
                 },
             },
         };
-        let http = Transport::new(&url, key.as_deref())?;
-        Ok(Remote {
-            http: RefCell::new(http),
-            url,
+        Remote::keeping(&url, origin, credential, key, kept)
+    }
+
+    fn keeping(
+        url: &str,
+        origin: String,
+        credential: Option<CredentialSource>,
+        bearer: Option<String>,
+        kept: Option<Kept>,
+    ) -> Result<Remote, CliError> {
+        let http = Http::new(url, bearer.as_deref().unwrap_or_default())?;
+        let remote = Remote {
+            http,
+            url: url.to_string(),
             origin,
             credential,
-            bearer: RefCell::new(key),
-            kept: RefCell::new(kept),
-        })
+            held: Held::of(bearer, kept),
+        };
+        if let Some(renew) = renewal(&remote) {
+            remote.http.renew_with(renew);
+        }
+        Ok(remote)
     }
 
     pub fn url_named(named: &Named) -> Result<String, CliError> {
@@ -230,69 +284,46 @@ impl Remote {
     }
 
     pub fn bearer(&self) -> Option<String> {
-        self.bearer.borrow().clone()
+        self.held.bearer()
     }
 
     pub fn kept(&self) -> Option<Kept> {
-        self.kept.borrow().clone()
-    }
-
-    fn can_refresh(&self) -> bool {
-        matches!(
-            &*self.kept.borrow(),
-            Some(Kept::Token {
-                refresh_token: Some(_),
-                ..
-            })
-        )
-    }
-
-    fn refreshed(&self) -> Result<(), CliError> {
-        let refused = self.bearer.borrow().clone().unwrap_or_default();
-        let next = auth::refresh(&self.origin, Some(&refused))?;
-        let bearer = next.bearer().to_string();
-        *self.http.borrow_mut() = Transport::new(&self.url, Some(&bearer))?;
-        *self.bearer.borrow_mut() = Some(bearer);
-        *self.kept.borrow_mut() = Some(next);
-        Ok(())
+        self.held.kept()
     }
 
     #[cfg(test)]
     pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
-        let http = Transport::new(url, Some(kept.bearer()))?;
-        let origin = http.origin();
-        Ok(Remote {
-            url: url.to_string(),
-            http: RefCell::new(http),
+        let origin = marfa_core::http::origin_of(url)?;
+        Remote::keeping(
+            url,
             origin,
-            credential: Some(CredentialSource::Keychain),
-            bearer: RefCell::new(Some(kept.bearer().to_string())),
-            kept: RefCell::new(Some(kept)),
-        })
+            Some(CredentialSource::Keychain),
+            Some(kept.bearer().to_string()),
+            Some(kept),
+        )
     }
 
     pub fn public_at(url: &str) -> Result<Remote, CliError> {
-        let http = Transport::new(url, None)?;
-        let origin = http.origin();
-        Ok(Remote {
-            url: url.to_string(),
-            http: RefCell::new(http),
-            origin,
-            credential: None,
-            bearer: RefCell::new(None),
-            kept: RefCell::new(None),
-        })
+        let origin = marfa_core::http::origin_of(url)?;
+        Remote::keeping(url, origin, None, None, None)
     }
 
-    pub fn with(http: Transport) -> Remote {
+    /// A key named outright, as a door that checks one wants it: a bootstrap
+    /// secret, a key about to be kept, a token sent to its userinfo endpoint.
+    pub fn keyed(url: &str, key: &str) -> Result<Remote, CliError> {
+        let origin = marfa_core::http::origin_of(url)?;
+        Remote::keeping(url, origin, None, Some(key.to_string()), None)
+    }
+
+    #[cfg(test)]
+    pub fn with_http(http: Http, bearer: Option<&str>) -> Remote {
         let origin = http.origin();
         Remote {
             url: origin.clone(),
-            http: RefCell::new(http),
+            http,
             origin,
             credential: None,
-            bearer: RefCell::new(None),
-            kept: RefCell::new(None),
+            held: Held::of(bearer.map(str::to_string), None),
         }
     }
 
@@ -309,34 +340,14 @@ impl Remote {
     }
 
     /// A refusal that names no contract is handed on, since a proxy in front
-    /// of the server answers without one. A `401` to a kept token gets one
-    /// refresh and retry: another process may have rotated it since this one
-    /// read the keychain.
+    /// of the server answers without one. An answer on another contract, and a
+    /// redirect, are refused by the core's `Http`, as they are for the working
+    /// copy, and a `401` to a kept token is renewed there too.
     pub fn call(&self, request: &Request) -> Result<Reply, CliError> {
         if request.mints {
             self.hold_root()?;
         }
-        let reply = self.checked(self.send(request, true)?, request)?;
-        if reply.status == 401 && request.credential && self.can_refresh() {
-            self.refreshed()?;
-            return self.checked(self.send(request, true)?, request);
-        }
-        Ok(reply)
-    }
-
-    fn checked(&self, reply: Reply, request: &Request) -> Result<Reply, CliError> {
-        if transport::speaks_this_contract(reply.contract.as_deref(), reply.status) {
-            return Ok(reply);
-        }
-        Err(CliError::ContractMismatch {
-            origin: self.origin.clone(),
-            served: reply.contract,
-            expected: marfa_client::CONTRACT_VERSION,
-            // The answer is what names the contract, so the server has
-            // already acted on the request.
-            write_sent: request.method != request::Method::Get,
-            status: Some(reply.status),
-        })
+        self.send(request, true)
     }
 
     /// For a write whose answer is the only copy of what it mints: an answer
@@ -344,7 +355,7 @@ impl Remote {
     pub fn hold_root(&self) -> Result<(), CliError> {
         let instance = self.root()?;
         let served = instance.get("contract");
-        if served.and_then(Value::as_u64) == Some(marfa_client::CONTRACT_VERSION) {
+        if served.and_then(Value::as_u64) == Some(CONTRACT_VERSION) {
             return Ok(());
         }
         Err(CliError::ContractMismatch {
@@ -353,25 +364,14 @@ impl Remote {
                 Value::String(served) => served.clone(),
                 other => other.to_string(),
             }),
-            expected: marfa_client::CONTRACT_VERSION,
+            expected: CONTRACT_VERSION,
             write_sent: false,
             status: None,
         })
     }
 
-    fn redirected(&self, reply: &Reply) -> Option<CliError> {
-        (300..400)
-            .contains(&reply.status)
-            .then(|| CliError::Redirected {
-                origin: self.origin.clone(),
-                status: reply.status,
-                location: reply.location.clone(),
-            })
-    }
-
     fn send(&self, request: &Request, held: bool) -> Result<Reply, CliError> {
-        let http = self.http.borrow();
-        if request.credential && !http.has_credential() {
+        if request.credential && self.bearer().is_none() {
             return Err(CliError::NoCredential {
                 origin: self.origin.clone(),
             });
@@ -414,7 +414,7 @@ impl Remote {
                 CallBody::Text(&form_text)
             }
         };
-        Ok(http.call(
+        Ok(self.http.fetch(
             Call {
                 method: request.method,
                 segments: &segments,
@@ -429,11 +429,7 @@ impl Remote {
     }
 
     pub fn json(&self, request: &Request) -> Result<Value, CliError> {
-        let reply = self.call(request)?;
-        if let Some(redirect) = self.redirected(&reply) {
-            return Err(redirect);
-        }
-        read_json(reply, request)
+        read_json(self.call(request)?, request)
     }
 
     /// `contract` is taken from the header, never the body: a body claiming
@@ -467,18 +463,12 @@ impl Remote {
     /// this binary cannot read.
     fn describe(&self, request: &Request) -> Result<(Value, Option<String>), CliError> {
         let reply = self.send(request, false)?;
-        if let Some(redirect) = self.redirected(&reply) {
-            return Err(redirect);
-        }
         let served = reply.contract.clone();
         Ok((read_json(reply, request)?, served))
     }
 
     pub fn stream(&self, request: &Request) -> Result<(String, Box<dyn Read + Send>), CliError> {
         let reply = self.call(request)?;
-        if let Some(redirect) = self.redirected(&reply) {
-            return Err(redirect);
-        }
         match reply.body {
             ReplyBody::Stream(reader) => Ok((reply.content_type, reader)),
             ReplyBody::Text(text) => Err(refused(reply.status, &text, reply.retry_after_seconds)),
@@ -570,7 +560,10 @@ mod tests {
     use crate::door::{Answer, Door, another_contract};
 
     fn remote_at(door: &Door, key: Option<&str>) -> Remote {
-        Remote::with(Transport::new(&door.url, key).unwrap())
+        match key {
+            Some(key) => Remote::keyed(&door.url, key).unwrap(),
+            None => Remote::public_at(&door.url).unwrap(),
+        }
     }
 
     #[test]
@@ -722,7 +715,7 @@ mod tests {
                 "401 Unauthorized",
                 r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
             ),
-            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            root(&marfa_core::contract::CONTRACT_VERSION.to_string()),
             Answer::json(
                 "200 OK",
                 r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
@@ -732,7 +725,7 @@ mod tests {
                 "401 Unauthorized",
                 r#"{"error":{"code":"unauthorized","message":"still"}}"#,
             ),
-            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            root(&marfa_core::contract::CONTRACT_VERSION.to_string()),
             Answer::json(
                 "429 Too Many Requests",
                 r#"{"error":{"code":"rate_limited","message":"slow down"}}"#,
@@ -747,7 +740,7 @@ mod tests {
             token_endpoint: format!("{}/auth/oauth2/token", door.url),
             revocation_endpoint: None,
         };
-        let origin = Transport::new(&door.url, None).unwrap().origin();
+        let origin = marfa_core::http::origin_of(&door.url).unwrap();
         let _keychain = credentials::hold(&origin);
         credentials::keep(&origin, &kept).unwrap();
         let remote = Remote::holding(&door.url, kept).unwrap();
@@ -807,7 +800,7 @@ mod tests {
                     "401 Unauthorized",
                     r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
                 ),
-                root(&marfa_client::CONTRACT_VERSION.to_string()),
+                root(&marfa_core::contract::CONTRACT_VERSION.to_string()),
                 Answer::json(
                     "200 OK",
                     r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
@@ -825,7 +818,7 @@ mod tests {
             token_endpoint: format!("{}/auth/oauth2/token", door.url),
             revocation_endpoint: None,
         };
-        let origin = Transport::new(&door.url, None).unwrap().origin();
+        let origin = marfa_core::http::origin_of(&door.url).unwrap();
         let _keychain = credentials::hold(&origin);
         credentials::keep(&origin, &kept).unwrap();
         let remote = Remote::holding(&door.url, kept).unwrap();
@@ -879,7 +872,7 @@ mod tests {
                 "401 Unauthorized",
                 r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
             ),
-            root(&marfa_client::CONTRACT_VERSION.to_string()),
+            root(&marfa_core::contract::CONTRACT_VERSION.to_string()),
             Answer::json(
                 "200 OK",
                 r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
@@ -895,7 +888,7 @@ mod tests {
             token_endpoint: format!("{}/auth/oauth2/token", door.url),
             revocation_endpoint: None,
         };
-        let origin = Transport::new(&door.url, None).unwrap().origin();
+        let origin = marfa_core::http::origin_of(&door.url).unwrap();
         let _keychain = credentials::hold(&origin);
         credentials::keep(&origin, &kept).unwrap();
         let remote = Remote::holding(&door.url, kept).unwrap();
@@ -948,7 +941,7 @@ mod tests {
                 body: "hello".into(),
                 headers: Vec::new(),
             }
-            .on_contract(Some(&marfa_client::CONTRACT_VERSION.to_string())),
+            .on_contract(Some(&marfa_core::contract::CONTRACT_VERSION.to_string())),
             Answer::json(
                 "404 Not Found",
                 r#"{"error":{"code":"blob_not_found","message":"no such blob"}}"#,
@@ -1076,7 +1069,7 @@ mod tests {
             Answer::json("200 OK", PAGE).on_another_contract(),
             Answer::json("200 OK", PAGE).on_another_contract(),
         ]);
-        let transport = Transport::new(&door.url, Some("marfa_k1_x")).unwrap();
+        let http = Http::new(&door.url, "marfa_k1_x").unwrap();
         let call = || Call {
             method: request::Method::Get,
             segments: &["items"],
@@ -1086,13 +1079,18 @@ mod tests {
             credential: true,
             stream: false,
         };
-        let text = |reply: Reply| match reply.body {
-            ReplyBody::Text(text) => text,
-            ReplyBody::Stream(_) => panic!("a stream"),
-        };
-        assert_eq!(text(transport.call(call(), true).unwrap()), "");
+        assert!(matches!(
+            http.fetch(call(), true),
+            Err(CoreError::ContractMismatch {
+                write_sent: false,
+                ..
+            })
+        ));
         // The witness: the same answer, not held, is read.
-        assert_eq!(text(transport.call(call(), false).unwrap()), PAGE);
+        match http.fetch(call(), false).unwrap().body {
+            ReplyBody::Text(text) => assert_eq!(text, PAGE),
+            ReplyBody::Stream(_) => panic!("a stream"),
+        }
         door.received();
     }
 
@@ -1210,7 +1208,7 @@ mod tests {
                         "application/json"
                     },
                     marfa_core::http::CONTRACT_HEADER,
-                    marfa_client::CONTRACT_VERSION,
+                    marfa_core::contract::CONTRACT_VERSION,
                     body.len()
                 );
                 let _ = std::io::Write::write_all(&mut stream_to, head.as_bytes());
@@ -1224,14 +1222,15 @@ mod tests {
     }
 
     fn budgeted(url: &str, read_ms: u64, whole_ms: u64) -> Remote {
-        Remote::with(
-            Transport::budgeted(
+        Remote::with_http(
+            Http::with_timeouts(
                 url,
-                Some("marfa_k1_x"),
+                "marfa_k1_x",
                 std::time::Duration::from_millis(read_ms),
                 std::time::Duration::from_millis(whole_ms),
             )
             .unwrap(),
+            Some("marfa_k1_x"),
         )
     }
 
@@ -1274,63 +1273,12 @@ mod tests {
     }
 
     #[test]
-    fn an_upload_outlasts_the_budgets() {
-        let slow = || {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let url = format!("http://{}", listener.local_addr().unwrap());
-            std::thread::spawn(move || {
-                if let Ok((mut stream, _)) = listener.accept() {
-                    // Read the whole request, a chunked body included, so the
-                    // answer is not cut off by unread bytes when it closes.
-                    let mut seen = Vec::new();
-                    let mut chunk = [0u8; 4096];
-                    while !seen.ends_with(b"0\r\n\r\n") && !seen.ends_with(b"{}") {
-                        match std::io::Read::read(&mut stream, &mut chunk) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => seen.extend_from_slice(&chunk[..n]),
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1500));
-                    let body = r#"{"hash":"sha256:h"}"#;
-                    let _ = std::io::Write::write_all(
-                        &mut stream,
-                        format!(
-                            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n{}: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                            marfa_core::http::CONTRACT_HEADER,
-                            marfa_client::CONTRACT_VERSION,
-                            body.len()
-                        )
-                        .as_bytes(),
-                    );
-                }
-            });
-            let budget = std::time::Duration::from_millis(500);
-            Remote::with(Transport::budgeted(&url, Some("marfa_k1_x"), budget, budget).unwrap())
-        };
-        let dir = std::env::temp_dir().join(format!("marfa-upload-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bytes.bin");
-        std::fs::write(&path, b"bytes").unwrap();
-        slow()
-            .json(&Request::post(&["blobs"]).file(path, "application/octet-stream"))
-            .unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-        // The witness: a JSON call to the same server runs out of its budget.
-        match slow().json(&Request::post(&["items"]).json(serde_json::json!({}))) {
-            Err(CliError::Core(marfa_core::CoreError::Network(_))) => {}
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
     fn a_transport_failure_carries_its_cause() {
         let port = {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.local_addr().unwrap().port()
         };
-        let remote = Remote::with(
-            Transport::new(&format!("http://127.0.0.1:{port}"), Some("marfa_k1_x")).unwrap(),
-        );
+        let remote = Remote::keyed(&format!("http://127.0.0.1:{port}"), "marfa_k1_x").unwrap();
         match remote.json(&Request::get(&["items"])) {
             Err(CliError::Core(marfa_core::CoreError::Network(text))) => {
                 assert!(text.to_lowercase().contains("refused"), "{text}");
