@@ -23,6 +23,7 @@ import { ErrorCode, MarfaError, isCoreEdgeType } from "@withmarfa/shared";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
+import { RefusedDatabaseError } from "./refused-database.js";
 import {
   TransactionControl,
   transactionControl,
@@ -56,17 +57,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 `;
 
 /**
- * What an operator can do about a database this build will not open, and it
- * is deliberately not "export it and load it here": whether the export the
- * writing build takes restores here depends on that build, which this one
- * cannot see. Naming a recovery that may end in a `400` is worse than naming
- * none, so the sentence says what is true: the file belongs to the build
- * that wrote it.
+ * What an operator can do about a database this build will not open: nothing
+ * is upgraded in place, so the data goes forward in an archive taken by the
+ * build that wrote the file. Before the first public release an archive is
+ * read only by the build that wrote it (`search-and-filters.md` 27), so the
+ * sentence says that the restore can refuse, and that the file is the
+ * writing build's either way.
  */
 const REFUSED_DATABASE_REMEDY =
-  "Nothing is upgraded in place, so this file is readable only by the build that wrote it. " +
-  "Keep it with that build if you need what is in it, point this server at a fresh file, or " +
-  "discard it.";
+  "Nothing is upgraded in place. To carry what this file holds into this build, export it " +
+  "with the build that wrote it (`GET /export?format=archive`), start this build on a fresh file, " +
+  "and restore the archive there (`POST /admin/restore-archive`). Until the first public release " +
+  "an archive is read only by the build that wrote it, so that restore can refuse it; the file " +
+  "stays readable by the build that wrote it either way.";
 
 interface SchemaObject {
   type: string;
@@ -963,7 +966,7 @@ export async function createConnection(sqlitePath: string): Promise<{
       .filter((name): name is string => typeof name === "string")
       .join(" and ");
     client.close();
-    throw new Error(
+    throw new RefusedDatabaseError(
       `The type registry in ${sqlitePath} is still held in ${names}, which this build does not read. ` +
         REFUSED_DATABASE_REMEDY,
     );
@@ -977,7 +980,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   const differences = await schemaDifferences(client);
   if (differences.length > 0) {
     client.close();
-    throw new Error(
+    throw new RefusedDatabaseError(
       `The schema in ${sqlitePath} is not this build's: ${differences.join("; ")}. ` +
         REFUSED_DATABASE_REMEDY,
     );
@@ -1006,7 +1009,7 @@ export async function createConnection(sqlitePath: string): Promise<{
         .filter((key): key is string => typeof key === "string")
         .join(" and ");
       client.close();
-      throw new Error(
+      throw new RefusedDatabaseError(
         `The settings in ${sqlitePath} are still keyed ${keys}, which this build does not read. ` +
           REFUSED_DATABASE_REMEDY,
       );
@@ -1045,6 +1048,19 @@ export async function createConnection(sqlitePath: string): Promise<{
     captureRead,
     close: async () => {
       await closeReads();
+      // The driver keeps a connection open while a statement refers to it,
+      // and the process then ends without the checkpoint SQLite makes when
+      // the last connection closes, so without this the log of a stopped
+      // instance still holds its newest writes and the database file alone
+      // does not. A reader that holds the log, such as the replicator's,
+      // refuses it, and the next boot checkpoints as it always has.
+      if (sqlitePath !== ":memory:") {
+        try {
+          await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+        } catch {
+          // Best effort: a stop that cannot checkpoint is still a stop.
+        }
+      }
       client.close();
     },
   };

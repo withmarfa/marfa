@@ -256,7 +256,7 @@ it("audits fenced worker chunks with their rows, events and checkpoints", async 
       ).data,
     ).toHaveLength(2);
   } finally {
-    worker.stop();
+    await worker.stop();
     abort.abort();
     await live.done;
   }

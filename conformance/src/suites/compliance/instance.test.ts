@@ -100,11 +100,29 @@ describe("the instance", () => {
     expect(r.status).toBe(200);
     const body = (await r.json()) as {
       status: string;
-      components: Record<string, { status: string }>;
+      components: Record<string, { status: string; error?: string }>;
     };
     expect(body.status).toBe("ok");
-    expect(body.components.database.status).toBe("ok");
-    expect(body.components.blob_storage.status).toBe("ok");
+    expect(Object.keys(body.components).sort()).toEqual([
+      "blob_storage",
+      "database",
+      "database_write",
+      "disk",
+    ]);
+    for (const component of Object.values(body.components)) {
+      expect(component.status).toBe("ok");
+      // Error text goes to the operator key alone, so a healthy answer to a
+      // caller with no credential holds none to begin with.
+      expect(component).not.toHaveProperty("error");
+    }
+  });
+
+  it("answers /health to a request that names a key the instance does not hold as it does to one that names none", async () => {
+    const r = await fetch(`${apiUrl}/health`, {
+      headers: { Authorization: "Bearer marfa_a-key-no-instance-holds" },
+    });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { status: string }).status).toBe("ok");
   });
 
   it("describes itself at the root", async () => {
