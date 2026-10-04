@@ -842,8 +842,8 @@ describe("source_filter lever", () => {
     expect(statsAfter.ok).toBe(true);
     expect(statsAfter.data["active"] ?? 0).toBeLessThan(activeBefore);
 
-    // Tags: a count of rows the lever hides opens to rows that are not
-    // there, so the shared tag counts the one row and the other is not named.
+    // Tags: a tag counted over hidden rows would open to an empty listing, so
+    // the shared tag counts the one visible row and the other is not named.
     const tagsAfter = await tagCounts();
     expect(tagsAfter[marker]).toBe(1);
     expect(tagsAfter[`${marker}-hidden-only`]).toBeUndefined();
