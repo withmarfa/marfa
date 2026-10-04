@@ -249,6 +249,9 @@ async function fingerprint(
     // order is part of the request, which is a wider question than the
     // path's.
     url.search,
+    // Whether a body is read as JSON decides whether the write happens at
+    // all, so the same text under another type is another request.
+    c.req.header("content-type")?.trim().toLowerCase() ?? "",
     body,
   ].join("\n");
   const digest = await crypto.subtle.digest(
