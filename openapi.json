@@ -4488,7 +4488,9 @@
           "tags": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             },
             "maxItems": 100
           },
@@ -5893,7 +5895,9 @@
                   "tags": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
                     }
                   },
                   "edges": {
@@ -9421,7 +9425,9 @@
                   "tags": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
                     },
                     "default": []
                   }
@@ -9697,7 +9703,9 @@
                   "tags": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
                     }
                   }
                 }
@@ -9974,7 +9982,9 @@
                   "tags": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
                     },
                     "minItems": 1
                   }
@@ -10926,7 +10936,9 @@
                         "tags": {
                           "type": "array",
                           "items": {
-                            "type": "string"
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
                           }
                         },
                         "edges": {
@@ -11353,7 +11365,9 @@
                       "add": {
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
                         }
                       },
                       "remove": {

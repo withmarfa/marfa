@@ -6,7 +6,12 @@
  * of one shape, and the document would carry both.
  */
 import { z } from "@hono/zod-openapi";
-import { ItemStateEnum, TierEnum } from "../routes/_schemas.js";
+import {
+  ItemStateEnum,
+  TagSchema,
+  TierEnum,
+  WrittenPropertiesSchema,
+} from "../routes/_schemas.js";
 import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
 
 /**
@@ -81,7 +86,7 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
   }),
   BulkActionBaseSchema.extend({
     action: z.literal("update_tags"),
-    add: z.array(z.string()).optional(),
+    add: z.array(TagSchema).optional(),
     remove: z.array(z.string()).optional(),
   }),
   BulkActionBaseSchema.extend({
@@ -90,7 +95,7 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
   }),
   BulkActionBaseSchema.extend({
     action: z.literal("update_properties"),
-    patch: z.record(z.string(), z.unknown()),
+    patch: WrittenPropertiesSchema,
   }),
   BulkActionBaseSchema.extend({
     action: z.literal("update_occurred_at"),
