@@ -7,10 +7,10 @@ use serde_json::{Map, Value};
 
 use super::Folder;
 use crate::catalog::Catalog;
-use crate::drain::DrainReport;
+use crate::drain::{DrainReport, ReadBack};
 use crate::error::CoreError;
 use crate::model::{
-    BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Verdict, WriteKind,
+    BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Subject, Verdict, WriteKind,
 };
 use crate::{Result, store};
 
@@ -335,50 +335,61 @@ impl Folder {
     }
 
     /// Puts the placement the server holds for `source` into the copy, in
-    /// place of any this machine holds.
+    /// place of any this machine holds, as the queue puts back any row it
+    /// read again: never over a row the copy took while the read was out.
     fn take_servers_placement(&self, source: &str, edge_id: &str) -> Result<()> {
-        let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
+        let (context, known) = {
+            let conn = self.core.conn()?;
+            let context = crate::read_view::Context::capture(&conn)?;
+            let mut known = Vec::new();
+            for edge in store::edges_from(&conn, source)? {
+                if edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder {
+                    let before = store::stamp(&conn, Subject::Edge, &edge.id)?;
+                    known.push((edge.id, before));
+                }
+            }
+            (context, known)
+        };
         let http = context.http(self.core.http()?);
+        let read = |id: String, held: Option<crate::wire::WireEdge>, before| ReadBack::Edge {
+            context: context.clone(),
+            id,
+            held: held.map(Box::new),
+            before,
+        };
         let result = (|| {
-            let mut held = Vec::new();
+            let mut reads = Vec::new();
             let mut cursor: Option<String> = None;
             let mut seen = std::collections::HashSet::new();
             loop {
                 let page = http.item_edges_page(source, PLACEMENT_EDGE, cursor.as_deref())?;
-                held.extend(
-                    page.data
-                        .into_iter()
-                        .filter(|edge| edge.target_id == self.folder),
-                );
+                for edge in page.data {
+                    if edge.target_id == self.folder {
+                        reads.push(read(edge.id.clone(), Some(edge), None));
+                    }
+                }
                 match page.next_cursor {
                     Some(next) if seen.insert(next.clone()) => cursor = Some(next),
                     Some(_) => return Err(crate::read_view::invalid()),
                     None => break,
                 }
             }
-            let known = store::edges_from(&*self.core.conn()?, source)?;
-            let mut absent = Vec::new();
-            for edge in known {
-                if edge.edge_type == PLACEMENT_EDGE
-                    && edge.target_id == self.folder
-                    && !held.iter().any(|found| found.id == edge.id)
-                {
-                    match http.edge(&edge.id)? {
-                        Some(current) => held.push(current),
-                        None => absent.push(edge.id),
-                    }
+            for (id, before) in known {
+                let listed = reads
+                    .iter()
+                    .any(|read| matches!(read, ReadBack::Edge { id: found, .. } if *found == id));
+                if !listed {
+                    let current = http.edge(&id)?;
+                    reads.push(read(id, current, before));
                 }
             }
             let mut conn = self.core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
-            for id in absent {
-                store::forget_edge(&tx, &id)?;
-            }
-            for edge in &held {
-                store::put_server_edge(&tx, edge)?;
-            }
             store::withdraw_edge_writes(&tx, edge_id)?;
+            for read in &reads {
+                crate::drain::apply_read_back(&tx, read)?;
+            }
             tx.commit()?;
             Ok(())
         })();
@@ -482,13 +493,13 @@ pub(super) fn beside(path: &str, taken: impl Fn(&str) -> bool) -> String {
         Some((dir, name)) => (format!("{dir}/"), name),
         None => (String::new(), path),
     };
-    let (stem, extension) = match name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
-        _ => (name, String::new()),
-    };
+    let (stem, extension) = super::names::split_extension(name);
     let stem = unnumbered(stem);
     (2u64..)
-        .map(|n| format!("{dir}{stem} ({n}){extension}"))
+        .map(|n| {
+            let name = super::names::fitted(stem, &format!(" ({n}){extension}"));
+            format!("{dir}{name}")
+        })
         .find(|candidate| !taken(candidate))
         .unwrap_or_else(|| path.to_string())
 }
@@ -537,6 +548,141 @@ mod tests {
         assert_eq!(beside("Shared (2).md", free), "Shared (4).md");
         assert_eq!(beside("a/Plan (x).md", |_| false), "a/Plan (x) (2).md");
         assert_eq!(beside("README", |_| false), "README (2)");
+        // A name cut to the limit is cut again to take its number.
+        let cut = format!("{}.md", "\u{65e5}".repeat(84));
+        let numbered = beside(&format!("a/{cut}"), |_| false);
+        assert_eq!(numbered, format!("a/{} (2).md", "\u{65e5}".repeat(82)));
+        let long = format!("{}.md", "x".repeat(252));
+        let taken = [format!("{} (2).md", "x".repeat(248))];
+        assert_eq!(
+            beside(&long, |candidate| taken
+                .iter()
+                .any(|held| held == candidate)),
+            format!("{} (3).md", "x".repeat(248))
+        );
+    }
+
+    /// A folder whose copy holds `note`, placed at `Plan.md` by the edge
+    /// `placed`, and a move of it this machine queued that the server
+    /// answered as stale.
+    fn moved_and_refused_as_stale(url: String) -> (tempfile::TempDir, Folder) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join(super::super::STATE_DIR).join("core.sqlite");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();
+        super::super::settings_file::bind(&core, "folder").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            store::replace_types(
+                &conn,
+                &[store::testing::wire_type("core.note", None, Some("title"))],
+            )
+            .unwrap();
+            let note = store::testing::note("note", "Plan", "", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &note, None, &Default::default()).unwrap();
+            store::put_server_edge(&conn, &placed_at(1, "Plan.md")).unwrap();
+        }
+        core.update_edge(
+            "placed",
+            &EdgeEdit {
+                properties: json!({ "path": "Second/Plan.md" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                base_version: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        store::block_unanswered(&core.conn().unwrap(), BlockedReason::ConflictUnresolved).unwrap();
+        drop(core);
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url,
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        (dir, folder)
+    }
+
+    fn placed_at(version: i64, path: &str) -> crate::wire::WireEdge {
+        let mut edge = store::testing::wire_edge("placed", "note", "folder", PLACEMENT_EDGE);
+        edge.properties.insert("path".into(), path.into());
+        edge.version = version;
+        edge.updated_at = format!("2026-01-0{version}T00:00:00Z");
+        edge
+    }
+
+    fn placed_json(version: i64, path: &str) -> Value {
+        let edge = placed_at(version, path);
+        json!({
+            "id": edge.id,
+            "source_id": edge.source_id,
+            "target_id": edge.target_id,
+            "edge_type": edge.edge_type,
+            "properties": edge.properties,
+            "version": edge.version,
+            "created_at": edge.created_at,
+            "updated_at": edge.updated_at,
+        })
+    }
+
+    #[test]
+    fn giving_way_keeps_a_placement_that_arrives_while_the_server_is_read() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let server = crate::scripted::Scripted::start();
+        let ready = Arc::new(AtomicBool::new(false));
+        let listing = "/items/note/edges";
+        server.on(
+            listing,
+            vec![crate::scripted::Answer::WaitFor {
+                ready: Arc::clone(&ready),
+                answer: Box::new(crate::scripted::certified(crate::scripted::json(
+                    200,
+                    &json!({ "data": [placed_json(2, "First/Plan.md")], "next_cursor": null })
+                        .to_string(),
+                ))),
+            }],
+        );
+        let (_dir, folder) = moved_and_refused_as_stale(server.url());
+        std::thread::scope(|scope| {
+            let giving_way = scope.spawn(|| folder.take_servers_placement("note", "placed"));
+            server.wait_for(listing, 1, Duration::from_secs(10));
+            // What a follow applies for a third move, made after the server
+            // answered the read.
+            {
+                let mut conn = folder.core.conn().unwrap();
+                let tx = conn.transaction().unwrap();
+                store::put_server_edge(&tx, &placed_at(3, "Third/Plan.md")).unwrap();
+                store::lay_waiting_edge_writes_over(&tx, "placed").unwrap();
+                tx.commit().unwrap();
+            }
+            ready.store(true, Ordering::SeqCst);
+            giving_way.join().unwrap().unwrap();
+        });
+        let conn = folder.core.conn().unwrap();
+        let held = store::edge_by_id(&conn, "placed").unwrap().unwrap();
+        assert_eq!(
+            (held.version, path_of(&held)),
+            (3, Some("Third/Plan.md")),
+            "giving way left the copy showing something other than the newest placement"
+        );
+        assert!(
+            store::queued_writes(&conn)
+                .unwrap()
+                .iter()
+                .all(|row| row.edge_id.as_deref() != Some("placed")),
+            "the stale move was not withdrawn"
+        );
     }
 
     #[test]
