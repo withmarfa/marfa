@@ -452,7 +452,7 @@ const revokeFolderRoute = createRoute({
         },
       },
       description:
-        "`invalid_id`: the id is malformed. `invalid_transition`: the folder is already revoked.",
+        "- `invalid_id`: the ID is malformed.\n- `invalid_transition`: the folder is already revoked.",
     },
     ...unauthorized,
     ...notPermitted,

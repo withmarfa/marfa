@@ -65,23 +65,12 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
     route.security === undefined || route.security.length === 0
       ? []
       : [requireDeclaredCredential, copyBoundary];
-  // Every door refuses a query key it does not declare, so a door with no
-  // other 400 still declares that one.
-  const responses =
-    route.responses[400] === undefined
-      ? {
-          ...route.responses,
-          400: {
-            content: {
-              "application/json": {
-                schema: makeErrorResponseSchema(["validation_error"]),
-              },
-            },
-            description:
-              "- `validation_error`: the query has a parameter this endpoint doesn't take.",
-          },
-        }
-      : route.responses;
+  // Every door refuses a query key it does not declare, so every door
+  // declares that refusal on its 400.
+  const responses = {
+    ...route.responses,
+    400: withUndeclaredQueryRefusal(route.responses[400]),
+  };
   return {
     ...route,
     responses,
@@ -93,6 +82,50 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
         queryKeyFamilies(route),
       ),
     ],
+  };
+}
+
+const UNDECLARED_QUERY_LINE =
+  "- `validation_error`: the query has a parameter this endpoint doesn't take.";
+
+/**
+ * A door's 400 with `validation_error` added. A 400 built from
+ * {@link makeErrorResponseSchema} is rebuilt with the extra code; any other
+ * shape is left as declared, and the status census reports it if a request
+ * draws the code.
+ */
+function withUndeclaredQueryRefusal(
+  declared: RouteConfig["responses"][string] | undefined,
+): RouteConfig["responses"][string] {
+  if (declared === undefined) {
+    return {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: UNDECLARED_QUERY_LINE,
+    };
+  }
+  if (!("content" in declared)) return declared;
+  const json = declared.content?.["application/json"];
+  const codes =
+    json === undefined || !("schema" in json)
+      ? undefined
+      : refusalCodes.get(json.schema as object);
+  if (codes === undefined || codes.includes("validation_error")) {
+    return declared;
+  }
+  return {
+    ...declared,
+    content: {
+      ...declared.content,
+      "application/json": {
+        ...json,
+        schema: makeErrorResponseSchema([...codes, "validation_error"]),
+      },
+    },
+    description: [declared.description, UNDECLARED_QUERY_LINE].join("\n"),
   };
 }
 
@@ -290,6 +323,7 @@ function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
  * one's codes as the meaning of both. Nothing errors.
  */
 const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
+const refusalCodes = new WeakMap<object, readonly [string, ...string[]]>();
 
 /**
  * Per-operation error response schema with a closed enum of `code` values.
@@ -312,6 +346,7 @@ export function makeErrorResponseSchema<
   if (cached) return cached as ReturnType<typeof buildRefusalSchema<C>>;
   const schema = buildRefusalSchema(codes);
   refusalSchemas.set(name, schema);
+  refusalCodes.set(schema, codes);
   return schema;
 }
 

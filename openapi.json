@@ -833,7 +833,7 @@
           "created_at"
         ]
       },
-      "InvalidIdRefusal": {
+      "InvalidIdOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -842,7 +842,8 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "invalid_id"
+                  "invalid_id",
+                  "validation_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -1100,42 +1101,6 @@
                   "invalid_id",
                   "invalid_transition",
                   "missing_required_field",
-                  "validation_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
-      "InvalidIdOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "invalid_id",
                   "validation_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -4565,42 +4530,6 @@
         ],
         "description": "An error response."
       },
-      "InvalidIdOrInvalidTransitionRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "invalid_id",
-                  "invalid_transition"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "KeyResponse": {
         "type": "object",
         "properties": {
@@ -7136,11 +7065,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -9244,11 +9173,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -10706,11 +10635,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -13261,11 +13190,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -13526,11 +13455,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -14053,11 +13982,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -28665,11 +28594,11 @@
             }
           },
           "400": {
-            "description": "`invalid_id`: the id is malformed. `invalid_transition`: the folder is already revoked.",
+            "description": "- `invalid_id`: the ID is malformed.\n- `invalid_transition`: the folder is already revoked.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrValidationErrorRefusal"
                 }
               }
             },

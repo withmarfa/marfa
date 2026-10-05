@@ -1900,14 +1900,14 @@ export interface components {
             created_at: string;
         };
         /** @description An error response. */
-        InvalidIdRefusal: {
+        InvalidIdOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "invalid_id";
+                code: "invalid_id" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2023,23 +2023,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "edge_constraint_violation" | "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        InvalidIdOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "invalid_id" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3272,23 +3255,6 @@ export interface components {
                 };
             };
         };
-        /** @description An error response. */
-        InvalidIdOrInvalidTransitionRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "invalid_id" | "invalid_transition";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         KeyResponse: {
             id: string;
             key: string;
@@ -4300,7 +4266,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemDetail"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4312,7 +4281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -5350,7 +5319,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5362,7 +5334,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -6085,7 +6057,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6097,7 +6072,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7317,7 +7292,10 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7329,7 +7307,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7443,7 +7421,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7455,7 +7436,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7712,7 +7693,10 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7724,7 +7708,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -14788,7 +14772,11 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description `invalid_id`: the id is malformed. `invalid_transition`: the folder is already revoked. */
+            /**
+             * @description - `invalid_id`: the ID is malformed.
+             *     - `invalid_transition`: the folder is already revoked.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14801,7 +14789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
