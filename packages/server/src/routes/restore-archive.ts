@@ -154,14 +154,14 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. It writes all of the archive or none of it. Only the build that wrote an archive is sure to read it. Requires the operator key.",
+    "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: {
     body: {
       required: true,
       description:
-        "The archive file, as `GET /export?format=archive` returned it.",
+        "The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it.",
       content: {
         "application/gzip": {
           // The archive is a gzipped tarball: bytes, as 3.1 spells them.
@@ -236,7 +236,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "`request_too_large`: the request body is larger than this instance accepts.",
+        "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field.",
     },
     401: {
       content: {

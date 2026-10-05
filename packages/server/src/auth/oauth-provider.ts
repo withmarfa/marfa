@@ -412,12 +412,11 @@ export function buildOauthProviderPlugin(
     allowUnauthenticatedClientRegistration: true,
 
     // ----- Scope grammar -----
-    // The allowlist, which is also the ceiling of a client that registers
-    // naming no scope: the plugin's registration validates a requested
-    // `scope` against `clientRegistrationAllowedScopes` and stores this whole
-    // set on the row whatever the request named, and the registration
-    // adapter stores a named scope in that same registration unit. Custom types
-    // registered at runtime require a server restart to surface here.
+    // The allowlist. The plugin's registration validates a requested `scope`
+    // against `clientRegistrationAllowedScopes`; the registration adapter
+    // stores the scope a request names, and this whole set only for a request
+    // that names none. Custom types registered at runtime require a server
+    // restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above carries the runtime namespace roots, but the

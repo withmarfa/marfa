@@ -11,11 +11,7 @@ import {
   readInstanceConfig,
   writeInstanceConfig,
 } from "../storage/instance-config.js";
-import {
-  ENFORCEMENT_COMPONENTS,
-  EnforcementReadSchema,
-  EnforcementWriteSchema,
-} from "./_schemas.js";
+import { EnforcementReadSchema, EnforcementWriteSchema } from "./_schemas.js";
 
 /**
  * One shape, built twice: permissive for reads and strict for the write.
@@ -31,7 +27,7 @@ const instanceConfigShape = (strict: boolean) => ({
   enforcement: (strict ? EnforcementWriteSchema : EnforcementReadSchema)
     .optional()
     .describe(
-      "The instance's enforcement levers, which apply to every credential that doesn't set its own. Absent: no lever is on.",
+      "The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on.",
     ),
   // Retention overrides for the cleanup jobs. Each falls back to the
   // instance env default when unset. `0` disables the job (matches
@@ -44,7 +40,7 @@ const instanceConfigShape = (strict: boolean) => ({
     .max(MAX_RETENTION_DAYS)
     .optional()
     .describe(
-      `Days Marfa keeps audit log entries. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+      `Days Marfa keeps audit log entries and outbound webhook delivery history. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
     ),
   event_log_retention_hours: z
     .number()
@@ -53,7 +49,7 @@ const instanceConfigShape = (strict: boolean) => ({
     .max(MAX_RETENTION_HOURS)
     .optional()
     .describe(
-      `Hours Marfa keeps events, which a stream can replay from a cursor. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+      `Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an \`Idempotency-Key\`. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
     ),
   trash_retention_days: z
     .number()
@@ -237,9 +233,6 @@ const putConfigRoute = createRoute({
 
 export function configRoutes(storage: Storage, instanceId: string) {
   const router = createOpenAPIRouter<AppEnv>();
-  for (const [name, schema] of Object.entries(ENFORCEMENT_COMPONENTS)) {
-    router.openAPIRegistry.register(name, schema);
-  }
 
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);

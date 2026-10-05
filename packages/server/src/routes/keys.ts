@@ -37,7 +37,6 @@ import {
 } from "../auth/bootstrap-secret.js";
 import type { Storage, StoredApiKey } from "../storage/interface.js";
 import {
-  ENFORCEMENT_COMPONENTS,
   EnforcementOverrideSchema,
   KEY_FIELD_TEXT,
   KeyResponseSchema,
@@ -288,7 +287,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `write` on every map. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items.",
+        "Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items.",
     },
     400: {
       content: {
@@ -349,7 +348,7 @@ const listKeysRoute = createRoute({
         },
       },
       description:
-        "Returns the keys, in one page. A key past its `expires_at` isn't listed.",
+        "Returns the keys, in one page. A revoked key, or one past its `expires_at`, isn't listed.",
     },
     401: {
       content: {
@@ -539,14 +538,11 @@ const updateKeyRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            "missing_required_field",
-          ]),
+          schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
       description:
-        "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
+        "- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a lever in `enforcement_override` without `types` or `sources`, or a claimed source that starts with `oauth:`.",
     },
     401: {
       content: {
@@ -973,9 +969,6 @@ const EVERY_TYPE = { "*": "write" } as const;
 
 export function keyRoutes(storage: Storage, salt: string) {
   const router = createOpenAPIRouter<AppEnv>();
-  for (const [name, schema] of Object.entries(ENFORCEMENT_COMPONENTS)) {
-    router.openAPIRegistry.register(name, schema);
-  }
 
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");

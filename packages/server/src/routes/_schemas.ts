@@ -564,7 +564,7 @@ const enforcementSchema = (strict: boolean) => {
   });
   return {
     block,
-    components: {
+    levers: {
       [`TypeLever${suffix}`]: typesOnly,
       [`TypeAndSourceLever${suffix}`]: typesAndSourcesLever,
     },
@@ -592,17 +592,20 @@ export const EnforcementOverrideSchema = EnforcementReadSchema.describe(
 ).openapi("EnforcementOverride");
 
 /**
- * The named schemas the levers are built from, for a router to register
- * before its routes, each lever ahead of the block that holds it. A
- * component takes its description from the first schema the generator meets
- * under its name, and every field naming one of these describes it, so
- * without this the first field's text would become the component's.
+ * The named schemas that every field naming them describes in its own words,
+ * registered once on the app.
+ *
+ * The generator takes a component's description from the first schema it
+ * meets under the component's name, and registered schemas ahead of every
+ * route. Without the registration, the first field's text would become the
+ * component's.
  */
-export const ENFORCEMENT_COMPONENTS: Record<string, z.ZodType> = {
-  ...enforcementRead.components,
-  ...enforcementWrite.components,
-  EnforcementOverride: EnforcementOverrideSchema,
-};
+export const DESCRIBED_ONLY_BY_REFERENCE: Readonly<Record<string, z.ZodType>> =
+  {
+    ...enforcementRead.levers,
+    ...enforcementWrite.levers,
+    EnforcementOverride: EnforcementOverrideSchema,
+  };
 
 /**
  * Field text every key answer shares, and the bodies that write the same
@@ -626,9 +629,9 @@ export const KEY_FIELD_TEXT = {
   type_permissions:
     "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers.",
   extension_permissions:
-    "Extension namespaces the key may `read` or `write`, by namespace or `*`.",
+    "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`.",
   edge_permissions:
-    "Edge types the key may `read` or `write`, by edge type or `*`.",
+    "Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`.",
   metadata_permissions:
     "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both.",
   profile_permissions:

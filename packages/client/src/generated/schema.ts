@@ -1315,7 +1315,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. It writes all of the archive or none of it. Only the build that wrote an archive is sure to read it. Requires the operator key.
+         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -1509,7 +1509,7 @@ export interface paths {
         };
         /**
          * List audit log entries
-         * @description Returns audit log entries, newest first. Marfa records changes and exports here, not other reads. Requires `audit.read`.
+         * @description Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.
          */
         get: operations["listAuditLog"];
         put?: never;
@@ -3502,11 +3502,11 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            /** @description Edge types the key may `read` or `write`, by edge type or `*`. */
+            /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
             edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
@@ -3567,11 +3567,11 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            /** @description Edge types the key may `read` or `write`, by edge type or `*`. */
+            /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
             edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
@@ -3612,15 +3612,15 @@ export interface components {
         InstanceConfig: {
             /** @description Unique identifier for the instance, the same value `GET /` returns. */
             instance_id: string;
-            /** @description The instance's enforcement levers, which apply to every credential that doesn't set its own. Absent: no lever is on. */
+            /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
             enforcement?: {
                 strict_mode?: components["schemas"]["TypeLever"] & unknown;
                 source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
                 source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
             };
-            /** @description Days Marfa keeps audit log entries. `0` keeps them with no age limit. Absent: the server's default applies. */
+            /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
             audit_retention_days?: number;
-            /** @description Hours Marfa keeps events, which a stream can replay from a cursor. `0` keeps them with no age limit. Absent: the server's default applies. */
+            /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
             event_log_retention_hours?: number;
             /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
             trash_retention_days?: number;
@@ -16724,7 +16724,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the keys, in one page. A key past its `expires_at` isn't listed. */
+            /** @description Returns the keys, in one page. A revoked key, or one past its `expires_at`, isn't listed. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16856,11 +16856,11 @@ export interface operations {
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
-                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
-                    /** @description Edge types the key may `read` or `write`, by edge type or `*`. */
+                    /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
                     edge_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
@@ -16877,7 +16877,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `write` on every map. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items. */
+            /** @description Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17318,11 +17318,11 @@ export interface operations {
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
-                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
-                    /** @description Edge types the key may `read` or `write`, by edge type or `*`. */
+                    /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
                     edge_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
@@ -17358,10 +17358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /**
-             * @description - `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.
-             *     - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.
-             */
+            /** @description - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a lever in `enforcement_override` without `types` or `sources`, or a claimed source that starts with `oauth:`. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17373,7 +17370,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -17609,15 +17606,15 @@ export interface operations {
                 "application/json": {
                     /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
                     instance_id?: string;
-                    /** @description The instance's enforcement levers, which apply to every credential that doesn't set its own. Absent: no lever is on. */
+                    /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
                     enforcement?: {
                         strict_mode?: components["schemas"]["TypeLeverStrict"] & unknown;
                         source_allowlist?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                         source_filter?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                     };
-                    /** @description Days Marfa keeps audit log entries. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
                     audit_retention_days?: number;
-                    /** @description Hours Marfa keeps events, which a stream can replay from a cursor. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
                     event_log_retention_hours?: number;
                     /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
                     trash_retention_days?: number;
@@ -17758,7 +17755,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/gzip": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
@@ -17868,7 +17865,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"];
                 };
             };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18525,7 +18522,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description With `format=ndjson`, a JSON object per line: `{ "item", "metadata" }` for each item, then `{ "edge" }` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18541,7 +18538,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't an instant.
+             * @description - `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't a timestamp.
              *     - `unknown_type`: `type` is a concrete type that nothing registers.
              */
             400: {
@@ -20123,6 +20120,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /**
+             * @description An error with `message` and `code`, rather than Marfa's own shape:
+             *     - `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.
+             */
+            415: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description A machine-readable code for the error. Use it in your logic.
+                         * @enum {string}
+                         */
+                        code: "UNSUPPORTED_MEDIA_TYPE";
+                        /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                        message: string;
+                    };
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

@@ -102,7 +102,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        'With `format=ndjson`, a JSON object per line: `{ "item", "metadata" }` for each item, then `{ "edge" }` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won\'t unpack.',
+        "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack.",
     },
     400: {
       content: {
@@ -111,7 +111,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't an instant.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
+        "- `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't a timestamp.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {

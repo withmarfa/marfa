@@ -51,7 +51,7 @@ const listAuditRoute = createRoute({
   tags: ["Instance"],
   summary: "List audit log entries",
   description:
-    "Returns audit log entries, newest first. Marfa records changes and exports here, not other reads. Requires `audit.read`.",
+    "Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("audit.read"),
   request: {

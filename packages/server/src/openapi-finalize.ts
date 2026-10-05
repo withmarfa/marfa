@@ -1295,6 +1295,29 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
             },
           },
         },
+        "415": {
+          description:
+            "An error with `message` and `code`, rather than Marfa's own shape:\n- `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  code: {
+                    type: "string",
+                    enum: ["UNSUPPORTED_MEDIA_TYPE"],
+                    description: REFUSAL_TEXT.code,
+                  },
+                  message: {
+                    type: "string",
+                    description: REFUSAL_TEXT.message,
+                  },
+                },
+                required: ["code", "message"],
+              },
+            },
+          },
+        },
         // Declared here rather than by the floor, which hangs it off a
         // door's `security`, and this door has none: the registration is
         // still a write, and it meets the write lock as any other does.

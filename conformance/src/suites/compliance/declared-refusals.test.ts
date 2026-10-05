@@ -620,6 +620,26 @@ describe("client registration given a key", () => {
     });
     expect(accepted.status).toBe(201);
   });
+
+  it("is refused 415 in the shape the document declares for a body that is not JSON", async () => {
+    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        redirect_uris: "https://example.com/callback",
+        client_name: `${ctx.source}-form-registration`,
+      }).toString(),
+    });
+    const refusedBody = (await refused.json()) as { code?: string };
+    expect(refused.status, JSON.stringify(refusedBody)).toBe(415);
+    expect(refusedBody.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+    await expectMatchesSchema(
+      "POST",
+      "/auth/oauth2/register",
+      415,
+      refusedBody,
+    );
+  });
 });
 
 describe("a deployment that caps live viewers", () => {
