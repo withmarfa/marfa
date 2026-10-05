@@ -6,7 +6,11 @@
  */
 import { describe, expect, it } from "vitest";
 import { shippedPlatformTypes } from "@withmarfa/shared";
-import { computePlatformDrift, setPlatformDrift } from "./platform-drift.js";
+import {
+  computePlatformDrift,
+  forgetPlatformDrift,
+  setPlatformDrift,
+} from "./platform-drift.js";
 import { platformDrift } from "./platform-drift.js";
 import { createTestContext } from "../test-utils.js";
 import type { LoadedType } from "./interface.js";
@@ -99,5 +103,14 @@ describe("which shipped types an instance carries that the build does not", () =
     expect(platformDrift()).toEqual(["core.retired"]);
     setPlatformDrift([]);
     expect(platformDrift()).toEqual([]);
+  });
+
+  it("forgets one identifier and leaves the rest", () => {
+    setPlatformDrift(["core.a", "core.b"]);
+    forgetPlatformDrift("core.a");
+    expect(platformDrift()).toEqual(["core.b"]);
+    forgetPlatformDrift("core.unknown");
+    expect(platformDrift()).toEqual(["core.b"]);
+    setPlatformDrift([]);
   });
 });

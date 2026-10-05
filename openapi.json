@@ -33881,7 +33881,7 @@
         "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.",
         "responses": {
           "200": {
-            "description": "Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts.",
+            "description": "Returns the stale types. A type you delete drops out of the list at once.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34252,7 +34252,7 @@
             }
           },
           "404": {
-            "description": "- `type_not_found`: no platform type has this identifier.\n- `not_found`: the type was deleted after the server started.",
+            "description": "- `type_not_found`: no platform type has this identifier, including one you already deleted.\n- `not_found`: another request deleted the type first.",
             "content": {
               "application/json": {
                 "schema": {

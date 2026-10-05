@@ -34,7 +34,10 @@ import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
-import { platformDrift } from "../storage/platform-drift.js";
+import {
+  forgetPlatformDrift,
+  platformDrift,
+} from "../storage/platform-drift.js";
 
 const DriftedTypeSchema = z
   .object({
@@ -79,7 +82,7 @@ const listDriftRoute = createRoute({
         },
       },
       description:
-        "Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts.",
+        "Returns the stale types. A type you delete drops out of the list at once.",
     },
     401: {
       content: {
@@ -147,7 +150,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "- `type_not_found`: no platform type has this identifier.\n- `not_found`: the type was deleted after the server started.",
+        "- `type_not_found`: no platform type has this identifier, including one you already deleted.\n- `not_found`: another request deleted the type first.",
     },
     409: {
       content: {
@@ -280,6 +283,9 @@ export function platformTypeRoutes(storage: Storage) {
         details: { type: id },
       },
     );
+
+    // After the commit, so a removal that rolled back stays listed.
+    forgetPlatformDrift(id);
 
     return c.json({ removed: true as const, id }, 200);
   });
