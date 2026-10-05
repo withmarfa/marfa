@@ -407,6 +407,10 @@ export const CHAIN_REFUSALS = {
     ["write_contention"],
     "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
   ),
+  internalError: chainRefusal(
+    ["internal_error"],
+    "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`.",
+  ),
 } as const;
 
 const UNDECLARED_QUERY_REFUSAL = chainRefusal(
@@ -989,6 +993,13 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       }
       if (declaresSecurity(operation)) {
         floorRefusal(responses, "503", CHAIN_REFUSALS.writeContention);
+      }
+      // Every door can meet a fault nothing foresaw, and the error handler
+      // answers it alike on all of them. Registration is the exception: the
+      // sign-in library serves it, and what it answers for a fault of its
+      // own is not this server's envelope.
+      if (pathKey !== "/auth/oauth2/register") {
+        floorRefusal(responses, "500", CHAIN_REFUSALS.internalError);
       }
       if (IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`)) {
         for (const { status, refusal, merge } of IDEMPOTENCY_REFUSALS) {

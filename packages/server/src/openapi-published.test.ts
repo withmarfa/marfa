@@ -135,6 +135,32 @@ describe("published OpenAPI spec", () => {
     expect(anonymous).toEqual([]);
   });
 
+  it("declares 500 internal_error on every operation the error handler answers for", () => {
+    // The handler answers a fault nothing named alike on every door, so a
+    // door that left the status out would send a client branching on the
+    // document to a status it never declared. Registration is the one door
+    // the sign-in library serves, and what it answers for its own fault is
+    // not this server's envelope.
+    const ref = `#/components/schemas/${CHAIN_REFUSALS.internalError.name}`;
+    const declares = (operation: Operation): boolean => {
+      const responses = (operation.responses ?? {}) as Record<
+        string,
+        { content?: Record<string, { schema?: { $ref?: string } }> }
+      >;
+      return (
+        responses["500"]?.content?.["application/json"]?.schema?.$ref === ref
+      );
+    };
+    const without = [...published.entries()]
+      .filter(([, operation]) => !declares(operation))
+      .map(([key]) => key);
+    expect(without).toEqual(["POST /auth/oauth2/register"]);
+    // The witness: the check is about an operation that declares it.
+    expect(declares(published.get("GET /items/{id}")!)).toBe(true);
+    expect(declares({ responses: {} })).toBe(false);
+    expect(CHAIN_REFUSALS.internalError.codes).toEqual(["internal_error"]);
+  });
+
   it("does not send a reader to a documentation site to learn what a door does", () => {
     // `AGENTS.md`: the server's behavior is the specification and the docs
     // site is not a source of truth. A description that sends the reader
