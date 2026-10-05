@@ -491,7 +491,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       (cleared) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: key.id,
-        action: "connector_state.clear",
+        action: "connector_state.delete",
         resource_type: "connector",
         resource_id: connector.id,
         details: { source: connector.source, ...cleared },

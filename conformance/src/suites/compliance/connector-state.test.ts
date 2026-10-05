@@ -1205,7 +1205,7 @@ describe("what a connector keeps on the instance", () => {
     expect((await mine.client.deleteConnectorState(mine.id)).status).toBe(200);
     const audited = await client.listAudit({
       resource_id: mine.id,
-      action: "connector_state.clear",
+      action: "connector_state.delete",
     });
     expect(audited.data.data.map((r) => r.details)).toEqual([
       { source: mine.source, state: false, agreements: 1 },
@@ -1442,7 +1442,7 @@ describe("what a connector keeps on the instance", () => {
 
     const audited = await client.listAudit({
       resource_id: mine.id,
-      action: "connector_state.clear",
+      action: "connector_state.delete",
     });
     expect(audited.status).toBe(200);
     expect(audited.data.data.map((row) => row.details)).toEqual([
@@ -1601,7 +1601,7 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(next, [row.id])).toEqual([]);
     const audited = await client.listAudit({
       resource_id: first.id,
-      action: "connector_state.clear",
+      action: "connector_state.delete",
     });
     expect(audited.status).toBe(200);
     expect(audited.data.data.map((r) => r.details)).toEqual([
@@ -1611,7 +1611,7 @@ describe("what a connector keeps on the instance", () => {
       (
         await client.listAudit({
           resource_id: next.id,
-          action: "connector_state.clear",
+          action: "connector_state.delete",
         })
       ).data.data,
     ).toEqual([]);

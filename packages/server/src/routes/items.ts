@@ -2225,7 +2225,7 @@ export function itemRoutes(storage: Storage) {
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: requireAuth(c).id,
-        action: "item.metadata.set",
+        action: "item.metadata.replace",
         resource_type: "item",
         resource_id: id,
         details: { tags },
@@ -2297,7 +2297,7 @@ export function itemRoutes(storage: Storage) {
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: requireAuth(c).id,
-        action: "item.metadata.merge",
+        action: "item.metadata.update",
         resource_type: "item",
         resource_id: id,
         details: { tags },

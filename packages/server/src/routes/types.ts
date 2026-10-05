@@ -837,7 +837,7 @@ export function typeRoutes(storage: Storage) {
         {
           client_ip: c.get("clientIp") ?? null,
           key_id: c.get("apiKey")?.id,
-          action: "type.update",
+          action: "type.replace",
           resource_type: "type",
           resource_id: id,
         },

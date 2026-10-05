@@ -185,7 +185,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     }),
   ],
   [
-    "item.metadata.set",
+    "item.metadata.replace",
     async () => ({
       method: "PUT",
       path: `/items/${(await item()).id}/metadata`,
@@ -193,7 +193,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     }),
   ],
   [
-    "item.metadata.merge",
+    "item.metadata.update",
     async () => ({
       method: "PATCH",
       path: `/items/${(await item()).id}/metadata`,
@@ -306,7 +306,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     }),
   ],
   [
-    "type.update",
+    "type.replace",
     async () => ({
       method: "PUT",
       path: `/types/${await registeredType()}`,
@@ -321,7 +321,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     }),
   ],
   [
-    "edge_type.create",
+    "edge_type.register",
     () => ({
       method: "POST",
       path: "/edge-types",
@@ -404,7 +404,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
     },
   ],
   [
-    "connector_state.clear",
+    "connector_state.delete",
     async () => {
       const row = await connector();
       expect(

@@ -460,7 +460,7 @@ export function edgeTypeRoutes(storage: Storage) {
       (schema) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
-        action: "edge_type.create",
+        action: "edge_type.register",
         resource_type: "edge_type",
         resource_id: schema.id,
       }),
