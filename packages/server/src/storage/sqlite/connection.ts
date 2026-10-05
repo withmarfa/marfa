@@ -222,17 +222,16 @@ async function schemaDifferences(
 }
 
 /**
- * The tables of this build's that `client`'s file holds rows in, by name.
+ * Whether any of this build's tables in `client`'s file holds a row.
  *
  * A table this build does not declare is not read: a replication sidecar
  * keeps its own tables in the file and writes rows to them whatever state
  * this build's tables are in.
  */
-async function tablesHoldingRows(client: Client): Promise<string[]> {
+async function holdsRows(client: Client): Promise<boolean> {
   const ref = await referenceSchema();
   const found = await schemaObjects(client);
   const shadow = shadowTablePrefixes(ref.objects);
-  const holding: string[] = [];
   for (const [name, object] of ref.objects) {
     if (object.type !== "table" || !found.has(name)) continue;
     if (name.startsWith("sqlite_")) continue;
@@ -240,9 +239,9 @@ async function tablesHoldingRows(client: Client): Promise<string[]> {
     const rows = await client.execute(
       `SELECT 1 FROM \`${name.replaceAll("`", "``")}\` LIMIT 1`,
     );
-    if (rows.rows.length > 0) holding.push(name);
+    if (rows.rows.length > 0) return true;
   }
-  return holding;
+  return false;
 }
 
 /**
@@ -1014,7 +1013,17 @@ export async function createConnection(sqlitePath: string): Promise<{
   // rewritten the header, and anything nothing indexes fails nowhere until
   // a request meets it.
   const { differences, missingTables } = await schemaDifferences(client);
-  if (differences.length > 0) {
+  // A file that lacks some of this build's tables and holds no rows is one
+  // this build began creating and did not finish, and is completed by the
+  // DDL below. The DDL is a series of statements, each applied on its own,
+  // so a start that stopped partway leaves the first of them, and it
+  // inserts nothing, so that file is empty. One that holds rows was
+  // written by another build, and completing it would open the missing
+  // tables empty beside rows they should describe.
+  if (
+    differences.length > 0 ||
+    (missingTables.length > 0 && (await holdsRows(client)))
+  ) {
     client.close();
     throw new RefusedDatabaseError(
       `The schema in ${sqlitePath} is not this build's: ${[
@@ -1022,26 +1031,6 @@ export async function createConnection(sqlitePath: string): Promise<{
         ...missingTables.map((name) => `the file lacks the ${name} table`),
       ].join("; ")}. ` + REFUSED_DATABASE_REMEDY,
     );
-  }
-
-  // A file that lacks some of this build's tables is one this build began
-  // creating and did not finish, when it holds no rows: the DDL below is a
-  // series of statements, each applied on its own, so a start that stopped
-  // partway leaves the first of them and nothing else. The DDL is
-  // idempotent and every table it would add is created empty, so completing
-  // such a file leaves what a fresh one holds. A file that lacks tables and
-  // holds rows was written by something else, and completing it would open
-  // those tables empty beside rows they should describe.
-  if (missingTables.length > 0) {
-    const holding = await tablesHoldingRows(client);
-    if (holding.length > 0) {
-      client.close();
-      throw new RefusedDatabaseError(
-        `The database in ${sqlitePath} is incomplete: it holds data in ${holding.join(", ")} but lacks tables this build creates (${missingTables.join(", ")}). ` +
-          "This build completes only a file that holds no data, such as one left by a first start that was stopped partway, so this file was written by another build or was damaged. " +
-          REFUSED_DATABASE_REMEDY,
-      );
-    }
   }
 
   // A retired settings key is refused on the same terms, and it is the

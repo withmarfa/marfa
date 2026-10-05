@@ -6,7 +6,7 @@
  * of this build's objects and not the rest. Such a file holds no rows,
  * because nothing writes one before the DDL is done, and the next start
  * completes it. A file that lacks tables and holds rows was written by
- * another build, and is refused as incomplete.
+ * another build, and is refused as one.
  */
 import { createClient } from "@libsql/client";
 import { createHash } from "node:crypto";
@@ -107,7 +107,9 @@ describe("a database this build began creating and did not finish", () => {
     );
   });
 
-  it("is refused as incomplete, naming what it lacks and leaving the file, when it holds rows", async () => {
+  it("is refused as another build's, naming what it lacks and leaving the file, when it holds rows", async () => {
+    // Cut at the same place, with a row: it cannot be a first start this
+    // build left, and the message must not say that it is.
     const path = scratch();
     await seed(path, stoppedBefore("item_blob_references"), ROW);
     const before = digest(path);
@@ -115,16 +117,34 @@ describe("a database this build began creating and did not finish", () => {
     const refusal = createConnection(path);
     await expect(refusal).rejects.toBeInstanceOf(RefusedDatabaseError);
     await expect(refusal).rejects.toThrow(path);
-    await expect(refusal).rejects.toThrow(/is incomplete/);
-    await expect(refusal).rejects.toThrow(/lacks tables this build creates/);
     await expect(refusal).rejects.toThrow(
-      /but lacks tables.*item_blob_references/,
+      /is not this build's: .*the file lacks the item_blob_references table/,
     );
-    await expect(refusal).rejects.not.toThrow(/is not this build's/);
+    await expect(refusal).rejects.not.toThrow(/is incomplete|damaged/);
     await expect(refusal).rejects.toThrow(
       /export it with the build that wrote it/,
     );
     expect(digest(path)).toBe(before);
+  });
+
+  it("is refused when an older build finished and filled it and it lacks one table this build added", async () => {
+    const path = scratch();
+    await seed(
+      path,
+      SCHEMA_SQL.replace(
+        /CREATE TABLE IF NOT EXISTS `extension_blob_references` \([\s\S]*?\);\n/,
+        "",
+      )
+        .split("\n")
+        .filter((line) => !line.includes("`extension_blob_references`"))
+        .join("\n"),
+      ROW,
+    );
+    expect(await objectNames(path)).not.toContain("extension_blob_references");
+
+    await expect(createConnection(path)).rejects.toThrow(
+      /is not this build's: the file lacks the extension_blob_references table/,
+    );
   });
 
   it("is refused as it is today when it also holds a column this build does not declare", async () => {

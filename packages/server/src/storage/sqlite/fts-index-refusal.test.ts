@@ -105,7 +105,7 @@ describe("the full-text index is refused when it predates the schema", () => {
     await first.raw.execute("DROP TABLE item_search_keys");
     await first.close();
     await expect(createConnection(path)).rejects.toThrow(
-      /is incomplete.*lacks tables this build creates \(item_search_keys\)/,
+      /file lacks the item_search_keys table/,
     );
   });
 });

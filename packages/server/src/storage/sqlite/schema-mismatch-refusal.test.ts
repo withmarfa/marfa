@@ -81,7 +81,7 @@ describe("a database whose schema is not this build's", () => {
     ["edge_blob_references", "idx_edge_blob_references_edge"],
     ["extension_blob_references", "idx_extension_blob_references_item"],
   ])(
-    "is refused as incomplete when it holds rows and lacks %s, naming it",
+    "is refused when it holds rows and lacks %s, naming it",
     async (table, index) => {
       // Created empty by the DDL, a missing index table would describe none of
       // the rows the file already holds.
@@ -105,7 +105,7 @@ describe("a database whose schema is not this build's", () => {
       const before = digest(path);
 
       await expect(createConnection(path)).rejects.toThrow(
-        new RegExp(`is incomplete.*lacks tables this build creates.*${table}`),
+        new RegExp(`the file lacks the ${table} table`),
       );
       expect(digest(path)).toBe(before);
     },

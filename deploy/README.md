@@ -66,7 +66,7 @@ The worst case is under eight seconds, and a stop that completes exits `0`. A st
 
 ## Upgrading
 
-Until the first public release, nothing upgrades a database in place. A build whose database schema differs from your instance's refuses to start on it, changes nothing in the file, and says so in its log. Whether a build's schema differs is not something you can read off its version, so treat each new build as one that might. The build that wrote the file can still read it, so going back to that build brings the instance back. A file this build began creating and did not finish, such as one left by a first start that was stopped partway, holds no data; the next start creates the tables it lacks and opens it. A file that lacks tables and holds data is refused, and the message calls it incomplete.
+Until the first public release, nothing upgrades a database in place. A build whose database schema differs from your instance's refuses to start on it, changes nothing in the file, and says so in its log. Whether a build's schema differs is not something you can read off its version, so treat each new build as one that might. The build that wrote the file can still read it, so going back to that build brings the instance back. A file this build began creating and did not finish, such as one left by a first start that was stopped partway, holds no data; the next start creates the tables it lacks and opens it. A file that lacks tables and holds data was written by another build, and is refused as one.
 
 To carry your data into a new build:
 

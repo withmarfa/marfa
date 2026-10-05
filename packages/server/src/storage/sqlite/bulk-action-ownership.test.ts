@@ -337,7 +337,7 @@ it.each(["checkpoint columns", "carried ledger", "hash ledger"] as const)(
     await expect(createSqliteStorage(path)).rejects.toThrow(
       missing === "checkpoint columns"
         ? /bulk_action_jobs table lacks claim_generation/
-        : /is incomplete.*lacks tables this build creates.*bulk_action_job_/,
+        : /file lacks the bulk_action_job_/,
     );
   },
 );
