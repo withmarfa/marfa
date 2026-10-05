@@ -75,11 +75,11 @@ import { readInstanceConfig } from "./instance-config.js";
 import { baseVersion } from "./interface.js";
 import type {
   ArchivedDates,
+  BlobProof,
   CascadeRoot,
   ResolvedItem,
   Storage,
 } from "./interface.js";
-import type { BlobProof } from "./sqlite/blob-references.js";
 
 /**
  * Who a write is made for. A credential's writes are held to its grants; the

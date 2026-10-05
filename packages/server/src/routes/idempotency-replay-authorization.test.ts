@@ -240,9 +240,14 @@ it.each(["extensions", "edges"])(
     const key = await actor();
     const item = await note();
     if (kind === "extensions") {
-      await ctx.storage.metadata.setExtension(item.id, "example.private", {
-        secret: "Extension marker",
-      });
+      await ctx.storage.metadata.setExtension(
+        item.id,
+        "example.private",
+        {
+          secret: "Extension marker",
+        },
+        null,
+      );
     } else {
       const target = await note();
       expect(

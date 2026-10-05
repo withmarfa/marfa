@@ -366,8 +366,8 @@ describe("POST /admin/restore-archive all or nothing", () => {
     const setExtensions = metadata.setExtensions.bind(metadata);
     let written = 0;
     let observed: Promise<number> | undefined;
-    metadata.setExtensions = async (id, extensions) => {
-      const result = await setExtensions(id, extensions);
+    metadata.setExtensions = async (id, extensions, proofFor) => {
+      const result = await setExtensions(id, extensions, proofFor);
       written += 1;
       observed ??= new Promise((resolve) =>
         setImmediate(() => {
@@ -427,9 +427,9 @@ describe("POST /admin/restore-archive all or nothing", () => {
     const turnsAtRow: number[] = [];
     const metadata = ctx.storage.metadata;
     const setExtensions = metadata.setExtensions.bind(metadata);
-    metadata.setExtensions = async (id, extensions) => {
+    metadata.setExtensions = async (id, extensions, proofFor) => {
       turnsAtRow.push(turns);
-      return setExtensions(id, extensions);
+      return setExtensions(id, extensions, proofFor);
     };
     const audit = ctx.storage.audit;
     const log = audit.log.bind(audit);
@@ -859,8 +859,8 @@ describe("POST /admin/restore-archive all or nothing", () => {
     const resumed = new Promise<void>((resolve) => {
       resume = resolve;
     });
-    metadata.setExtensions = async (id, extensions) => {
-      const result = await setExtensions(id, extensions);
+    metadata.setExtensions = async (id, extensions, proofFor) => {
+      const result = await setExtensions(id, extensions, proofFor);
       written += 1;
       if (written === 150) {
         stopped();

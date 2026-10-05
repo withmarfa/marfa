@@ -1,6 +1,7 @@
 import {
   ErrorCode,
   MarfaError,
+  edgePermissionCovers,
   listTypes,
   resolveTypePermission,
 } from "@withmarfa/shared";
@@ -15,6 +16,7 @@ import {
   standingRule,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { mayReadNamespace } from "./_extension-reach.js";
 
 /** One answer for a blob that is not there and one the caller may not read. */
 function blobNotFound(): MarfaError {
@@ -45,13 +47,17 @@ function requestCredential(c: Context<AppEnv>): {
  * Whether this credential may read the blob `hash` names, whether or not it
  * is registered.
  *
- * A blob belongs to no type, so it borrows its reach from the items whose
- * properties reference it, in every lifecycle state, through the same type
- * predicate the item listings compile. A reference lends only once a write
- * carrying it was made for a credential that proved it held the bytes
- * (`blobProof`), so writing a hash into a row one may write is never a way
- * to read the bytes behind it. Extensions, edge properties and version
- * snapshots keep a blob from the orphan sweep and lend nothing.
+ * A blob belongs to no type, so it borrows its reach from what references
+ * it, in every lifecycle state of the item involved, through the same type
+ * predicate the item listings compile. An item's properties lend to a
+ * credential that may read the item's type. An edge's properties lend to one
+ * that may read the edge, which is its edge type by the edge map and its
+ * source's type. An extension namespace lends to one that may read the
+ * namespace by the extension map and the item's type. A reference lends only
+ * once a write carrying it was made for a credential that proved it held the
+ * bytes (`blobProof`), so writing a hash into a row one may write is never a
+ * way to read the bytes behind it. Version snapshots keep a blob from the
+ * orphan sweep and lend nothing.
  *
  * The operator key holds no type permission and stands outside the model;
  * it reads every blob.
@@ -64,7 +70,13 @@ export async function mayReadBlob(
   if (key.is_operator) return true;
   const { allowed, excluded } = computeTypeFilter(key, "read");
   if (!allowed || allowed.length === 0) return false;
-  return storage.blobs.readableThrough(hash, allowed, excluded);
+  return storage.blobs.readableThrough(hash, {
+    allowedTypes: allowed,
+    excludedTypes: excluded,
+    readsEdgeType: (edgeType) =>
+      edgePermissionCovers(key.edge_permissions, edgeType, "read"),
+    readsNamespace: (namespace) => mayReadNamespace(key, namespace),
+  });
 }
 
 /**

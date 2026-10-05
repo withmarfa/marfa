@@ -183,7 +183,7 @@ const UNREADABLE_BLOB_RESPONSE = {
  * cannot drift apart.
  */
 const READ_RULE =
-  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.";
+  "A working key or a signed-in app reads a blob only when something it may read references the blob's digest with a reference that lends: an item of a type it may read, in any lifecycle state, naming it in its properties; an edge it may read, by its edge permissions and the type of its source, naming it in its properties; or an extension namespace it may read, by its extension permissions and the item's type, naming it. A reference lends when a write sent it for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.";
 
 const bytesResponses = {
   200: {

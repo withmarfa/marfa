@@ -66,7 +66,12 @@ async function pinnedItem(): Promise<string> {
     properties: { body: "metadata touches item" },
     tags: ["seed"],
   });
-  await ctx.storage.metadata.setExtension(item.id, "testapp.state", { n: 0 });
+  await ctx.storage.metadata.setExtension(
+    item.id,
+    "testapp.state",
+    { n: 0 },
+    null,
+  );
   await forceUpdatedAt(item.id, PAST);
   return item.id;
 }
@@ -88,15 +93,7 @@ const writes: {
   {
     name: "setExtension",
     run: (id) =>
-      ctx.storage.metadata.setExtension(id, "testapp.state", { n: 1 }),
-  },
-  {
-    name: "mutateExtension",
-    run: (id) =>
-      ctx.storage.metadata.mutateExtension(id, "testapp.state", (cur) => ({
-        ...cur,
-        n: 2,
-      })),
+      ctx.storage.metadata.setExtension(id, "testapp.state", { n: 1 }, null),
   },
   {
     name: "deleteExtension",
@@ -134,9 +131,13 @@ describe("setExtensions writes a whole set at once", () => {
     // fixture the archive restore never produces.
     const itemId = await pinnedItem();
 
-    const { extensions } = await ctx.storage.metadata.setExtensions(itemId, {
-      [OTHER]: { b: 1 },
-    });
+    const { extensions } = await ctx.storage.metadata.setExtensions(
+      itemId,
+      {
+        [OTHER]: { b: 1 },
+      },
+      () => null,
+    );
 
     // Answered and stored have to agree, and both have to carry the
     // namespace the write never mentioned.
@@ -152,11 +153,14 @@ describe("setExtensions writes a whole set at once", () => {
 
   it("replaces a namespace it does name, whole", async () => {
     const itemId = await pinnedItem();
-    await ctx.storage.metadata.setExtensions(itemId, {
-      "testapp.state": { replaced: true },
-    });
-    // `setExtension`'s rule, not `mutateExtension`'s: the previous `n` is
-    // gone rather than merged with.
+    await ctx.storage.metadata.setExtensions(
+      itemId,
+      {
+        "testapp.state": { replaced: true },
+      },
+      () => null,
+    );
+    // The previous `n` is gone rather than merged with.
     expect(await ctx.storage.metadata.getExtensions(itemId)).toEqual({
       "testapp.state": { replaced: true },
     });
@@ -164,10 +168,14 @@ describe("setExtensions writes a whole set at once", () => {
 
   it("moves the modification time, and answers the value it wrote", async () => {
     const itemId = await pinnedItem();
-    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
-      "testapp.one": { a: 1 },
-      "testapp.two": { b: 2 },
-    });
+    const { updated_at } = await ctx.storage.metadata.setExtensions(
+      itemId,
+      {
+        "testapp.one": { a: 1 },
+        "testapp.two": { b: 2 },
+      },
+      () => null,
+    );
     const stored = await readUpdatedAt(itemId);
     expect(stored).not.toBe(PAST);
     // The answer is what the caller announces the item with, so it has to
@@ -180,6 +188,7 @@ describe("setExtensions writes a whole set at once", () => {
     const { extensions, updated_at } = await ctx.storage.metadata.setExtensions(
       itemId,
       {},
+      () => null,
     );
     expect(await readUpdatedAt(itemId)).toBe(PAST);
     expect(updated_at).toBeNull();

@@ -180,9 +180,14 @@ describe("complete archive round trips", () => {
     const target = await context();
     const a = await note(source);
     const b = await note(source, "target");
-    await source.storage.metadata.setExtension(a.id, "roundtrip", {
-      retained: true,
-    });
+    await source.storage.metadata.setExtension(
+      a.id,
+      "roundtrip",
+      {
+        retained: true,
+      },
+      null,
+    );
     const edge = await source.storage.edges.createRaw({
       source_id: a.id,
       target_id: b.id,
@@ -506,9 +511,14 @@ describe("complete archive round trips", () => {
     const item = await note(source);
     const other = await note(source, "edge target");
     await seedHistory(source, item, 2);
-    await source.storage.metadata.setExtension(item.id, "roundtrip", {
-      retained: true,
-    });
+    await source.storage.metadata.setExtension(
+      item.id,
+      "roundtrip",
+      {
+        retained: true,
+      },
+      null,
+    );
     await source.storage.edges.createRaw({
       source_id: item.id,
       target_id: other.id,
@@ -640,9 +650,14 @@ describe("complete archive round trips", () => {
     const target = await context();
     const item = await note(source);
     await seedHistory(source, item, 2);
-    await source.storage.metadata.setExtension(item.id, "roundtrip", {
-      retained: true,
-    });
+    await source.storage.metadata.setExtension(
+      item.id,
+      "roundtrip",
+      {
+        retained: true,
+      },
+      null,
+    );
     const entries = await unpack(await exported(source));
     const row = JSON.parse(entries.get("items.ndjson")!.toString()) as {
       item: Item;

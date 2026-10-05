@@ -142,8 +142,13 @@ async function seedNote(
 }
 
 async function stampBothNamespaces(id: string): Promise<void> {
-  await ctx.storage.metadata.setExtension(id, SEEN, { value: SEEN_MARK });
-  await ctx.storage.metadata.setExtension(id, UNSEEN, { value: UNSEEN_MARK });
+  await ctx.storage.metadata.setExtension(id, SEEN, { value: SEEN_MARK }, null);
+  await ctx.storage.metadata.setExtension(
+    id,
+    UNSEEN,
+    { value: UNSEEN_MARK },
+    null,
+  );
 }
 
 async function versionOf(id: string): Promise<number> {

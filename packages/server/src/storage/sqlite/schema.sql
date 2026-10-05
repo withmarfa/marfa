@@ -429,6 +429,15 @@ CREATE TABLE IF NOT EXISTS `edge_types` (
 	`updated_at` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `edge_blob_references` (
+	`hash` text NOT NULL,
+	`edge_id` text NOT NULL,
+	`lends` integer NOT NULL,
+	PRIMARY KEY(`hash`, `edge_id`),
+	FOREIGN KEY (`edge_id`) REFERENCES `edges`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_edge_blob_references_edge` ON `edge_blob_references` (`edge_id`);
 CREATE TABLE IF NOT EXISTS `edges` (
 	`id` text PRIMARY KEY NOT NULL,
 	`source_id` text NOT NULL,
@@ -466,6 +475,16 @@ CREATE TABLE IF NOT EXISTS `event_log` (
 
 CREATE INDEX IF NOT EXISTS `idx_event_log_created_at` ON `event_log` (`created_at`);
 CREATE INDEX IF NOT EXISTS `idx_event_log_edge_id` ON `event_log` (`edge_id`);
+CREATE TABLE IF NOT EXISTS `extension_blob_references` (
+	`hash` text NOT NULL,
+	`item_id` text NOT NULL,
+	`namespace` text NOT NULL,
+	`lends` integer NOT NULL,
+	PRIMARY KEY(`hash`, `item_id`, `namespace`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_extension_blob_references_item` ON `extension_blob_references` (`item_id`);
 CREATE TABLE IF NOT EXISTS `housekeeping` (
 	`name` text PRIMARY KEY NOT NULL,
 	`interval_ms` integer NOT NULL,
@@ -707,3 +726,7 @@ CREATE INDEX IF NOT EXISTS `idx_versions_item_id` ON `versions` (`item_id`);
 
 CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
 CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+CREATE TRIGGER IF NOT EXISTS `edge_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `edge_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `edge_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `edge_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+CREATE TRIGGER IF NOT EXISTS `extension_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `extension_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `extension_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `extension_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;

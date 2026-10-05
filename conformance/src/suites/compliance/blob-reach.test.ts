@@ -35,15 +35,20 @@ function sha256(bytes: Uint8Array): string {
 
 let minted = 0;
 
-/** A key of this run's own, holding exactly the type map named. */
+/** A key of this run's own, holding exactly the maps named. */
 async function keyHolding(
   typePermissions: Record<string, string>,
+  more: {
+    edge_permissions?: Record<string, string>;
+    extension_permissions?: Record<string, string>;
+  } = {},
 ): Promise<{ client: MarfaClient; id: string }> {
   minted += 1;
   const res = await client.createKey({
     label: `blob-reach-${String(minted)}`,
     source: `${ctx.source}-${String(minted)}`,
     type_permissions: typePermissions,
+    ...more,
   });
   expect(res.ok, JSON.stringify(res.error)).toBe(true);
   trackKey(ctx, res.data.id);
@@ -189,25 +194,8 @@ describe("who may read and upload a blob", () => {
     expect(await readingDoors(client, hash)).toEqual(SERVED);
   });
 
-  it("does not serve a blob through an extension, an edge or an earlier version", async () => {
-    const inExtension = await upload("named by an extension");
-    const inEdge = await upload("named by an edge");
+  it("does not serve a blob through an earlier version", async () => {
     const inVersion = await upload("named by an earlier version");
-
-    const one = await noteSaying("one end");
-    const other = await noteSaying("the other end");
-    const ext = await client.setItemExtension(one.id, "blobreach", {
-      cover: inExtension,
-    });
-    expect(ext.ok, JSON.stringify(ext.error)).toBe(true);
-    const edge = await client.createEdge({
-      source_id: one.id,
-      target_id: other.id,
-      edge_type: "about",
-      properties: { cover: inEdge },
-    });
-    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
-
     const versioned = await noteSaying(`was ![it](${inVersion})`);
     expect(await readingDoors(client, inVersion)).toEqual(SERVED);
     const moved = await client.updateItem(versioned.id, {
@@ -218,17 +206,179 @@ describe("who may read and upload a blob", () => {
     const versions = await client.getVersions(versioned.id);
     expect(JSON.stringify(versions.data)).toContain(inVersion);
 
-    for (const hash of [inExtension, inEdge, inVersion]) {
-      expect(await readingDoors(client, hash)).toEqual(UNKNOWN);
-      // Held all the same, and kept by the sweep: only the read is refused.
-      expect((await operator.downloadBlob(hash)).status).toBe(200);
-    }
+    expect(await readingDoors(client, inVersion)).toEqual(UNKNOWN);
+    // Held all the same, and kept by the sweep: only the read is refused.
+    expect((await operator.downloadBlob(inVersion)).status).toBe(200);
 
-    // The witness: the same key is served each one once a property names it.
-    for (const hash of [inExtension, inEdge, inVersion]) {
-      await noteSaying(`now a property names ![it](${hash})`);
-      expect(await readingDoors(client, hash)).toEqual(SERVED);
-    }
+    // The witness: the same key is served it once a property names it.
+    await noteSaying(`now a property names ![it](${inVersion})`);
+    expect(await readingDoors(client, inVersion)).toEqual(SERVED);
+  });
+
+  it("serves a blob named only in an edge's properties to a key that reads the edge, and to no other", async () => {
+    const hash = await upload("named only by an edge");
+    const source = await noteSaying("an edge's source");
+    const target = await noteSaying("an edge's target");
+    const edgeReader = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+    const noEdges = await keyHolding({ "core.note": "read" });
+    const otherEdges = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { references: "read" } },
+    );
+    const wrongSourceType = await keyHolding(
+      { "core.file": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+
+    // The witness: the bytes are held, and nothing yet names them.
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    expect(await readingDoors(client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(edgeReader.client, hash)).toEqual(UNKNOWN);
+
+    const edge = await client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "about",
+      properties: { cover: hash },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+
+    expect(await readingDoors(client, hash)).toEqual(SERVED);
+    expect(await readingDoors(edgeReader.client, hash)).toEqual(SERVED);
+    expect(await readingDoors(noEdges.client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(otherEdges.client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(wrongSourceType.client, hash)).toEqual(UNKNOWN);
+
+    expect((await client.deleteEdge(edge.data.edge.id)).ok).toBe(true);
+    expect(await readingDoors(edgeReader.client, hash)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("serves a blob named only in an extension to a key that reads the namespace, and to no other", async () => {
+    const hash = await upload("named only by an extension");
+    const item = await noteSaying("an extension's item");
+    const namespace = `blobreach.${ctx.runId}`;
+    const namespaceReader = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
+    const otherNamespace = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { elsewhere: "read" } },
+    );
+    const noExtensions = await keyHolding({ "core.note": "read" });
+    const wrongItemType = await keyHolding(
+      { "core.file": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
+
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    expect(await readingDoors(namespaceReader.client, hash)).toEqual(UNKNOWN);
+
+    const written = await client.setItemExtension(item.id, namespace, {
+      cover: hash,
+    });
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+
+    expect(await readingDoors(client, hash)).toEqual(SERVED);
+    expect(await readingDoors(namespaceReader.client, hash)).toEqual(SERVED);
+    expect(await readingDoors(otherNamespace.client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(noExtensions.client, hash)).toEqual(UNKNOWN);
+    expect(await readingDoors(wrongItemType.client, hash)).toEqual(UNKNOWN);
+
+    // Replacing the namespace without the digest withdraws the reach.
+    const replaced = await client.setItemExtension(item.id, namespace, {
+      cover: "none",
+    });
+    expect(replaced.ok, JSON.stringify(replaced.error)).toBe(true);
+    expect(await readingDoors(namespaceReader.client, hash)).toEqual(UNKNOWN);
+    const again = await client.setItemExtension(item.id, namespace, {
+      cover: hash,
+    });
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(await readingDoors(namespaceReader.client, hash)).toEqual(SERVED);
+    expect((await client.deleteItemExtension(item.id, namespace)).ok).toBe(
+      true,
+    );
+    expect(await readingDoors(namespaceReader.client, hash)).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("lends through an edge or an extension only a digest its writer proved", async () => {
+    const edgeDigest = await upload("an edge writer without the bytes plants");
+    const extensionDigest = await upload("an extension writer plants");
+    const source = await noteSaying("a planted edge's source");
+    const target = await noteSaying("a planted edge's target");
+    const bare = await keyHolding(
+      { "core.note": "write" },
+      {
+        edge_permissions: { about: "write" },
+        extension_permissions: { "*": "write" },
+      },
+    );
+    const namespace = `planted.${ctx.runId}`;
+
+    const edge = await bare.client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "about",
+      properties: { cover: edgeDigest },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    const planted = await bare.client.setItemExtension(source.id, namespace, {
+      cover: extensionDigest,
+    });
+    expect(planted.ok, JSON.stringify(planted.error)).toBe(true);
+    // The suite's key reads every blob an item names, and these were written
+    // by a key that neither sent the bytes nor could read them.
+    expect(await readingDoors(client, edgeDigest)).toEqual(UNKNOWN);
+    expect(await readingDoors(client, extensionDigest)).toEqual(UNKNOWN);
+
+    // Written again by the suite's key, the same digest is the same
+    // reference as before and stays dead.
+    const patched = await client.updateEdge(edge.data.edge.id, {
+      properties: { cover: edgeDigest, title: "retitled" },
+      version: edge.data.edge.version,
+    });
+    expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
+    const rewritten = await client.setItemExtension(source.id, namespace, {
+      cover: extensionDigest,
+      title: "retitled",
+    });
+    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
+    expect(await readingDoors(client, edgeDigest)).toEqual(UNKNOWN);
+    expect(await readingDoors(client, extensionDigest)).toEqual(UNKNOWN);
+
+    // Dropped and written anew with the proof, each lends.
+    const droppedEdge = await client.updateEdge(edge.data.edge.id, {
+      properties: { cover: "none" },
+      version: patched.data.edge.version,
+    });
+    expect(droppedEdge.ok, JSON.stringify(droppedEdge.error)).toBe(true);
+    const droppedExtension = await client.setItemExtension(
+      source.id,
+      namespace,
+      {
+        cover: "none",
+      },
+    );
+    expect(droppedExtension.ok, JSON.stringify(droppedExtension.error)).toBe(
+      true,
+    );
+    const fresh = await client.updateEdge(edge.data.edge.id, {
+      properties: { cover: edgeDigest },
+      version: droppedEdge.data.edge.version,
+    });
+    expect(fresh.ok, JSON.stringify(fresh.error)).toBe(true);
+    const freshExtension = await client.setItemExtension(source.id, namespace, {
+      cover: extensionDigest,
+    });
+    expect(freshExtension.ok, JSON.stringify(freshExtension.error)).toBe(true);
+    expect(await readingDoors(client, edgeDigest)).toEqual(SERVED);
+    expect(await readingDoors(client, extensionDigest)).toEqual(SERVED);
   });
 
   it("lends no reach through a digest written by a key that never sent the bytes", async () => {
@@ -316,21 +466,47 @@ describe("who may read and upload a blob", () => {
 
   it("carries in an export archive only the bytes the blob doors would serve", async () => {
     const inProperty = await upload("an archive carries this");
-    const inExtension = await upload("an archive leaves this, an extension");
-    const inEdge = await upload("an archive leaves this, an edge");
+    const inExtension = await upload("an archive carries this, an extension");
+    const inEdge = await upload("an archive carries this, an edge");
+    const inPlantedExtension = await upload(
+      "an archive leaves this, a planted extension",
+    );
+    const inPlantedEdge = await upload(
+      "an archive leaves this, a planted edge",
+    );
     const named = await noteSaying(`![kept](${inProperty})`);
     const other = await noteSaying("the edge's far end");
-    const ext = await client.setItemExtension(named.id, "blobreach", {
-      cover: inExtension,
-    });
-    expect(ext.ok, JSON.stringify(ext.error)).toBe(true);
-    const edge = await client.createEdge({
-      source_id: named.id,
-      target_id: other.id,
-      edge_type: "about",
-      properties: { cover: inEdge },
-    });
-    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    const another = await noteSaying("the planted edge's far end");
+    const namespace = `blobreach.${ctx.runId}`;
+    const planter = await keyHolding(
+      { "core.note": "write" },
+      {
+        edge_permissions: { about: "write" },
+        extension_permissions: { [namespace]: "write" },
+      },
+    );
+    const written = [
+      await client.setItemExtension(named.id, namespace, {
+        cover: inExtension,
+      }),
+      await client.createEdge({
+        source_id: named.id,
+        target_id: other.id,
+        edge_type: "about",
+        properties: { cover: inEdge },
+      }),
+      await planter.client.createEdge({
+        source_id: named.id,
+        target_id: another.id,
+        edge_type: "about",
+        properties: { cover: inPlantedEdge },
+      }),
+      await planter.client.setItemExtension(other.id, namespace, {
+        cover: inPlantedExtension,
+      }),
+    ];
+    for (const res of written)
+      expect(res.ok, JSON.stringify(res.error)).toBe(true);
 
     const archive = await client.exportArchive({
       type: "core.note",
@@ -340,11 +516,96 @@ describe("who may read and upload a blob", () => {
     const manifest = JSON.parse(
       readTarGzEntry(archive.data, "manifest.json") ?? "{}",
     ) as { blobs: Record<string, unknown> };
-    expect(Object.keys(manifest.blobs)).toContain(inProperty);
-    expect(Object.keys(manifest.blobs)).not.toContain(inExtension);
-    expect(Object.keys(manifest.blobs)).not.toContain(inEdge);
-    expect(readTarGzEntry(archive.data, `blobs/${inProperty}`)).not.toBeNull();
-    expect(readTarGzEntry(archive.data, `blobs/${inEdge}`)).toBeNull();
+    for (const hash of [inProperty, inExtension, inEdge]) {
+      expect(Object.keys(manifest.blobs)).toContain(hash);
+      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+    }
+    for (const hash of [inPlantedExtension, inPlantedEdge]) {
+      // The witness: the instance holds the bytes, and the archive leaves
+      // them out because the key was never served them.
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+      expect(Object.keys(manifest.blobs)).not.toContain(hash);
+      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBeNull();
+    }
+  });
+
+  it("carries the bytes an edge and an extension lend, and restores the same answers", async () => {
+    const viaEdge = await upload("an archive restores this, an edge");
+    const viaExtension = await upload("an archive restores this, an extension");
+    const source = await noteSaying("the archived edge's source");
+    const target = await noteSaying("the archived edge's target");
+    const namespace = `blobreach.${ctx.runId}`;
+    const edgeReader = await keyHolding(
+      { "core.note": "read" },
+      { edge_permissions: { about: "read" } },
+    );
+    const namespaceReader = await keyHolding(
+      { "core.note": "read" },
+      { extension_permissions: { [namespace]: "read" } },
+    );
+    const neither = await keyHolding({ "core.note": "read" });
+    const edge = await client.createEdge({
+      source_id: source.id,
+      target_id: target.id,
+      edge_type: "about",
+      properties: { cover: viaEdge },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    const extension = await client.setItemExtension(source.id, namespace, {
+      cover: viaExtension,
+    });
+    expect(extension.ok, JSON.stringify(extension.error)).toBe(true);
+
+    // A working key's archive: it reads the notes, the edge and the
+    // namespace, so it is served both blobs.
+    const exporter = await keyHolding(
+      { "core.note": "read" },
+      {
+        edge_permissions: { about: "read" },
+        extension_permissions: { [namespace]: "read" },
+      },
+    );
+    expect(await readingDoors(exporter.client, viaEdge)).toEqual(SERVED);
+    expect(await readingDoors(exporter.client, viaExtension)).toEqual(SERVED);
+    const archive = await exporter.client.exportArchive({
+      type: "core.note",
+      source: ctx.source,
+    });
+    expect(archive.status).toBe(200);
+    for (const hash of [viaEdge, viaExtension]) {
+      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+    }
+
+    // Take the rows away, which withdraws both reaches, and restore them.
+    expect((await client.deleteEdge(edge.data.edge.id)).ok).toBe(true);
+    expect((await client.deleteItemExtension(source.id, namespace)).ok).toBe(
+      true,
+    );
+    expect(await readingDoors(edgeReader.client, viaEdge)).toEqual(UNKNOWN);
+    expect(await readingDoors(namespaceReader.client, viaExtension)).toEqual(
+      UNKNOWN,
+    );
+    for (const id of [source.id, target.id]) {
+      expect((await client.deleteItem(id)).ok).toBe(true);
+      expect((await client.purgeItem(id)).ok).toBe(true);
+    }
+    const restored = await operator.restoreArchive(archive.data);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, source.id);
+    trackItem(ctx, target.id);
+
+    expect(await readingDoors(edgeReader.client, viaEdge)).toEqual(SERVED);
+    expect(await readingDoors(namespaceReader.client, viaExtension)).toEqual(
+      SERVED,
+    );
+    expect(await readingDoors(neither.client, viaEdge)).toEqual(UNKNOWN);
+    expect(await readingDoors(neither.client, viaExtension)).toEqual(UNKNOWN);
+    expect(await readingDoors(edgeReader.client, viaExtension)).toEqual(
+      UNKNOWN,
+    );
+    expect(await readingDoors(namespaceReader.client, viaEdge)).toEqual(
+      UNKNOWN,
+    );
   });
 
   it("restores a row's reach only for the digests its archive line says lent", async () => {
