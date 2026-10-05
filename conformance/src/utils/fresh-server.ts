@@ -476,8 +476,8 @@ export async function startDeviceFlow(
  * credential a fixture can hold that an app holds, so a door that treats an
  * app differently from a key is asserted through it.
  *
- * Takes the same arguments as `startDeviceFlow`, owner included, so it runs
- * once per fresh server.
+ * It creates the owner, as `startDeviceFlow` does, so it runs once per fresh
+ * server.
  */
 export async function approvedApp(
   server: FreshServer,
@@ -485,6 +485,7 @@ export async function approvedApp(
 ): Promise<{ token: string; clientId: string }> {
   const flow = await startDeviceFlow(server, scopes);
   await flow.approve();
+  // The code's first poll, so no polling interval applies to it yet.
   const answer = await flow.poll();
   if (answer.body.access_token === undefined) {
     throw new Error("the approved device flow answered no access token");
@@ -492,7 +493,7 @@ export async function approvedApp(
   return { token: answer.body.access_token, clientId: flow.clientId };
 }
 
-/** The access token of `approvedApp`, for a fixture that holds no client. */
+/** The access token of `approvedApp`, for a fixture that needs no client id. */
 export async function approvedAppToken(
   server: FreshServer,
   scopes?: readonly string[],

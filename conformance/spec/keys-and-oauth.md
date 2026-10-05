@@ -51,7 +51,7 @@
 27. The token endpoint refuses a request with no proof of the client with `400 invalid_request`, and an unsupported grant type with `400 unsupported_grant_type`. `compliance/oauth.test.ts › refuses a token request with no proof of the client`, `› refuses a grant type it does not support`.
 28. The server SHALL answer a poll of `POST /auth/oauth2/token` that names a device code by the code's state: `400 authorization_pending` before a person approves it, `200` with an access token for the scopes the person approved on the first poll after the approval, and `400 invalid_grant` on every poll after that exchange.
 
-    Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on. An answer that stayed pending after approval would leave the device waiting for ever, and one that gave a second token for the same code would let a code anyone has seen mint again. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (43, 44).
+    Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on. An answer that stayed pending after approval would leave the device waiting forever, and one that gave a second token for the same code would let a code anyone has seen mint again. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (31).
 
     Tests: `compliance/device-grant.test.ts › answers a poll by the code's state: pending, then a token, then invalid_grant once it is spent`.
 
