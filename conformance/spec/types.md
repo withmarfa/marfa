@@ -178,3 +178,9 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
     Reason: type existence is not secret, because an unregistered type and a registered one are already told apart (`search-and-filters.md` 1, 50); a schema holds no item data; and a device resolves an inherited field by walking `parent` through `GET /types` (`device.md` 47), so hiding an ancestor would silently drop the fields it declares. `keys-and-oauth.md` 16 already admits both registries to every credential. Narrowing them would not simplify the doors that name a type either, since each already refuses by the type's name.
 
     Tests: `compliance/unreadable-type-filter.test.ts › lists every type and edge type to a key that reads two types`.
+
+49. When validating a `datetime` property, the server MUST accept a valid `YYYY-MM-DD` calendar date or that date followed by `T`, a time (`HH:MM`, `HH:MM:SS` or `HH:MM:SS` followed by a decimal fraction) and `Z` or a `±HH:MM` offset, with hours from `00` to `23` and minutes and seconds from `00` to `59`.
+
+    Reason: field values retain the precision their source supplied, and a device must validate the same values offline as the server accepts online (`device.md` 57). This rule applies to declared properties, not the system timestamps that `items.md` 6 normalizes.
+
+    Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/shared/src/type-registry.test.ts › accepts datetime instants in any offset, and the all-day bare date`; `packages/server/src/routes/items.test.ts › stores a zoned datetime property at minute precision unchanged`.

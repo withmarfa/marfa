@@ -40,6 +40,25 @@ describe("POST /items", () => {
     expect(data).toHaveProperty("metadata");
   });
 
+  it("stores a zoned datetime property at minute precision unchanged", async () => {
+    const type = "fixture.minute_datetime";
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id: type, version: 1, fields: { time: { type: "datetime" } } },
+    });
+    expect(registered.status).toBe(201);
+    const time = "2026-01-01T23:59+23:59";
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type, properties: { time } },
+    });
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as {
+      item: { properties: { time: string } };
+    };
+    expect(body.item.properties.time).toBe(time);
+  });
+
   it("rejects missing required field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,

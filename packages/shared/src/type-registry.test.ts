@@ -315,6 +315,9 @@ describe("validateProperties", () => {
       "",
       "2026-03-27T09:00:00", // naive local time carries no offset
       "2026-3-27", // not ISO 8601
+      "2026-01-01T12:00+24:00",
+      "2026-01-01T12:00+00:60",
+      "2026-01-01T24:00Z",
     ]) {
       const result = validateProperties("core.event", {
         title: "an event",
@@ -328,6 +331,9 @@ describe("validateProperties", () => {
     for (const good of [
       "2026-03-27T09:00:00Z",
       "2026-03-27T09:00:00+01:00",
+      "2026-01-01T23:59+23:59",
+      "0000-02-29T00:00-23:59",
+      "2026-01-01T12:00Z",
       "2026-03-27T09:00:00.123Z",
       "2026-09-20T13:30:00-04:00",
       // The all-day shape the event model rules: a whole day has no

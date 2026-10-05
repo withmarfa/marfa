@@ -852,7 +852,11 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       // `all_day` on the event is what says which reading applies. A
       // naive local time satisfies neither and is refused, so it cannot
       // surface later as a parse error in whatever reads it.
-      schema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
+      schema = z.union([
+        z.iso.datetime({ offset: true }),
+        z.iso.datetime({ offset: true, precision: -1 }),
+        z.iso.date(),
+      ]);
       break;
     case "date":
       // A calendar date, YYYY-MM-DD. Same reasoning as datetime: a
