@@ -873,9 +873,9 @@ export interface StatusReport {
  *  another case or form (`folders.md` 27). A directory the walk did not
  *  enter is `package` or `unreadable` (`folders.md` 26), or `gone`
  *  (`folders.md` 22). A pull names an item whose file it did not write as
- *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in, and
- *  one it could not let go to another folder as `retained` (`folders.md` 19,
- *  44). */
+ *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in
+ *  (`folders.md` 60), and one it could not let go to another folder as
+ *  `retained` (`folders.md` 44). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -895,7 +895,8 @@ export interface FlaggedFile {
     | "absent"
     | "retained";
   reason: string;
-  /** The item whose file a pull did not write (`folders.md` 19). */
+  /** The item whose file a pull did not write (`folders.md` 60), or could
+   *  not let go to another folder (`folders.md` 44). */
   item?: string;
 }
 
