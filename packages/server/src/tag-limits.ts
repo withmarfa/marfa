@@ -45,7 +45,8 @@
 export const MAX_TAGS_PER_ITEM = 100;
 
 /**
- * Longest tag, in characters. A tag is removed through its own URL path, so
- * one the server's URL limit refuses could be written and never removed.
+ * Longest tag, in UTF-16 code units. A tag is removed through its own URL
+ * path, so one the server's URL limit refuses could be written and never
+ * removed.
  */
 export const MAX_TAG_LENGTH = 128;
