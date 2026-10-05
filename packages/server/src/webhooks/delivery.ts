@@ -186,7 +186,8 @@ export async function deliveryInReach(
     stored as Record<string, unknown>,
   );
   if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
-  // The body names the event once, after the frame's own fields.
+  // Deleted so the spread below cannot keep the frame's `event_type` first:
+  // the body's `event_type` follows the frame's own fields.
   delete frame.event_type;
   const body = JSON.stringify({
     ...frame,

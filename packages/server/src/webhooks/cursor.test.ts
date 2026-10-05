@@ -752,7 +752,23 @@ describe("durable outbound event acknowledgement", () => {
     {
       name: "mismatched discriminator",
       eventType: "created",
-      frame: { event_type: "item.deleted", item: {} },
+      // A valid item, so the discriminator alone makes the frame invalid.
+      frame: {
+        event_type: "item.deleted",
+        item: {
+          id: "01HMISMATCHMISMATCHMISMAT0",
+          type: "core.note",
+          version: 1,
+          state: "active",
+          tier: "library",
+          source: "test",
+          schema_version: 1,
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          properties: { title: "mismatch" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      },
     },
   ])(
     "fails the scheduling job on a $name without acknowledging it",
