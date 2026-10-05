@@ -432,11 +432,7 @@ const listTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: wholeListOf(
-            TypeSchemaResponse,
-            "TypeDefinitionPage",
-            "type",
-          ),
+          schema: wholeListOf(TypeSchemaResponse, "TypeDefinitionPage", "type"),
         },
       },
       description:

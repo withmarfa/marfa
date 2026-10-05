@@ -2360,7 +2360,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EdgeType"
-            }
+            },
+            "description": "Every edge type."
           },
           "next_cursor": {
             "type": [
@@ -2373,7 +2374,8 @@
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every edge type."
       },
       "EdgeTypeNotFoundRefusal": {
         "type": "object",
@@ -2452,7 +2454,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TypeDefinition"
-            }
+            },
+            "description": "Every type."
           },
           "next_cursor": {
             "type": [
@@ -2465,7 +2468,8 @@
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every type."
       },
       "TypeDefinition": {
         "type": "object",
@@ -5211,7 +5215,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/DriftedPlatformType"
-            }
+            },
+            "description": "Every stale type."
           },
           "next_cursor": {
             "type": [
@@ -5224,7 +5229,8 @@
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every stale type."
       },
       "DriftedPlatformType": {
         "type": "object",

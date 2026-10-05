@@ -2542,7 +2542,9 @@ export interface components {
              */
             written_at?: "source" | "target";
         };
+        /** @description A page holding every edge type. */
         EdgeTypePage: {
+            /** @description Every edge type. */
             data: components["schemas"]["EdgeType"][];
             /** @description Always `null`: Marfa returns every edge type in one page. */
             next_cursor: string | null;
@@ -2581,7 +2583,9 @@ export interface components {
                 };
             };
         };
+        /** @description A page holding every type. */
         TypeDefinitionPage: {
+            /** @description Every type. */
             data: components["schemas"]["TypeDefinition"][];
             /** @description Always `null`: Marfa returns every type in one page. */
             next_cursor: string | null;
@@ -3545,7 +3549,9 @@ export interface components {
                 };
             };
         };
+        /** @description A page holding every stale type. */
         DriftedPlatformTypePage: {
+            /** @description Every stale type. */
             data: components["schemas"]["DriftedPlatformType"][];
             /** @description Always `null`: Marfa returns every stale type in one page. */
             next_cursor: string | null;
