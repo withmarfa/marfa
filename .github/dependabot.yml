@@ -16,8 +16,9 @@ updates:
   #
   # The root entry is also the one that cannot go stale: a package added to
   # `pnpm-workspace.yaml` is covered with no change here. Its one gap is an
-  # npm manifest placed outside the workspace, which would need an entry of
-  # its own. There is none today.
+  # npm manifest placed outside the workspace, which needs an entry of its
+  # own. There is one: `core/bindings/node`, which has its own lockfile and
+  # is built with `pnpm --ignore-workspace`. Its entry is further down.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -109,5 +110,64 @@ updates:
         patterns:
           - "*"
     open-pull-requests-limit: 1
+    labels:
+      - "dependencies"
+  # The Node binding is outside the pnpm workspace on purpose, so the root
+  # entry never reads it. It has its own manifest and lockfile and needs its
+  # own entry. A single group: a major is a separate pull request, so it can
+  # be read on its own and does not hold up the minor and patch updates.
+  - package-ecosystem: "npm"
+    directory: "/core/bindings/node"
+    schedule:
+      interval: "monthly"
+    groups:
+      node-binding-minor-and-patch:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+  # Two Cargo workspaces, each with its own `Cargo.lock`, and Dependabot reads
+  # one lockfile per entry. `core/Cargo.toml` is the core's workspace, which
+  # holds `marfa-core`, `marfa-cli` and the Node binding's crate.
+  # `core/bindings/swift` is excluded from it and declares its own
+  # `[workspace]`, so the entry for `/core` never sees it.
+  #
+  # A single group for minor and patch updates, with majors as separate pull
+  # requests. Dependabot counts a `0.x` minor bump as a minor update, so a
+  # breaking change in a `0.x` crate can arrive inside the group. The run on
+  # the pull request is what catches it.
+  - package-ecosystem: "cargo"
+    directory: "/core"
+    schedule:
+      interval: "monthly"
+    groups:
+      core-minor-and-patch:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+  - package-ecosystem: "cargo"
+    directory: "/core/bindings/swift"
+    schedule:
+      interval: "monthly"
+    groups:
+      swift-binding-minor-and-patch:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
