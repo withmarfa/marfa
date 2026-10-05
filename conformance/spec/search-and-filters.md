@@ -258,7 +258,7 @@ The server and a device index the same text and read a query the same way, so a 
 
 ## How an excerpt is written
 
-87. The server and a device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`, and whose only markup is the `<mark>` and `</mark>` around each matched word.
+87. The server and a device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`, and whose only markup is pairs of `<mark>` and `</mark>`, each pair opened before it closes, marking where the query matched.
 
     Reason: an app shows the excerpt as HTML, and a row's text is what a person or a source wrote, never markup for that app to render.
 
