@@ -1,6 +1,5 @@
 /**
- * The page renderers, for tests that look at a page's markup rather than at
- * the nonce on its tags.
+ * The page renderers, for tests that render a page without a request.
  *
  * Each takes the nonce its response's policy names, which a request supplies
  * and a bare render does not. These give every render a fixed one, so a test
