@@ -33,6 +33,20 @@ afterAll(async () => {
 
 const HTML = { accept: "text/html" };
 
+/**
+ * The attributes of every `<name ...>` start tag in `html`, read by splitting
+ * on the tag's opening rather than by a pattern for the whole tag: this is a
+ * scan of markup this server wrote, not a filter for markup somebody else
+ * did.
+ */
+function startTagAttributes(html: string, name: string): string[] {
+  return html
+    .split(`<${name}`)
+    .slice(1)
+    .filter((rest) => /^[\s>]/.test(rest))
+    .map((rest) => rest.slice(0, rest.indexOf(">")));
+}
+
 /** The directives of a policy, by name. */
 function directives(policy: string): Map<string, string[]> {
   return new Map(
@@ -195,13 +209,14 @@ describe("every page the app renders", () => {
     expect(nonce).toBeTruthy();
     // Every script tag, inline or by source, and the stylesheet link, carry
     // the nonce: the policy allows nothing by origin.
-    const tags = [...html.matchAll(/<(?:script|link)\b([^>]*)>/g)];
+    const tags = [
+      ...startTagAttributes(html, "script"),
+      ...startTagAttributes(html, "link"),
+    ];
     // Witness: the page has some, among them an inline script.
     expect(tags.length).toBeGreaterThan(2);
-    expect(
-      tags.some(([, attributes]) => !/\bsrc=/.test(attributes ?? "")),
-    ).toBe(true);
-    for (const [, attributes] of tags) {
+    expect(tags.some((attributes) => !attributes.includes("src="))).toBe(true);
+    for (const attributes of tags) {
       expect(attributes).toContain(`nonce="${nonce ?? ""}"`);
     }
   });
@@ -265,9 +280,11 @@ describe("the pages with scopes on them", () => {
     // The witness: the re-consent page has an inline script, so a scan of
     // inline scripts looks at something.
     expect(consent).toContain("lsec--later");
-    const inline = [...consent.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>/g)];
+    const inline = startTagAttributes(consent, "script").filter(
+      (attributes) => !attributes.includes("src="),
+    );
     expect(inline.length).toBeGreaterThan(0);
-    for (const [, attributes] of inline) {
+    for (const attributes of inline) {
       expect(attributes).toContain('nonce="test-nonce"');
     }
   });
