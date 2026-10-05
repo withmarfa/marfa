@@ -12,7 +12,7 @@ import {
   TierEnum,
   WrittenPropertiesSchema,
 } from "../routes/_schemas.js";
-import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
+import type { DeclaresKeys } from "../routes/_unknown-body-keys.js";
 
 /**
  * The bulk-action match set, and the only declaration of it.

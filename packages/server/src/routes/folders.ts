@@ -139,13 +139,7 @@ const CreateFolderSchema = z.strictObject({
 });
 
 const UpdateFolderSchema = z.strictObject({
-  version: z
-    .number()
-    .int()
-    .min(0)
-    .describe(
-      "The version the caller read. There is no `conflict` parameter: a change to a setting changed since is refused whatever the query says.",
-    ),
+  version: z.number().int().min(0).describe("The version the caller read."),
   title: z.string().min(1).max(500).optional(),
   search: settingsShape.search.optional(),
   defaults: settingsShape.defaults.optional(),
@@ -368,7 +362,7 @@ const updateRefusal = {
         ]),
       },
     },
-    description: `${SETTING_REFUSAL} \`invalid_id\`: the id is malformed. \`invalid_transition\`: the folder is revoked.`,
+    description: `${SETTING_REFUSAL} \`validation_error\` is also a query parameter, such as \`conflict\`, which this door does not take. \`invalid_id\`: the id is malformed. \`invalid_transition\`: the folder is revoked.`,
   },
 };
 
@@ -430,7 +424,7 @@ const updateFolderRoute = createRoute({
         },
       },
       description:
-        "`version_conflict`: a setting this change names was changed since `version`, whatever the query says. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held.",
+        "`version_conflict`: a setting this change names was changed since `version`. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held.",
     },
   },
 });
@@ -458,7 +452,7 @@ const revokeFolderRoute = createRoute({
         },
       },
       description:
-        "`invalid_id`: the id is malformed. `invalid_transition`: the folder is already revoked.",
+        "- `invalid_id`: the ID is malformed.\n- `invalid_transition`: the folder is already revoked.",
     },
     ...unauthorized,
     ...notPermitted,

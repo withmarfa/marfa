@@ -26,7 +26,6 @@ import {
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
 /** How deep the ranking is read; a cursor past it is refused. */
@@ -216,11 +215,6 @@ export function searchRoutes(storage: Storage) {
 
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
-
-    // Read from the raw URL, because the validated query has already had
-    // an unknown key stripped from it, and a filter the caller believes
-    // applied would otherwise answer 200 over the whole corpus.
-    refuseUnknownQueryParams(c.req.raw.url, searchRoute.request.query);
 
     const {
       q,

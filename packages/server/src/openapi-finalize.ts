@@ -53,7 +53,7 @@ const GENERAL_SECTIONS = [
   "## Pagination",
   'A list returns one page at a time, as `{ "data": [...], "next_cursor": "..." }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.',
   "## Query parameters",
-  "Many operations refuse a query parameter they don't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.",
+  "Every operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.",
   "## Errors",
   'An error answers `{ "error": { "code": "...", "message": "...", "details": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.',
   "## Idempotency",
@@ -409,6 +409,11 @@ export const CHAIN_REFUSALS = {
   ),
 } as const;
 
+const UNDECLARED_QUERY_REFUSAL = chainRefusal(
+  ["validation_error"],
+  "`validation_error`: the query has a parameter this endpoint doesn't take.",
+);
+
 const READ_VIEW_REFUSAL = chainRefusal(
   ["read_view_changed"],
   "`read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy.",
@@ -647,6 +652,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       description:
         "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
       responses: {
+        "400": UNDECLARED_QUERY_REFUSAL.response,
         "200": {
           description: "The instance",
           content: {
@@ -836,23 +842,30 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         },
         "400": {
           description:
-            "An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it.",
+            "An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint.",
           content: {
             "application/json": {
               schema: {
-                type: "object",
-                properties: {
-                  error: {
-                    type: "string",
-                    enum: [
-                      "invalid_client_metadata",
-                      "invalid_redirect_uri",
-                      "invalid_scope",
-                    ],
+                anyOf: [
+                  {
+                    $ref: `#/components/schemas/${UNDECLARED_QUERY_REFUSAL.name}`,
                   },
-                  error_description: { type: "string" },
-                },
-                required: ["error"],
+                  {
+                    type: "object",
+                    properties: {
+                      error: {
+                        type: "string",
+                        enum: [
+                          "invalid_client_metadata",
+                          "invalid_redirect_uri",
+                          "invalid_scope",
+                        ],
+                      },
+                      error_description: { type: "string" },
+                    },
+                    required: ["error"],
+                  },
+                ],
               },
             },
           },

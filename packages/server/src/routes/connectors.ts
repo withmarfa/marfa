@@ -28,7 +28,6 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { nullableRef, pageOf } from "./_schemas.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { connectorsForReader } from "./_connector-reach.js";
 
 // ---------------------------------------------------------------------------
@@ -755,7 +754,6 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(listRunsRoute, async (c) => {
     const reader = connectorsForReader(requireAuth(c), storage);
     const connector = await reader.get(c.req.valid("param").id);
-    refuseUnknownQueryParams(c.req.raw.url, listRunsRoute.request.query);
     const { limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.connectors.listRuns(connector.id, { limit, cursor }),
@@ -855,7 +853,6 @@ export function connectorRoutes(storage: Storage) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
-    refuseUnknownQueryParams(c.req.raw.url, listDeliveriesRoute.request.query);
     const { state, endpoint_id, limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.inbound.listDeliveries(

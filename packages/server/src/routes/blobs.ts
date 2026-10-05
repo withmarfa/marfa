@@ -41,7 +41,6 @@ import {
   makeErrorResponseSchema,
   OkResponseSchema,
 } from "../openapi.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import {
   requireBlobUpload,
   requireReadableBlob,
@@ -833,7 +832,6 @@ export function blobRoutes(
 
   // GET /blobs/:hash/url — a link the bytes can be fetched from
   router.openapi(getBlobUrlRoute, async (c) => {
-    refuseUnknownQueryParams(c.req.raw.url, getBlobUrlRoute.request.query);
     const hash = normalizeHash(c.req.valid("param").hash);
     const record = await requireReadableBlob(c, storage, hash);
 

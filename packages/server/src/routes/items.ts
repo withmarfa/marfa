@@ -82,7 +82,6 @@ import {
 import { readableMetadata } from "./_extension-reach.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import {
   ITEM_NOT_FOUND_ON_READ,
@@ -90,17 +89,24 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
+import {
+  takesQueryKeysLike,
+  type QueryKeyFamily,
+} from "../middleware/undeclared-query-keys.js";
 
 /**
  * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
  *
  * Declared once because two things read it: the clause builder that
- * compiles a match into the filter grammar, and the unknown-parameter
- * refusal, which would otherwise reject every one of them. Two copies of
- * this pattern would mean a working shorthand starting to answer 400 the
- * moment one of them changed.
+ * compiles a match into the filter grammar, and the refusal of undeclared
+ * query keys, which no schema can tell about a key whose type is part of its
+ * name. The two doors that take them say so with `takesQueryKeysLike`.
  */
 const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
+const EDGE_SHORTHAND_KEYS: QueryKeyFamily = {
+  pattern: EDGE_SHORTHAND_KEY,
+  spelling: "edge[<type>], backref[<type>]",
+};
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -554,6 +560,7 @@ const getItemStatsRoute = createRoute({
     },
   },
 });
+takesQueryKeysLike(getItemStatsRoute, EDGE_SHORTHAND_KEYS);
 
 const listItemsRoute = createRoute({
   operationId: "listItems",
@@ -647,6 +654,7 @@ const listItemsRoute = createRoute({
     },
   },
 });
+takesQueryKeysLike(listItemsRoute, EDGE_SHORTHAND_KEYS);
 
 const getItemRoute = createRoute({
   operationId: "getItem",
@@ -1702,9 +1710,6 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
-    refuseUnknownQueryParams(c.req.raw.url, getItemStatsRoute.request.query, {
-      allow: [EDGE_SHORTHAND_KEY],
-    });
     const query = c.req.valid("query");
     const filters = await listingFilters(
       c,
@@ -1720,15 +1725,6 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(listItemsRoute, async (c) => {
     requireAuth(c);
-
-    // Before anything reads the validated query, because validation has
-    // already dropped an undeclared key by then and a dropped time filter
-    // is indistinguishable from one that was never sent. The edge
-    // shorthands are allowed by pattern: the type is part of the key, so
-    // no schema can enumerate them.
-    refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
-      allow: [EDGE_SHORTHAND_KEY],
-    });
 
     const query = c.req.valid("query");
 
@@ -2130,9 +2126,6 @@ export function itemRoutes(storage: Storage) {
     }
 
     const key = requireAuth(c);
-    // A misspelled `version` stripped by the validator would delete
-    // unconditionally, which is the act the parameter exists to guard.
-    refuseUnknownQueryParams(c.req.raw.url, deleteItemRoute.request.query);
     const { version } = c.req.valid("query");
     const result = await runAuditedTransaction(
       storage,
@@ -2374,9 +2367,6 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    // A misspelled `version` stripped by the validator would purge
-    // unconditionally, which is the act the parameter exists to guard.
-    refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);
     const { version } = c.req.valid("query");
     const key = requireAuth(c);
     // The key's type map is asked whatever state the row is in, and the

@@ -1900,14 +1900,14 @@ export interface components {
             created_at: string;
         };
         /** @description An error response. */
-        InvalidIdRefusal: {
+        InvalidIdOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "invalid_id";
+                code: "invalid_id" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2023,23 +2023,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "edge_constraint_violation" | "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        InvalidIdOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "invalid_id" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2231,6 +2214,23 @@ export interface components {
             filter?: string;
         };
         /** @description An error response. */
+        ValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         ForbiddenRefusal: {
             /** @description What went wrong. */
             error: {
@@ -2292,23 +2292,6 @@ export interface components {
         ExtensionsResponse: {
             extensions: {
                 [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        ValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
                     [key: string]: unknown;
                 };
             };
@@ -3264,23 +3247,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "invalid_id" | "invalid_transition" | "missing_required_field" | "unknown_type" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        InvalidIdOrInvalidTransitionRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "invalid_id" | "invalid_transition";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4300,7 +4266,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemDetail"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4312,7 +4281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -5350,7 +5319,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5362,7 +5334,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -6085,7 +6057,10 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6097,7 +6072,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -6658,6 +6633,21 @@ export interface operations {
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -6760,6 +6750,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BulkActionJob"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7287,7 +7292,10 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7299,7 +7307,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7413,7 +7421,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7425,7 +7436,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -7682,7 +7693,10 @@ export interface operations {
                     "application/json": components["schemas"]["ExtensionsResponse"];
                 };
             };
-            /** @description - `invalid_id`: the ID is not a valid item ID. */
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7694,7 +7708,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -8427,6 +8441,21 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -8552,7 +8581,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `Idempotency-Key` is empty or longer than 255 characters. */
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9075,6 +9104,21 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypePage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -9448,6 +9492,21 @@ export interface operations {
                     "application/json": components["schemas"]["TypeDefinitionPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -9682,6 +9741,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TypeDefinition"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -9954,6 +10028,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ok"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -10323,6 +10412,21 @@ export interface operations {
                     "application/json": components["schemas"]["TagCountPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -10518,6 +10622,21 @@ export interface operations {
                     "application/json": components["schemas"]["BlobOrphanPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -10602,6 +10721,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BlobStorePage"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -11241,6 +11375,21 @@ export interface operations {
                     "application/json": components["schemas"]["HousekeepingJobPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -11473,6 +11622,21 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -11681,6 +11845,21 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -11768,6 +11947,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ok"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -11886,6 +12080,21 @@ export interface operations {
                     "application/json": {
                         last_heartbeat_at: string;
                     };
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -12255,6 +12464,21 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpointPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -12515,6 +12739,21 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -12759,6 +12998,21 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -13303,6 +13557,21 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorState"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -13568,6 +13837,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ok"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -14281,7 +14565,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The version the caller read. There is no `conflict` parameter: a change to a setting changed since is refused whatever the query says. */
+                    /** @description The version the caller read. */
                     version: number;
                     title?: string;
                     search?: components["schemas"]["FolderSearch"];
@@ -14314,7 +14598,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
+            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `validation_error` is also a query parameter, such as `conflict`, which this door does not take. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14376,7 +14660,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: a setting this change names was changed since `version`, whatever the query says. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held. */
+            /** @description `version_conflict`: a setting this change names was changed since `version`. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14488,7 +14772,11 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description `invalid_id`: the id is malformed. `invalid_transition`: the folder is already revoked. */
+            /**
+             * @description - `invalid_id`: the ID is malformed.
+             *     - `invalid_transition`: the folder is already revoked.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14501,7 +14789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -14653,6 +14941,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKeyPage"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -14899,6 +15202,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -15294,6 +15612,21 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -15664,6 +15997,21 @@ export interface operations {
                     "application/json": components["schemas"]["DriftedPlatformTypePage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -15754,6 +16102,21 @@ export interface operations {
                         removed: true;
                         id: string;
                     };
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -15882,6 +16245,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Owner"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -16238,6 +16616,21 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -16450,6 +16843,21 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -16552,6 +16960,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ok"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -16816,6 +17239,21 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookDeliveryPage"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -16918,6 +17356,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WebhookDelivery"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -17170,6 +17623,18 @@ export interface operations {
                     };
                 };
             };
+            /** @description `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
         };
     };
     streamEvents: {
@@ -17359,7 +17824,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. */
+            /** @description An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17371,7 +17836,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"] | {
                         /** @enum {string} */
                         error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope";
                         error_description?: string;

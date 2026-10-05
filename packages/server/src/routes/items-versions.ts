@@ -15,7 +15,6 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { VersionPageSchema } from "./_schemas.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { ITEM_NOT_FOUND_ON_READ, READ_REFUSED } from "./_item-refusals.js";
 
 // ---------------------------------------------------------------------------
@@ -104,7 +103,6 @@ export function itemsVersionsRoutes(storage: Storage) {
 
   // GET /items/:id/versions
   router.openapi(listVersionsRoute, async (c) => {
-    refuseUnknownQueryParams(c.req.raw.url, PageQuery);
     const { id } = c.req.valid("param");
     const { limit, cursor } = c.req.valid("query");
     if (!isValidId(id)) {

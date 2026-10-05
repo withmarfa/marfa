@@ -22,10 +22,7 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { pageOf } from "./_schemas.js";
-import {
-  refuseUnknownBodyKeys,
-  refuseUnknownQueryParams,
-} from "./_unknown-query-keys.js";
+import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
 import {
   IdParam,
   connectorOrRefuse,
@@ -446,7 +443,6 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
-    refuseUnknownQueryParams(c.req.raw.url, releaseHoldRoute.request.query);
     await storage.connectors.releaseHold(
       connector.id,
       c.req.valid("query").process,
@@ -567,7 +563,6 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
-    refuseUnknownQueryParams(c.req.raw.url, listAgreementsRoute.request.query);
     const { waiting, limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.connectorState.listAgreements(

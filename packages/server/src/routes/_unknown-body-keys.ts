@@ -1,19 +1,17 @@
 /**
- * Refusing a query parameter, a filter field or a request field the door
- * does not declare, and the judgment in doing it at all.
+ * Refusing a filter field or a request field the door does not declare, and
+ * the judgment in doing it at all.
  *
  * The request validator strips keys it does not declare rather than
- * rejecting them, so a caller who misspells a filter gets a successful
- * response containing everything the filter was meant to exclude. There
- * is no status, no warning and no field in the response that separates
- * that from a filter which matched every row, so **a filter that does not
- * exist is indistinguishable from one that matched everything**.
+ * rejecting them, so a caller who misspells a field gets a successful
+ * response as if the field had never been sent. There is no status, no
+ * warning and no field in the response that separates that from a field
+ * left at its default.
  *
- * On a read that is a long answer that looks filtered. On
- * `POST /items/bulk-actions` the filter *is* the match set, so a dropped
+ * On `POST /items/bulk-actions` the filter *is* the match set, so a dropped
  * key turns `{action: "purge", filter: {occurred_before: "..."}}` into a
- * purge with an empty filter — every item, and under the
- * match cap it does not even error.
+ * purge with an empty filter — every item, and under the match cap it does
+ * not even error.
  *
  * The same door's *envelope* is worse again, and is the one that reads as
  * out of scope until it is written down: `dry_run` is taken as
@@ -23,28 +21,8 @@
  * `refuseUnknownBodyKeys` exists beside the filter one rather than
  * instead of it: they are two different silences on one request.
  *
- * ## Why this is called per door rather than installed as middleware
- *
- * Two reasons, and the first one would have broken a working feature.
- *
- * `GET /items` accepts `edge[<type>]` and `backref[<type>]` shorthand keys
- * that no schema declares and no schema can, because the type is part of
- * the key. A blanket rule refuses them. So a door that takes dynamic keys
- * has to say so, which is what `allow` is for.
- *
- * And a door that has not been looked at should not start refusing by
- * accident. Opting in per route bounds this to the doors someone has
- * actually checked for dynamic keys.
- *
- * ## The cost, and the escape hatch that pays it
- *
- * A client appending a parameter of its own — a cache-buster, an
- * analytics tag — sees a previously working request become a 400. That is
- * the real cost of refusing, and it is why `RESERVED_CLIENT_PREFIX`
- * exists: a key starting with `_` is ignored by contract and always will
- * be. No door declares a parameter starting with `_`, and a misspelling
- * of a real one never does either, so the hatch does not weaken the
- * catch — it just gives the legitimate case a spelling that keeps working.
+ * The query string has the same rule on every door, installed once by
+ * `createOpenAPIRouter`; see `middleware/undeclared-query-keys.ts`.
  *
  * ## Why the declared set is derived rather than listed
  *
@@ -54,16 +32,7 @@
  * answering 400. Reading the shape off the schema cannot drift.
  */
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
-
-/**
- * Keys under this prefix are the client's own and are never refused.
- *
- * Documented rather than incidental: a caller needs a spelling that is
- * guaranteed to be ignored, and "whatever the server happens not to
- * validate" is not that guarantee — it is exactly the silence this module
- * removes.
- */
-export const RESERVED_CLIENT_PREFIX = "_";
+import { RESERVED_CLIENT_PREFIX } from "../middleware/undeclared-query-keys.js";
 
 /**
  * What these refusals need from a schema: the names it declares.
@@ -98,50 +67,6 @@ function undeclaredKeys(value: unknown, schema: DeclaresKeys): string[] {
   return Object.keys(value).filter(
     (k) => !allowedSet.has(k) && !k.startsWith(RESERVED_CLIENT_PREFIX),
   );
-}
-
-function refusal(unknown: string[], allowed: string[]): MarfaError {
-  const names = unknown.map((k) => `"${k}"`).join(", ");
-  const noun = unknown.length === 1 ? "parameter" : "parameters";
-  return new MarfaError(
-    ErrorCode.VALIDATION_ERROR,
-    `Unknown query ${noun} ${names}. This endpoint accepts: ${allowed
-      .slice()
-      .sort()
-      .join(", ")}. A parameter of your own must start with ` +
-      `"${RESERVED_CLIENT_PREFIX}", which is always ignored.`,
-    { unknown_parameters: unknown },
-  );
-}
-
-/**
- * Refuse any query parameter the route's schema does not declare.
- *
- * Reads the raw query string deliberately: by the time the validated
- * object exists the unknown key has already been stripped from it, so
- * there would be nothing left to notice.
- *
- * `allow` carries the patterns for doors whose keys are not all
- * enumerable — the item listing's edge shorthands. Everything else is
- * derived from `schema`.
- */
-export function refuseUnknownQueryParams(
-  rawUrl: string,
-  schema: DeclaresKeys,
-  opts?: { allow?: readonly RegExp[] },
-): void {
-  const allowed = declaredKeys(schema);
-  const allowedSet = new Set(allowed);
-  const params = new URL(rawUrl).searchParams;
-  const unknown: string[] = [];
-  for (const key of params.keys()) {
-    if (allowedSet.has(key)) continue;
-    if (key.startsWith(RESERVED_CLIENT_PREFIX)) continue;
-    if (opts?.allow?.some((re) => re.test(key))) continue;
-    // A repeated unknown key is one mistake, not several.
-    if (!unknown.includes(key)) unknown.push(key);
-  }
-  if (unknown.length > 0) throw refusal(unknown, allowed);
 }
 
 /**

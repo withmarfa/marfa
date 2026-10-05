@@ -18,7 +18,6 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { readableMetadata } from "./_extension-reach.js";
 
 /**
@@ -81,10 +80,6 @@ const exportRoute = createRoute({
         .describe(
           "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this.",
         ),
-      // Enforced, not merely documented, for the reason
-      // `refuseUnknownQueryParams` is given below: a caller who asked for
-      // an archive and was handed a stream, or asked for anything and was
-      // handed the default, believes the file is something it is not.
       format: z
         .enum(["ndjson", "archive"])
         .optional()
@@ -149,13 +144,6 @@ export function exportRoutes(
 
   router.openapi(exportRoute, async (c) => {
     const callerKey = requireAuth(c);
-
-    // One check for both output formats: `format=archive` is handled by a
-    // separate function further down but arrives through this handler and
-    // shares this query schema, so refusing here covers both. An export
-    // narrowed by a filter that was silently dropped writes everything to
-    // a file the caller believes is a slice of it.
-    refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
 

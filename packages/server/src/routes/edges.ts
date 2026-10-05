@@ -52,7 +52,6 @@ import {
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { publishEdge } from "../pubsub.js";
 import { requestBlobProof } from "./_blob-reach.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
 // ---------------------------------------------------------------------------
@@ -591,11 +590,6 @@ export function edgeRoutes(storage: Storage) {
     // `GET /edges/{id}` beside it already refuses.
     getTypeFilter(c);
 
-    // An edge has no time of its own, so this door carries only the
-    // modification-time bounds. A caller reaching for `occurred_after`
-    // here has to be refused rather than served an unfiltered page at 200
-    // with a well-formed cursor.
-    refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
     const q = c.req.valid("query");
     const result = await storage.edges.list({
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -1063,10 +1057,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   router.openapi(listFromSourceRoute, async (c) => {
     const key = requireAuth(c);
 
-    // The listing's twin. A misspelled `edge_type` here widens the
-    // page from one type to every edge on the item, which is the
-    // same silence on a smaller set.
-    refuseUnknownQueryParams(c.req.raw.url, listFromSourceRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -1110,10 +1100,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
   router.openapi(listBackrefsRoute, async (c) => {
     const key = requireAuth(c);
 
-    // The listing's twin. A misspelled `edge_type` here widens the
-    // page from one type to every edge on the item, which is the
-    // same silence on a smaller set.
-    refuseUnknownQueryParams(c.req.raw.url, listBackrefsRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");

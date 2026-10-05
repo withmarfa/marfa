@@ -7,6 +7,11 @@ import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
 import { assertTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
+import { EXTRA_PATHS } from "../openapi-finalize.js";
+import {
+  documentedQueryKeys,
+  refuseUndeclaredQueryKeys,
+} from "../middleware/undeclared-query-keys.js";
 import {
   computeTypeFilter,
   getTypeFilter,
@@ -473,6 +478,22 @@ function parseEdgeMode(raw: string | undefined): EdgeMode {
   return found;
 }
 
+/**
+ * The query keys the stream takes, read from its published description: the
+ * route is a plain Hono handler, so there is no schema to read them from, and
+ * `createOpenAPIRouter` does not give it the credential check that comes
+ * ahead of the refusal on every other door.
+ */
+const refuseUndeclaredEventKeys: MiddlewareHandler<AppEnv> = (() => {
+  const refuse = refuseUndeclaredQueryKeys(
+    documentedQueryKeys((EXTRA_PATHS["/events"] as { get: unknown }).get),
+  );
+  return async (c, next) => {
+    requireAuth(c);
+    await refuse(c, next);
+  };
+})();
+
 export function eventRoutes(
   storage: Storage,
   options: EventRoutesOptions = {},
@@ -484,7 +505,13 @@ export function eventRoutes(
   const copyMode: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (c.req.query("copy") !== undefined) {
       requireAuth(c);
-      copyStreamRequest(c);
+      try {
+        copyStreamRequest(c);
+      } catch (refused) {
+        // A request this door turns away learns nothing about its query.
+        await readsSomeType(c, () => Promise.resolve());
+        throw refused;
+      }
       const cap = options.maxViewers ?? 0;
       if (cap > 0 && liveViewers >= cap)
         throw new MarfaError(
@@ -514,7 +541,7 @@ export function eventRoutes(
     await next();
   };
 
-  router.get("/", copyMode, readsSomeType, (c) => {
+  router.get("/", copyMode, readsSomeType, refuseUndeclaredEventKeys, (c) => {
     const apiKey = requireAuth(c);
     const typeParam = parseTypeFilter(c, c.req.query("type"));
     const edgeMode = parseEdgeMode(c.req.query("edges"));

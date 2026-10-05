@@ -9,7 +9,6 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { pageOf } from "./_schemas.js";
 
 const AuditEntrySchema = z
@@ -104,7 +103,6 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
-    refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
     const {
       action,
       resource_type,

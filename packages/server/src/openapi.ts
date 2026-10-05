@@ -15,24 +15,32 @@ import {
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import { requireDeclaredCredential } from "./middleware/auth.js";
+import {
+  declaredQueryKeys,
+  queryKeyFamilies,
+  refuseUndeclaredQueryKeys,
+} from "./middleware/undeclared-query-keys.js";
 import { isJsonContentType } from "./middleware/json-content-type.js";
 
 /**
- * Hang the credential gate off a route whose own `security` asks for one.
+ * Put a route's guards ahead of everything it declares for itself.
  *
  * **The declaration is the list.** Each route already states whether it
- * takes a credential, the OpenAPI document is generated from that
- * statement, and this reads the same field — so there is no second table of
- * protected paths to keep in step, and a route added without one is open
- * because it said so rather than because somebody forgot a line.
+ * takes a credential and which query keys it takes, the OpenAPI document is
+ * generated from those statements, and this reads the same fields — so there
+ * is no second table of protected paths or accepted keys to keep in step, and
+ * a route added without a credential is open because it said so rather than
+ * because somebody forgot a line.
  *
- * The gate goes ahead of anything the route declares for itself, and
- * `OpenAPIHono.openapi` puts route middleware ahead of the validators it
- * derives from the request schemas. That ordering is the point: a validator
- * refusing first would tell a bare request what was wrong with its body.
+ * The credential gate goes first, and `OpenAPIHono.openapi` puts route
+ * middleware ahead of the validators it derives from the request schemas.
+ * That ordering is the point: a validator refusing first would tell a bare
+ * request what was wrong with its body. A route's own middleware, which holds
+ * the standing rule of its door, comes next, and the refusal of a query key
+ * the route does not declare comes last, so a caller the door turns away
+ * learns nothing about its query.
  */
-function withCredentialGate<R extends RouteConfig>(route: R): R {
-  if (route.security === undefined || route.security.length === 0) return route;
+function withRouteGuards<R extends RouteConfig>(route: R): R {
   const declared = route.middleware;
   const rest =
     declared === undefined
@@ -53,9 +61,71 @@ function withCredentialGate<R extends RouteConfig>(route: R): R {
             );
           await next();
         };
+  const gate =
+    route.security === undefined || route.security.length === 0
+      ? []
+      : [requireDeclaredCredential, copyBoundary];
+  // Every door refuses a query key it does not declare, so every door
+  // declares that refusal on its 400.
+  const responses = {
+    ...route.responses,
+    400: withUndeclaredQueryRefusal(route.responses[400]),
+  };
   return {
     ...route,
-    middleware: [requireDeclaredCredential, copyBoundary, ...rest],
+    responses,
+    middleware: [
+      ...gate,
+      ...rest,
+      refuseUndeclaredQueryKeys(
+        declaredQueryKeys(route.request?.query),
+        queryKeyFamilies(route),
+      ),
+    ],
+  };
+}
+
+const UNDECLARED_QUERY_LINE =
+  "- `validation_error`: the query has a parameter this endpoint doesn't take.";
+
+/**
+ * A door's 400 with `validation_error` added. A 400 built from
+ * {@link makeErrorResponseSchema} is rebuilt with the extra code; any other
+ * shape is left as declared, and the status census reports it if a request
+ * draws the code.
+ */
+function withUndeclaredQueryRefusal(
+  declared: RouteConfig["responses"][string] | undefined,
+): RouteConfig["responses"][string] {
+  if (declared === undefined) {
+    return {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: UNDECLARED_QUERY_LINE,
+    };
+  }
+  if (!("content" in declared)) return declared;
+  const json = declared.content?.["application/json"];
+  const codes =
+    json === undefined || !("schema" in json)
+      ? undefined
+      : refusalCodes.get(json.schema as object);
+  if (codes === undefined || codes.includes("validation_error")) {
+    return declared;
+  }
+  return {
+    ...declared,
+    content: {
+      ...declared.content,
+      "application/json": {
+        ...json,
+        schema: makeErrorResponseSchema([...codes, "validation_error"]),
+      },
+    },
+    description: [declared.description, UNDECLARED_QUERY_LINE].join("\n"),
   };
 }
 
@@ -82,8 +152,9 @@ const requireJsonContentType: MiddlewareHandler = async (c, next) => {
  *
  * Marking the body `required` runs the validator on every request, and the
  * check added last in the route's middleware answers the refusal the contract
- * names, after the credential and the door's own checks and before any
- * validator reads the body.
+ * names, after the credential, the door's own checks and the refusal of an
+ * undeclared query key (the query is the cheaper thing to judge), and before
+ * any validator reads the body.
  */
 function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
   const body = route.request?.body;
@@ -113,8 +184,8 @@ function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
  * Create an OpenAPIHono router with the defaultHook configured to throw
  * MarfaError on validation failure, preserving the existing error response format.
  *
- * Every route registered through it is gated by its own declaration; see
- * {@link withCredentialGate}.
+ * Every route registered through it is guarded by its own declaration; see
+ * {@link withRouteGuards}.
  */
 export function createOpenAPIRouter<
   T extends Record<string, unknown>,
@@ -151,14 +222,14 @@ export function createOpenAPIRouter<
       }
     },
   });
-  // Routes go in through `openapi()`, so wrapping it is what makes the gates
+  // Routes go in through `openapi()`, so wrapping it is what makes the guards
   // unforgettable. The two casts are the registrar's own generic signature,
-  // which says nothing this wrapper needs: it reads one field off the route
-  // and passes the rest of the call through untouched.
+  // which says nothing this wrapper needs: it reads fields off the route and
+  // passes the rest of the call through untouched.
   type Registrar = (route: RouteConfig, ...rest: unknown[]) => unknown;
   const register = router.openapi as unknown as Registrar;
   const gated: Registrar = (route, ...rest) =>
-    register(withCredentialGate(withRequiredJsonBody(route)), ...rest);
+    register(withRequiredJsonBody(withRouteGuards(route)), ...rest);
   router.openapi = gated as unknown as typeof router.openapi;
   return router;
 }
@@ -252,6 +323,7 @@ function buildRefusalSchema<const C extends readonly [string, ...string[]]>(
  * one's codes as the meaning of both. Nothing errors.
  */
 const refusalSchemas = new Map<string, ReturnType<typeof buildRefusalSchema>>();
+const refusalCodes = new WeakMap<object, readonly [string, ...string[]]>();
 
 /**
  * Per-operation error response schema with a closed enum of `code` values.
@@ -274,6 +346,7 @@ export function makeErrorResponseSchema<
   if (cached) return cached as ReturnType<typeof buildRefusalSchema<C>>;
   const schema = buildRefusalSchema(codes);
   refusalSchemas.set(name, schema);
+  refusalCodes.set(schema, codes);
   return schema;
 }
 
