@@ -28,95 +28,161 @@ import {
   pageLimit,
   pageCursor,
 } from "../page-limits.js";
-import { nullableRef, pageOf } from "./_schemas.js";
+import { nullableRef, pageOf, wholeListOf } from "./_schemas.js";
 import { connectorsForReader } from "./_connector-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
-const OutcomeSchema = z.enum(["succeeded", "failed"]);
+const OutcomeSchema = z
+  .enum(["succeeded", "failed"])
+  .describe("How the run ended: `succeeded` or `failed`.");
 
 const ConnectorRunSchema = z
   .object({
-    id: z.string(),
-    connector_id: z.string(),
+    id: z.string().describe("Unique identifier for the run."),
+    connector_id: z
+      .string()
+      .describe("The ID of the connector that reported the run."),
     outcome: OutcomeSchema,
-    started_at: z.string(),
-    finished_at: z.string(),
-    summary: z.string().nullable(),
-    error: z.string().nullable(),
-    reported_at: z.string(),
+    started_at: z
+      .string()
+      .describe("When the run started, as the connector reported it."),
+    finished_at: z
+      .string()
+      .describe("When the run finished, as the connector reported it."),
+    summary: z
+      .string()
+      .nullable()
+      .describe("A short summary of the run; `null` if none was reported."),
+    error: z
+      .string()
+      .nullable()
+      .describe("The error the run reported; `null` if none was reported."),
+    reported_at: z.string().describe("When Marfa recorded the run."),
   })
+  .describe("A run a connector reported, with its outcome and times.")
   .openapi("ConnectorRun");
 
 const ConnectorSchema = z
   .object({
-    id: z.string(),
-    key_id: z.string(),
-    /** The key's own source, which its writes carry unless they name a claim. */
-    source: z.string(),
-    name: z.string(),
-    description: z.string().nullable(),
-    registered_at: z.string(),
-    updated_at: z.string(),
-    last_heartbeat_at: z.string().nullable(),
-    last_run: nullableRef(ConnectorRunSchema),
+    id: z.string().describe("Unique identifier for the connector."),
+    key_id: z
+      .string()
+      .describe("The ID of the API key the connector registered under."),
+    source: z
+      .string()
+      .describe(
+        "The source of that key. The connector's state document and agreements belong to this source.",
+      ),
+    name: z.string().describe("The connector's name."),
+    description: z
+      .string()
+      .nullable()
+      .describe("What the connector does; `null` if none was given."),
+    registered_at: z.string().describe("When the connector first registered."),
+    updated_at: z
+      .string()
+      .describe("When the connector's name or description was last set."),
+    last_heartbeat_at: z
+      .string()
+      .nullable()
+      .describe("When the connector last sent a heartbeat; `null` if never."),
+    last_run: nullableRef(ConnectorRunSchema).describe(
+      "The connector's most recently reported run; `null` if it has reported none.",
+    ),
     hold_expires_at: z
       .string()
       .nullable()
       .describe(
-        "When the hold a process took at `POST /connectors/{id}/hold` lapses; `null` when no process holds the registration or its hold has lapsed.",
+        "When the hold on the connector lapses; `null` if no process holds it or its hold has lapsed.",
       ),
   })
+  .describe(
+    "A connector is a process outside Marfa that registers under an API key, sends heartbeats and reports its runs.",
+  )
   .openapi("Connector");
 
 const RegisterSchema = z.object({
-  name: maxStringLength(z.string().min(1), 200),
-  description: maxStringLength(z.string(), 2000).optional(),
+  name: maxStringLength(z.string().min(1), 200).describe(
+    "The connector's name.",
+  ),
+  description: maxStringLength(z.string(), 2000)
+    .optional()
+    .describe(
+      "What the connector does. Leave it out for none: registering again without it clears the old one.",
+    ),
 });
 
 const RunInputSchema = z.object({
   outcome: OutcomeSchema,
-  started_at: z.string().refine(isValidTimestamp, "an ISO 8601 timestamp"),
-  finished_at: z.string().refine(isValidTimestamp, "an ISO 8601 timestamp"),
-  summary: maxStringLength(z.string(), 2000).optional(),
-  error: maxStringLength(z.string(), 2000).optional(),
+  started_at: z
+    .string()
+    .refine(isValidTimestamp, "an ISO 8601 timestamp")
+    .describe(
+      "When the run started, as an ISO 8601 time. Marfa stores it as you send it.",
+    ),
+  finished_at: z
+    .string()
+    .refine(isValidTimestamp, "an ISO 8601 timestamp")
+    .describe(
+      "When the run finished, as an ISO 8601 time. It can't be before `started_at`.",
+    ),
+  summary: maxStringLength(z.string(), 2000)
+    .optional()
+    .describe("A short summary of the run. Leave it out for none."),
+  error: maxStringLength(z.string(), 2000)
+    .optional()
+    .describe("The error the run hit. Leave it out for none."),
 });
 
 export const IdParam = z.object({
-  id: z.string().describe("A connector's `id`, as `GET /connectors` lists it."),
+  id: z.string().describe("The ID of the connector."),
 });
 
 const InboundEndpointSchema = z
   .object({
-    id: z.string(),
-    connector_id: z.string(),
-    label: z.string().nullable(),
+    id: z.string().describe("Unique identifier for the webhook endpoint."),
+    connector_id: z
+      .string()
+      .describe("The ID of the connector the endpoint belongs to."),
+    label: z
+      .string()
+      .nullable()
+      .describe("A name for people to read; `null` if none was given."),
     duplicate_header: z
       .string()
       .nullable()
       .describe(
-        "Lowercased. A delivery repeating this header's value is marked a repeat of the first that carried it.",
+        "The header whose value identifies a delivery, lowercased; `null` if none was set. A delivery that repeats a value is marked as a repeat in `duplicate_of`.",
       ),
     path: z
       .string()
       .describe(
-        "The address, under the instance's own: in full only in the answer that made it, redacted to its last four characters after.",
+        "The address a sender posts to, a path on this instance. It is in full only in the response that created the endpoint; after that it shows `/inbound/****` and its last four characters.",
       ),
-    created_at: z.string(),
-    retired_at: z.string().nullable(),
+    created_at: z.string().describe("When the endpoint was created."),
+    retired_at: z
+      .string()
+      .nullable()
+      .describe("When the endpoint was retired; `null` while it is live."),
   })
+  .describe(
+    "A webhook endpoint is an address where a sender posts to a connector without a credential: the address is the credential.",
+  )
   .openapi("InboundEndpoint");
 
 const EndpointInputSchema = z.object({
-  label: maxStringLength(z.string().min(1), 200).optional(),
+  label: maxStringLength(z.string().min(1), 200)
+    .optional()
+    .describe("A name for people to read. Leave it out for none."),
   duplicate_header: z
     .string()
     .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/, "an HTTP header name")
     .optional()
     .describe(
-      "A header whose value names a delivery, such as `X-GitHub-Delivery`: a delivery repeating a value is marked as a repeat, never dropped.",
+      "A header whose value identifies a delivery, such as `X-GitHub-Delivery`. Marfa stores a delivery that repeats a value and marks it as a repeat. Leave it out to mark none.",
     ),
 });
 
@@ -124,35 +190,63 @@ const InboundOutcomeSchema = z.enum(["processed", "duplicate", "rejected"]);
 
 const InboundDeliverySchema = z
   .object({
-    id: z.string(),
-    endpoint_id: z.string(),
-    received_at: z.string(),
-    method: z.string(),
-    query: z.string(),
+    id: z.string().describe("Unique identifier for the delivery."),
+    endpoint_id: z
+      .string()
+      .describe("The ID of the endpoint that received the delivery."),
+    received_at: z.string().describe("When Marfa received the delivery."),
+    method: z.string().describe("The HTTP method of the request."),
+    query: z
+      .string()
+      .describe(
+        "The query string as the sender sent it, without the `?`; empty if there was none.",
+      ),
     headers: z
       .array(z.tuple([z.string(), z.string()]))
       .describe("`[name, value]` pairs in the order and case they arrived."),
-    size: z.number().int(),
-    sha256: z.string(),
+    size: z.number().int().describe("The size of the body in bytes."),
+    sha256: z.string().describe("The SHA-256 hash of the body, in hex."),
     duplicate_of: z
-      .object({ id: z.string(), outcome: InboundOutcomeSchema.nullable() })
-      .nullable(),
-    handled_at: z.string().nullable(),
-    outcome: InboundOutcomeSchema.nullable(),
+      .object({
+        id: z.string().describe("The ID of the earlier delivery."),
+        outcome: InboundOutcomeSchema.nullable().describe(
+          "How the earlier delivery was handled; `null` if it is still pending.",
+        ),
+      })
+      .nullable()
+      .describe(
+        "The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none.",
+      ),
+    handled_at: z
+      .string()
+      .nullable()
+      .describe("When the delivery was marked handled; `null` while pending."),
+    outcome: InboundOutcomeSchema.nullable().describe(
+      "How the connector handled the delivery: `processed`, `duplicate` or `rejected`; `null` while pending.",
+    ),
   })
+  .describe(
+    "A delivery is one request that arrived at a webhook endpoint, stored as it came until the connector marks it handled.",
+  )
   .openapi("InboundDelivery");
 
 const EndpointParam = IdParam.extend({
-  endpoint_id: z.string().describe("An endpoint's `id`."),
+  endpoint_id: z.string().describe("The ID of the webhook endpoint."),
 });
 
 const DeliveryParam = IdParam.extend({
-  delivery_id: z.string().describe("A delivery's `id`."),
+  delivery_id: z.string().describe("The ID of the delivery."),
 });
 
 const HandledInputSchema = z.object({
-  ids: z.array(z.string()).min(1).max(MAX_PAGE_LIMIT),
-  outcome: InboundOutcomeSchema,
+  ids: z
+    .array(z.string())
+    .min(1)
+    .max(MAX_PAGE_LIMIT)
+    .describe("The IDs of the deliveries to mark."),
+  outcome: InboundOutcomeSchema.describe(
+    "How the connector handled them: `processed`, `duplicate` or `rejected`. Marfa records it and acts on nothing.",
+  ),
 });
 
 /** Live endpoints one registration may hold. */
@@ -167,6 +261,21 @@ const anyKeyResponses = {
   },
 };
 
+const NOT_FOUND = "- `connector_not_found`: no connector has this ID.";
+
+/** The 400 of a paged listing whose query takes filters. */
+export const listQueryResponse = {
+  400: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["validation_error"]),
+      },
+    },
+    description:
+      "- `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing.",
+  },
+};
+
 const notFoundResponse = {
   404: {
     content: {
@@ -174,25 +283,42 @@ const notFoundResponse = {
         schema: makeErrorResponseSchema(["connector_not_found"]),
       },
     },
-    description: "No such connector",
+    description: NOT_FOUND,
   },
 };
 
 const hiddenConnectorResponse = {
   404: {
     ...notFoundResponse[404],
-    description: "No such connector, or one registered by another key",
+    description:
+      "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key.",
   },
 };
 
-export const ownKeyResponses = {
-  ...anyKeyResponses,
+const forbiddenResponse = (description: string) => ({
   403: {
     content: {
       "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
     },
-    description: "Another key's registration",
+    description,
   },
+});
+
+/** The doors only the connector's own key reaches. */
+export const ownKeyResponses = {
+  ...anyKeyResponses,
+  ...forbiddenResponse(
+    "- `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint.",
+  ),
+  ...notFoundResponse,
+};
+
+/** The doors the operator key reaches too. */
+export const ownKeyOrOperatorResponses = {
+  ...anyKeyResponses,
+  ...forbiddenResponse(
+    "- `forbidden`: your credential is neither the connector's own key nor the operator key.",
+  ),
   ...notFoundResponse,
 };
 
@@ -229,7 +355,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register a connector",
   description:
-    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
+    "Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`.",
   security: [{ bearerAuth: [] }],
   middleware: workingKeyOnly,
   request: {
@@ -238,11 +364,12 @@ const registerConnectorRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: ConnectorSchema } },
-      description: "The registration, updated",
+      description:
+        "Returns the existing connector with its name and description updated. Its `id` and `registered_at` don't change.",
     },
     201: {
       content: { "application/json": { schema: ConnectorSchema } },
-      description: "The registration",
+      description: "Returns the new connector.",
     },
     400: {
       content: {
@@ -254,16 +381,12 @@ const registerConnectorRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body without `name`; `validation_error` for any other invalid registration",
+        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.",
     },
     ...anyKeyResponses,
-    403: {
-      content: {
-        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
-      },
-      description:
-        "- `forbidden`: the request carries an app's session token, which is not a key, or the operator key, which runs the instance and never acts as a connector.",
-    },
+    ...forbiddenResponse(
+      "- `forbidden`: your credential is an app's session token, not a key, or the operator key, which runs the instance and can't register as a connector.",
+    ),
   },
 });
 
@@ -274,16 +397,20 @@ const listConnectorsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List connectors",
   description:
-    "The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.",
+    "Returns your registration, or every registration if you use the operator key, newest first.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(ConnectorSchema, "ConnectorPage"),
+          schema: wholeListOf(
+            ConnectorSchema,
+            "ConnectorPage",
+            "connector you can read",
+          ),
         },
       },
-      description: "The registrations",
+      description: "Returns the connectors.",
     },
     ...anyKeyResponses,
   },
@@ -295,13 +422,14 @@ const getConnectorRoute = createRoute({
   path: "/{id}",
   tags: ["Connectors"],
   summary: "Get a connector",
-  description: "The connector's own key or the operator key.",
+  description:
+    "Returns a connector, with when it last sent a heartbeat, its last run and any hold on it.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
     200: {
       content: { "application/json": { schema: ConnectorSchema } },
-      description: "The registration",
+      description: "Returns the connector.",
     },
     ...anyKeyResponses,
     ...hiddenConnectorResponse,
@@ -315,7 +443,7 @@ const deleteConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Delete a connector",
   description:
-    "Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key.",
+    "Deletes the connector, its runs and hold, and its webhook endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -323,9 +451,9 @@ const deleteConnectorRoute = createRoute({
       content: {
         "application/json": { schema: OkResponseSchema },
       },
-      description: "Removed",
+      description: "Returns `ok: true`.",
     },
-    ...ownKeyResponses,
+    ...ownKeyOrOperatorResponses,
   },
 });
 
@@ -336,17 +464,21 @@ const heartbeatRoute = createRoute({
   tags: ["Connectors"],
   summary: "Send a heartbeat",
   description:
-    "Stamps `last_heartbeat_at` with the server's clock. The connector's own key only. What a stale heartbeat means is the reader's to decide: nothing here supervises.",
+    "Sets `last_heartbeat_at` to the current time and returns it. Marfa takes no action when heartbeats stop.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z.object({ last_heartbeat_at: z.string() }),
+          schema: z.object({
+            last_heartbeat_at: z
+              .string()
+              .describe("When Marfa recorded the heartbeat."),
+          }),
         },
       },
-      description: "The stamp",
+      description: "Returns the time Marfa recorded.",
     },
     ...ownKeyResponses,
   },
@@ -359,7 +491,7 @@ const reportRunRoute = createRoute({
   tags: ["Connectors"],
   summary: "Report a run",
   description:
-    "Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.",
+    "Records one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -368,7 +500,7 @@ const reportRunRoute = createRoute({
   responses: {
     201: {
       content: { "application/json": { schema: ConnectorRunSchema } },
-      description: "The run",
+      description: "Returns the run.",
     },
     400: {
       content: {
@@ -380,7 +512,7 @@ const reportRunRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body without `outcome`, `started_at` or `finished_at`; `validation_error` for any other invalid run",
+        "- `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.\n- `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, or `summary` or `error` is over 2,000 characters.",
     },
     ...ownKeyResponses,
   },
@@ -392,7 +524,7 @@ const listRunsRoute = createRoute({
   path: "/{id}/runs",
   tags: ["Connectors"],
   summary: "List connector runs",
-  description: "Newest first, to the connector's own key or the operator key.",
+  description: "Returns the runs the connector reported, newest first.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -405,34 +537,19 @@ const listRunsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(ConnectorRunSchema, "ConnectorRunPage"),
+          schema: pageOf(ConnectorRunSchema, "ConnectorRunPage", {
+            page: "One page of a connector's runs.",
+            data: "The runs, newest reported first.",
+          }),
         },
       },
-      description: "The runs",
+      description: "Returns a page of runs.",
     },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "A `limit` outside its bounds",
-    },
+    ...listQueryResponse,
     ...anyKeyResponses,
     ...hiddenConnectorResponse,
   },
 });
-
-export const validationResponse = {
-  400: {
-    content: {
-      "application/json": {
-        schema: makeErrorResponseSchema(["validation_error"]),
-      },
-    },
-    description: "An invalid body or query",
-  },
-};
 
 const createEndpointRoute = createRoute({
   operationId: "createInboundEndpoint",
@@ -440,7 +557,8 @@ const createEndpointRoute = createRoute({
   path: "/{id}/endpoints",
   tags: ["Connectors"],
   summary: "Create a webhook endpoint",
-  description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints.`,
+  description:
+    "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -451,15 +569,23 @@ const createEndpointRoute = createRoute({
   responses: {
     201: {
       content: { "application/json": { schema: InboundEndpointSchema } },
-      description: "The endpoint, its address in full",
+      description: "Returns the endpoint, with its full `path`.",
     },
-    ...validationResponse,
-    ...ownKeyResponses,
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "- `validation_error`: `label` isn't 1 to 200 characters, or `duplicate_header` isn't a valid header name.",
+    },
+    ...ownKeyOrOperatorResponses,
     409: {
       content: {
         "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
       },
-      description: "The registration holds as many live endpoints as it may",
+      description: `- \`conflict\`: the connector already has ${String(MAX_LIVE_ENDPOINTS)} live endpoints. Retire one first.`,
     },
   },
 });
@@ -471,19 +597,24 @@ const listEndpointsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List webhook endpoints",
   description:
-    "Newest first, retired ones included, each address redacted. The connector's own key or the operator key.",
+    "Returns the connector's webhook endpoints, newest first, retired ones included.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(InboundEndpointSchema, "InboundEndpointPage"),
+          schema: wholeListOf(
+            InboundEndpointSchema,
+            "InboundEndpointPage",
+            "webhook endpoint of the connector",
+          ),
         },
       },
-      description: "The endpoints",
+      description:
+        "Returns the endpoints, each with its `path` redacted to its last four characters.",
     },
-    ...ownKeyResponses,
+    ...ownKeyOrOperatorResponses,
   },
 });
 
@@ -494,16 +625,17 @@ const retireEndpointRoute = createRoute({
   tags: ["Connectors"],
   summary: "Retire a webhook endpoint",
   description:
-    "Its address stops accepting deliveries, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
+    "Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
   security: [{ bearerAuth: [] }],
   request: { params: EndpointParam },
   responses: {
     200: {
       content: { "application/json": { schema: InboundEndpointSchema } },
-      description: "The endpoint, retired",
+      description:
+        "Returns the endpoint with `retired_at` set. Retiring it again returns it unchanged.",
     },
     ...anyKeyResponses,
-    403: ownKeyResponses[403],
+    403: ownKeyOrOperatorResponses[403],
     404: {
       content: {
         "application/json": {
@@ -513,7 +645,7 @@ const retireEndpointRoute = createRoute({
           ]),
         },
       },
-      description: "No such connector, or no such endpoint on it",
+      description: `${NOT_FOUND}\n- \`endpoint_not_found\`: the connector has no endpoint with this ID.`,
     },
   },
 });
@@ -525,7 +657,7 @@ const listDeliveriesRoute = createRoute({
   tags: ["Connectors"],
   summary: "List inbound deliveries",
   description:
-    "Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.",
+    "Returns the webhook deliveries the connector received, oldest first, without their bodies. Only those not yet handled, unless you set `state`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -533,7 +665,9 @@ const listDeliveriesRoute = createRoute({
       state: z
         .enum(["pending", "handled", "any"])
         .default("pending")
-        .describe("Which deliveries: not yet handled, handled, or both."),
+        .describe(
+          "Which deliveries to return: `pending` (not yet handled), `handled` or `any`.",
+        ),
       endpoint_id: z
         .string()
         .optional()
@@ -546,12 +680,15 @@ const listDeliveriesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(InboundDeliverySchema, "InboundDeliveryPage"),
+          schema: pageOf(InboundDeliverySchema, "InboundDeliveryPage", {
+            page: "One page of a connector's inbound deliveries.",
+            data: "The deliveries, oldest first.",
+          }),
         },
       },
-      description: "The deliveries",
+      description: "Returns a page of deliveries.",
     },
-    ...validationResponse,
+    ...listQueryResponse,
     ...ownKeyResponses,
   },
 });
@@ -563,7 +700,7 @@ const deliveryBodyRoute = createRoute({
   tags: ["Connectors"],
   summary: "Get an inbound delivery's body",
   description:
-    "The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.",
+    "Returns a delivery's body exactly as it arrived, as `application/octet-stream` whatever the sender declared.",
   security: [{ bearerAuth: [] }],
   request: { params: DeliveryParam },
   responses: {
@@ -573,7 +710,7 @@ const deliveryBodyRoute = createRoute({
           schema: { type: "string" as const, format: "binary" as const },
         },
       },
-      description: "The body",
+      description: "Returns the body.",
     },
     ...anyKeyResponses,
     403: ownKeyResponses[403],
@@ -586,7 +723,7 @@ const deliveryBodyRoute = createRoute({
           ]),
         },
       },
-      description: "No such connector, or no such delivery on it",
+      description: `${NOT_FOUND}\n- \`delivery_not_found\`: the connector has no delivery with this ID.`,
     },
   },
 });
@@ -598,7 +735,7 @@ const markHandledRoute = createRoute({
   tags: ["Connectors"],
   summary: "Mark inbound deliveries handled",
   description:
-    "Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. The connector's own key only.",
+    "Marks each named delivery handled, with an outcome, and returns them in the order you named. The first mark stands: marking a delivery again returns it unchanged.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -608,10 +745,16 @@ const markHandledRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(InboundDeliverySchema) }),
+          schema: z.object({
+            data: z
+              .array(InboundDeliverySchema)
+              .describe(
+                "The deliveries, each once, in the order you first named it.",
+              ),
+          }),
         },
       },
-      description: "The deliveries, marked",
+      description: "Returns the deliveries, marked.",
     },
     400: {
       content: {
@@ -623,7 +766,7 @@ const markHandledRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body without `ids` or `outcome`; `validation_error` for any other invalid body",
+        "- `missing_required_field`: `ids` or `outcome` is missing.\n- `validation_error`: `ids` is empty or has more than 200 IDs, or `outcome` isn't `processed`, `duplicate` or `rejected`.",
     },
     ...anyKeyResponses,
     403: ownKeyResponses[403],
@@ -636,8 +779,7 @@ const markHandledRoute = createRoute({
           ]),
         },
       },
-      description:
-        "- `connector_not_found`: no such connector.\n- `delivery_not_found`: an ID is not one of this connector's deliveries. Nothing is marked.",
+      description: `${NOT_FOUND}\n- \`delivery_not_found\`: an ID isn't one of this connector's deliveries. Nothing is marked.`,
     },
   },
 });

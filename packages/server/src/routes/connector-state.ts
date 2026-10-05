@@ -27,22 +27,24 @@ import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
 import {
   IdParam,
   connectorOrRefuse,
+  listQueryResponse,
+  ownKeyOrOperatorResponses,
   ownKeyResponses,
   requireOwnKey,
   requireOwnKeyOrOperator,
-  validationResponse,
 } from "./connectors.js";
 
 export const MAX_STATE_BYTES = 512 * 1024;
 export const MAX_RECORD_BYTES = 16 * 1024;
 export const MAX_AGREEMENTS_PER_REQUEST = 500;
 
-const CONNECTOR_KEY_ONLY = "The connector's own key only.";
-
-const FENCED = "Taken only from the `process` holding a live hold.";
-
 const ProcessSchema = maxStringLength(z.string().min(1), 100).describe(
-  "The process's own name for itself, opaque to the server, such as a UUID it chose at start.",
+  "A name the process chose for itself, such as a UUID made at start. Marfa treats it as opaque.",
+);
+
+/** The `process` of a write the hold fences. */
+const HolderSchema = ProcessSchema.describe(
+  "The name the process took the connector's hold under.",
 );
 
 /**
@@ -54,16 +56,22 @@ const JsonObject = z.record(z.string(), z.unknown());
 
 const ItemId = maxStringLength(z.string().min(1), 200);
 
+const WAITING =
+  "`true` if a change to the item is waiting to be carried to the vendor.";
+
 const ConnectorStateSchema = z
   .object({
     state: JsonObject.describe(
-      "The document as last written; `{}` when none was.",
+      "The document as last written; `{}` if none was.",
     ),
     updated_at: z
       .string()
       .nullable()
-      .describe("When it was last written; `null` when it never was."),
+      .describe("When it was last written; `null` if it never was."),
   })
+  .describe(
+    "A connector's state document: the JSON object it keeps on the instance to resume from.",
+  )
   .openapi("ConnectorState");
 
 const WrittenStateSchema = z.object({
@@ -73,49 +81,65 @@ const WrittenStateSchema = z.object({
 
 const ConnectorAgreementSchema = z
   .object({
-    item_id: z.string(),
-    waiting: z
-      .boolean()
-      .describe(
-        "Whether a change to the row waits to be carried to the vendor.",
-      ),
-    record: JsonObject.describe("The connector's own record of the row."),
-    updated_at: z.string(),
+    item_id: z.string().describe("The ID of the item the agreement is about."),
+    waiting: z.boolean().describe(WAITING),
+    record: JsonObject.describe(
+      "The connector's own record of the item, as it wrote it.",
+    ),
+    updated_at: z.string().describe("When the agreement was last written."),
   })
+  .describe(
+    "An agreement is a connector's record of what it and its vendor last agreed about one item.",
+  )
   .openapi("ConnectorAgreement");
 
 const HoldInputSchema = z.object({ process: ProcessSchema });
 
 const StateInputSchema = z.object({
-  process: ProcessSchema,
-  state: JsonObject,
+  process: HolderSchema,
+  state: JsonObject.describe(
+    `The new document, a JSON object of at most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. It replaces the whole document.`,
+  ),
 });
 
 const FindInputSchema = z.object({
-  item_ids: z.array(ItemId).min(1).max(MAX_AGREEMENTS_PER_REQUEST),
+  item_ids: z
+    .array(ItemId)
+    .min(1)
+    .max(MAX_AGREEMENTS_PER_REQUEST)
+    .describe("The IDs of the items to look up."),
 });
 
 const AgreementsInputSchema = z.object({
-  process: ProcessSchema,
+  process: HolderSchema,
   set: z
     .array(
       z.object({
-        item_id: ItemId,
-        waiting: z.boolean(),
-        record: JsonObject,
+        item_id: ItemId.describe("The ID of the item."),
+        waiting: z.boolean().describe(WAITING),
+        record: JsonObject.describe(
+          `The connector's record of the item: a JSON object of at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized.`,
+        ),
       }),
     )
     .max(MAX_AGREEMENTS_PER_REQUEST)
     .optional()
-    .describe("Records to write, each replacing the row's."),
+    .describe(
+      "Agreements to write. Each replaces the item's current agreement. Leave it out to write none.",
+    ),
   clear: z
     .array(ItemId)
     .max(MAX_AGREEMENTS_PER_REQUEST)
     .optional()
-    .describe("Rows whose records to remove."),
+    .describe(
+      "The IDs of items whose agreements to remove. Leave it out to remove none.",
+    ),
 });
 
-const queryRefusal = {
+const UNKNOWN_FIELD =
+  "the body has a top-level field this endpoint doesn't take";
+
+const badRequest = (description: string) => ({
   400: {
     content: {
       "application/json": {
@@ -125,17 +149,11 @@ const queryRefusal = {
         ]),
       },
     },
-    description: "A field missing, or one of the wrong shape or past its bound",
+    description,
   },
-};
+});
 
-const bodyRefusal = {
-  400: {
-    ...queryRefusal[400],
-    description:
-      "A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare",
-  },
-};
+const PROCESS_MISSING = "- `missing_required_field`: `process` is missing.";
 
 const heldResponse = {
   409: {
@@ -145,7 +163,7 @@ const heldResponse = {
       },
     },
     description:
-      "Another process holds the registration until `details.expires_at`; the hold did not move",
+      "- `connector_held`: another process holds the connector until `details.expires_at`. The hold doesn't move.",
   },
 };
 
@@ -157,7 +175,7 @@ const fencedResponse = {
       },
     },
     description:
-      "`process` does not hold the registration: another process does, until `details.expires_at`, or no live hold does and `details` names no `expires_at`. Nothing was written",
+      "- `connector_held`: `process` doesn't hold the connector. `details.expires_at` is when another process's hold ends, and is absent when no process holds a live hold. Nothing is written.",
   },
 };
 
@@ -167,7 +185,8 @@ const holdRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Take or renew a hold",
-  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -182,24 +201,31 @@ const holdRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            expires_at: z.string().describe("When the hold lapses."),
+            expires_at: z
+              .string()
+              .describe(
+                "When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another.",
+              ),
             ttl_ms: z
               .number()
               .int()
               .describe(
-                "The instance's hold window in milliseconds: `expires_at` is the server's clock plus this when it took the hold, so a process schedules its next renewal without reading the server's clock.",
+                "The hold window in milliseconds, so you can schedule the next renewal without reading Marfa's clock.",
               ),
             renewed: z
               .boolean()
               .describe(
-                "True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again.",
+                "`true` if this process's hold was still live when the call arrived; `false` on a first take or after a lapse. If it's `false` and you believed you held the connector, read the state and agreements again before writing.",
               ),
           }),
         },
       },
-      description: "Held",
+      description:
+        "Returns the hold. It lapses at `expires_at` unless the process renews it first.",
     },
-    ...bodyRefusal,
+    ...badRequest(
+      `${PROCESS_MISSING}\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, or ${UNKNOWN_FIELD}.`,
+    ),
     ...ownKeyResponses,
     ...heldResponse,
   },
@@ -211,18 +237,22 @@ const releaseHoldRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Release a hold",
-  description: `Releases the hold if \`process\` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
-    query: z.object({ process: ProcessSchema }),
+    query: z.object({ process: HolderSchema }),
   },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
-      description: "Released, or never held by this process",
+      description:
+        "Returns `ok: true`, whether or not `process` held the hold.",
     },
-    ...queryRefusal,
+    ...badRequest(
+      `${PROCESS_MISSING}\n- \`validation_error\`: a query parameter is unknown, or \`process\` isn't 1 to 100 characters.`,
+    ),
     ...ownKeyResponses,
   },
 });
@@ -233,13 +263,14 @@ const getStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Get the state document",
-  description: `The state document of the registration's source, which a later key with the same source reads too. ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Returns the state document of the connector's source. A later key with the same source reads the same document.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
     200: {
       content: { "application/json": { schema: ConnectorStateSchema } },
-      description: "The state",
+      description: "Returns the state document.",
     },
     ...ownKeyResponses,
   },
@@ -251,7 +282,8 @@ const putStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Replace the state document",
-  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -264,9 +296,11 @@ const putStateRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: WrittenStateSchema } },
-      description: "The state, written",
+      description: "Returns the document as written.",
     },
-    ...bodyRefusal,
+    ...badRequest(
+      `- \`missing_required_field\`: \`process\` or \`state\` is missing.\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, \`state\` isn't a JSON object or is over ${String(MAX_STATE_BYTES / 1024)} KiB serialized, or ${UNKNOWN_FIELD}.`,
+    ),
     ...ownKeyResponses,
     ...fencedResponse,
   },
@@ -279,15 +313,15 @@ const deleteStateRoute = createRoute({
   tags: ["Connectors"],
   summary: "Delete the state document",
   description:
-    "Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.",
+    "Deletes the state document and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
-      description: "Cleared",
+      description: "Returns `ok: true`.",
     },
-    ...ownKeyResponses,
+    ...ownKeyOrOperatorResponses,
   },
 });
 
@@ -297,7 +331,8 @@ const writeAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "Write agreements",
-  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -310,17 +345,28 @@ const writeAgreementsRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            written: z.number().int(),
-            cleared: z.number().int(),
+            written: z
+              .number()
+              .int()
+              .describe("How many agreements Marfa wrote."),
+            cleared: z
+              .number()
+              .int()
+              .describe("How many agreements Marfa removed."),
             skipped: z
               .array(z.string())
-              .describe("The ids skipped, in the order named."),
+              .describe(
+                "The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or its type is one you can't read. A trashed item counts as stored.",
+              ),
           }),
         },
       },
-      description: "What was written",
+      description:
+        "Returns how many agreements Marfa wrote and removed, and the IDs it skipped. Writing an agreement doesn't change the item, its `updated_at` or its `version`, and sends no event.",
     },
-    ...bodyRefusal,
+    ...badRequest(
+      `- \`missing_required_field\`: \`process\` is missing, or an entry in \`set\` lacks a field.\n- \`validation_error\`: a list has more than ${String(MAX_AGREEMENTS_PER_REQUEST)} entries, a record is over ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, an item is named twice across \`set\` and \`clear\`, a field has the wrong type, or ${UNKNOWN_FIELD}.`,
+    ),
     ...ownKeyResponses,
     ...fencedResponse,
   },
@@ -332,7 +378,8 @@ const lookupAgreementsRoute = createRoute({
   path: "/{id}/agreements/lookup",
   tags: ["Connectors"],
   summary: "Look up agreements",
-  description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -346,12 +393,18 @@ const lookupAgreementsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(ConnectorAgreementSchema) }),
+          schema: z.object({
+            data: z
+              .array(ConnectorAgreementSchema)
+              .describe("The agreements found. This list never pages."),
+          }),
         },
       },
-      description: "The agreements",
+      description: "Returns the agreements.",
     },
-    ...bodyRefusal,
+    ...badRequest(
+      `- \`missing_required_field\`: \`item_ids\` is missing.\n- \`validation_error\`: \`item_ids\` is empty or has more than ${String(MAX_AGREEMENTS_PER_REQUEST)} IDs, or ${UNKNOWN_FIELD}.`,
+    ),
     ...ownKeyResponses,
   },
 });
@@ -362,7 +415,8 @@ const listAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "List a connector's agreements",
-  description: `The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. ${CONNECTOR_KEY_ONLY}`,
+  description:
+    "Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -371,7 +425,7 @@ const listAgreementsRoute = createRoute({
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Only the agreements waiting to be carried to the vendor, or only the others.",
+          "Only the agreements waiting to be carried to the vendor (`true`), or only the others (`false`).",
         ),
       limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
       cursor: pageCursor(),
@@ -381,12 +435,15 @@ const listAgreementsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(ConnectorAgreementSchema, "ConnectorAgreementPage"),
+          schema: pageOf(ConnectorAgreementSchema, "ConnectorAgreementPage", {
+            page: "One page of a connector's agreements.",
+            data: "The agreements, the one written longest ago first.",
+          }),
         },
       },
-      description: "The agreements",
+      description: "Returns a page of agreements.",
     },
-    ...validationResponse,
+    ...listQueryResponse,
     ...ownKeyResponses,
   },
 });

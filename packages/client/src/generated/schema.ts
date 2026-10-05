@@ -869,13 +869,13 @@ export interface paths {
         };
         /**
          * List connectors
-         * @description The caller's own registration, or every registration for the operator key, newest first, each with when it last heartbeated, its last run, and until when a process holds it.
+         * @description Returns your registration, or every registration if you use the operator key, newest first.
          */
         get: operations["listConnectors"];
         put?: never;
         /**
          * Register a connector
-         * @description Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.
+         * @description Registers your key as a connector, with a name and description, and returns it. Each key has one registration: registering again updates the name and description and returns the same `id`.
          */
         post: operations["registerConnector"];
         delete?: never;
@@ -893,14 +893,14 @@ export interface paths {
         };
         /**
          * Get a connector
-         * @description The connector's own key or the operator key.
+         * @description Returns a connector, with when it last sent a heartbeat, its last run and any hold on it.
          */
         get: operations["getConnector"];
         put?: never;
         post?: never;
         /**
          * Delete a connector
-         * @description Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key.
+         * @description Deletes the connector, its runs and hold, and its webhook endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.
          */
         delete: operations["deleteConnector"];
         options?: never;
@@ -919,7 +919,7 @@ export interface paths {
         put?: never;
         /**
          * Send a heartbeat
-         * @description Stamps `last_heartbeat_at` with the server's clock. The connector's own key only. What a stale heartbeat means is the reader's to decide: nothing here supervises.
+         * @description Sets `last_heartbeat_at` to the current time and returns it. Marfa takes no action when heartbeats stop.
          */
         post: operations["heartbeatConnector"];
         delete?: never;
@@ -937,13 +937,13 @@ export interface paths {
         };
         /**
          * List connector runs
-         * @description Newest first, to the connector's own key or the operator key.
+         * @description Returns the runs the connector reported, newest first.
          */
         get: operations["listConnectorRuns"];
         put?: never;
         /**
          * Report a run
-         * @description Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.
+         * @description Records one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.
          */
         post: operations["reportConnectorRun"];
         delete?: never;
@@ -961,13 +961,13 @@ export interface paths {
         };
         /**
          * List webhook endpoints
-         * @description Newest first, retired ones included, each address redacted. The connector's own key or the operator key.
+         * @description Returns the connector's webhook endpoints, newest first, retired ones included.
          */
         get: operations["listInboundEndpoints"];
         put?: never;
         /**
          * Create a webhook endpoint
-         * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints.
+         * @description Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.
          */
         post: operations["createInboundEndpoint"];
         delete?: never;
@@ -988,7 +988,7 @@ export interface paths {
         post?: never;
         /**
          * Retire a webhook endpoint
-         * @description Its address stops accepting deliveries, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
+         * @description Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.
          */
         delete: operations["retireInboundEndpoint"];
         options?: never;
@@ -1005,7 +1005,7 @@ export interface paths {
         };
         /**
          * List inbound deliveries
-         * @description Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.
+         * @description Returns the webhook deliveries the connector received, oldest first, without their bodies. Only those not yet handled, unless you set `state`.
          */
         get: operations["listInboundDeliveries"];
         put?: never;
@@ -1025,7 +1025,7 @@ export interface paths {
         };
         /**
          * Get an inbound delivery's body
-         * @description The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.
+         * @description Returns a delivery's body exactly as it arrived, as `application/octet-stream` whatever the sender declared.
          */
         get: operations["getInboundDeliveryBody"];
         put?: never;
@@ -1047,7 +1047,7 @@ export interface paths {
         put?: never;
         /**
          * Mark inbound deliveries handled
-         * @description Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. The connector's own key only.
+         * @description Marks each named delivery handled, with an outcome, and returns them in the order you named. The first mark stands: marking a delivery again returns it unchanged.
          */
         post: operations["markInboundDeliveriesHandled"];
         delete?: never;
@@ -1067,12 +1067,12 @@ export interface paths {
         put?: never;
         /**
          * Take or renew a hold
-         * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.
+         * @description Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.
          */
         post: operations["holdConnector"];
         /**
          * Release a hold
-         * @description Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only.
+         * @description Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.
          */
         delete: operations["releaseConnectorHold"];
         options?: never;
@@ -1089,18 +1089,18 @@ export interface paths {
         };
         /**
          * Get the state document
-         * @description The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.
+         * @description Returns the state document of the connector's source. A later key with the same source reads the same document.
          */
         get: operations["getConnectorState"];
         /**
          * Replace the state document
-         * @description Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold. The connector's own key only.
+         * @description Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.
          */
         put: operations["replaceConnectorState"];
         post?: never;
         /**
          * Delete the state document
-         * @description Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
+         * @description Deletes the state document and every agreement of the connector's source, which every registration of that source reads. No hold is needed.
          */
         delete: operations["deleteConnectorState"];
         options?: never;
@@ -1117,13 +1117,13 @@ export interface paths {
         };
         /**
          * List a connector's agreements
-         * @description The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. The connector's own key only.
+         * @description Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.
          */
         get: operations["listConnectorAgreements"];
         put?: never;
         /**
          * Write agreements
-         * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A record announces nothing and leaves the row, its `updated_at` and its version as they were. Taken only from the `process` holding a live hold. The connector's own key only.
+         * @description Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.
          */
         post: operations["writeConnectorAgreements"];
         delete?: never;
@@ -1143,7 +1143,7 @@ export interface paths {
         put?: never;
         /**
          * Look up agreements
-         * @description The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. The connector's own key only.
+         * @description Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.
          */
         post: operations["lookupConnectorAgreements"];
         delete?: never;
@@ -3137,28 +3137,49 @@ export interface components {
                 };
             };
         };
+        /** @description A connector is a process outside Marfa that registers under an API key, sends heartbeats and reports its runs. */
         Connector: {
+            /** @description Unique identifier for the connector. */
             id: string;
+            /** @description The ID of the API key the connector registered under. */
             key_id: string;
+            /** @description The source of that key. The connector's state document and agreements belong to this source. */
             source: string;
+            /** @description The connector's name. */
             name: string;
+            /** @description What the connector does; `null` if none was given. */
             description: string | null;
+            /** @description When the connector first registered. */
             registered_at: string;
+            /** @description When the connector's name or description was last set. */
             updated_at: string;
+            /** @description When the connector last sent a heartbeat; `null` if never. */
             last_heartbeat_at: string | null;
+            /** @description The connector's most recently reported run; `null` if it has reported none. */
             last_run: components["schemas"]["ConnectorRun"] | null;
-            /** @description When the hold a process took at `POST /connectors/{id}/hold` lapses; `null` when no process holds the registration or its hold has lapsed. */
+            /** @description When the hold on the connector lapses; `null` if no process holds it or its hold has lapsed. */
             hold_expires_at: string | null;
         };
+        /** @description A run a connector reported, with its outcome and times. */
         ConnectorRun: {
+            /** @description Unique identifier for the run. */
             id: string;
+            /** @description The ID of the connector that reported the run. */
             connector_id: string;
-            /** @enum {string} */
+            /**
+             * @description How the run ended: `succeeded` or `failed`.
+             * @enum {string}
+             */
             outcome: "succeeded" | "failed";
+            /** @description When the run started, as the connector reported it. */
             started_at: string;
+            /** @description When the run finished, as the connector reported it. */
             finished_at: string;
+            /** @description A short summary of the run; `null` if none was reported. */
             summary: string | null;
+            /** @description The error the run reported; `null` if none was reported. */
             error: string | null;
+            /** @description When Marfa recorded the run. */
             reported_at: string;
         };
         /** @description An error response. */
@@ -3178,9 +3199,11 @@ export interface components {
                 };
             };
         };
+        /** @description A page holding every connector you can read. */
         ConnectorPage: {
+            /** @description Every connector you can read. */
             data: components["schemas"]["Connector"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every connector you can read in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -3200,25 +3223,35 @@ export interface components {
                 };
             };
         };
+        /** @description One page of a connector's runs. */
         ConnectorRunPage: {
+            /** @description The runs, newest reported first. */
             data: components["schemas"]["ConnectorRun"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description A webhook endpoint is an address where a sender posts to a connector without a credential: the address is the credential. */
         InboundEndpoint: {
+            /** @description Unique identifier for the webhook endpoint. */
             id: string;
+            /** @description The ID of the connector the endpoint belongs to. */
             connector_id: string;
+            /** @description A name for people to read; `null` if none was given. */
             label: string | null;
-            /** @description Lowercased. A delivery repeating this header's value is marked a repeat of the first that carried it. */
+            /** @description The header whose value identifies a delivery, lowercased; `null` if none was set. A delivery that repeats a value is marked as a repeat in `duplicate_of`. */
             duplicate_header: string | null;
-            /** @description The address, under the instance's own: in full only in the answer that made it, redacted to its last four characters after. */
+            /** @description The address a sender posts to, a path on this instance. It is in full only in the response that created the endpoint; after that it shows `/inbound/****` and its last four characters. */
             path: string;
+            /** @description When the endpoint was created. */
             created_at: string;
+            /** @description When the endpoint was retired; `null` while it is live. */
             retired_at: string | null;
         };
+        /** @description A page holding every webhook endpoint of the connector. */
         InboundEndpointPage: {
+            /** @description Every webhook endpoint of the connector. */
             data: components["schemas"]["InboundEndpoint"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every webhook endpoint of the connector in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -3238,31 +3271,50 @@ export interface components {
                 };
             };
         };
+        /** @description One page of a connector's inbound deliveries. */
         InboundDeliveryPage: {
+            /** @description The deliveries, oldest first. */
             data: components["schemas"]["InboundDelivery"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description A delivery is one request that arrived at a webhook endpoint, stored as it came until the connector marks it handled. */
         InboundDelivery: {
+            /** @description Unique identifier for the delivery. */
             id: string;
+            /** @description The ID of the endpoint that received the delivery. */
             endpoint_id: string;
+            /** @description When Marfa received the delivery. */
             received_at: string;
+            /** @description The HTTP method of the request. */
             method: string;
+            /** @description The query string as the sender sent it, without the `?`; empty if there was none. */
             query: string;
             /** @description `[name, value]` pairs in the order and case they arrived. */
             headers: [
                 string,
                 string
             ][];
+            /** @description The size of the body in bytes. */
             size: number;
+            /** @description The SHA-256 hash of the body, in hex. */
             sha256: string;
+            /** @description The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none. */
             duplicate_of: {
+                /** @description The ID of the earlier delivery. */
                 id: string;
-                /** @enum {string|null} */
+                /**
+                 * @description How the earlier delivery was handled; `null` if it is still pending.
+                 * @enum {string|null}
+                 */
                 outcome: "processed" | "duplicate" | "rejected" | null;
             } | null;
+            /** @description When the delivery was marked handled; `null` while pending. */
             handled_at: string | null;
-            /** @enum {string|null} */
+            /**
+             * @description How the connector handled the delivery: `processed`, `duplicate` or `rejected`; `null` while pending.
+             * @enum {string|null}
+             */
             outcome: "processed" | "duplicate" | "rejected" | null;
         };
         /** @description An error response. */
@@ -3299,25 +3351,31 @@ export interface components {
                 };
             };
         };
+        /** @description A connector's state document: the JSON object it keeps on the instance to resume from. */
         ConnectorState: {
-            /** @description The document as last written; `{}` when none was. */
+            /** @description The document as last written; `{}` if none was. */
             state: {
                 [key: string]: unknown;
             };
-            /** @description When it was last written; `null` when it never was. */
+            /** @description When it was last written; `null` if it never was. */
             updated_at: string | null;
         };
+        /** @description An agreement is a connector's record of what it and its vendor last agreed about one item. */
         ConnectorAgreement: {
+            /** @description The ID of the item the agreement is about. */
             item_id: string;
-            /** @description Whether a change to the row waits to be carried to the vendor. */
+            /** @description `true` if a change to the item is waiting to be carried to the vendor. */
             waiting: boolean;
-            /** @description The connector's own record of the row. */
+            /** @description The connector's own record of the item, as it wrote it. */
             record: {
                 [key: string]: unknown;
             };
+            /** @description When the agreement was last written. */
             updated_at: string;
         };
+        /** @description One page of a connector's agreements. */
         ConnectorAgreementPage: {
+            /** @description The agreements, the one written longest ago first. */
             data: components["schemas"]["ConnectorAgreement"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
@@ -12676,7 +12734,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The registrations */
+            /** @description Returns the connectors. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12778,13 +12836,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The connector's name. */
                     name: string;
+                    /** @description What the connector does. Leave it out for none: registering again without it clears the old one. */
                     description?: string;
                 };
             };
         };
         responses: {
-            /** @description The registration, updated */
+            /** @description Returns the existing connector with its name and description updated. Its `id` and `registered_at` don't change. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12798,7 +12858,7 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
-            /** @description The registration */
+            /** @description Returns the new connector. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12812,7 +12872,10 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
-            /** @description `missing_required_field` for a body without `name`; `validation_error` for any other invalid registration */
+            /**
+             * @description - `missing_required_field`: `name` is missing.
+             *     - `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12842,7 +12905,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries an app's session token, which is not a key, or the operator key, which runs the instance and never acts as a connector. */
+            /** @description - `forbidden`: your credential is an app's session token, not a key, or the operator key, which runs the instance and can't register as a connector. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12922,14 +12985,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The registration */
+            /** @description Returns the connector. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12973,7 +13036,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No such connector, or one registered by another key */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13041,14 +13104,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Removed */
+            /** @description Returns `ok: true`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13092,7 +13155,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13107,7 +13170,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13187,14 +13250,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The stamp */
+            /** @description Returns the time Marfa recorded. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13206,6 +13269,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description When Marfa recorded the heartbeat. */
                         last_heartbeat_at: string;
                     };
                 };
@@ -13240,7 +13304,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13255,7 +13319,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13340,14 +13404,14 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The runs */
+            /** @description Returns a page of runs. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13361,7 +13425,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorRunPage"];
                 };
             };
-            /** @description A `limit` outside its bounds */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13391,7 +13455,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No such connector, or one registered by another key */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours isn't the operator key. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13459,7 +13523,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -13467,17 +13531,24 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @enum {string} */
+                    /**
+                     * @description How the run ended: `succeeded` or `failed`.
+                     * @enum {string}
+                     */
                     outcome: "succeeded" | "failed";
+                    /** @description When the run started, as an ISO 8601 time. Marfa stores it as you send it. */
                     started_at: string;
+                    /** @description When the run finished, as an ISO 8601 time. It can't be before `started_at`. */
                     finished_at: string;
+                    /** @description A short summary of the run. Leave it out for none. */
                     summary?: string;
+                    /** @description The error the run hit. Leave it out for none. */
                     error?: string;
                 };
             };
         };
         responses: {
-            /** @description The run */
+            /** @description Returns the run. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13491,7 +13562,10 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorRun"];
                 };
             };
-            /** @description `missing_required_field` for a body without `outcome`, `started_at` or `finished_at`; `validation_error` for any other invalid run */
+            /**
+             * @description - `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.
+             *     - `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, or `summary` or `error` is over 2,000 characters.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13521,7 +13595,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13536,7 +13610,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13616,14 +13690,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The endpoints */
+            /** @description Returns the endpoints, each with its `path` redacted to its last four characters. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13667,7 +13741,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13682,7 +13756,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13750,7 +13824,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -13758,14 +13832,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description A name for people to read. Leave it out for none. */
                     label?: string;
-                    /** @description A header whose value names a delivery, such as `X-GitHub-Delivery`: a delivery repeating a value is marked as a repeat, never dropped. */
+                    /** @description A header whose value identifies a delivery, such as `X-GitHub-Delivery`. Marfa stores a delivery that repeats a value and marks it as a repeat. Leave it out to mark none. */
                     duplicate_header?: string;
                 };
             };
         };
         responses: {
-            /** @description The endpoint, its address in full */
+            /** @description Returns the endpoint, with its full `path`. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13779,7 +13854,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
-            /** @description An invalid body or query */
+            /** @description - `validation_error`: `label` isn't 1 to 200 characters, or `duplicate_header` isn't a valid header name. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13809,7 +13884,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13824,7 +13899,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13839,7 +13914,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description The registration holds as many live endpoints as it may */
+            /** @description - `conflict`: the connector already has 10 live endpoints. Retire one first. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13919,16 +13994,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
-                /** @description An endpoint's `id`. */
+                /** @description The ID of the webhook endpoint. */
                 endpoint_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The endpoint, retired */
+            /** @description Returns the endpoint with `retired_at` set. Retiring it again returns it unchanged. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13972,7 +14047,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13987,7 +14062,10 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector, or no such endpoint on it */
+            /**
+             * @description - `connector_not_found`: no connector has this ID.
+             *     - `endpoint_not_found`: the connector has no endpoint with this ID.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14065,7 +14143,7 @@ export interface operations {
     listInboundDeliveries: {
         parameters: {
             query?: {
-                /** @description Which deliveries: not yet handled, handled, or both. */
+                /** @description Which deliveries to return: `pending` (not yet handled), `handled` or `any`. */
                 state?: "pending" | "handled" | "any";
                 /** @description Only the deliveries this endpoint received. */
                 endpoint_id?: string;
@@ -14076,14 +14154,14 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The deliveries */
+            /** @description Returns a page of deliveries. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14097,7 +14175,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundDeliveryPage"];
                 };
             };
-            /** @description An invalid body or query */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14127,7 +14205,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14142,7 +14220,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14210,16 +14288,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
-                /** @description A delivery's `id`. */
+                /** @description The ID of the delivery. */
                 delivery_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The body */
+            /** @description Returns the body. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14263,7 +14341,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14278,7 +14356,10 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector, or no such delivery on it */
+            /**
+             * @description - `connector_not_found`: no connector has this ID.
+             *     - `delivery_not_found`: the connector has no delivery with this ID.
+             */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14346,7 +14427,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -14354,14 +14435,18 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The IDs of the deliveries to mark. */
                     ids: string[];
-                    /** @enum {string} */
+                    /**
+                     * @description How the connector handled them: `processed`, `duplicate` or `rejected`. Marfa records it and acts on nothing.
+                     * @enum {string}
+                     */
                     outcome: "processed" | "duplicate" | "rejected";
                 };
             };
         };
         responses: {
-            /** @description The deliveries, marked */
+            /** @description Returns the deliveries, marked. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14373,11 +14458,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description The deliveries, each once, in the order you first named it. */
                         data: components["schemas"]["InboundDelivery"][];
                     };
                 };
             };
-            /** @description `missing_required_field` for a body without `ids` or `outcome`; `validation_error` for any other invalid body */
+            /**
+             * @description - `missing_required_field`: `ids` or `outcome` is missing.
+             *     - `validation_error`: `ids` is empty or has more than 200 IDs, or `outcome` isn't `processed`, `duplicate` or `rejected`.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14407,7 +14496,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14423,8 +14512,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `connector_not_found`: no such connector.
-             *     - `delivery_not_found`: an ID is not one of this connector's deliveries. Nothing is marked.
+             * @description - `connector_not_found`: no connector has this ID.
+             *     - `delivery_not_found`: an ID isn't one of this connector's deliveries. Nothing is marked.
              */
             404: {
                 headers: {
@@ -14505,7 +14594,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -14513,13 +14602,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The process's own name for itself, opaque to the server, such as a UUID it chose at start. */
+                    /** @description A name the process chose for itself, such as a UUID made at start. Marfa treats it as opaque. */
                     process: string;
                 };
             };
         };
         responses: {
-            /** @description Held */
+            /** @description Returns the hold. It lapses at `expires_at` unless the process renews it first. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14531,16 +14620,19 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description When the hold lapses. */
+                        /** @description When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another. */
                         expires_at: string;
-                        /** @description The instance's hold window in milliseconds: `expires_at` is the server's clock plus this when it took the hold, so a process schedules its next renewal without reading the server's clock. */
+                        /** @description The hold window in milliseconds, so you can schedule the next renewal without reading Marfa's clock. */
                         ttl_ms: number;
-                        /** @description True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again. */
+                        /** @description `true` if this process's hold was still live when the call arrived; `false` on a first take or after a lapse. If it's `false` and you believed you held the connector, read the state and agreements again before writing. */
                         renewed: boolean;
                     };
                 };
             };
-            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
+            /**
+             * @description - `missing_required_field`: `process` is missing.
+             *     - `validation_error`: `process` isn't 1 to 100 characters, or the body has a top-level field this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14570,7 +14662,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14585,7 +14677,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14600,7 +14692,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Another process holds the registration until `details.expires_at`; the hold did not move */
+            /** @description - `connector_held`: another process holds the connector until `details.expires_at`. The hold doesn't move. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14678,19 +14770,19 @@ export interface operations {
     releaseConnectorHold: {
         parameters: {
             query: {
-                /** @description The process's own name for itself, opaque to the server, such as a UUID it chose at start. */
+                /** @description The name the process took the connector's hold under. */
                 process: string;
             };
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Released, or never held by this process */
+            /** @description Returns `ok: true`, whether or not `process` held the hold. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14704,7 +14796,10 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description A field missing, or one of the wrong shape or past its bound */
+            /**
+             * @description - `missing_required_field`: `process` is missing.
+             *     - `validation_error`: a query parameter is unknown, or `process` isn't 1 to 100 characters.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14734,7 +14829,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14749,7 +14844,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14829,14 +14924,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The state */
+            /** @description Returns the state document. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14880,7 +14975,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14895,7 +14990,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14963,7 +15058,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -14971,8 +15066,9 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The process's own name for itself, opaque to the server, such as a UUID it chose at start. */
+                    /** @description The name the process took the connector's hold under. */
                     process: string;
+                    /** @description The new document, a JSON object of at most 512 KiB serialized. It replaces the whole document. */
                     state: {
                         [key: string]: unknown;
                     };
@@ -14980,7 +15076,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The state, written */
+            /** @description Returns the document as written. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15001,7 +15097,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
+            /**
+             * @description - `missing_required_field`: `process` or `state` is missing.
+             *     - `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15031,7 +15130,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15046,7 +15145,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15061,7 +15160,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description `process` does not hold the registration: another process does, until `details.expires_at`, or no live hold does and `details` names no `expires_at`. Nothing was written */
+            /** @description - `connector_held`: `process` doesn't hold the connector. `details.expires_at` is when another process's hold ends, and is absent when no process holds a live hold. Nothing is written. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15141,14 +15240,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Cleared */
+            /** @description Returns `ok: true`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15192,7 +15291,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor the operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15207,7 +15306,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15285,7 +15384,7 @@ export interface operations {
     listConnectorAgreements: {
         parameters: {
             query?: {
-                /** @description Only the agreements waiting to be carried to the vendor, or only the others. */
+                /** @description Only the agreements waiting to be carried to the vendor (`true`), or only the others (`false`). */
                 waiting?: "true" | "false";
                 /** @description The maximum number of results to return. */
                 limit?: number;
@@ -15294,14 +15393,14 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The agreements */
+            /** @description Returns a page of agreements. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15315,7 +15414,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorAgreementPage"];
                 };
             };
-            /** @description An invalid body or query */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15345,7 +15444,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15360,7 +15459,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15428,7 +15527,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -15436,23 +15535,26 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The process's own name for itself, opaque to the server, such as a UUID it chose at start. */
+                    /** @description The name the process took the connector's hold under. */
                     process: string;
-                    /** @description Records to write, each replacing the row's. */
+                    /** @description Agreements to write. Each replaces the item's current agreement. Leave it out to write none. */
                     set?: {
+                        /** @description The ID of the item. */
                         item_id: string;
+                        /** @description `true` if a change to the item is waiting to be carried to the vendor. */
                         waiting: boolean;
+                        /** @description The connector's record of the item: a JSON object of at most 16 KiB serialized. */
                         record: {
                             [key: string]: unknown;
                         };
                     }[];
-                    /** @description Rows whose records to remove. */
+                    /** @description The IDs of items whose agreements to remove. Leave it out to remove none. */
                     clear?: string[];
                 };
             };
         };
         responses: {
-            /** @description What was written */
+            /** @description Returns how many agreements Marfa wrote and removed, and the IDs it skipped. Writing an agreement doesn't change the item, its `updated_at` or its `version`, and sends no event. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15464,14 +15566,19 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description How many agreements Marfa wrote. */
                         written: number;
+                        /** @description How many agreements Marfa removed. */
                         cleared: number;
-                        /** @description The ids skipped, in the order named. */
+                        /** @description The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or its type is one you can't read. A trashed item counts as stored. */
                         skipped: string[];
                     };
                 };
             };
-            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
+            /**
+             * @description - `missing_required_field`: `process` is missing, or an entry in `set` lacks a field.
+             *     - `validation_error`: a list has more than 500 entries, a record is over 16 KiB serialized, an item is named twice across `set` and `clear`, a field has the wrong type, or the body has a top-level field this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15501,7 +15608,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15516,7 +15623,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15531,7 +15638,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description `process` does not hold the registration: another process does, until `details.expires_at`, or no live hold does and `details` names no `expires_at`. Nothing was written */
+            /** @description - `connector_held`: `process` doesn't hold the connector. `details.expires_at` is when another process's hold ends, and is absent when no process holds a live hold. Nothing is written. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15611,7 +15718,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                /** @description The ID of the connector. */
                 id: string;
             };
             cookie?: never;
@@ -15619,12 +15726,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The IDs of the items to look up. */
                     item_ids: string[];
                 };
             };
         };
         responses: {
-            /** @description The agreements */
+            /** @description Returns the agreements. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15636,11 +15744,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description The agreements found. This list never pages. */
                         data: components["schemas"]["ConnectorAgreement"][];
                     };
                 };
             };
-            /** @description A field missing, one of the wrong shape or past its bound, or a top-level field the body does not declare */
+            /**
+             * @description - `missing_required_field`: `item_ids` is missing.
+             *     - `validation_error`: `item_ids` is empty or has more than 500 IDs, or the body has a top-level field this endpoint doesn't take.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15670,7 +15782,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Another key's registration */
+            /** @description - `forbidden`: your credential isn't the connector's own key. The operator key can't use this endpoint. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15685,7 +15797,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such connector */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
