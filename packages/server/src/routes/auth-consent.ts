@@ -204,7 +204,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const getVerdict = await verifySignedQuery(auth, oauthQuery);
     if (getVerdict !== "valid") {
       setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage(failureCopy(getVerdict)), 400);
+      return c.html(
+        renderAuthorizeExpiredPage(c.var.cspNonce, failureCopy(getVerdict)),
+        400,
+      );
     }
 
     // OIDC `prompt` rides the signed query verbatim:
@@ -618,7 +621,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     if (decisionVerdict !== "valid") {
       setNoStore(c);
       return c.html(
-        renderAuthorizeExpiredPage(failureCopy(decisionVerdict)),
+        renderAuthorizeExpiredPage(
+          c.var.cspNonce,
+          failureCopy(decisionVerdict),
+        ),
         400,
       );
     }

@@ -12,10 +12,10 @@ import { parseScope } from "@withmarfa/shared";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
+  renderConsentScreen,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
-} from "./device-pages.js";
-import { renderConsentScreen } from "./test-render.js";
+} from "./test-render.js";
 import {
   contentSecurityPolicy,
   pageSecurityPolicy,
@@ -48,8 +48,12 @@ describe("the policy", () => {
   it("refuses inline script and style without a nonce, and any other origin's", () => {
     const policy = directives(contentSecurityPolicy("abc"));
     expect(policy.get("default-src")).toEqual(["'none'"]);
-    expect(policy.get("script-src")).toEqual(["'self'", "'nonce-abc'"]);
-    expect(policy.get("style-src")).toEqual(["'self'"]);
+    // By nonce alone and not by origin: an origin source would also admit
+    // whatever this origin serves under that type, and the blob link door
+    // serves an uploader's bytes under the uploader's type, without a
+    // credential.
+    expect(policy.get("script-src")).toEqual(["'nonce-abc'"]);
+    expect(policy.get("style-src")).toEqual(["'nonce-abc'"]);
     for (const [name, values] of policy) {
       expect(values, name).not.toContain("'unsafe-inline'");
       expect(values, name).not.toContain("'unsafe-eval'");
@@ -95,7 +99,7 @@ describe("pageSecurityPolicy", () => {
       const res = await app().request(path);
       expect(res.headers.get("content-type"), path).toContain("text/html");
       expect(res.headers.get("content-security-policy"), path).toMatch(
-        /script-src 'self' 'nonce-[\w+/=-]{16,}'/,
+        /script-src 'nonce-[\w+/=-]{16,}'/,
       );
     }
   });
@@ -147,7 +151,7 @@ describe("every page the app renders", () => {
       }
       answeredHtml.push(path);
       expect(res.headers.get("content-security-policy"), path).toMatch(
-        /default-src 'none'; script-src 'self' 'nonce-/,
+        /default-src 'none'; script-src 'nonce-/,
       );
     }
     // The witness that the loop looked at something: these are pages, and
@@ -159,7 +163,20 @@ describe("every page the app renders", () => {
     const missing = await ctx.app.request("/no-such-door", { headers: HTML });
     expect(missing.headers.get("content-type")).toContain("text/html");
     expect(missing.headers.get("content-security-policy")).toContain(
-      "script-src 'self' 'nonce-",
+      "script-src 'nonce-",
+    );
+  });
+
+  it("carries the policy on a page a later middleware refused before any door ran", async () => {
+    // A read-view header the app refuses is answered by middleware mounted
+    // well before the doors, and as a page when asked for one.
+    const res = await ctx.app.request("/auth/sign-in", {
+      headers: { ...HTML, "X-Marfa-Read-View": "x" },
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("content-security-policy")).toContain(
+      "script-src 'nonce-",
     );
   });
 
@@ -176,10 +193,15 @@ describe("every page the app renders", () => {
       res.headers.get("content-security-policy") ?? "",
     )?.[1];
     expect(nonce).toBeTruthy();
-    const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>/g)];
-    // Witness: the page has an inline script at all.
-    expect(inline.length).toBeGreaterThan(0);
-    for (const [, attributes] of inline) {
+    // Every script tag, inline or by source, and the stylesheet link, carry
+    // the nonce: the policy allows nothing by origin.
+    const tags = [...html.matchAll(/<(?:script|link)\b([^>]*)>/g)];
+    // Witness: the page has some, among them an inline script.
+    expect(tags.length).toBeGreaterThan(2);
+    expect(
+      tags.some(([, attributes]) => !/\bsrc=/.test(attributes ?? "")),
+    ).toBe(true);
+    for (const [, attributes] of tags) {
       expect(attributes).toContain(`nonce="${nonce ?? ""}"`);
     }
   });
@@ -212,7 +234,7 @@ describe("the pages with scopes on them", () => {
     clientId: "c",
     oauthQuery: "a=b",
     // A re-consent, so the sections with spacing render as well as the groups.
-    priorScopes: ["core.note:read", "core.event:read"],
+    priorScopes: ["core.note:read", "core.event:write"],
   });
   const pages: Record<string, string> = {
     "the consent page": consent,
@@ -240,8 +262,9 @@ describe("the pages with scopes on them", () => {
   });
 
   it("gives its inline script the nonce, and shows the scan can find one", () => {
-    // The witness: the first-time page has an inline script, so a scan of
+    // The witness: the re-consent page has an inline script, so a scan of
     // inline scripts looks at something.
+    expect(consent).toContain("lsec--later");
     const inline = [...consent.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>/g)];
     expect(inline.length).toBeGreaterThan(0);
     for (const [, attributes] of inline) {

@@ -175,9 +175,10 @@ describe("the instance", () => {
       expect(res.headers.get("content-type"), path).toContain("text/html");
       const policy = res.headers.get("content-security-policy") ?? "";
       expect(policy, path).toContain("default-src 'none'");
-      expect(policy, path).toContain("style-src 'self'");
+      expect(policy, path).toMatch(/style-src 'nonce-[^']+'/);
+      expect(policy, path).not.toContain("'self'");
       expect(policy, path).not.toContain("unsafe-inline");
-      const nonce = /script-src 'self' 'nonce-([^']+)'/.exec(policy)?.[1];
+      const nonce = /script-src 'nonce-([^']+)'/.exec(policy)?.[1];
       expect(nonce, path).toBeTruthy();
       nonces.add(nonce ?? "");
     }

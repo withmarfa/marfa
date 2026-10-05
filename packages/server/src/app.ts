@@ -163,12 +163,19 @@ export function createApp(
     // same way it reads every other refusal.
     c.header("X-Error-Code", "not_found");
     if (prefersHtml(c.req.header("accept"))) {
-      return c.html(renderHttpErrorPage(404), 404);
+      return c.html(renderHttpErrorPage(404, c.var.cspNonce), 404);
     }
     return c.json(body, 404);
   });
 
-  // Outermost, so every answer the application gives carries the contract
+  // The policy for every page the server renders. First, so that no answer
+  // can precede it, a refusal from any middleware below included. Its own
+  // middleware and not an option of `secureHeaders`, which writes after the
+  // handler and would replace the policy the blob doors send for the bytes
+  // they serve.
+  app.use("*", pageSecurityPolicy);
+
+  // Next out, so every answer the application gives carries the contract
   // version, the ones no later layer shapes included.
   app.use("*", contractHeader());
 
@@ -261,10 +268,6 @@ export function createApp(
       referrerPolicy: "strict-origin-when-cross-origin",
     }),
   );
-  // The policy for every page the server renders. Its own middleware and not
-  // an option of `secureHeaders`, which writes after the handler and would
-  // replace the policy the blob doors send for the bytes they serve.
-  app.use("*", pageSecurityPolicy);
 
   // Global request-body size cap for the JSON write surface — a
   // memory-exhaustion DoS guard. `bodyLimit` rejects (via Content-Length
@@ -347,8 +350,11 @@ export function createApp(
       const session = await auth?.getSession(c.req.raw.headers);
       return c.html(
         session
-          ? renderSignedInPage({ email: session.user.email })
-          : renderRootPage(),
+          ? renderSignedInPage({
+              email: session.user.email,
+              nonce: c.var.cspNonce,
+            })
+          : renderRootPage(c.var.cspNonce),
       );
     }
     return c.json({

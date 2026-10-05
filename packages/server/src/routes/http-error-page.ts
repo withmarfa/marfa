@@ -81,11 +81,12 @@ function copyFor(status: number): ErrorPageCopy {
   };
 }
 
-export function renderHttpErrorPage(status: number): string {
+export function renderHttpErrorPage(status: number, nonce: string): string {
   const copy = copyFor(status);
   return renderAuthLayout({
     title: copy.title,
     centered: true,
+    nonce,
     bodyHtml: `
       ${confirmIcon(copy.icon)}
       <h1 class="title">${copy.heading}</h1>

@@ -147,8 +147,20 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
 ## Pages
 
-23. WHEN the server answers with an HTML page, it SHALL send a `Content-Security-Policy` that allows a script only from its own origin or carrying a nonce the policy names, and a style only from its own origin, and that names a nonce of its own for each response.
+23. WHEN the server answers with an HTML page, it SHALL send a `Content-Security-Policy` that allows a script or a style only when it carries a nonce the policy names.
 
-    Reason: the sign-in, consent, device approval and error pages act on the owner's signed-in session, so a policy that refuses inline script without a nonce and any script from another origin limits what an injection into one of them can do. A nonce reused across responses is one a page can be made to repeat. A blob's bytes are not a page of this server and keep the policy of `blobs.md` 25.
+    Reason: the sign-in, consent, device approval and error pages act on the owner's signed-in session, so a policy that refuses inline script without a nonce and any script from another origin limits what an injection into one of them can do. The nonce stands alone and no source is allowed by origin, because the same origin serves a blob's bytes at its link door, without a credential and under the type its uploader named, and a source allowed by origin would run them. A blob's bytes are not a page of this server and keep the policy of `blobs.md` 25.
 
-    Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts`; `packages/server/src/routes/blob-door-census.test.ts`.
+    Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts › refuses inline script and style without a nonce, and any other origin's`; `packages/server/src/routes/auth-pages-browser.test.ts › refuses a script an uploaded blob offers from the page's own origin`; `packages/server/src/routes/blob-door-census.test.ts`.
+
+24. WHEN the server answers with an HTML page, it SHALL name in its policy a nonce of its own for that response.
+
+    Reason: a nonce that repeats across responses can be read from one page and carried by an injection into the next.
+
+    Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts › uses a nonce of its own for each response`.
+
+25. WHEN a middleware refuses a request before any door has run, and the answer is an HTML page, the server SHALL send that page with the policy of statement 23.
+
+    Reason: the pages a refusal renders are pages of this server like any other, and an answer given ahead of the doors must not be the way round the policy.
+
+    Tests: `packages/server/src/routes/content-security-policy.test.ts › carries the policy on a page a later middleware refused before any door ran`.

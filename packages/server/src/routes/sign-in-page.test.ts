@@ -5,11 +5,8 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import {
-  renderSignInPage,
-  synthesizeOauthReturnTo,
-  validateReturnTo,
-} from "./sign-in-page.js";
+import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-page.js";
+import { renderSignInPage } from "./test-render.js";
 
 /**
  * Smoke tests for GET /auth/sign-in (HTML page) + the POST /auth/sign-in
@@ -81,7 +78,7 @@ describe("renderSignInPage", () => {
       returnTo: "/",
     });
     expect(html).toContain(
-      '<script src="/auth/static/submit-state.js"></script>',
+      '<script src="/auth/static/submit-state.js" nonce="test-nonce"></script>',
     );
   });
 
@@ -124,7 +121,7 @@ describe("renderSignInPage", () => {
       returnTo: "/",
     });
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css">',
+      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
     );
     expect(html).not.toContain("<style>");
   });

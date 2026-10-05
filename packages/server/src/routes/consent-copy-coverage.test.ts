@@ -43,10 +43,12 @@ import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import { getPermissionBundles } from "../config.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { humanizeType, SCOPE_LABELS } from "./consent.js";
-import { renderConsentScreen } from "./test-render.js";
+import {
+  renderConsentScreen,
+  renderDeviceConsentScreen,
+} from "./test-render.js";
 import { PERMISSION_LABELS, permissionLabel } from "./permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
-import { renderDeviceConsentScreen } from "./device-pages.js";
 import { escapeHtml } from "./auth-html.js";
 
 /**

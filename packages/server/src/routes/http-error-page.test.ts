@@ -16,7 +16,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { prefersHtml, renderHttpErrorPage } from "./http-error-page.js";
+import { prefersHtml } from "./http-error-page.js";
+import { renderHttpErrorPage } from "./test-render.js";
 
 let ctx: TestContext | undefined;
 

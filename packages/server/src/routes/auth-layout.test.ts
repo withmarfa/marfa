@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderAuthLayout } from "./auth-layout.js";
+import { renderAuthLayout } from "./test-render.js";
 
 /**
  * `renderAuthLayout` is the shared scaffold. Tests cover:
@@ -27,7 +27,7 @@ describe("renderAuthLayout", () => {
   it("links to /auth/static/auth.css", () => {
     const html = renderAuthLayout({ title: "x", bodyHtml: "" });
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css">',
+      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
     );
   });
 

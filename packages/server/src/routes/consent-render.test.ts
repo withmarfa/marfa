@@ -1,7 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen } from "./test-render.js";
+import {
+  renderConsentScreen,
+  renderDeviceConsentScreen,
+} from "./test-render.js";
 import {
   SCOPE_LABELS,
   SCOPE_SHORT,
@@ -34,7 +37,6 @@ import {
   buildScopeDescriptions,
   CONSENT_SCOPE_DESCRIPTIONS,
 } from "./auth-consent.js";
-import { renderDeviceConsentScreen } from "./device-pages.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import {
   OPEN_ENDED_EXPANSION_TAIL,
@@ -111,7 +113,7 @@ describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css">',
+      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
     );
     expect(html).not.toContain("<style>");
   });

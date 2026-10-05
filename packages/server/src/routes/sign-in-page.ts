@@ -15,6 +15,9 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml, unverifiedAppCallout } from "./auth-html.js";
 
 interface SignInPageParams {
+  /** The nonce the response's content security policy names, which the
+   *  script tags carry. */
+  nonce: string;
   /**
    * Where to send the user after a successful sign-in, already passed
    * through `validateReturnTo`. Carried in the form's hidden field so it
@@ -120,13 +123,14 @@ export function renderSignInPage(params: SignInPageParams): string {
     ${appCallout}
     ${errorBanner}
     ${passwordForm}
-    <script src="/auth/static/password-toggle.js"></script>
-    <script src="/auth/static/submit-state.js"></script>
+    <script src="/auth/static/password-toggle.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({
     title: "Sign in to Marfa",
     bodyHtml: body,
+    nonce: params.nonce,
   });
 }
 

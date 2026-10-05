@@ -1073,8 +1073,8 @@ export function renderConsentScreen(params: ConsentParams): string {
   // duplicate groups in a re-consent diff don't cross-wire. The master toggle
   // carries no `name`, so only the per-type members submit. Minified with
   // `replace(/\s+/g, " ")` — no `//` line comments. A click on a group's
-  // switch must not also open or close the group, which an inline handler used
-  // to stop and the policy no longer allows.
+  // switch must not also open or close the group; the page's content security
+  // policy refuses an inline handler, so the listener that stops it is here.
   const enhancementScript = `
     (function () {
       document.querySelectorAll('.grp').forEach(function (grp) {
@@ -1116,7 +1116,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       </div>
     </form>
     <script nonce="${escapeHtml(params.nonce)}">${enhancementScript}</script>
-    <script src="/auth/static/submit-state.js"></script>
+    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({
@@ -1124,5 +1124,6 @@ export function renderConsentScreen(params: ConsentParams): string {
       ? `Update access for ${params.clientName}`
       : `Authorize ${params.clientName}`,
     bodyHtml,
+    nonce: params.nonce,
   });
 }
