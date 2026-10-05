@@ -72,7 +72,8 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Scan, drain, catch up and pull: everything a folder does, once.
+    /// Scan, drain, catch up, pull, and send the placements the pull queued:
+    /// everything a folder does, once.
     Push {
         /// The folder.
         dir: PathBuf,
@@ -251,6 +252,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push { dir } => {
+            let folder = opened(&dir, Some(named.session()?))?;
             let SyncReport {
                 hydrated,
                 settings,
@@ -258,7 +260,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 drain: drained,
                 catch_up,
                 pull: pulled,
-            } = match opened(&dir, Some(named.session()?))?.sync()? {
+            } = match folder.sync()? {
                 Synced::Done(report) => *report,
                 Synced::Waiting(plan) => {
                     return output::report(
@@ -310,6 +312,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                             .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
                     ));
                     lines.push(output::counts(&drained.report));
+                    lines.extend(Conflicts::default().say(&folder, &drained.report));
                     lines.extend(output::undelivered(&drained.report));
                     if let Some(stopped) = &drained.report.stopped {
                         lines.push(stopped.clone());
@@ -776,7 +779,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         line.push('\n');
         line.push_str(&said);
     }
-    for said in trashed_lines(report) {
+    for said in trashed_lines(report)
+        .into_iter()
+        .chain(unsure_lines(report))
+    {
         line.push('\n');
         line.push_str(&said);
     }
@@ -784,11 +790,20 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
 }
 
 pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
+    report
+        .trashed
+        .iter()
+        .map(|path| {
+            format!("{path} was found in no folder on this machine, so its item was trashed")
+        })
+        .collect()
+}
+
+/// What stands while other folders cannot be read, as opposed to what
+/// happened in one pass.
+pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")
-    });
-    let trashed = report.trashed.iter().map(|path| {
-        format!("{path} was found in no folder on this machine, so its item was trashed")
     });
     let unsure = report.unsure.iter().map(|file| {
         format!(
@@ -796,5 +811,157 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
             file.path, file.reason
         )
     });
-    registry.chain(trashed).chain(unsure).collect()
+    registry.chain(unsure).collect()
+}
+
+/// Says each conflicted edit once, with the file it was for and the file its
+/// text went to, as `device drain` says a conflicted write. A conflicted copy
+/// reaches the folder with a change after the answer, so a watch can know its
+/// file only at a later pass; it keeps those and says them then.
+#[derive(Default)]
+pub struct Conflicts {
+    awaiting: Vec<(String, String)>,
+}
+
+impl Conflicts {
+    pub fn say(&mut self, folder: &Folder, drain: &marfa_core::DrainReport) -> Vec<String> {
+        self.say_with(|id| folder.file_of(id).ok().flatten(), drain)
+    }
+
+    /// `file_of` answers the path of the file bound to an item, if any.
+    fn say_with(
+        &mut self,
+        file_of: impl Fn(&str) -> Option<String>,
+        drain: &marfa_core::DrainReport,
+    ) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut arrived = Vec::new();
+        self.awaiting.retain(|(file, copy)| match file_of(copy) {
+            Some(path) => {
+                arrived.push(format!(
+                    "{path} holds the text of the conflicted edit of {file}"
+                ));
+                false
+            }
+            None => true,
+        });
+        for verdict in &drain.verdicts {
+            if verdict.verdict != Some(marfa_core::Verdict::Conflicted) {
+                continue;
+            }
+            let file = verdict.item_id.as_deref().and_then(&file_of);
+            let copy = verdict.conflicted_copy_id.as_deref().and_then(&file_of);
+            let mut line = output::verdict_line(verdict, file.as_deref(), copy.as_deref());
+            if let (None, Some(id)) = (&copy, &verdict.conflicted_copy_id) {
+                line.push_str("; it is not a file in this folder yet");
+                let said = file.or_else(|| verdict.item_id.clone()).unwrap_or_default();
+                self.awaiting.push((said, id.clone()));
+            }
+            lines.push(line);
+        }
+        lines.extend(arrived);
+        lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
+    use std::collections::HashMap;
+
+    fn drain(verdicts: Vec<DrainVerdict>) -> DrainReport {
+        DrainReport {
+            answered: verdicts.len(),
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts,
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    fn answered(verdict: Verdict, item: &str, copy: Option<&str>) -> DrainVerdict {
+        DrainVerdict {
+            id: "write".into(),
+            kind: WriteKind::UpdateItem,
+            item_id: Some(item.into()),
+            edge_id: None,
+            verdict: Some(verdict),
+            reason: None,
+            refusal: None,
+            conflicted_copy_id: copy.map(str::to_string),
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_conflicted_edit_names_its_file_and_the_file_its_text_went_to() {
+        let files: HashMap<&str, &str> = [("item", "note.md"), ("copy", "note (2).md")].into();
+        let mut conflicts = Conflicts::default();
+        let said = conflicts.say_with(
+            |id| files.get(id).map(|path| path.to_string()),
+            &drain(vec![
+                answered(Verdict::Accepted, "item", None),
+                answered(Verdict::Conflicted, "item", Some("copy")),
+            ]),
+        );
+        assert_eq!(
+            said,
+            ["conflicted update_item note.md conflicted copy note (2).md"]
+        );
+    }
+
+    #[test]
+    fn a_copy_that_is_not_a_file_yet_is_said_when_it_becomes_one() {
+        let mut files: HashMap<&str, &str> = [("item", "note.md")].into();
+        let mut conflicts = Conflicts::default();
+        let verdicts = drain(vec![answered(Verdict::Conflicted, "item", Some("copy"))]);
+        let said = conflicts.say_with(|id| files.get(id).map(|path| path.to_string()), &verdicts);
+        assert_eq!(
+            said,
+            [
+                "conflicted update_item note.md conflicted copy copy; it is not a file in this folder yet"
+            ]
+        );
+        let quiet = drain(Vec::new());
+        assert!(
+            conflicts
+                .say_with(|id| files.get(id).map(|path| path.to_string()), &quiet)
+                .is_empty(),
+            "said again before the copy had a file"
+        );
+        files.insert("copy", "note (2).md");
+        let arrived = conflicts.say_with(|id| files.get(id).map(|path| path.to_string()), &quiet);
+        assert_eq!(
+            arrived,
+            ["note (2).md holds the text of the conflicted edit of note.md"]
+        );
+        assert!(
+            conflicts
+                .say_with(|id| files.get(id).map(|path| path.to_string()), &quiet)
+                .is_empty(),
+            "said a third time"
+        );
+    }
+
+    #[test]
+    fn only_a_conflicted_verdict_is_said() {
+        let mut conflicts = Conflicts::default();
+        let said = conflicts.say_with(
+            |_| None,
+            &drain(vec![
+                answered(Verdict::Accepted, "a", None),
+                answered(Verdict::Merged, "b", None),
+                answered(Verdict::Refused, "c", None),
+            ]),
+        );
+        assert!(said.is_empty(), "{said:?}");
+    }
 }

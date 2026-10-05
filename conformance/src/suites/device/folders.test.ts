@@ -577,6 +577,14 @@ function sentTitles(harness: FolderHarness): string[] {
   );
 }
 
+/** The paths the door holds an `in-folder` placement for, in order. */
+function placedPaths(edges: EdgeDoor): string[] {
+  return [...edges.edges.values()]
+    .filter((edge) => edge.edge_type === "in-folder")
+    .map((edge) => String((edge.properties as Record<string, unknown>).path))
+    .sort();
+}
+
 /** The item updates the folder sent, each with the id it went to. */
 function sentUpdates(
   harness: FolderHarness,
@@ -3258,6 +3266,139 @@ describe("files and items", () => {
     if (!online.ok) return;
     expect(online.value.catch_up.caught_up?.applied).toBe(1);
     expect(read(harness, "offline.md")).toContain("changed elsewhere");
+  });
+
+  it("sends the placement of each file a push writes in the push, and counts it", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("placement-in-the-push", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000055a1",
+              properties: { title: "One", body: "made elsewhere\n" },
+            },
+          },
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000055a2",
+              properties: { title: "Two", body: "made elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness, { edges });
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.pull?.written).toBe(2);
+    expect(
+      pushed.value.drain.answered,
+      "the placements the pull queued were left for the next push",
+    ).toBe(2);
+    expect(placedPaths(edges)).toEqual(["One.md", "Two.md"]);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.files.map((file) => file.status)).toEqual([
+      "in_step",
+      "in_step",
+    ]);
+    const again = await harness.folder.push();
+    expect(
+      again.ok && [again.value.drain.answered, again.value.pull?.written],
+    ).toEqual([0, 0]);
+  });
+
+  it("leaves the placements of the files a push wrote waiting where it could not reach the server, and sends them at the next push", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("placement-push-offline", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000055b1",
+              properties: { title: "Offline", body: "made elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness, { edges });
+    await harness.server.offline();
+    const offline = await harness.folder.push();
+    await harness.server.online();
+    expect(offline.ok, JSON.stringify(offline)).toBe(true);
+    if (!offline.ok) return;
+    expect(offline.value.catch_up.failed).toMatch(/network/);
+    expect(offline.value.pull?.written).toBe(1);
+    expect(offline.value.drain.answered).toBe(0);
+    const waiting = await harness.folder.status();
+    expect(waiting.ok && waiting.value.files).toMatchObject([
+      { path: "Offline.md", status: "waiting", waits: ["placement"] },
+    ]);
+    expect(placedPaths(edges)).toEqual([]);
+
+    const online = await harness.folder.push();
+    expect(online.ok, JSON.stringify(online)).toBe(true);
+    if (!online.ok) return;
+    expect(online.value.drain.answered).toBe(1);
+    expect(placedPaths(edges)).toEqual(["Offline.md"]);
+    const settled = await harness.folder.status();
+    expect(
+      settled.ok && settled.value.files.map((file) => file.status),
+    ).toEqual(["in_step"]);
+  });
+
+  it("leaves the placements waiting where the server fails them as the push sends them, and sends them at the next push", async () => {
+    const edges = new EdgeDoor();
+    let failing = true;
+    edges.placing = (edge) =>
+      failing && edge.edge_type === "in-folder"
+        ? refusal(503, "unavailable", "Try again")
+        : undefined;
+    harness = await folderHarness("placement-push-failing", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000055c1",
+              properties: { title: "Elsewhere", body: "made elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness, { edges });
+    // A file made here, whose create and placement the first drain sends:
+    // the server fails the placement, so the push has nothing to ask of it
+    // again for the file its pull wrote.
+    put(harness, "Here.md", "---\ntitle: Here\n---\nmade here\n");
+    const placements = () =>
+      harness!.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/edges",
+      ).length;
+    const failed = await harness.folder.push();
+    expect(failed.ok, JSON.stringify(failed)).toBe(true);
+    if (!failed.ok) return;
+    expect(failed.value.pull?.written).toBe(1);
+    expect(failed.value.drain.unavailable).toBeTruthy();
+    expect(
+      placements(),
+      "the push asked the server that failed it to take the placements again",
+    ).toBe(1);
+    const waiting = await harness.folder.status();
+    expect(
+      waiting.ok && waiting.value.files.map((file) => file.status),
+    ).toEqual(["waiting", "waiting"]);
+
+    failing = false;
+    const next = await harness.folder.push();
+    expect(next.ok, JSON.stringify(next)).toBe(true);
+    expect(placedPaths(edges)).toEqual(["Elsewhere.md", "Here.md"]);
+    const settled = await harness.folder.status();
+    expect(
+      settled.ok && settled.value.files.map((file) => file.status),
+    ).toEqual(["in_step", "in_step"]);
   });
 
   it("makes an edge between two files that arrive together", async () => {
@@ -13704,6 +13845,132 @@ describe("what a folder takes", () => {
       existsSync(join(harness.dir, ".notes/.hidden/Placed.md")),
       "a pull wrote under a dot-led directory no scan walks, where the next scan would read it as gone",
     ).toBe(false);
+  });
+
+  it("says a conflicted edit while watching, and that its copy is not a file yet", async () => {
+    const id = "01a00000-0000-7000-8000-0000000055d1";
+    harness = await folderHarness("folder-conflict-watch", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "Note", body: "as read\n" } },
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // Another machine changes the body the file carries, and the person
+    // edits the file as it was read.
+    door?.update(id, { properties: { body: "theirs\n" }, version: 1 });
+    put(
+      harness,
+      "Note.md",
+      read(harness, "Note.md").replace("as read", "mine"),
+    );
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout).toContain("conflicted update_item Note.md"),
+        { timeout: 20_000, interval: 100 },
+      );
+      // Passes enough for a line said at every one to show more than once.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+    } finally {
+      await watching.stop();
+    }
+    const said = watching.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("conflicted "));
+    expect(said, watching.stdout).toHaveLength(1);
+    expect(said[0]).toMatch(
+      /^conflicted update_item Note\.md conflicted copy [0-9a-f-]{36} merged body; it is not a file in this folder yet$/,
+    );
+    expect(door?.conflictedCopies()).toHaveLength(1);
+  });
+
+  it("says nothing for passes that only wait out a delete's grace", async () => {
+    harness = await folderHarness("folder-grace-quiet");
+    scriptFolderWrites(harness);
+    put(harness, "going.md", "---\ntitle: Going\n---\nbody\n");
+    put(harness, ".env", "TOKEN=not-a-real-one\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // Gone before the watch starts, which journals it at its first pass, so
+    // no pass of the watch races the removal.
+    rmSync(join(harness.dir, "going.md"));
+    const watching = harness.folder.watchText();
+    let quiet = "";
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain(".env: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+      quiet = watching.stdout;
+      // Inside the grace, which is five seconds from the pass that finds the
+      // file gone: every pass of it finds the file still gone.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(
+        watching.stdout,
+        "a pass that only waited out the grace was told",
+      ).toBe(quiet);
+      // The pass that sends the delete says so.
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout, watching.stdout).toMatch(
+            /0 created, 0 updated, 0 renamed, 1 deleted/,
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout.split(".env: not taken").length - 1).toBe(1);
+  });
+
+  it("says a refused secret once while a delete waits out its grace and other passes report", async () => {
+    harness = await folderHarness("folder-secret-grace-watch");
+    scriptFolderWrites(harness);
+    put(harness, "going.md", "---\ntitle: Going\n---\nbody\n");
+    put(harness, ".env", "TOKEN=not-a-real-one\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    rmSync(join(harness.dir, "going.md"));
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain(".env: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      // A pass that reports something, inside the grace, with the secret
+      // still standing.
+      put(harness, "fresh.md", "---\ntitle: Fresh\n---\nbody\n");
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout, watching.stdout).toMatch(
+            /1 created, 0 updated/,
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout, watching.stdout).toMatch(
+            /0 renamed, 1 deleted/,
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.stdout.split(".env: not taken").length - 1,
+      `a watch said the standing secret again at a pass that reported: ${watching.stdout}`,
+    ).toBe(1);
   });
 
   it("says a refused secret in words once while watching", async () => {

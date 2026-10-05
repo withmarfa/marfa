@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -42,6 +43,10 @@ interface PushReport {
   };
   drain: { answered: number; held: number };
   pull: { written: number; rewritten: number; unchanged: number };
+}
+
+interface StatusReport {
+  files: Array<{ path: string; status: string; waits?: string[] }>;
 }
 
 describe("a folder round trip", () => {
@@ -342,6 +347,226 @@ describe("a folder round trip", () => {
     expect(afterCollections.updated).toBe(0);
   });
 
+  it("is in step after the one push that writes its files", async () => {
+    const titles = [1, 2, 3].map((n) => unique(`in-step-${String(n)}`));
+    for (const title of titles) {
+      const made = await c.cli.json<ItemEnvelope>([
+        "items",
+        "create",
+        "--type",
+        "core.note",
+        "--properties",
+        JSON.stringify({ title, body: "made elsewhere\n" }),
+      ]);
+      trackItem(c.ctx, made.item.id);
+    }
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("in-step"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      dir,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    const pushed = await c.cli.json<PushReport>(["folders", "push", dir]);
+    expect(pushed.pull.written).toBeGreaterThanOrEqual(titles.length);
+    for (const title of titles) {
+      expect(readFileSync(join(dir, `${title}.md`), "utf8")).toContain(title);
+    }
+    // The placement of each file written is sent by the push that wrote it,
+    // and the report counts it.
+    expect(pushed.drain.answered).toBe(pushed.pull.written);
+    const status = await c.cli.json<StatusReport>(["folders", "status", dir]);
+    expect(status.files.length).toBeGreaterThanOrEqual(titles.length);
+    expect(
+      status.files.filter((file) => file.status !== "in_step"),
+      "files a push left waiting",
+    ).toEqual([]);
+    const again = await c.cli.json<PushReport>(["folders", "push", dir]);
+    expect(again.drain.answered).toBe(0);
+    expect(again.pull.written).toBe(0);
+  });
+
+  it("is in step after the push that runs a confirmed first sync", async () => {
+    const title = unique("in-step-confirmed");
+    const made = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title, body: "made elsewhere\n" }),
+    ]);
+    trackItem(c.ctx, made.item.id);
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("in-step-confirmed"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json(["folders", "add", dir, "--folder", settings.item.id]);
+    writeFileSync(
+      join(dir, "dropped.md"),
+      `---\ntitle: ${unique("in-step-dropped")}\n---\nDropped here.\n`,
+    );
+    const waiting = await c.cli.json<{ first_sync: { waiting: boolean } }>([
+      "folders",
+      "push",
+      dir,
+    ]);
+    expect(waiting.first_sync.waiting).toBe(true);
+    // Reading the folder sends nothing and writes nothing.
+    expect(existsSync(join(dir, `${title}.md`))).toBe(false);
+    await c.cli.json(["folders", "confirm", dir]);
+    const pushed = await c.cli.json<PushReport>(["folders", "push", dir]);
+    expect(existsSync(join(dir, `${title}.md`))).toBe(true);
+    // The dropped file's create and placement, queued when the first sync
+    // was read, and the placement of each file the pull wrote.
+    expect(pushed.drain.answered).toBe(2 + pushed.pull.written);
+    const status = await c.cli.json<StatusReport>(["folders", "status", dir]);
+    expect(
+      status.files.filter((file) => file.status !== "in_step"),
+      "files a push left waiting",
+    ).toEqual([]);
+    const minted = /marfa_id: (\S+)/.exec(
+      readFileSync(join(dir, "dropped.md"), "utf8"),
+    )![1]!;
+    trackItem(c.ctx, minted);
+  });
+
+  it("names a conflicted edit and the file its text went to, in words", async () => {
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("conflicted"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      dir,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    const title = unique("conflicted-note");
+    const path = join(dir, `${title}.md`);
+    writeFileSync(path, `---\ntitle: ${title}\n---\nOriginal body\n`);
+    await c.cli.json(["folders", "push", dir]);
+    const id = /marfa_id: (\S+)/.exec(readFileSync(path, "utf8"))![1]!;
+    trackItem(c.ctx, id);
+    await c.cli.json([
+      "items",
+      "update",
+      id,
+      "--version",
+      "1",
+      "--properties",
+      JSON.stringify({ body: "Changed elsewhere\n" }),
+    ]);
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace("Original body", "Edited here"),
+    );
+    const pushed = await c.cli.run(["folders", "push", dir]);
+    expect(pushed.code, pushed.stderr).toBe(0);
+    // The server kept its own text on the row, and the edit's text is in a
+    // sibling the pull wrote as a file.
+    expect(readFileSync(path, "utf8")).toContain("Changed elsewhere");
+    const copy = join(dir, `${title} (2).md`);
+    expect(readFileSync(copy, "utf8")).toContain("Edited here");
+    const copyId = /marfa_id: (\S+)/.exec(readFileSync(copy, "utf8"))![1]!;
+    trackItem(c.ctx, copyId);
+    expect(
+      pushed.stdout
+        .split("\n")
+        .filter((line) => line.startsWith("conflicted ")),
+    ).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^conflicted update_item ${title}\\.md conflicted copy ${title} \\(2\\)\\.md`,
+        ),
+      ),
+    ]);
+    // Said once: the next push sends nothing and has nothing to say of it.
+    const next = await c.cli.run(["folders", "push", dir]);
+    expect(next.stdout).not.toContain("conflicted");
+  });
+
+  it("says a conflicted edit while watching, and where its text went", async () => {
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("conflicted-watch"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      dir,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    const title = unique("conflicted-watched");
+    const path = join(dir, `${title}.md`);
+    writeFileSync(path, `---\ntitle: ${title}\n---\nOriginal body\n`);
+    await c.cli.json(["folders", "push", dir]);
+    const id = /marfa_id: (\S+)/.exec(readFileSync(path, "utf8"))![1]!;
+    trackItem(c.ctx, id);
+    await c.cli.json([
+      "items",
+      "update",
+      id,
+      "--version",
+      "1",
+      "--properties",
+      JSON.stringify({ body: "Changed elsewhere\n" }),
+    ]);
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace("Original body", "Edited here"),
+    );
+    // The edit is sent as read at the version its file names, whether or
+    // not the watch has caught up with the change made elsewhere by then.
+    const watched = await c.cli.run(["folders", "watch", dir, "--for", "8"]);
+    expect(watched.code, watched.stderr).toBe(0);
+    const copy = join(dir, `${title} (2).md`);
+    expect(readFileSync(copy, "utf8")).toContain("Edited here");
+    trackItem(c.ctx, /marfa_id: (\S+)/.exec(readFileSync(copy, "utf8"))![1]!);
+    const said = watched.stdout
+      .split("\n")
+      .filter((line) => line.includes("conflicted"));
+    expect(said[0]).toMatch(
+      new RegExp(`^conflicted update_item ${title}\\.md conflicted copy `),
+    );
+    // The copy reaches the watch with a change after the answer, so its file
+    // is named in that line or, once it is a file, in one of its own.
+    expect(said.join("\n")).toContain(`${title} (2).md`);
+    expect(
+      said.length,
+      `a watch said the conflict at every pass: ${watched.stdout}`,
+    ).toBeLessThanOrEqual(2);
+  });
+
   it("waits at a first sync until it is confirmed, then sends the dropped note", async () => {
     const folder = join(dir, "asks-first");
     mkdirSync(folder);
@@ -439,8 +664,9 @@ describe("a folder round trip", () => {
     );
     const pushed = await c.cli.json<PushReport>(["folders", "push", dir]);
     expect(pushed.scan.created).toBe(1);
-    // The create and its placement.
-    expect(pushed.drain.answered).toBe(2);
+    // The create and its placement, and the placement of each file the pull
+    // wrote.
+    expect(pushed.drain.answered).toBe(2 + pushed.pull.written);
 
     // It is in Marfa under the id the folder minted, with no natural key.
     const queued = await c.cli.json<

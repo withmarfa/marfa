@@ -14,6 +14,8 @@ pub struct SyncReport {
     pub hydrated: Option<HydrateReport>,
     pub settings: SettingsFileReport,
     pub scan: ScanReport,
+    /// Every write the sync sent, those the pull queued after the first
+    /// drain included.
     pub drain: Drained,
     /// Why the catch-up could not reach the server, where it could not; the
     /// sync goes on to write out the copy it holds.
@@ -25,8 +27,9 @@ pub struct SyncReport {
 
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
-    /// an edit of the settings file, scans, drains, catches up and pulls. A
-    /// folder whose first sync waits to be confirmed is only read, and says
+    /// an edit of the settings file, scans, drains, catches up, pulls, and
+    /// drains again where the pull queued the placement of a file it wrote.
+    /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
         if self.awaiting_confirmation()?
@@ -43,7 +46,7 @@ impl Folder {
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
         let scan = self.scan()?;
-        let drain = self.drain()?;
+        let mut drain = self.drain()?;
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
@@ -54,6 +57,15 @@ impl Folder {
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
             Err(error) => return Err(error),
         };
+        // Not where the server did not answer, which the report says: the
+        // placements wait for the next sync.
+        let reachable = catch_up.is_ok()
+            && drain.report.unavailable.is_none()
+            && drain.report.stopped.is_none()
+            && drain.report.undelivered == 0;
+        if reachable && pull.as_ref().is_some_and(|pulled| pulled.placed > 0) {
+            drain.absorb(self.drain()?);
+        }
         Ok(SyncReport {
             hydrated,
             settings,

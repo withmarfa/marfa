@@ -75,6 +75,10 @@ pub struct WatchPass {
     pub unplaced_changed: bool,
     /// Whether why the drain stopped differs from the pass before.
     pub stopped_changed: bool,
+    /// Whether anything a pass says on a line of its own while it stands, a
+    /// refused secret or a held file say, differs from the pass before. A
+    /// pass that did something else says them again only where it does.
+    pub notices_changed: bool,
 }
 
 /// Why a watch ended other than by its stop.
@@ -412,6 +416,7 @@ struct Standing {
     directories: Vec<(String, String)>,
     secrets: Vec<String>,
     settling: Vec<String>,
+    warnings: Vec<Flagged>,
     unwritten: usize,
     outside: usize,
     unsuited: usize,
@@ -426,6 +431,23 @@ struct Standing {
     registry: Option<String>,
     unsure: Vec<Unsure>,
     paused: (usize, usize),
+}
+
+impl Standing {
+    /// Whether the conditions a pass says on lines of their own are these.
+    fn same_notices(&self, other: &Standing) -> bool {
+        self.registry == other.registry
+            && self.unsure == other.unsure
+            && self.paused == other.paused
+            && self.uncarried == other.uncarried
+            && self.directories == other.directories
+            && self.secrets == other.secrets
+            && self.settling == other.settling
+            && self.warnings == other.warnings
+            && self.flagged == other.flagged
+            && self.embeds == other.embeds
+            && self.settings == other.settings
+    }
 }
 
 impl Telling {
@@ -467,8 +489,6 @@ impl Telling {
         let happened = scan.created
             + scan.updated
             + scan.renamed
-            // A paused removal's files are missing at every pass.
-            + scan.missing.saturating_sub(scan.paused)
             + scan.deleted
             + scan.moved_away
             + scan.requeued
@@ -512,6 +532,7 @@ impl Telling {
                 .collect(),
             secrets: scan.secrets.clone(),
             settling: scan.settling.clone(),
+            warnings: scan.warnings.clone(),
             unwritten: pull.unwritten,
             outside: pull.outside,
             unsuited: pull.unsuited,
@@ -539,6 +560,9 @@ impl Telling {
         let stopped_changed = before
             .as_ref()
             .is_none_or(|before| before.stopped != now.stopped);
+        let notices_changed = before
+            .as_ref()
+            .is_none_or(|before| !before.same_notices(&now));
         (happened || changed).then(|| {
             WatchEvent::Passed(Box::new(WatchPass {
                 settings,
@@ -549,6 +573,7 @@ impl Telling {
                 embeds,
                 unplaced_changed,
                 stopped_changed,
+                notices_changed,
             }))
         })
     }
@@ -751,6 +776,80 @@ mod tests {
             ),
             "a condition that clears is told"
         );
+    }
+
+    fn pass_of(telling: &mut Telling, scan: ScanReport) -> Option<WatchPass> {
+        match telling.passed(
+            false,
+            SettingsFileReport::default(),
+            scan,
+            drained(),
+            PullReport::default(),
+        ) {
+            Some(WatchEvent::Passed(pass)) => Some(*pass),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_pass_waiting_out_a_delete_s_grace_is_not_told() {
+        let mut telling = Telling::default();
+        assert!(told(
+            &mut telling,
+            true,
+            ScanReport::default(),
+            PullReport::default()
+        ));
+        let waiting = ScanReport {
+            missing: 1,
+            secrets: vec![".env".into()],
+            ..ScanReport::default()
+        };
+        // The first pass to meet the standing secret says it; the passes
+        // after it, though a file is missing at each, have nothing to say.
+        assert!(told(
+            &mut telling,
+            false,
+            waiting.clone(),
+            PullReport::default()
+        ));
+        for _ in 0..3 {
+            assert!(!told(
+                &mut telling,
+                false,
+                waiting.clone(),
+                PullReport::default()
+            ));
+        }
+        let deleted = ScanReport {
+            deleted: 1,
+            ..waiting
+        };
+        assert!(
+            told(&mut telling, false, deleted, PullReport::default()),
+            "the pass that sends the delete is told"
+        );
+    }
+
+    #[test]
+    fn a_standing_notice_is_told_again_only_where_it_changes() {
+        let mut telling = Telling::default();
+        let held = |secrets: &[&str], created| ScanReport {
+            created,
+            secrets: secrets.iter().map(|name| name.to_string()).collect(),
+            ..ScanReport::default()
+        };
+        let first = pass_of(&mut telling, held(&[".env"], 0)).unwrap();
+        assert!(first.notices_changed, "the first pass says what stands");
+        let eventful = pass_of(&mut telling, held(&[".env"], 1)).unwrap();
+        assert!(
+            !eventful.notices_changed,
+            "a pass that created a file said the standing secret again"
+        );
+        let more = pass_of(&mut telling, held(&[".env", "id_rsa"], 1)).unwrap();
+        assert!(more.notices_changed, "a second secret is news");
+        let cleared = pass_of(&mut telling, held(&[], 0)).unwrap();
+        assert!(cleared.notices_changed, "a notice that clears is told");
     }
 
     #[test]
