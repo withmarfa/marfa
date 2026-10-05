@@ -809,13 +809,13 @@ async function proxyConsentDecision(
 /**
  * Verdict on an authorize query's signature.
  *
- * `expired` and `unsigned` both end the request the same way and get the
- * same page — the user's only move either way is to start again at the
- * app, and telling them which it was would be no help to them and a hint
- * to anyone probing. The split exists for the operator: a request that
- * timed out is routine traffic, one nobody signed is somebody building a
- * consent screen, and a log that couldn't tell them apart would bury the
- * second in the first.
+ * `expired` is only ever the verdict on a query the plugin signed, whose
+ * window has closed. `unsigned` covers every other failure: a signature that
+ * did not match, one missing, repeated, or an `exp` that never parsed. The
+ * two get different pages, because a request that timed out is routine and
+ * one nobody signed, or one edited after it was signed, is not, and an
+ * honest user told the second was the first goes looking for a clock
+ * problem.
  */
 type SignedQueryVerdict = "valid" | "expired" | "unsigned";
 
@@ -906,18 +906,23 @@ async function verifySignedQuery(
     // plugin always signs one, so its absence means the parameter set
     // never came from the plugin at all.
     if (!Number.isFinite(expSeconds)) return "unsigned";
-    if (expSeconds * 1000 < Date.now()) return "expired";
     params.delete("sig");
     const expected = await makeSignature(
       canonicalizeOAuthQueryParams(params).toString(),
       auth.signingSecret,
     );
-    if (constantTimeEqual(sig, expected)) return "valid";
-    log(
-      "warn",
-      "consent: authorize request carries a signature we did not make",
-    );
-    return "unsigned";
+    // The signature first, because `exp` is one of the signed fields: a link
+    // whose `exp` was edited into the past fails here, and answering it with
+    // the expiry would tell somebody who tampered with it that it merely
+    // timed out. Only a query the plugin signed is ever told it expired.
+    if (!constantTimeEqual(sig, expected)) {
+      log(
+        "warn",
+        "consent: authorize request carries a signature we did not make",
+      );
+      return "unsigned";
+    }
+    return expSeconds * 1000 < Date.now() ? "expired" : "valid";
   } catch (err) {
     log("warn", "consent: signed-query verification failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -1003,6 +1008,39 @@ function classifyProxyOutcome(
     return "client_error";
   }
   return "interaction";
+}
+
+/**
+ * The app behind a sign-in's `return_to`, for the page to name, or `null`
+ * when the page has nothing it may say.
+ *
+ * Only a request the plugin signed and whose window is open is read: the name
+ * is whatever the app registered under, so one taken from a query nobody
+ * signed would put a stranger's words on a page served by the real issuer,
+ * which is the reason the consent page refuses it too. An unverified app is
+ * named all the same, flagged as the consent screen flags it.
+ */
+export async function appBehindReturnTo(
+  deps: { auth: MarfaAuth; storage: Storage },
+  returnTo: string,
+): Promise<{ name: string; unverified: boolean } | null> {
+  let target: URL;
+  try {
+    target = new URL(returnTo, "http://localhost");
+  } catch {
+    return null;
+  }
+  if (target.pathname !== "/auth/authorize") return null;
+  const signed = new URLSearchParams(target.search);
+  for (const name of CONSENT_DISPLAY_PARAMS) signed.delete(name);
+  const clientId = signed.get("client_id");
+  if (!clientId) return null;
+  if ((await verifySignedQuery(deps.auth, signed.toString())) !== "valid") {
+    return null;
+  }
+  const client = await resolveClient(deps.storage, clientId);
+  if (!client) return null;
+  return { name: client.name ?? clientId, unverified: client.isPublic };
 }
 
 export const __test_internals = {

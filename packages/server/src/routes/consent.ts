@@ -74,7 +74,7 @@ import { PERMISSION_LABELS, permissionShort } from "./permission-labels.js";
 import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, unverifiedAppCallout } from "./auth-html.js";
 import {
   isOpenEnded,
   OPEN_ENDED_EXPANSION_TAIL,
@@ -1061,9 +1061,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   // One boxed caution for an unverified (public / DCR) client — no inline
   // badge, no second warning.
-  const callout = params.unverified
-    ? `<div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>`
-    : "";
+  const callout = params.unverified ? unverifiedAppCallout() : "";
 
   const errorBanner = params.errorMessage
     ? `<div class="banner banner--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
@@ -1087,7 +1085,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? asksForMore
       ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
       : `You have used <b>${safeClient}</b> before. It is asking you to confirm what it already has.`
-    : `<b>${safeClient}</b> wants to access your server. You can change this anytime in settings.`;
+    : `<b>${safeClient}</b> wants to access your server.`;
   const primaryLabel = showDiff ? "Continue" : "Allow access";
 
   // Each group's master toggle drives its members; members reflect back as an

@@ -138,6 +138,29 @@ describe("the instance", () => {
     );
   });
 
+  it("answers a browser at the root with a page and a program with the JSON", async () => {
+    const browser = await fetch(`${apiUrl}/`, {
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    expect(browser.status).toBe(200);
+    expect(browser.headers.get("content-type")).toContain("text/html");
+    expect(browser.headers.get("vary")).toContain("Accept");
+
+    // The witness: the same address, asked the way a program asks, is the
+    // description.
+    for (const accept of [undefined, "*/*", "application/json"]) {
+      const program = await fetch(`${apiUrl}/`, {
+        headers: accept === undefined ? {} : { accept },
+      });
+      expect(program.headers.get("content-type")).toContain("application/json");
+      expect(program.headers.get("vary")).toContain("Accept");
+      expect(((await program.json()) as { name: string }).name).toBe("marfa");
+    }
+  });
+
   it("serves a route for every feature it advertises", async () => {
     // The witness first, so the assertions after it are about something. A
     // path nothing serves answers `404 not_found`, which is exactly what

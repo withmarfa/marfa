@@ -25,6 +25,10 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "starts a writer process with the node that runs the test",
   "storage/sqlite/backup-writer.ts":
     "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
+  "test-browser.ts":
+    "finds the browser a test runs in, from the machine's own environment, a test's own switch",
+  "routes/auth-pages-browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "refused-database-exit.test.ts":
     "starts the server as a child process, which needs the test's own environment to run",
   "shutdown-stream.test.ts":

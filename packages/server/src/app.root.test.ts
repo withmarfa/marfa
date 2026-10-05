@@ -87,6 +87,29 @@ describe("GET /", () => {
     expect(res.headers.get("X-Error-Code")).toBeNull();
   });
 
+  it("answers a browser with a page and a program with the JSON", async () => {
+    const browser = await ctx.app.request("/", {
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    expect(browser.status).toBe(200);
+    expect(browser.headers.get("content-type")).toContain("text/html");
+    expect(browser.headers.get("vary")).toContain("Accept");
+    expect(await browser.text()).toContain("Marfa is running");
+
+    // Witness: the same address, asked the way programs ask, is the JSON.
+    for (const accept of [undefined, "*/*", "application/json"]) {
+      const program = await ctx.app.request("/", {
+        headers: accept === undefined ? {} : { accept },
+      });
+      expect(program.headers.get("content-type")).toContain("application/json");
+      expect(program.headers.get("vary")).toContain("Accept");
+      expect(((await program.json()) as { name: string }).name).toBe("marfa");
+    }
+  });
+
   it("serves the same identity as GET /config", async () => {
     // Three doors, one name, and all three are in this package: the root,
     // `/config` and the export manifest. The conformance suite asserts them

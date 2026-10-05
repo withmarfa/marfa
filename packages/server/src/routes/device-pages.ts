@@ -23,7 +23,7 @@ import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { permissionLabel } from "./permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
-import { escapeHtml, confirmIcon } from "./auth-html.js";
+import { escapeHtml, confirmIcon, unverifiedAppCallout } from "./auth-html.js";
 import { isOpenEnded, OPEN_ENDED_SENTENCE } from "./scope-openness.js";
 import { operationSentence } from "./scope-operation.js";
 
@@ -36,6 +36,12 @@ interface DevicePageParams {
 
 interface DeviceConsentParams {
   clientName: string;
+  /**
+   * The app registered itself, so its name is whatever it said. Shown as the
+   * same caution the browser consent screen carries, because the device flow
+   * is where a code from a stranger is likeliest to be typed in.
+   */
+  unverified?: boolean;
   scopes: ParsedScope[];
   userCode: string;
   descriptions?: Record<string, string>;
@@ -386,6 +392,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const bodyHtml = `
     <h1 class="title">Approve sign-in</h1>
     <p class="sub"><b>${safeClient}</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
+    ${params.unverified ? unverifiedAppCallout() : ""}
     <div class="codetile">${safeUserCode}</div>
     <div class="actions">
       <form method="POST" action="/auth/device/consent" novalidate>
