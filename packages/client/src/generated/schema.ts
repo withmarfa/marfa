@@ -1425,13 +1425,13 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here; the plaintext is only returned at create time.
+         * @description Returns every webhook that belongs to you, with each `secret` shortened to its last four characters.
          */
         get: operations["listWebhooks"];
         put?: never;
         /**
          * Create a webhook
-         * @description Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.
+         * @description Creates a webhook that sends the events you name to `url`. It belongs to your key, or your app's grant: Marfa deletes it when that is revoked, and sends nothing while it lacks `webhooks.manage` or the key has expired.
          */
         post: operations["createWebhook"];
         delete?: never;
@@ -1449,21 +1449,21 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns one outbound webhook subscription by id, with its secret redacted.
+         * @description Returns a webhook, with its `secret` shortened to its last four characters.
          */
         get: operations["getWebhook"];
         put?: never;
         post?: never;
         /**
          * Delete a webhook
-         * @description Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.
+         * @description Deletes a webhook and cancels its pending deliveries.
          */
         delete: operations["deleteWebhook"];
         options?: never;
         head?: never;
         /**
          * Update a webhook
-         * @description Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here; delete the subscription and create a new one.
+         * @description Updates a webhook and returns it. Fields you leave out keep their values. Changing `url`, or setting `active` to `false`, cancels its pending deliveries. To change the secret, create a new webhook.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -1477,7 +1477,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns recent delivery rows for one subscription, newest first, with the last accepted outcome and cumulative accepted-outcome ordinal. This is not a census of concurrent or lost HTTP sends.
+         * @description Returns a page of a webhook's deliveries, newest first. Marfa deletes a delivery that isn't `pending` once it's older than the instance's audit retention.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1499,7 +1499,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a failed delivery
-         * @description Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.
+         * @description Sends a `dead_letter` delivery again, to the webhook's current `url`, and returns it as `pending`. The delivery keeps its ID, and Marfa makes up to 8 more attempts.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -1557,25 +1557,7 @@ export interface paths {
         };
         /**
          * Stream change events
-         * @description Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.
-         *
-         *     For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `event_type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A view that changes after the stream opens sends only the no-id terminal `read_view_changed` with data `{"event_type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.
-         *
-         *     The stream opens with a `stream_cursor` frame, carrying `{ "event_type": "stream_cursor", "cursor": "<event id>" }`, the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.
-         *
-         *     For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.
-         *
-         *     Once the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ "event_type": "stream_live", "cursor": "<event id>" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.
-         *
-         *     The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.
-         *
-         *     An item frame carries `event_type` and `item`, and an edge frame `event_type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.
-         *
-         *     A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame, `{ "event_type": "stream_incomplete", "reason": "…", "cursor": "<event id>" | null }`, and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.
-         *
-         *     The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. An app reconnects with the token it refreshed to.
-         *
-         *     A `Last-Event-ID` past the log's head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ "event_type": "cursor_ahead", "requested": "<event id>", "head": "<event id>" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.
+         * @description Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -1607,7 +1589,28 @@ export interface paths {
         trace?: never;
     };
 }
-export type webhooks = Record<string, never>;
+export interface webhooks {
+    event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive an event
+         * @description Marfa sends this request to a webhook's `url` for each event it subscribes to, with only what the webhook's credential can read when it's sent. A delivery can arrive more than once: use `delivery_id` to recognize a repeat.
+         */
+        post: operations["receiveWebhookEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export interface components {
     schemas: {
         ItemWithMetadata: {
@@ -3683,19 +3686,30 @@ export interface components {
                 };
             };
         };
+        /** @description A webhook sends the events you choose, as you can read them, to a URL. */
         Webhook: {
+            /** @description Unique identifier for the webhook. */
             id: string;
+            /** @description The URL Marfa posts events to. */
             url: string;
+            /** @description The events Marfa sends, such as `item.created`. */
             events: string[];
+            /** @description The type whose item events Marfa sends, with its subtypes, or `null` for every type. Edge events aren't filtered. */
             type_filter?: string | null;
+            /** @description The key Marfa signs each delivery with. Only `POST /webhooks` returns it whole; other responses show `****` and its last four characters. */
             secret: string;
+            /** @description `true` if Marfa sends events. Marfa never sends an event that happens while it's `false`. */
             active: boolean;
+            /** @description When the webhook was created, in UTC. */
             created_at: string;
+            /** @description When the webhook last changed, in UTC. */
             updated_at: string;
         };
+        /** @description A page holding every webhook you own. */
         WebhookPage: {
+            /** @description Every webhook you own. */
             data: components["schemas"]["Webhook"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every webhook you own in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -3715,22 +3729,35 @@ export interface components {
                 };
             };
         };
+        /** @description A page of a webhook's deliveries, newest first. */
         WebhookDeliveryPage: {
+            /** @description The deliveries, newest first. */
             data: components["schemas"]["WebhookDelivery"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description A delivery is one event Marfa sends, or tries to send, to a webhook's URL. */
         WebhookDelivery: {
+            /** @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt. */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description `pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
+             * @enum {string}
+             */
             status: "pending" | "success" | "dead_letter" | "canceled";
+            /** @description The ID of the webhook the delivery belongs to. */
             webhook_id: string;
+            /** @description The event delivered, such as `item.created`. */
             event_type: string;
+            /** @description The HTTP status the receiver answered on the latest recorded attempt, or `null` if that attempt got no answer or no attempt has run. */
             status_code: number | null;
-            /** @description Cumulative accepted-outcome ordinal, not a census of concurrent or lost HTTP sends. */
+            /** @description How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more. */
             attempt: number;
+            /** @description `true` if `status` is `success`. */
             succeeded: boolean;
+            /** @description Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt. */
             error: string | null;
+            /** @description When Marfa queued the delivery, in UTC. */
             created_at: string;
         };
         AuditEntryPage: {
@@ -3869,6 +3896,131 @@ export interface components {
                 };
             };
         };
+        /** @description An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions. */
+        ItemEventFrame: {
+            /**
+             * @description The event, which is also the frame's `event:`.
+             * @enum {string}
+             */
+            event_type: "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed";
+            item: components["schemas"]["Item"] & unknown;
+            /** @description The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`. */
+            metadata?: components["schemas"]["Metadata"] | null;
+            /** @description On `item.restored` of an item another item's restore brought back: the ID of that item, if you can read its type. */
+            restored_with?: string;
+            /** @description Only on a copy stream: `true` if the item is in the set you can list, `false` if you can read it only by ID. */
+            listed?: boolean;
+        };
+        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`. */
+        EdgeEventFrame: {
+            /**
+             * @description The event, which is also the frame's `event:`.
+             * @enum {string}
+             */
+            event_type: "edge.created" | "edge.updated" | "edge.deleted";
+            edge: components["schemas"]["Edge"] & unknown;
+            /** @description The type of the edge's source item when the event happened. */
+            source_type?: string;
+            /** @description On `edge.deleted` of an edge a purge removed: the ID of the purged item. */
+            purged_with?: string;
+        };
+        /** @description The stream's first frame, with no `id:`: where the log stood when the stream opened. If Marfa can't read the log within 5 seconds, an ordinary stream leaves it out, so don't wait for it, and a copy stream ends with `stream_incomplete`. */
+        StreamCursorFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "stream_cursor";
+            /** @description The ID of the latest event in the log, or `0` if it's empty. Read state after this frame, and you can resume from this ID without missing a change. */
+            cursor: string;
+            /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
+            instance_id?: string;
+            /** @description Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data. */
+            read_view?: string;
+        };
+        /** @description Sent once, with no `id:`, when the catch-up is over: everything up to `cursor` has been sent or withheld, and what follows is live. A stream that ends early never sends it. */
+        StreamLiveFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "stream_live";
+            /** @description A position you can resume from without receiving again what the catch-up covered. `null` only when Marfa couldn't read the log in time and had nothing to replay. */
+            cursor: string | null;
+            /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
+            instance_id?: string;
+            /** @description Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data. */
+            read_view?: string;
+        };
+        /** @description The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. `reader_behind` comes when 4 MiB of frames wait unread, or when you take none for 30 seconds during the catch-up. */
+        StreamIncompleteFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "stream_incomplete";
+            /**
+             * @description `replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: delivery failed. `credential_ended`: your credential stopped working. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.
+             * @enum {string}
+             */
+            reason: "replay_failed" | "backlog_overflow" | "live_delivery_failed" | "credential_ended" | "reader_behind" | "server_stopping";
+            /** @description The ID of the last event the stream sent, or `null` if it sent none. */
+            cursor: string | null;
+        };
+        /** @description The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. */
+        CatchupTooOldFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "catchup_too_old";
+            /** @description The ID of the oldest event the log still holds. */
+            min_retained_id: string;
+            /** @description The `Last-Event-ID` you sent. */
+            requested: string;
+        };
+        /** @description The last frame, with no `id:`, when your `Last-Event-ID` is past the latest event in the log, as after the instance is restored to an earlier state. Read state again from the API. */
+        CursorAheadFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "cursor_ahead";
+            /** @description The `Last-Event-ID` you sent. */
+            requested: string;
+            /** @description The ID of the latest event in the log. */
+            head: string;
+        };
+        /** @description The last frame of a copy stream, with no `id:`, when its read view changes, such as after a retype or a narrowed key. Rebuild the working copy. */
+        ReadViewChangedFrame: {
+            /**
+             * @description The frame's name, which is also its `event:`.
+             * @constant
+             */
+            event_type: "read_view_changed";
+        };
+        /** @description One frame of `GET /events`. Its `event_type` is also its `event:`. */
+        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReadViewChangedFrame"];
+        /** @description The body of a webhook delivery of an item event. */
+        WebhookItemEvent: components["schemas"]["ItemEventFrame"] & {
+            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            event_id: string;
+            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            delivery_id: string;
+            /** @description When Marfa sent this attempt, in UTC. */
+            delivered_at: string;
+        };
+        /** @description The body of a webhook delivery of an edge event. */
+        WebhookEdgeEvent: components["schemas"]["EdgeEventFrame"] & {
+            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            event_id: string;
+            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            delivery_id: string;
+            /** @description When Marfa sent this attempt, in UTC. */
+            delivered_at: string;
+        };
+        /** @description The body of a webhook delivery: the event, with its ID and the delivery's. */
+        WebhookEvent: components["schemas"]["WebhookItemEvent"] | components["schemas"]["WebhookEdgeEvent"];
     };
     responses: never;
     parameters: never;
@@ -18359,7 +18511,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of webhooks (secrets redacted) */
+            /** @description Returns your webhooks. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18403,7 +18555,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18476,16 +18628,19 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
                     url: string;
+                    /** @description The events to send. Name each one: there's no wildcard. */
                     events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
-                    /** @description One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter. */
+                    /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Leave it out, blank or `null` for every type. */
                     type_filter?: string | null;
+                    /** @description The key Marfa signs each delivery with. Leave it out for Marfa to generate one. */
                     secret?: string;
                 };
             };
         };
         responses: {
-            /** @description Webhook created */
+            /** @description Returns the new webhook with its whole `secret`, which no other response shows. Use it to check each delivery's `X-Marfa-Signature`. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18499,7 +18654,10 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; `secret` is too short; or `type_filter` is `*`, malformed or a list.
+             *     - `missing_required_field`: `url` or `events` is missing.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18529,7 +18687,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18609,14 +18767,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Id of the webhook to fetch. */
+                /** @description The ID of the webhook. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Webhook details (secret redacted) */
+            /** @description Returns the webhook. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18660,7 +18818,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18675,7 +18833,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found, or registered by another credential */
+            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18743,14 +18901,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Id of the webhook to delete. */
+                /** @description The ID of the webhook. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Webhook deleted */
+            /** @description Returns `ok: true`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18794,7 +18952,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18809,7 +18967,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found */
+            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18889,7 +19047,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Id of the webhook to update. */
+                /** @description The ID of the webhook. */
                 id: string;
             };
             cookie?: never;
@@ -18897,16 +19055,19 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
                     url?: string;
+                    /** @description The events to send. Name each one: there's no wildcard. */
                     events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
-                    /** @description One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter. */
+                    /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Blank or `null` removes it. */
                     type_filter?: string | null;
+                    /** @description `false` stops sending events, and Marfa never sends one that happens while it's `false`. `true` starts again. */
                     active?: boolean;
                 };
             };
         };
         responses: {
-            /** @description Updated webhook (secret redacted) */
+            /** @description Returns the updated webhook. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18920,7 +19081,7 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description Validation error */
+            /** @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; or `type_filter` is `*`, malformed or a list. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18950,7 +19111,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18965,7 +19126,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found */
+            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19050,14 +19211,14 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Id of the webhook whose deliveries to list. */
+                /** @description The ID of the webhook. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description List of delivery rows */
+            /** @description Returns a page of deliveries. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19101,7 +19262,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19116,7 +19277,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found */
+            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19184,14 +19345,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description The ID of the webhook. */
                 id: string;
+                /** @description The ID of the delivery. */
                 delivery_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Delivery queued */
+            /** @description Returns the delivery as `pending`. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome. */
             202: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19235,7 +19398,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold webhooks.manage. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19250,7 +19413,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Webhook not found */
+            /** @description - `webhook_not_found`: no webhook of yours has this ID, or it has no delivery with this `delivery_id`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19265,7 +19428,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description Delivery cannot be redelivered */
+            /** @description - `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19529,17 +19692,17 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
-                /** @description Select certified copy mode; requires explicit edges=all and forbids every other query key. */
+                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`. */
                 copy?: "1";
-                /** @description Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them. */
+                /** @description Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type. */
                 type?: string;
-                /** @description Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame. */
+                /** @description Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`. */
                 edges?: "all" | "none";
             };
             header?: {
-                /** @description In copy mode, send one certificate together with Last-Event-ID to resume. Bootstrap omits both headers. This header is invalid on an ordinary stream. */
+                /** @description On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy. */
                 "X-Marfa-Read-View"?: string;
-                /** @description Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor only for an ordinary stream; copy mode refuses it. */
+                /** @description The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream. */
                 "Last-Event-ID"?: string;
             };
             path?: never;
@@ -19547,7 +19710,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A `text/event-stream` of item and edge change events. */
+            /**
+             * @description Returns the stream. Each frame's `event:` names it:
+             *     - `stream_cursor`: first, where the log stands.
+             *     - An event, such as `item.created`, with its event ID as `id:`.
+             *     - `stream_live`: once the catch-up is over.
+             *     - `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.
+             */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19558,12 +19727,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    /**
+                     * @example : connected
+                     *
+                     *     event: stream_cursor
+                     *     data: {"event_type":"stream_cursor","cursor":"1041"}
+                     *
+                     *     event: stream_live
+                     *     data: {"event_type":"stream_live","cursor":"1041"}
+                     *
+                     *     id: 1042
+                     *     event: item.created
+                     *     data: {"event_type":"item.created","item":{"id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","type":"core.note","properties":{"title":"Reading list","body":"Finish the chapter on tides."},"state":"active","tier":"library","version":1,"schema_version":0,"source":"notes-app","occurred_at":"2026-10-03T09:30:00.000Z","created_at":"2026-10-03T09:30:00.000Z","updated_at":"2026-10-03T09:30:00.000Z"},"metadata":{"item_id":"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b","tags":[],"extensions":{}}}
+                     */
+                    "text/event-stream": components["schemas"]["EventStreamFrame"];
                 };
             };
             /**
-             * @description - `validation_error`: more than 10 `type` entries, a `type` entry that is `*` or outside the type-identifier grammar, an `edges` value outside the enum, a `Last-Event-ID` that is not a decimal event ID, or, in copy mode, an extra or duplicate query key, an empty or malformed header, or one resume header without the other.
-             *     - `unknown_type`: a `type` entry nothing registers.
+             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.
+             *     - `unknown_type`: a `type` entry isn't registered.
              */
             400: {
                 headers: {
@@ -19594,7 +19776,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential reaches no type, or a `type` entry names a registered type it cannot read and none under it. Otherwise the stream is narrowed to the types it reads. */
+            /** @description - `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19655,7 +19837,7 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description This instance is already serving its maximum number of live viewers. Only a deployment that sets a viewer cap answers this. */
+            /** @description - `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19808,6 +19990,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
+            };
+        };
+    };
+    receiveWebhookEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description `t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw body>` under the webhook's `secret`. Check it, and that `t` is recent, before you trust the body. */
+                "X-Marfa-Signature": string;
+                /** @description The event, the same as `event_type` in the body. */
+                "X-Marfa-Event-Type": "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookEvent"];
+            };
+        };
+        responses: {
+            /** @description Marfa records the delivery as `success`. It doesn't read the response body. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Any other answer is a failure. On a redirect, or a `4xx` other than `408` and `429`, Marfa gives up and the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again, up to 8 attempts in all, after waiting at least 1, 5, 25, 125, 625, 3125 and 15625 seconds. A `Retry-After` of up to 5 minutes can lengthen a wait. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
