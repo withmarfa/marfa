@@ -1,5 +1,5 @@
 /**
- * The API description follows `API-STYLE.md`.
+ * The API description follows `packages/server/API-STYLE.md`.
  *
  * Every rule the guide marks **(checked)** is asserted here outright, against
  * the committed `openapi.json`. A failure lists each operation, parameter,

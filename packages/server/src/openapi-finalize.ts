@@ -47,7 +47,7 @@ interface OpenAPIDoc {
 
 /**
  * The rules that hold across operations, stated once so that no operation
- * repeats them. `API-STYLE.md` says what belongs here.
+ * repeats them. `packages/server/API-STYLE.md` says what belongs here.
  */
 const GENERAL_SECTIONS = [
   "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.",
