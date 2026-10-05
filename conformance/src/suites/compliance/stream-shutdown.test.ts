@@ -68,7 +68,7 @@ describe("stopping the instance with an event stream open", () => {
       expect(text).toContain("event: stream_incomplete");
       const frame = /event: stream_incomplete\ndata: (.*)\n/.exec(text)?.[1];
       expect(JSON.parse(frame ?? "{}")).toMatchObject({
-        type: "stream_incomplete",
+        event_type: "stream_incomplete",
         reason: "server_stopping",
         // Nothing was sent on this stream, so there is no event to name.
         cursor: null,

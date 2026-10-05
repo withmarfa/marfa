@@ -22,7 +22,7 @@ export function readProof(req) {
 
 /** @param {"stream_cursor" | "stream_live"} type @param {string} cursor */
 export function marker(type, cursor) {
-  return `event: ${type}\ndata: ${JSON.stringify({ type, cursor, instance_id: INSTANCE, read_view: FENCE })}\n\n`;
+  return `event: ${type}\ndata: ${JSON.stringify({ event_type: type, cursor, instance_id: INSTANCE, read_view: FENCE })}\n\n`;
 }
 
 /**

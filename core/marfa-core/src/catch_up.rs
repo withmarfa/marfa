@@ -384,7 +384,7 @@ pub(crate) fn replay_build(
                 connected = true;
                 prologue_seen = true;
                 let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
-                let kind = name.as_deref().unwrap_or(&payload.r#type);
+                let kind = name.as_deref().unwrap_or(&payload.event_type);
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
                     return Err(CoreError::CopyExpired { reason });
                 }
@@ -705,7 +705,7 @@ fn read_stream(
             continue;
         };
         let payload = read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
-        let kind = name.as_deref().unwrap_or(&payload.r#type);
+        let kind = name.as_deref().unwrap_or(&payload.event_type);
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
             return Err(CoreError::CopyExpired { reason });
         }
@@ -1310,7 +1310,7 @@ mod tests {
     }
 
     fn incomplete() -> String {
-        "event: stream_incomplete\ndata: {\"type\":\"stream_incomplete\",\"reason\":\"scripted\"}\n\n"
+        "event: stream_incomplete\ndata: {\"event_type\":\"stream_incomplete\",\"reason\":\"scripted\"}\n\n"
             .into()
     }
 
@@ -1539,7 +1539,7 @@ mod tests {
     fn a_change_to_an_edge_names_the_edge() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        let edge = r#"{"type":"edge.created","edge":{"id":"e1","source_id":"row","target_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
+        let edge = r#"{"event_type":"edge.created","edge":{"id":"e1","source_id":"row","target_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
         server.on(
             "/events",
             vec![stream(
@@ -1633,7 +1633,7 @@ mod tests {
             let image = "data:image/png;base64,iVBORw0KGgo=";
             serde_json::from_str::<EventPayload>(
                 &serde_json::json!({
-                    "type": "item.created",
+                    "event_type": "item.created",
                     "item": {
                         "id": "row", "type": r#type, "state": "active", "tier": "library",
                         "version": 1, "schema_version": 1, "source": "test",
@@ -1945,7 +1945,7 @@ mod tests {
 
     fn cursor_ahead(requested: &str, head: &str) -> String {
         format!(
-            "event: cursor_ahead\ndata: {{\"type\":\"cursor_ahead\",\"requested\":\"{requested}\",\"head\":\"{head}\"}}\n\n"
+            "event: cursor_ahead\ndata: {{\"event_type\":\"cursor_ahead\",\"requested\":\"{requested}\",\"head\":\"{head}\"}}\n\n"
         )
     }
 

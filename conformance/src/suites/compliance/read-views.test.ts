@@ -36,7 +36,7 @@ const CHANGED = {
 };
 
 interface Proof {
-  type: string;
+  event_type: string;
   cursor: string;
   instance_id: string;
   read_view: string;
@@ -145,11 +145,11 @@ function marker(event: SseEvent, name: string): Proof {
   const proof = event.data as Proof;
   expect(Object.keys(proof).sort()).toEqual([
     "cursor",
+    "event_type",
     "instance_id",
     "read_view",
-    "type",
   ]);
-  expect(proof.type).toBe(name);
+  expect(proof.event_type).toBe(name);
   expect(proof.cursor).toMatch(/^(0|[1-9][0-9]*)$/);
   expect(BigInt(proof.cursor)).toBeLessThanOrEqual(9223372036854775807n);
   expect(typeof proof.instance_id).toBe("string");
@@ -785,7 +785,10 @@ describe("conditional working-copy read views", () => {
         AbortSignal.timeout(FRAME_BUDGET_MS),
       );
       expect(ended.events).toEqual([
-        { event: "read_view_changed", data: { type: "read_view_changed" } },
+        {
+          event: "read_view_changed",
+          data: { event_type: "read_view_changed" },
+        },
       ]);
       const reader = stream.response.body!.getReader();
       const deadline = AbortSignal.timeout(FRAME_BUDGET_MS);

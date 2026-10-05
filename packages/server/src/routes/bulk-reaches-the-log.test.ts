@@ -101,10 +101,10 @@ describe("POST /items/bulk reaches the event log", () => {
     // so a row naming an id it cannot resolve is no better than no row.
     for (const row of logged) {
       const payload = JSON.parse(row.payload) as {
-        type: string;
+        event_type: string;
         item: { id: string; type: string; properties: { body?: string } };
       };
-      expect(payload.type).toBe("item.created");
+      expect(payload.event_type).toBe("item.created");
       expect(payload.item.type).toBe("core.note");
       expect(payload.item.properties.body).toMatch(/first|second/);
     }

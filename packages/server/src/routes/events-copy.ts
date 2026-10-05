@@ -94,9 +94,12 @@ function project(
   stored: Record<string, unknown>,
   authority: ReadViewAuthority,
 ): string | null {
-  if (typeof stored.type !== "string" || !COPY_EVENT_TYPES.has(stored.type))
+  if (
+    typeof stored.event_type !== "string" ||
+    !COPY_EVENT_TYPES.has(stored.event_type)
+  )
     throw new Error("Unclassifiable event type");
-  if (stored.type.startsWith("edge.")) {
+  if (stored.event_type.startsWith("edge.")) {
     const decoded = decodeStoredEdge(JSON.stringify(stored));
     if (decoded?.sourceType === undefined)
       throw new Error("Unclassifiable edge event");
@@ -206,7 +209,9 @@ export async function buildCopyStream(
   };
   const terminal = (type: string, data: Record<string, unknown>): void => {
     if (isClosed()) return;
-    send(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    send(
+      `event: ${type}\ndata: ${JSON.stringify({ event_type: type, ...data })}\n\n`,
+    );
     const body = controller;
     cleanup();
     held.length = 0;
@@ -310,7 +315,7 @@ export async function buildCopyStream(
   };
   const enqueueFrame = (id: bigint | undefined, payload: string): void => {
     if (isClosed()) return;
-    const type = (JSON.parse(payload) as { type: string }).type;
+    const type = (JSON.parse(payload) as { event_type: string }).event_type;
     send(
       `${id === undefined ? "" : `id: ${String(id)}\n`}event: ${type}\ndata: ${payload}\n\n`,
     );
@@ -512,7 +517,7 @@ export async function buildCopyStream(
           if (held.length === 0 && state.pending === 0 && hasRoom()) {
             if (state.cursor < head) state.cursor = head;
             send(
-              `event: stream_live\ndata: ${JSON.stringify({ type: "stream_live", cursor: String(state.cursor), instance_id: authority.instanceId, read_view: authority.readView })}\n\n`,
+              `event: stream_live\ndata: ${JSON.stringify({ event_type: "stream_live", cursor: String(state.cursor), instance_id: authority.instanceId, read_view: authority.readView })}\n\n`,
             );
             state.holding = false;
           }
@@ -538,7 +543,7 @@ export async function buildCopyStream(
         }
         send(": connected\n\n");
         send(
-          `event: stream_cursor\ndata: ${JSON.stringify({ type: "stream_cursor", cursor: String(head), instance_id: openingAuthority.instanceId, read_view: openingAuthority.readView })}\n\n`,
+          `event: stream_cursor\ndata: ${JSON.stringify({ event_type: "stream_cursor", cursor: String(head), instance_id: openingAuthority.instanceId, read_view: openingAuthority.readView })}\n\n`,
         );
         openingDone();
         keepAlive = setInterval(() => {

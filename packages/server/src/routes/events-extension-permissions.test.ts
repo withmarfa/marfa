@@ -379,12 +379,12 @@ describe("the replay's shape guard", () => {
       "updated",
       "shape-anchor-no-metadata",
       JSON.stringify({
-        type: "item.updated",
+        event_type: "item.updated",
         item: { id: "shape-anchor-no-metadata", type: "core.note" },
       }),
     );
     const payload = {
-      type: "item.updated",
+      event_type: "item.updated",
       item: { id: "shape-no-metadata", type: "core.note" },
     };
     await appendRow("updated", "shape-no-metadata", JSON.stringify(payload));
@@ -401,12 +401,12 @@ describe("the replay's shape guard", () => {
       "metadata_changed",
       "shape-anchor-no-extensions",
       JSON.stringify({
-        type: "metadata.changed",
+        event_type: "metadata.changed",
         item: { id: "shape-anchor-no-extensions", type: "core.note" },
       }),
     );
     const payload = {
-      type: "metadata.changed",
+      event_type: "metadata.changed",
       item: { id: "shape-no-extensions", type: "core.note" },
       metadata: { tags: ["kept"] },
     };
@@ -428,17 +428,17 @@ describe("the replay's shape guard", () => {
       "updated",
       "shape-anchor-unparseable",
       JSON.stringify({
-        type: "item.updated",
+        event_type: "item.updated",
         item: { id: "shape-anchor-unparseable", type: "core.note" },
       }),
     );
     await appendRow(
       "updated",
       "shape-unparseable",
-      '{"type":"item.updated","item":{"id":"shape-unparseable","type":"core.note"}} ZZunparseableZZ',
+      '{"event_type":"item.updated","item":{"id":"shape-unparseable","type":"core.note"}} ZZunparseableZZ',
     );
     const after =
-      '{"type":"item.updated","item":{"id":"shape-after-unparseable","type":"core.note"}}';
+      '{"event_type":"item.updated","item":{"id":"shape-after-unparseable","type":"core.note"}}';
     await appendRow("updated", "shape-after-unparseable", after);
 
     const text = await replayAfter(cursor, "shape-after-unparseable");

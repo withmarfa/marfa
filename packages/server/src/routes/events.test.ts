@@ -153,11 +153,11 @@ describe("GET /events — catchup_too_old", () => {
     expect(frame).not.toBeNull();
     expect(frame!.id).toBe(String(oldest));
     const payload = JSON.parse(frame!.data) as {
-      type: string;
+      event_type: string;
       min_retained_id: string;
       requested: string;
     };
-    expect(payload.type).toBe("catchup_too_old");
+    expect(payload.event_type).toBe("catchup_too_old");
     expect(payload.min_retained_id).toBe(String(oldest));
     expect(payload.requested).toBe(String(retired));
 

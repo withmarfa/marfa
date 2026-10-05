@@ -33,7 +33,7 @@ function created(id, cursor) {
     updated_at: AT,
   };
   const data = JSON.stringify({
-    type: "item.created",
+    event_type: "item.created",
     listed: true,
     item,
     metadata: { tags: [] },
@@ -157,7 +157,7 @@ test(
         for (let cursor = 11; cursor <= 60; cursor += 1)
           body += created(`n${cursor}`, cursor);
         body +=
-          'event: catchup_too_old\ndata: {"type":"catchup_too_old","min_retained_id":"500"}\n\n';
+          'event: catchup_too_old\ndata: {"event_type":"catchup_too_old","min_retained_id":"500"}\n\n';
         res.end(body, sent);
       },
     ]);

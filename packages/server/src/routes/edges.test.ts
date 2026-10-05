@@ -908,7 +908,10 @@ describe("event_log accepts item_id=null for edge rows", () => {
       event_type: "edge_created",
       item_id: null,
       edge_id: "019d0000-0000-7000-a000-000000000abc",
-      payload: JSON.stringify({ type: "edge.created", edge: { id: "x" } }),
+      payload: JSON.stringify({
+        event_type: "edge.created",
+        edge: { id: "x" },
+      }),
     });
     expect(id > 0n).toBe(true);
     const batch = await ctx.storage.eventLog.getAfter(id - 1n, 10);

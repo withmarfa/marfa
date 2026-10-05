@@ -289,7 +289,7 @@ describe("failed delivery reopening and claim fencing", () => {
     );
     await raw.__sqliteRun(
       "UPDATE outbound_webhook_deliveries SET payload=? WHERE id=?",
-      ['{"type":"item.created","item":null}', delivery.id],
+      ['{"event_type":"item.created","item":null}', delivery.id],
     );
     expect(
       (await request(ctx.app, "POST", path, { key: ctx.workingKey })).status,

@@ -2354,7 +2354,7 @@ mod tests {
                     };
                     let marker = |kind: &str| {
                         format!(
-                            "event: {kind}\ndata: {{\"type\":\"{kind}\",\"cursor\":\"10\",\"instance_id\":\"{instance}\",\"read_view\":\"{fence}\"}}\n\n"
+                            "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"10\",\"instance_id\":\"{instance}\",\"read_view\":\"{fence}\"}}\n\n"
                         )
                     };
                     let json = |body: &str| {
@@ -2380,7 +2380,7 @@ mod tests {
                                 counted.fetch_add(1, Ordering::SeqCst);
                                 while stream.write_all(b": keepalive\n\n").is_ok() {
                                     if changed.load(Ordering::SeqCst) {
-                                        let _ = stream.write_all(b"event: read_view_changed\ndata: {\"type\":\"read_view_changed\"}\n\n");
+                                        let _ = stream.write_all(b"event: read_view_changed\ndata: {\"event_type\":\"read_view_changed\"}\n\n");
                                         break;
                                     }
                                     std::thread::sleep(std::time::Duration::from_millis(50));

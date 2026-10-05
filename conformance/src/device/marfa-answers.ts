@@ -485,7 +485,10 @@ export function refusal(
 export const connected: SseFrame = { comment: "connected" };
 
 export function streamCursor(cursor: string): SseFrame {
-  return { event: "stream_cursor", data: { type: "stream_cursor", cursor } };
+  return {
+    event: "stream_cursor",
+    data: { event_type: "stream_cursor", cursor },
+  };
 }
 
 /**
@@ -493,7 +496,7 @@ export function streamCursor(cursor: string): SseFrame {
  * from this reader included. `null` where the server knew no position.
  */
 export function streamLive(cursor: string | null): SseFrame {
-  return { event: "stream_live", data: { type: "stream_live", cursor } };
+  return { event: "stream_live", data: { event_type: "stream_live", cursor } };
 }
 
 export function itemEvent(
@@ -516,17 +519,17 @@ export function itemEvent(
     // The same metadata block every other door carries, built the same way.
     // A frame whose metadata held only tags is a shape the server does not
     // send.
-    data: { type: kind, ...withMetadata(stored, options.tags ?? []) },
+    data: { event_type: kind, ...withMetadata(stored, options.tags ?? []) },
   };
 }
 
-/** An edge's event, as the server publishes it: the type and the edge. */
+/** An edge's event, as the server publishes it: the event type and the edge. */
 export function edgeEvent(
   id: string,
   kind: string,
   edge: Record<string, unknown>,
 ): SseFrame {
-  return { id, event: kind, data: { type: kind, edge } };
+  return { id, event: kind, data: { event_type: kind, edge } };
 }
 
 export function catchupTooOld(
@@ -540,7 +543,7 @@ export function catchupTooOld(
     id: minRetainedId,
     event: "catchup_too_old",
     data: {
-      type: "catchup_too_old",
+      event_type: "catchup_too_old",
       min_retained_id: minRetainedId,
       requested,
     },
@@ -557,7 +560,7 @@ export const SCRIPTED_INSTANCE = "00000000-0000-7000-8000-000000000000";
 export function cursorAhead(requested: string, head: string): SseFrame {
   return {
     event: "cursor_ahead",
-    data: { type: "cursor_ahead", requested, head },
+    data: { event_type: "cursor_ahead", requested, head },
   };
 }
 
@@ -567,7 +570,10 @@ export function copyFrame(frame: SseFrame): SseFrame {
   const data = frame.data;
   if (data === null || typeof data !== "object") return frame;
   const payload = data as Record<string, unknown>;
-  if (payload.type === "stream_cursor" || payload.type === "stream_live") {
+  if (
+    payload.event_type === "stream_cursor" ||
+    payload.event_type === "stream_live"
+  ) {
     return {
       ...frame,
       data: {

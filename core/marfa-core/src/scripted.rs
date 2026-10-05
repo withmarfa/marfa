@@ -415,12 +415,12 @@ pub fn event(id: &str, name: &str, payload: &str) -> String {
 
 pub fn stream_live(cursor: Option<&str>) -> String {
     let cursor = cursor.map_or("null".to_string(), |cursor| format!("\"{cursor}\""));
-    format!("event: stream_live\ndata: {{\"type\":\"stream_live\",\"cursor\":{cursor}}}\n\n")
+    format!("event: stream_live\ndata: {{\"event_type\":\"stream_live\",\"cursor\":{cursor}}}\n\n")
 }
 
 pub fn item_payload(event: &str, id: &str, r#type: &str, version: i64) -> String {
     format!(
-        r#"{{"type":"{event}","item":{{"id":"{id}","type":"{type}","properties":{{"title":"{id}"}},"state":"active","tier":"library","version":{version},"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
+        r#"{{"event_type":"{event}","item":{{"id":"{id}","type":"{type}","properties":{{"title":"{id}"}},"state":"active","tier":"library","version":{version},"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
     )
 }
 
@@ -491,7 +491,7 @@ pub fn certified(mut answer: Answer) -> Answer {
 
 pub fn copy_marker(kind: &str, cursor: &str) -> String {
     format!(
-        "event: {kind}\ndata: {{\"type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"read_view\":\"{FENCE}\"}}\n\n"
+        "event: {kind}\ndata: {{\"event_type\":\"{kind}\",\"cursor\":\"{cursor}\",\"instance_id\":\"{INSTANCE}\",\"read_view\":\"{FENCE}\"}}\n\n"
     )
 }
 

@@ -131,7 +131,7 @@ describe("a catch-up that throws partway through", () => {
       event_type: "created",
       item_id: "ZZbeforethrowZZ",
       payload: JSON.stringify({
-        type: "item.created",
+        event_type: "item.created",
         item: { id: "ZZbeforethrowZZ", type: "core.note", properties: {} },
       }),
     });
@@ -143,7 +143,7 @@ describe("a catch-up that throws partway through", () => {
       event_type: "created",
       item_id: "ZZcyclicZZ",
       payload: JSON.stringify({
-        type: "item.created",
+        event_type: "item.created",
         item: { id: "ZZcyclicZZ", type: CYCLE[0], properties: {} },
       }),
     });
@@ -155,7 +155,7 @@ describe("a catch-up that throws partway through", () => {
       event_type: "created",
       item_id: "ZZafterthrowZZ",
       payload: JSON.stringify({
-        type: "item.created",
+        event_type: "item.created",
         item: { id: "ZZafterthrowZZ", type: "core.note", properties: {} },
       }),
     });

@@ -995,7 +995,7 @@ export function eventRoutes(
              */
             const failStream = (reason: StreamIncompleteReason): void => {
               const payload = JSON.stringify({
-                type: STREAM_INCOMPLETE_EVENT,
+                event_type: STREAM_INCOMPLETE_EVENT,
                 reason,
                 // What to reconnect with. Null when this stream had not
                 // delivered an event yet, which a client reads as "resume
@@ -1168,7 +1168,7 @@ export function eventRoutes(
                     return false;
                   }
                   const payload = JSON.stringify({
-                    type: "catchup_too_old",
+                    event_type: "catchup_too_old",
                     min_retained_id: String(minRetained),
                     requested: String(afterIdResolved),
                   });
@@ -1191,7 +1191,7 @@ export function eventRoutes(
                   announcedHead ?? (await storage.eventLog.getMaxId()) ?? 0n;
                 if (afterIdResolved > head) {
                   const payload = JSON.stringify({
-                    type: CURSOR_AHEAD_EVENT,
+                    event_type: CURSOR_AHEAD_EVENT,
                     requested: String(afterIdResolved),
                     head: String(head),
                   });
@@ -1660,7 +1660,7 @@ export function eventRoutes(
               // answers null on an empty log, so nothing reads 0 as stale.
               announcedHead = head ?? 0n;
               const payload = JSON.stringify({
-                type: STREAM_CURSOR_EVENT,
+                event_type: STREAM_CURSOR_EVENT,
                 cursor: String(announcedHead),
               });
               send(`event: ${STREAM_CURSOR_EVENT}\ndata: ${payload}\n\n`);
@@ -1689,7 +1689,7 @@ export function eventRoutes(
               }
               coveredThrough = reached;
               const payload = JSON.stringify({
-                type: STREAM_LIVE_EVENT,
+                event_type: STREAM_LIVE_EVENT,
                 cursor: reached === null ? null : String(reached),
               });
               send(`event: ${STREAM_LIVE_EVENT}\ndata: ${payload}\n\n`);

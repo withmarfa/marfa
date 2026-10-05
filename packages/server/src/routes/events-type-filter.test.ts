@@ -195,7 +195,10 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
 
     await ctx.storage.eventLog.append({
       event_type: "item.created",
-      payload: JSON.stringify({ type: "item.created", note: "ZZtypelessZZ" }),
+      payload: JSON.stringify({
+        event_type: "item.created",
+        note: "ZZtypelessZZ",
+      }),
     });
     // The witness: the row is in the log after the cursor, so a replay
     // from that cursor walks over it and the absence below is a decision
@@ -395,7 +398,7 @@ describe("the replay's two checks on a row that names no item type", () => {
     await ctx.storage.eventLog.append({
       event_type: "item.created",
       payload: JSON.stringify({
-        type: "item.created",
+        event_type: "item.created",
         note: "ZZunclassifiableZZ",
       }),
     });

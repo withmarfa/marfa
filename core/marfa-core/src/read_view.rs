@@ -36,14 +36,14 @@ pub(crate) fn event_payload(
 ) -> Result<crate::wire::EventPayload> {
     let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|_| invalid())?;
     if matches!(name, Some("stream_cursor" | "stream_live"))
-        || matches!(payload.r#type.as_str(), "stream_cursor" | "stream_live")
+        || matches!(payload.event_type.as_str(), "stream_cursor" | "stream_live")
     {
         let fields: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(data).map_err(|_| invalid())?;
         if id.is_some()
-            || name != Some(payload.r#type.as_str())
+            || name != Some(payload.event_type.as_str())
             || fields.len() != 4
-            || !["type", "cursor", "instance_id", "read_view"]
+            || !["event_type", "cursor", "instance_id", "read_view"]
                 .iter()
                 .all(|key| fields.contains_key(*key))
         {
@@ -179,7 +179,7 @@ impl Context {
     }
 
     pub(crate) fn marker(&self, payload: &crate::wire::EventPayload, kind: &str) -> Result<u64> {
-        if payload.r#type != kind
+        if payload.event_type != kind
             || payload.instance_id.as_deref() != Some(&self.instance)
             || payload.read_view.as_deref() != Some(&self.fence)
         {
@@ -275,8 +275,8 @@ mod tests {
                 "live below greatest ID",
                 vec![
                     copy_marker("stream_cursor", "10"),
-                    event("20", "unknown", r#"{"type":"unknown"}"#),
-                    event("15", "unknown", r#"{"type":"unknown"}"#),
+                    event("20", "unknown", r#"{"event_type":"unknown"}"#),
+                    event("15", "unknown", r#"{"event_type":"unknown"}"#),
                     copy_marker("stream_live", "15"),
                 ],
             ),
@@ -284,7 +284,7 @@ mod tests {
                 "extra marker fields",
                 vec![
                     copy_marker("stream_cursor", "10")
-                        .replace("\"type\":", "\"extra\":true,\"type\":"),
+                        .replace("\"event_type\":", "\"extra\":true,\"event_type\":"),
                     copy_marker("stream_live", "10"),
                 ],
             ),

@@ -241,6 +241,36 @@ function sentBodies(http: Recorder): Record<string, unknown>[] {
 // One attempt: what the receiver's answer does to the row
 // ---------------------------------------------------------------------------
 
+describe("the body a delivery sends", () => {
+  it("names the event once, as event_type, beside the frame's own fields", async () => {
+    const { id } = await owner();
+    const webhook = await subscription(id, ["item.created"]);
+    await pending(
+      webhook,
+      { type: "created", item: item("01HBODYBODYBODYBODYBODY000") },
+      "item.created",
+    );
+    const http = recorder(() => ({
+      kind: "answered",
+      status: 204,
+      retryAfter: null,
+    }));
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(http.posts).toHaveLength(1);
+    const text = http.posts[0]!.body;
+    expect(text.match(/"event_type"/g)).toHaveLength(1);
+    expect(Object.keys(JSON.parse(text) as object)).toEqual([
+      "item",
+      "event_type",
+      "event_id",
+      "delivery_id",
+      "metadata",
+      "delivered_at",
+    ]);
+    expect(sentBodies(http)[0]).toMatchObject({ event_type: "item.created" });
+  });
+});
+
 describe("an attempt's outcome", () => {
   async function attempt(outcome: WebhookPostOutcome) {
     const { id } = await owner();
