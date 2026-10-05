@@ -4,8 +4,7 @@
  * submit state, Back and Forward.
  *
  * A request made through `app.request` shows what the server sent. It cannot
- * show that the page works once a browser has run it, which is where the
- * defects these tests hold were found.
+ * show that the page works once a browser has run it.
  *
  * The browser is whichever the machine already has. None is downloaded: a
  * test run must not need a network or write outside its own directories.
@@ -36,30 +35,33 @@ function chromiumCandidates(): string[] {
 }
 
 /**
- * Launch a browser, or answer `null` when the machine has none.
+ * Launch a browser, or answer why none would start.
  *
  * A machine with none is a developer's laptop on a plane; the caller skips
- * there. CI has Google Chrome installed, so a caller treats `null` as a
- * failure when `CI` is set rather than reporting a green run that looked at
- * nothing.
+ * there. CI has Google Chrome installed, so a caller throws the error when
+ * `CI` is set rather than reporting a green run that looked at nothing.
  */
-export async function launchTestBrowser(): Promise<Browser | null> {
+export async function launchTestBrowser(): Promise<Browser | Error> {
   // Playwright turns the back-forward cache off by default, and with it off
   // Back reloads the page, which hides exactly what a person with a browser's
   // ordinary settings meets: the page restored as it was left.
   const options = { ignoreDefaultArgs: ["--disable-back-forward-cache"] };
+  const failures: Error[] = [];
+  const asError = (error: unknown): Error =>
+    error instanceof Error ? error : new Error(String(error));
   for (const executablePath of chromiumCandidates()) {
     try {
       return await chromium.launch({ ...options, executablePath });
-    } catch {
-      // Try the next one.
+    } catch (error) {
+      failures.push(asError(error));
     }
   }
   try {
     return await chromium.launch({ ...options, channel: "chrome" });
-  } catch {
-    return null;
+  } catch (error) {
+    failures.push(asError(error));
   }
+  return new Error("no browser would start", { cause: failures });
 }
 
 /** A port nothing is listening on, found by asking the system for one. */

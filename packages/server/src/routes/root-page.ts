@@ -1,8 +1,7 @@
 /**
  * What a person sees when they open the server's address in a browser. A
  * program asking the same address gets the instance's JSON description, which
- * is what the address is for; a person got that too, with nothing to read in
- * it and nothing to do next.
+ * is what the address is for.
  *
  * Nothing here is read from the instance: the JSON is public, but a page
  * built from it would have to be kept in step with it for no one's benefit.

@@ -1,10 +1,8 @@
 /**
  * What a person sees when they are signed in and there is nowhere further to
  * send them: at the server's address after signing in with no app waiting,
- * and when they open the sign-in page while a session already exists.
- *
- * Without it the first ended on the server's JSON description of itself, and
- * the second showed an empty form as though nobody were signed in.
+ * and when they open the sign-in page while a session already exists and no
+ * authorization sent them.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";

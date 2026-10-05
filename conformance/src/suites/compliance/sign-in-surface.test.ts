@@ -245,3 +245,151 @@ describe("the sign-in surface", () => {
     );
   });
 });
+
+/** A browser's navigation, as the headers say it. */
+const NAVIGATION = {
+  accept: "text/html,application/xhtml+xml",
+  "sec-fetch-mode": "navigate",
+};
+
+/** The session cookie a sign-in from `address` sets. */
+async function sessionCookie(address: string): Promise<string> {
+  const signedIn = await signIn(OWNER.password, address);
+  expect(signedIn.status).toBe(200);
+  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    signedIn.headers.get("set-cookie") ?? "",
+  )?.[1];
+  expect(cookie).toBeDefined();
+  return cookie!;
+}
+
+/** Register an app the way any program can, and start its authorization:
+ *  answered with where the instance sends a person who is not signed in. */
+async function startAuthorization(name: string): Promise<URL> {
+  const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({
+      client_name: name,
+      application_type: "native",
+      redirect_uris: ["http://127.0.0.1/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  expect(registered.status).toBe(201);
+  const { client_id: clientId } = (await registered.json()) as {
+    client_id: string;
+  };
+  const authorize = await fetch(
+    `${server!.apiUrl}/auth/oauth2/authorize?${new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: "http://127.0.0.1/callback",
+      scope: "core.note:read",
+      state: "pages",
+      code_challenge: "0123456789012345678901234567890123456789012",
+      code_challenge_method: "S256",
+    }).toString()}`,
+    {
+      redirect: "manual",
+      headers: { ...NAVIGATION, [CLIENT_HEADER]: "192.0.2.50" },
+    },
+  );
+  // The provider answers a redirect as a 302 or, to a caller it takes for a
+  // program, as JSON naming the address.
+  const where =
+    authorize.status === 302
+      ? authorize.headers.get("location")
+      : ((await authorize.json()) as { url?: string }).url;
+  expect(where).toBeTruthy();
+  return new URL(where ?? "", server!.apiUrl);
+}
+
+describe("the pages a person reads at sign-in", () => {
+  it("returns the typed email after a wrong password, and never the password", async () => {
+    const failed = await postForm(
+      "/auth/sign-in",
+      { email: OWNER.email, password: "not-the-password", return_to: "/" },
+      { origin, [CLIENT_HEADER]: "192.0.2.51" },
+    );
+    expect(failed.status).toBe(302);
+    const location = failed.headers.get("location") ?? "";
+    expect(location).toContain("error=invalid_credentials");
+    expect(location).not.toContain("not-the-password");
+    const page = await (await fetch(`${server!.apiUrl}${location}`)).text();
+    expect(page).toContain(`value="${OWNER.email}"`);
+    expect(page).not.toContain("not-the-password");
+  });
+
+  it("names the app an authorization sent the person for, and no app for a link edited after signing", async () => {
+    const signInUrl = await startAuthorization("Conformance Notes");
+    expect(signInUrl.pathname).toBe("/auth/sign-in");
+    const named = await (await fetch(signInUrl)).text();
+    expect(named).toContain("Conformance Notes");
+    // An app that registered itself is flagged as the consent page flags it.
+    expect(named).toContain("hasn't verified this app");
+
+    const edited = new URL(signInUrl);
+    edited.searchParams.set("scope", "core.note:write");
+    expect(await (await fetch(edited)).text()).not.toContain(
+      "Conformance Notes",
+    );
+  });
+
+  it("tells a person who is signed in so, and shows the form to one an authorization sent to sign in again", async () => {
+    const cookie = await sessionCookie("192.0.2.52");
+    const page = await (
+      await fetch(`${server!.apiUrl}/auth/sign-in`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain("You&#39;re signed in");
+    expect(page).toContain(OWNER.email);
+    expect(page).not.toContain('name="password"');
+
+    const wanted = await startAuthorization("Conformance Again");
+    const again = await (await fetch(wanted, { headers: { cookie } })).text();
+    expect(again).toContain('name="password"');
+    // Witness for both: nobody signed in is shown the form.
+    expect(
+      await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text(),
+    ).toContain('name="password"');
+  });
+
+  it("tells a link edited after it was signed that it is invalid, not that it has expired", async () => {
+    const cookie = await sessionCookie("192.0.2.53");
+    const signInUrl = await startAuthorization("Conformance Edited");
+    const authorize = new URL(
+      signInUrl.searchParams.get("return_to") ?? "",
+      server!.apiUrl,
+    );
+    // The sign-in page carries the signed query itself; the consent screen
+    // takes the same one.
+    const signed = new URLSearchParams(signInUrl.search);
+    signed.delete("return_to");
+    authorize.search = signed.toString();
+    authorize.pathname = "/auth/authorize";
+    const edited = new URL(authorize);
+    edited.searchParams.set("exp", String(Math.floor(Date.now() / 1000) - 60));
+    const refused = await fetch(edited, { headers: { cookie } });
+    expect(refused.status).toBe(400);
+    const text = await refused.text();
+    expect(text).toContain("We could not verify this request");
+    expect(text).not.toContain("has expired");
+  });
+
+  it("shows a browser at end-session with no session a page, and a program the provider's JSON", async () => {
+    const page = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
+      headers: NAVIGATION,
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toContain("signed out");
+
+    const program = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
+      headers: { accept: "application/json" },
+    });
+    expect(program.status).toBe(400);
+    expect(program.headers.get("content-type")).toContain("application/json");
+  });
+});

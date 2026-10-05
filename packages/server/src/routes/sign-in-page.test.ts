@@ -750,9 +750,7 @@ describe("the sign-in page names the app that sent the person", () => {
     const html = await page.text();
     expect(html).toContain("Sign in to continue to <b>Named Notes</b>");
     // A self-registered app is flagged as the consent page flags it.
-    expect(html).toContain(
-      "Marfa hasn&#39;t verified this app".replace("&#39;", "'"),
-    );
+    expect(html).toContain("Marfa hasn't verified this app");
   });
 
   it("names nothing when the request was never signed", async () => {
@@ -847,6 +845,28 @@ describe("signing in with no app waiting", () => {
       await request(ctx.app, "GET", "/auth/sign-in")
     ).text();
     expect(anonymous).toContain('name="password"');
+  });
+
+  it("still shows the form to a signed-in person an authorization sent to sign in afresh", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "iris@example.com", "correct horse", "Iris");
+    const cookie = await signInCookie(ctx, "iris@example.com", "correct horse");
+    // `prompt=login` is how an app asks for a new sign-in from somebody who
+    // has a session; the plugin answers by sending them to the sign-in page.
+    const page = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?return_to=${encodeURIComponent("/auth/authorize?client_id=abc&prompt=login")}`,
+      { headers: { cookie } },
+    );
+    const html = await page.text();
+    expect(html).toContain('name="password"');
+    expect(html).not.toContain("You&#39;re signed in");
+    // Witness: the same person, sent nowhere in particular, is told.
+    const elsewhere = await request(ctx.app, "GET", "/auth/sign-in", {
+      headers: { cookie },
+    });
+    expect(await elsewhere.text()).toContain("You&#39;re signed in");
   });
 
   it("offers to continue to where an already signed-in person was headed", async () => {

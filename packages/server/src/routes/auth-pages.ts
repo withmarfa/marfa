@@ -414,8 +414,15 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // Somebody already signed in is told so, rather than shown a form that
     // reads as though nobody were. Without an identity layer there is no
     // session to look for and the form is all there is.
+    //
+    // Not when an authorization sent them: the plugin sends a signed-in
+    // person here to sign in afresh (`prompt=login`, an unsatisfied
+    // `max_age`), and only a new session satisfies it. A page with no form
+    // would send them round the same loop for ever.
+    const sentByAuthorization =
+      new URL(returnTo, "http://localhost").pathname === "/auth/authorize";
     const session = auth ? await auth.getSession(c.req.raw.headers) : null;
-    if (session) {
+    if (session && !sentByAuthorization) {
       return c.html(
         renderSignedInPage({
           email: session.user.email,
@@ -522,11 +529,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   });
 
   // Browser logout. The plugin owns the whole of it — validating the id token,
-  // matching the return URI, ending the session — and this wrapper adds one
-  // thing: a page for the case where the plugin ends the session and then has
-  // nowhere to send the person, which it answers with an empty 200. That
-  // renders as a blank tab, which reads as a failure even though the logout
-  // succeeded. Registered ahead of the catch-all so it sees the response
+  // matching the return URI, ending the session — and this wrapper adds two
+  // pages: one for a browser with no session and no id token hint, which has
+  // nothing to end, and one for the case where the plugin ends the session and
+  // then has nowhere to send the person, which it answers with an empty 200.
+  // That renders as a blank tab, which reads as a failure even though the
+  // logout succeeded. Registered ahead of the catch-all so it sees the response
   // first; every other outcome is passed through untouched.
   router.get("/oauth2/end-session", async (c) => {
     if (!auth) {

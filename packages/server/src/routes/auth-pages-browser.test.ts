@@ -3,9 +3,8 @@
  * against a listening server.
  *
  * A request made in process shows what the server sent. These show what a
- * person is left with once the page's own script has run, which is where the
- * defects held here lived: a form that kept its "already submitting" mark
- * through Back, a page with no way onward.
+ * person is left with once the page's own script has run, such as a form's
+ * "already submitting" mark after Back.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,10 +14,12 @@ import { createTestAccount, createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
 
-const browser: Browser | null = await launchTestBrowser();
-if (browser === null && process.env.CI) {
+const launched = await launchTestBrowser();
+const browser: Browser | null = launched instanceof Error ? null : launched;
+if (launched instanceof Error && process.env.CI) {
   throw new Error(
     "No browser to run the page tests in; CI is expected to have one",
+    { cause: launched },
   );
 }
 const inBrowser = browser === null ? describe.skip : describe;
@@ -105,12 +106,21 @@ inBrowser("the consent page, in a browser", () => {
       await signIn(page);
       await page.waitForURL(/\/auth\/authorize\?/);
 
+      // Marks the page's own JavaScript state, which a page restored from the
+      // back-forward cache keeps and one the browser reloads does not. Without
+      // the restore, this test would pass on the unfixed page too.
+      await page.evaluate("window.marfaMark = true");
       await page.click('button[name="accept"][value="false"]');
       await page.waitForURL(/\/callback/);
       // A page restored from the back-forward cache fires no load event, so
       // waiting for one would wait for ever.
       await page.goBack({ waitUntil: "commit" });
       await page.waitForURL(/\/auth\/authorize\?/, { waitUntil: "commit" });
+
+      expect(
+        await page.evaluate("window.marfaMark === true"),
+        "the browser restored the page from its back-forward cache",
+      ).toBe(true);
 
       const allow = page.locator('button[name="accept"][value="true"]');
       expect(await allow.isDisabled()).toBe(false);
