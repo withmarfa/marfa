@@ -6,7 +6,7 @@ The container recipe here runs the server with its database streamed off-site an
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
 - **Litestream** (`litestream.yml`), a sidecar in the same container. `entrypoint.sh` restores the database from the bucket when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
-- **The blob folder is replicated by the server itself.** Litestream carries the database only. The `blob-replicate` background job (listed at `GET /background-jobs`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
+- **The server replicates the blob folder itself.** Litestream carries the database only. The `blob-replicate` background job (listed at `GET /background-jobs`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
 
 ## The names it needs
 
@@ -59,7 +59,7 @@ A `degraded` instance still answers `200`, because it is still serving. A caller
 A stop is `SIGTERM`, which `docker stop` sends and which a container runtime follows with `SIGKILL` after ten seconds by default. The server finishes inside that:
 
 1. It tells every open event stream the instance is stopping, with a closing `stream_incomplete` frame whose `reason` is `server_stopping`. A client reconnects from the cursor in the frame, to the instance once it is back.
-2. In the same step it stops taking requests, and waits at most two seconds for those in flight, and at most four seconds for the bulk action and the background job runs in flight, the webhook deliveries among them. A delivery still running when the wait ends is retried after the next start.
+2. In the same step it stops taking requests, and waits at most two seconds for those in flight, and at most four seconds for the bulk action and the background jobs that are running, webhook deliveries included. A delivery still running when the wait ends is retried after the next start.
 3. It closes the database, which moves every write out of the log into the database file unless another connection holds the log, as Litestream does and as a copy's read transaction does, in which case the writes stay in the log and the next start applies them, and flushes its telemetry.
 
 The worst case is under eight seconds, and a stop that completes exits `0`. A stop that does not, because the server or the database would not close in time, exits `1` with a warning in the log naming the step.

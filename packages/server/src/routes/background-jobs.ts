@@ -72,7 +72,7 @@ const operatorResponses = {
         schema: makeErrorResponseSchema(["forbidden"]),
       },
     },
-    description: "Operator key required",
+    description: "- `forbidden`: your key isn't an operator key.",
   },
 };
 
@@ -87,7 +87,7 @@ const listBackgroundJobsRoute = createRoute({
   tags: ["Instance"],
   summary: "List background jobs",
   description:
-    "Every background job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
+    "Returns every background job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
@@ -97,7 +97,7 @@ const listBackgroundJobsRoute = createRoute({
           schema: pageOf(BackgroundJobSchema, "BackgroundJobPage"),
         },
       },
-      description: "The background jobs",
+      description: "Returns every background job, in one page.",
     },
     ...operatorResponses,
   },
@@ -110,14 +110,14 @@ const runBackgroundJobRoute = createRoute({
   tags: ["Instance"],
   summary: "Run a background job",
   description:
-    "Runs the background job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. Operator key only.",
+    "Runs a background job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: NameParam },
   responses: {
     200: {
       content: { "application/json": { schema: BackgroundJobRunSchema } },
-      description: "The run",
+      description: "Returns the run.",
     },
     400: {
       content: {
@@ -125,7 +125,8 @@ const runBackgroundJobRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Not a background job name",
+      description:
+        "- `validation_error`: `name` isn't lowercase letters, digits and hyphens starting with a letter, or a query parameter is unknown.",
     },
     ...operatorResponses,
     404: {
@@ -134,7 +135,8 @@ const runBackgroundJobRoute = createRoute({
           schema: makeErrorResponseSchema(["background_job_not_found"]),
         },
       },
-      description: "No such background job on this instance",
+      description:
+        "- `background_job_not_found`: this instance runs no background job with this name.",
     },
     409: {
       content: {
@@ -142,7 +144,8 @@ const runBackgroundJobRoute = createRoute({
           schema: makeErrorResponseSchema(["background_job_running"]),
         },
       },
-      description: "A run holds the background job",
+      description:
+        "- `background_job_running`: the background job is already running. Try again when the run finishes.",
     },
   },
 });

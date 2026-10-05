@@ -120,7 +120,7 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  */
 const CEILINGS = {
   summaryForm: 0,
-  descriptionLength: 44,
+  descriptionLength: 43,
   parameterUndescribed: 3,
   parameterLength: 9,
   schemaUndescribed: 97,

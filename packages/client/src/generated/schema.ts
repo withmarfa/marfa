@@ -827,7 +827,7 @@ export interface paths {
         };
         /**
          * List background jobs
-         * @description Every background job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.
+         * @description Returns every background job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.
          */
         get: operations["listBackgroundJobs"];
         put?: never;
@@ -849,7 +849,7 @@ export interface paths {
         put?: never;
         /**
          * Run a background job
-         * @description Runs the background job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. Operator key only.
+         * @description Runs a background job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.
          */
         post: operations["runBackgroundJob"];
         delete?: never;
@@ -11361,7 +11361,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The background jobs */
+            /** @description Returns every background job, in one page. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11405,7 +11405,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11465,7 +11465,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The run */
+            /** @description Returns the run. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11479,7 +11479,7 @@ export interface operations {
                     "application/json": components["schemas"]["BackgroundJobRun"];
                 };
             };
-            /** @description Not a background job name */
+            /** @description - `validation_error`: `name` isn't lowercase letters, digits and hyphens starting with a letter, or a query parameter is unknown. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11509,7 +11509,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11524,7 +11524,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such background job on this instance */
+            /** @description - `background_job_not_found`: this instance runs no background job with this name. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11539,7 +11539,7 @@ export interface operations {
                     "application/json": components["schemas"]["BackgroundJobNotFoundRefusal"];
                 };
             };
-            /** @description A run holds the background job */
+            /** @description - `background_job_running`: the background job is already running. Try again when the run finishes. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
