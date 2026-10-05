@@ -251,10 +251,10 @@ export function edgeTypeFromRequest(
 // Routes
 // ---------------------------------------------------------------------------
 
-const createEdgeTypeRoute = createRoute({
+const registerEdgeTypeRoute = createRoute({
   method: "post",
   path: "/",
-  operationId: "createEdgeType",
+  operationId: "registerEdgeType",
   tags: ["Edge types"],
   summary: "Register an edge type",
   description:
@@ -407,7 +407,7 @@ const deleteEdgeTypeRoute = createRoute({
 export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(createEdgeTypeRoute, async (c) => {
+  router.openapi(registerEdgeTypeRoute, async (c) => {
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
     // expectation that "can't redefine a core type" is a 409, not
@@ -460,7 +460,7 @@ export function edgeTypeRoutes(storage: Storage) {
       (schema) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
-        action: "edge_type.create",
+        action: "edge_type.register",
         resource_type: "edge_type",
         resource_id: schema.id,
       }),

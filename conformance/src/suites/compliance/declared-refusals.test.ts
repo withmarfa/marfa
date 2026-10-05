@@ -216,7 +216,7 @@ describe("a key names one request", () => {
         }),
       },
       {
-        method: "DELETE",
+        method: "POST",
         template: "/items/{id}/purge",
         first: async () => ({
           path: `/items/${await trashed("purge-a")}/purge`,
@@ -426,12 +426,7 @@ describe("a core edge type", () => {
     const restored = await getOperatorClient().restoreArchive(archive);
     expect(restored.status).toBe(409);
     expect(restored.error?.error.code).toBe("conflict");
-    await expectMatchesSchema(
-      "POST",
-      "/admin/restore-archive",
-      409,
-      restored.error,
-    );
+    await expectMatchesSchema("POST", "/restore", 409, restored.error);
   });
 });
 
@@ -546,7 +541,7 @@ describe("an item door given a malformed id", () => {
       ["GET", "/items/{id}/metadata", "/metadata", undefined],
       ["DELETE", "/items/{id}/tags/{tag}", "/tags/x", undefined],
       ["DELETE", "/items/{id}", "", undefined],
-      ["DELETE", "/items/{id}/purge", "/purge", undefined],
+      ["POST", "/items/{id}/purge", "/purge", undefined],
       ["POST", "/items/{id}/restore", "/restore", undefined],
       ["GET", "/items/{id}/edges", "/edges", undefined],
       ["GET", "/items/{id}/backrefs", "/backrefs", undefined],

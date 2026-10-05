@@ -3,7 +3,7 @@ import type { Version } from "@withmarfa/shared";
 import {
   archiveDates,
   archiveVersions,
-} from "../routes/admin-archive-history.js";
+} from "../routes/restore-archive-history.js";
 import {
   createTestContext,
   closeTestContexts,

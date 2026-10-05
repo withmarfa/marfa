@@ -90,7 +90,7 @@ describe("a type's version policy", () => {
     const made = await client.registerType(declared({ max_versions: 5 }, id));
     expect(made.status).toBe(201);
 
-    const refused = await client.updateType(
+    const refused = await client.replaceType(
       id,
       declared({ recent_days: 30, daily_snapshot_days: 7 }, id),
     );

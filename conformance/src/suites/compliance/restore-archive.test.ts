@@ -1,9 +1,9 @@
 /**
- * Conformance for POST /admin/restore-archive.
+ * Conformance for POST /restore.
  *
  * The round trip is end to end: the server builds the archive via
  * GET /export?format=archive and accepts it back via
- * POST /admin/restore-archive, which is what proves the manifest contract
+ * POST /restore, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
  * The rest build their archive with `utils/archive.ts` instead: a row no
@@ -43,7 +43,7 @@ let fileKey: string;
 let operator: MarfaClient;
 
 beforeAll(async () => {
-  const setup = await createTestContext("compliance", "admin-archive");
+  const setup = await createTestContext("compliance", "restore-archive");
   ({ ctx, client, apiUrl } = setup);
   fileKey = setup.apiKey;
   operator = getOperatorClient();
@@ -53,7 +53,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-describe("admin/restore-archive", () => {
+describe("restore", () => {
   it("round-trips: archive export then restore accepts the same payload", async () => {
     // Seed with an explicit source_id so the re-import path hits the
     // (source, source_id) dedup branch — that's the bit that proves
@@ -85,12 +85,7 @@ describe("admin/restore-archive", () => {
     expect(restored.ok).toBe(true);
     expect(restored.data.duplicates).toBeGreaterThanOrEqual(1);
     expect(restored.data.blobs_imported).toBe(0);
-    await expectMatchesSchema(
-      "POST",
-      "/admin/restore-archive",
-      200,
-      restored.data,
-    );
+    await expectMatchesSchema("POST", "/restore", 200, restored.data);
   });
 
   it("restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name", async () => {
@@ -537,7 +532,7 @@ describe("admin/restore-archive", () => {
       apiKey: keyResp.data.key,
     });
 
-    // A zero-length body is rejected before the admin check, so build a real
+    // A zero-length body is rejected before the operator check, so build a real
     // minimal archive to isolate the 403 path. Reuse the server-built archive,
     // valid by construction and scoped to this file's own `source`: this case
     // needs only *a* valid body, and an unscoped export is work it has no use

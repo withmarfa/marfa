@@ -56,7 +56,7 @@ describe("purging a row a working credential may not write", () => {
   it("names the namespace rather than the trashed-state precondition", async () => {
     const id = await seedReservedRow("folder:refusal-1");
 
-    const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${id}/purge`, {
       key: workingKey,
     });
 
@@ -96,7 +96,7 @@ describe("purging a row a working credential may not write", () => {
 
     const res = await request(
       ctx.app,
-      "DELETE",
+      "POST",
       `/items/${createdBody.item.id}/purge`,
       { key: workingKey },
     );
@@ -115,7 +115,7 @@ describe("purging a row a working credential may not write", () => {
     const id = await seedReservedRow("folder:refusal-2");
     await itemWrites(ctx.storage).delete(id);
 
-    const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+    const purged = await request(ctx.app, "POST", `/items/${id}/purge`, {
       key: workingKey,
     });
     expect(purged.status).toBe(200);
@@ -146,7 +146,7 @@ describe("purging a soft-deleted row", () => {
   }
 
   async function expectRefused(id: string, key: string): Promise<void> {
-    const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${id}/purge`, {
       key,
     });
     const body = (await res.json()) as { error: { code: string } };
@@ -157,7 +157,7 @@ describe("purging a soft-deleted row", () => {
 
   /** A row whose type the key may not read answers as no row, and stays. */
   async function expectHidden(id: string, key: string): Promise<void> {
-    const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${id}/purge`, {
       key,
     });
     const body = (await res.json()) as {
@@ -183,7 +183,7 @@ describe("purging a soft-deleted row", () => {
     // The witness: the same key purges a trashed row of the type it writes.
     const purged = await request(
       ctx.app,
-      "DELETE",
+      "POST",
       `/items/${await trashedNote()}/purge`,
       { key: coreOnlyKey },
     );
@@ -196,7 +196,7 @@ describe("purging a soft-deleted row", () => {
 
     await expectHidden(id, coreOnlyKey);
 
-    const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+    const purged = await request(ctx.app, "POST", `/items/${id}/purge`, {
       key: workingKey,
     });
     expect(purged.status).toBe(200);
@@ -220,7 +220,7 @@ describe("purging a soft-deleted row", () => {
 
     await expectHidden(conn.id, coreOnlyKey);
 
-    const purged = await request(ctx.app, "DELETE", `/items/${conn.id}/purge`, {
+    const purged = await request(ctx.app, "POST", `/items/${conn.id}/purge`, {
       key: workingKey,
     });
     expect(purged.status).toBe(200);

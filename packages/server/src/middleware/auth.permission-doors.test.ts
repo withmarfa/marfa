@@ -206,7 +206,7 @@ describe("/keys — keys.mint", () => {
   });
 });
 
-describe("DELETE /items/:id/purge — items.purge", () => {
+describe("POST /items/:id/purge — items.purge", () => {
   it("purges an item the caller can write", async () => {
     const caller = await mintKey(ctx, {
       label: "purge-holder",
@@ -222,7 +222,7 @@ describe("DELETE /items/:id/purge — items.purge", () => {
     });
     await itemWrites(ctx.storage).transition(item.id, "trashed");
 
-    const res = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
       key: caller,
     });
     expect(res.status).toBe(200);
@@ -242,7 +242,7 @@ describe("DELETE /items/:id/purge — items.purge", () => {
     });
     await itemWrites(ctx.storage).transition(item.id, "trashed");
 
-    const res = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
       key: caller,
     });
     expect(res.status).toBe(403);

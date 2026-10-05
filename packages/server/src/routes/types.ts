@@ -323,7 +323,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.",
+    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /platform-types/drift` names them and `DELETE /platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -480,8 +480,8 @@ const registerTypeRoute = createRoute({
   },
 });
 
-const updateTypeRoute = createRoute({
-  operationId: "updateType",
+const replaceTypeRoute = createRoute({
+  operationId: "replaceType",
   method: "put",
   path: "/{id}",
   middleware: [
@@ -795,7 +795,7 @@ export function typeRoutes(storage: Storage) {
   );
 
   router.openapi(
-    updateTypeRoute,
+    replaceTypeRoute,
     async (c) => {
       const { id } = c.req.valid("param");
       const body = c.req.valid("json");
@@ -837,7 +837,7 @@ export function typeRoutes(storage: Storage) {
         {
           client_ip: c.get("clientIp") ?? null,
           key_id: c.get("apiKey")?.id,
-          action: "type.update",
+          action: "type.replace",
           resource_type: "type",
           resource_id: id,
         },

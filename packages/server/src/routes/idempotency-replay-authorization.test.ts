@@ -458,7 +458,7 @@ it("refuses a purge receipt when its operation permission is withdrawn after the
   ).toBe(200);
   const headers = { "Idempotency-Key": `purge-${String(sequence++)}` };
   const ask = () =>
-    request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+    request(ctx.app, "POST", `/items/${item.id}/purge`, {
       key: key.key,
       headers,
     });
@@ -774,7 +774,7 @@ it.each(["item", "edge"])(
       ).toBe(200);
     expect(
       (
-        await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+        await request(ctx.app, "POST", `/items/${item.id}/purge`, {
           key: ctx.workingKey,
         })
       ).status,
@@ -876,7 +876,7 @@ it("reauthorizes a retained cascade mark after the named root was purged", async
   ).toBe(200);
   expect(
     (
-      await request(ctx.app, "DELETE", `/items/${parentId}/purge`, {
+      await request(ctx.app, "POST", `/items/${parentId}/purge`, {
         key: ctx.workingKey,
       })
     ).status,
@@ -1104,7 +1104,7 @@ it.each(["retyped", "moved", "purged"])(
       ).toBe(200);
       expect(
         (
-          await request(ctx.app, "DELETE", `/items/${target.id}/purge`, {
+          await request(ctx.app, "POST", `/items/${target.id}/purge`, {
             key: ctx.workingKey,
           })
         ).status,

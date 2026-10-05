@@ -237,11 +237,11 @@ export function trackRegisteredTypes(
     return response;
   };
 
-  const originalUpdate = client.updateType.bind(client);
-  client.updateType = async (
-    ...args: Parameters<MarfaClient["updateType"]>
+  const originalReplace = client.replaceType.bind(client);
+  client.replaceType = async (
+    ...args: Parameters<MarfaClient["replaceType"]>
   ) => {
-    const response = await originalUpdate(...args);
+    const response = await originalReplace(...args);
     if (response.ok) {
       const id = args[0];
       const parent = (args[1] as { parent?: unknown } | undefined)?.parent;

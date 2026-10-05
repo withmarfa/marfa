@@ -174,7 +174,7 @@ describe("type registry", () => {
     });
 
     for (const id of [other, readOnly]) {
-      const replaced = await scopedClient.updateType(id, {
+      const replaced = await scopedClient.replaceType(id, {
         fields: { taken: { type: "string" } },
       });
       expect(replaced.status, id).toBe(403);
@@ -197,7 +197,7 @@ describe("type registry", () => {
       // map reaches it.
       expect(
         (
-          await client.updateType(id, {
+          await client.replaceType(id, {
             fields: { ...fields, kept: fields.name },
           })
         ).status,
@@ -208,7 +208,7 @@ describe("type registry", () => {
     // The scoped key changes the type its own map reaches.
     expect(
       (
-        await scopedClient.updateType(own, {
+        await scopedClient.replaceType(own, {
           fields: { ...fields, mine: fields.name },
         })
       ).status,
@@ -243,7 +243,7 @@ describe("type registry", () => {
       apiKey: keyResp.data.key,
     });
 
-    const replaced = await scopedClient.updateType(typeId, {
+    const replaced = await scopedClient.replaceType(typeId, {
       id: typeId,
       version: 2,
       fields: { name: { type: "string" }, note: { type: "string" } },
@@ -262,7 +262,7 @@ describe("type registry", () => {
     // The other code the 403 now names. A credential that holds
     // `schema.write` reaches the immutability check, so this is the arm the
     // permission refusal above can never reach.
-    const replaced = await client.updateType("core.note", {
+    const replaced = await client.replaceType("core.note", {
       id: "core.note",
       version: 99,
       fields: { body: { type: "string" } },
@@ -290,7 +290,7 @@ describe("type registry", () => {
 
     // The registry-CRUD smoke for the additive path; what a replacement
     // does with the version is type-versioning.test.ts's.
-    const updated = await client.updateType(typeId, {
+    const updated = await client.replaceType(typeId, {
       ...schema,
       fields: {
         ...schema.fields,
@@ -318,7 +318,7 @@ describe("type registry", () => {
     trackItem(ctx, created.data.item.id);
     const before = created.data.item;
 
-    const gained = await client.updateType(typeId, {
+    const gained = await client.replaceType(typeId, {
       ...schema,
       fields: {
         ...schema.fields,

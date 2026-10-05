@@ -37,7 +37,7 @@ const READS: Record<string, string> = {
   EnrichmentStore: "listCandidates get",
   BackgroundJobStore: "listDue list get",
   ConnectorStore: "list get listRuns",
-  ConnectorStateStore: "getState findAgreements listAgreements",
+  ConnectorStateStore: "getState lookupAgreements listAgreements",
   InboundStore: "listEndpoints target backlog listDeliveries body",
 };
 // Storage primitives themselves can be used by several kinds of boundary. The

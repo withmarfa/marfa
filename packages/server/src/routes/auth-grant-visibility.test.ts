@@ -369,7 +369,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     expect(row?.properties.status).toBe("active");
   });
 
-  it("DELETE /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
+  it("POST /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
@@ -380,7 +380,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
-    const res = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
+    const res = await request(c.app, "POST", `/items/${grant!.id}/purge`, {
       key,
     });
     expect(res.status).toBe(400);
@@ -476,7 +476,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     expect(((await del.json()) as { error: { code: string } }).error.code).toBe(
       "type_not_permitted",
     );
-    const purge = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
+    const purge = await request(c.app, "POST", `/items/${grant!.id}/purge`, {
       key,
     });
     expect(purge.status).toBe(400);

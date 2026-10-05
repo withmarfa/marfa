@@ -2982,7 +2982,7 @@ export interface ConnectorStateStore {
   >;
   /** The agreements of the rows named that have one and whose type
    *  `readable` admits, in the order named. */
-  findAgreements(
+  lookupAgreements(
     source: string,
     itemIds: string[],
     readable: (type: string) => boolean,

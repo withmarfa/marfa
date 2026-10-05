@@ -95,8 +95,8 @@ describe("a bulk-action job queued by a signed-in app", () => {
     expect(read.status).toBe(200);
     const cancel = await request(
       ctx.app,
-      "DELETE",
-      `/items/bulk-actions/jobs/${job.id}`,
+      "POST",
+      `/items/bulk-actions/jobs/${job.id}/cancel`,
       { key: next },
     );
     expect(cancel.status).toBe(200);

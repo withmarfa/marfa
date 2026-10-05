@@ -106,7 +106,7 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "routes/export.ts": "hands the layer to the archive export below",
   "routes/export-archive.ts":
     "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
-  "routes/admin-archive.ts": "the restore, operator key only, writes bytes",
+  "routes/restore-archive.ts": "the restore, operator key only, writes bytes",
   "routes/health.ts": "a probe of the disk store under a fixed name",
 };
 

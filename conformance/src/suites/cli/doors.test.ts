@@ -39,7 +39,7 @@ async function note(title: string, body = "b"): Promise<string> {
 }
 
 describe("types and edge types", () => {
-  it("lists the shipped types, reads one, and registers, changes and removes one of its own", async () => {
+  it("lists the shipped types, reads one, and registers, replaces and removes one of its own", async () => {
     const listed = await c.cli.json<unknown>(["types", "list"]);
     const ids = JSON.stringify(listed);
     expect(ids).toContain("core.note");
@@ -65,11 +65,11 @@ describe("types and edge types", () => {
     ]);
     trackType(c.ctx, id);
     expect(registered.type.id).toBe(id);
-    const updated = await c.cli.json<{
+    const replaced = await c.cli.json<{
       type: { id: string; description: string };
     }>([
       "types",
-      "update",
+      "replace",
       id,
       "--body",
       JSON.stringify({
@@ -77,8 +77,8 @@ describe("types and edge types", () => {
         description: "Changed from the terminal.",
       }),
     ]);
-    expect(updated.type.id).toBe(id);
-    expect(updated.type.description).toBe("Changed from the terminal.");
+    expect(replaced.type.id).toBe(id);
+    expect(replaced.type.description).toBe("Changed from the terminal.");
     const reread = await c.cli.json<{ description: string }>([
       "types",
       "get",
@@ -140,14 +140,14 @@ describe("metadata and extensions", () => {
       "two",
     ]);
     expect(replaced.metadata.tags.sort()).toEqual(["one", "two"]);
-    const merged = await c.cli.json<{ metadata: { tags: string[] } }>([
+    const updated = await c.cli.json<{ metadata: { tags: string[] } }>([
       "metadata",
-      "merge",
+      "update",
       id,
       "--tag",
       "three",
     ]);
-    expect(merged.metadata.tags.sort()).toEqual(["one", "three", "two"]);
+    expect(updated.metadata.tags.sort()).toEqual(["one", "three", "two"]);
     const read = await c.cli.json<{ metadata: { tags: string[] } }>([
       "metadata",
       "get",

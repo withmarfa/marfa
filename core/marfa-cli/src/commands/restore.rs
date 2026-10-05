@@ -15,7 +15,7 @@ pub struct RestoreArgs {
 }
 
 pub fn request(args: &RestoreArgs) -> Request {
-    Request::post(&["admin", "restore-archive"]).file(args.file.clone(), "application/gzip")
+    Request::post(&["restore"]).file(args.file.clone(), "application/gzip")
 }
 
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {

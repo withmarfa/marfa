@@ -164,7 +164,7 @@ export enum ErrorCode {
   /**
    * A referenced bulk-action job id does not exist or is not visible to
    * the caller. Returned by `GET /items/bulk-actions/jobs/:id` and
-   * `DELETE /items/bulk-actions/jobs/:id`. Canceled / failed terminal
+   * `POST /items/bulk-actions/jobs/:id/cancel`. Canceled / failed terminal
    * states are NOT in this enum — they're carried in the job envelope's
    * `status` field on a 200 GET, for a client to classify, rather than
    * the server returning an HTTP error.

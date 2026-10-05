@@ -303,7 +303,7 @@ describe("GET /health while a long job runs", () => {
       const { worstCpuMs, asked, result } = await longestStretch(
         mountHealth(target),
         async () =>
-          target.app.request("/admin/restore-archive", {
+          target.app.request("/restore", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${target.operatorKey}`,

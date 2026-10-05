@@ -30,7 +30,7 @@ afterAll(async () => {
 /** Published doors whose body is not JSON, each with why. */
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
-  "POST /admin/restore-archive": "a gzip archive",
+  "POST /restore": "a gzip archive",
 };
 
 /** A published door that takes JSON, answered by the sign-in library. */

@@ -54,7 +54,7 @@ async function instanceLink(hash: string): Promise<string> {
   const locations = (await operator.listBlobLocations(hash)).data.data;
   for (const location of locations) {
     if (location.kind !== "s3") continue;
-    const dropped = await operator.dropBlobLocation(hash, location.store_id);
+    const dropped = await operator.deleteBlobLocation(hash, location.store_id);
     expect(dropped.status).toBe(200);
   }
   const link = await client.getBlobUrl(hash);

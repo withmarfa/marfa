@@ -458,7 +458,7 @@ describe("POST /items/bulk-actions (async)", () => {
   });
 });
 
-describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
+describe("GET and POST /items/bulk-actions/jobs/:id", () => {
   it("GET returns the terminal job envelope after the worker runs", async () => {
     const tag = `get-${Math.random().toString(36).slice(2, 8)}`;
     await seed("core.note", 2, { tags: [tag] });
@@ -494,7 +494,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(body.error.code).toBe("bulk_job_not_found");
   });
 
-  it("DELETE flips a queued job to canceled", async () => {
+  it("cancel flips a queued job to canceled", async () => {
     const tag = `cancel-${Math.random().toString(36).slice(2, 8)}`;
     await seed("core.note", 2, { tags: [tag] });
 
@@ -513,8 +513,8 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
 
     const delRes = await request(
       ctx.app,
-      "DELETE",
-      `/items/bulk-actions/jobs/${queued.id}`,
+      "POST",
+      `/items/bulk-actions/jobs/${queued.id}/cancel`,
       { key: ctx.workingKey },
     );
     expect(delRes.status).toBe(200);
@@ -522,7 +522,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(canceled.status).toBe("canceled");
   });
 
-  it("DELETE sets a running job to canceled, which the door does itself", async () => {
+  it("cancel sets a running job to canceled, which the door does itself", async () => {
     // The half of the door's description no caller can reach and so no
     // conformance fixture can hold: the worker takes a job the moment it
     // is queued, so only a test that claims the row by hand can present
@@ -551,8 +551,8 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
 
     const delRes = await request(
       ctx.app,
-      "DELETE",
-      `/items/bulk-actions/jobs/${queued.id}`,
+      "POST",
+      `/items/bulk-actions/jobs/${queued.id}/cancel`,
       { key: ctx.workingKey },
     );
     expect(delRes.status).toBe(200);
@@ -566,11 +566,11 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(stored?.status).toBe("canceled");
   });
 
-  it("DELETE 404s for an unknown job id", async () => {
+  it("cancel 404s for an unknown job id", async () => {
     const res = await request(
       ctx.app,
-      "DELETE",
-      "/items/bulk-actions/jobs/does-not-exist",
+      "POST",
+      "/items/bulk-actions/jobs/does-not-exist/cancel",
       { key: ctx.workingKey },
     );
     expect(res.status).toBe(404);

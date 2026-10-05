@@ -97,7 +97,7 @@ describe("trash — soft delete and restore", () => {
     expect((await client.deleteItem(r.data.item.id)).ok).toBe(true);
     const purged = await client.purgeItem(r.data.item.id);
     expect(purged.ok).toBe(true);
-    await expectMatchesSchema("DELETE", "/items/{id}/purge", 200, purged.data);
+    await expectMatchesSchema("POST", "/items/{id}/purge", 200, purged.data);
     expect((await client.getItem(r.data.item.id)).status).toBe(404);
     expect((await client.restoreItem(r.data.item.id)).status).toBe(404);
     const again = await client.purgeItem(r.data.item.id);

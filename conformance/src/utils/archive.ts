@@ -9,7 +9,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
  * Three preconditions cannot be arranged that way. A row under a source no
  * key may hold: `POST /keys` refuses the `oauth:` prefix as a key's own
  * source and as a claim, and `POST /items` refuses a source the key does not
- * claim, while `POST /admin/restore-archive` writes `item.source` through
+ * claim, while `POST /restore` writes `item.source` through
  * verbatim. A row in a state its type's lifecycle cannot produce, which no door
  * writes and the restore refuses. And a blob larger than the request cap
  * that nothing on the instance names yet, which only an archive carries in.

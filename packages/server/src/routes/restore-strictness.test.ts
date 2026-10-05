@@ -120,7 +120,7 @@ async function restoreInto(
   ctx: TestContext,
   archive: Buffer,
 ): Promise<Response> {
-  return ctx.app.request(`/admin/restore-archive`, {
+  return ctx.app.request(`/restore`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.operatorKey}`,
@@ -349,11 +349,10 @@ describe("archive blob rows commit with the restored rows", () => {
     expect((await ctx.storage.edges.list()).data).toEqual([]);
     expect(await ctx.storage.eventLog.getAfter(0n, 100)).toEqual([]);
     expect(
-      (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
+      (await ctx.storage.audit.list({ action: "restore_archive" })).data,
     ).toEqual([]);
     expect(
-      (await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" }))
-        .data,
+      (await ctx.storage.audit.list({ action: "restore_archive.blobs" })).data,
     ).toEqual([]);
     expect(await ctx.storage.blobs.get(placed.hash)).toBeNull();
     expect(await ctx.blobs.disk.has(placed.hash)).toBeNull();
@@ -371,10 +370,10 @@ describe("archive blob rows commit with the restored rows", () => {
     expect((await ctx.storage.edges.list()).data).toHaveLength(2);
     expect(await ctx.storage.eventLog.getAfter(0n, 100)).toHaveLength(4);
     expect(
-      (await ctx.storage.audit.list({ action: "admin.restore_archive" })).data,
+      (await ctx.storage.audit.list({ action: "restore_archive" })).data,
     ).toHaveLength(1);
     const registered = (
-      await ctx.storage.audit.list({ action: "admin.restore_archive.blobs" })
+      await ctx.storage.audit.list({ action: "restore_archive.blobs" })
     ).data;
     expect(registered).toHaveLength(1);
     expect(registered[0]?.details).toEqual({ hashes: [placed.hash] });

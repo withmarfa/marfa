@@ -588,7 +588,7 @@ describe("item versioning", () => {
     expect(advanced.ok).toBe(true);
     expect(advanced.data.item.version).toBe(2);
 
-    const gained = await client.updateType(typeId, {
+    const gained = await client.replaceType(typeId, {
       id: typeId,
       label: "Gains a required field",
       version: 2,
@@ -857,7 +857,7 @@ describe("item versioning", () => {
       version: 1,
     });
     expect(other.ok).toBe(true);
-    const required = await client.updateType(typeId, {
+    const required = await client.replaceType(typeId, {
       id: typeId,
       label: "Gains a field later",
       version: 2,

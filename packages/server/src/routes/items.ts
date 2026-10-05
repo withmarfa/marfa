@@ -1142,7 +1142,7 @@ const putMetadataRoute = createRoute({
 });
 
 const patchMetadataRoute = createRoute({
-  operationId: "mergeItemMetadata",
+  operationId: "updateItemMetadata",
   method: "patch",
   path: "/{id}/metadata",
   tags: ["Metadata"],
@@ -1334,7 +1334,7 @@ const removeTagRoute = createRoute({
 
 const purgeItemRoute = createRoute({
   operationId: "purgeItem",
-  method: "delete",
+  method: "post",
   path: "/{id}/purge",
   tags: ["Items"],
   summary: "Purge an item",
@@ -2225,7 +2225,7 @@ export function itemRoutes(storage: Storage) {
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: requireAuth(c).id,
-        action: "item.metadata.set",
+        action: "item.metadata.replace",
         resource_type: "item",
         resource_id: id,
         details: { tags },
@@ -2297,7 +2297,7 @@ export function itemRoutes(storage: Storage) {
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: requireAuth(c).id,
-        action: "item.metadata.merge",
+        action: "item.metadata.update",
         resource_type: "item",
         resource_id: id,
         details: { tags },

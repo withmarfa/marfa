@@ -210,9 +210,9 @@ const READING = ["GET /types", "GET /types/:id", "GET /edge-types"];
 
 /** Doors only the operator key opens, refusing a working key outright. */
 const OPERATOR_ONLY = [
-  "GET /admin/platform-types/drift",
-  "DELETE /admin/platform-types/:id",
-  "POST /admin/restore-archive",
+  "GET /platform-types/drift",
+  "DELETE /platform-types/:id",
+  "POST /restore",
 ];
 
 function schemaDoors(): string[] {
@@ -225,8 +225,8 @@ function schemaDoors(): string[] {
           (r) =>
             under(r.path, "/types") ||
             under(r.path, "/edge-types") ||
-            under(r.path, "/admin/platform-types") ||
-            under(r.path, "/admin/restore-archive"),
+            under(r.path, "/platform-types") ||
+            under(r.path, "/restore"),
         )
         .filter((r) => r.method !== "ALL")
         .map((r) => `${r.method} ${r.path}`),
@@ -247,9 +247,9 @@ const REGISTRY_WRITERS: Record<string, string> = {
   "routes/types.ts": "POST, PUT and DELETE /types, held to the type map",
   "routes/edge-types.ts":
     "POST and DELETE /edge-types, held to the edge map on the id and reverse name",
-  "routes/admin-archive-types.ts":
-    "the restore's type registrations, reached only through POST /admin/restore-archive",
-  "routes/admin-platform-types.ts": "DELETE /admin/platform-types/:id",
+  "routes/restore-archive-types.ts":
+    "the restore's type registrations, reached only through POST /restore",
+  "routes/platform-types.ts": "DELETE /platform-types/:id",
 };
 
 function registryWriters(): string[] {

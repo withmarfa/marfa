@@ -282,8 +282,8 @@ describe("bulk property updates retain their blobs", () => {
             await json<BulkActionJob>(
               await request(
                 c.app,
-                "DELETE",
-                `/items/bulk-actions/jobs/${job.id}`,
+                "POST",
+                `/items/bulk-actions/jobs/${job.id}/cancel`,
                 { key: writer },
               ),
               200,
@@ -420,9 +420,14 @@ describe("bulk property updates retain their blobs", () => {
     );
     expect(jobs).not.toBeNull();
     await json(
-      await request(c.app, "DELETE", `/items/bulk-actions/jobs/${jobs!.id}`, {
-        key: writer,
-      }),
+      await request(
+        c.app,
+        "POST",
+        `/items/bulk-actions/jobs/${jobs!.id}/cancel`,
+        {
+          key: writer,
+        },
+      ),
       200,
     );
     expect(await sweep(c)).toEqual({ reported: 1, purged: 0 });

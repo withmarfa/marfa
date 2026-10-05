@@ -229,7 +229,7 @@ describe("a type's link", () => {
       { title },
       { vendor_id: { type: "integer" }, title },
     ]) {
-      const refused = await client.updateType(parent, { fields, version: 2 });
+      const refused = await client.replaceType(parent, { fields, version: 2 });
       expect(refused.status, JSON.stringify(fields)).toBe(400);
       expect(refused.error?.error.code).toBe("invalid_schema");
       const errors = refused.error?.error.details?.errors as
@@ -241,13 +241,13 @@ describe("a type's link", () => {
     );
 
     // The witness: once the subtype names no link, the parent may drop it.
-    const unlinked = await client.updateType(sub, {
+    const unlinked = await client.replaceType(sub, {
       parent,
       fields: {},
       version: 2,
     });
     expect(unlinked.ok, JSON.stringify(unlinked.error)).toBe(true);
-    const dropped = await client.updateType(parent, {
+    const dropped = await client.replaceType(parent, {
       fields: { title },
       version: 2,
     });
@@ -268,7 +268,7 @@ describe("a type's link", () => {
     const binned = await row({ vendor_id: value }, { type: id });
     expect((await client.deleteItem(binned.id)).ok).toBe(true);
 
-    const shared = await client.updateType(id, {
+    const shared = await client.replaceType(id, {
       ...schema,
       version: 2,
       link_field: "vendor_id",
@@ -286,7 +286,7 @@ describe("a type's link", () => {
       version: live.version,
     });
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
-    const gained = await client.updateType(id, {
+    const gained = await client.replaceType(id, {
       ...schema,
       version: 2,
       link_field: "vendor_id",
@@ -972,7 +972,7 @@ describe("a purge's tombstones", () => {
     const [tombstone] = await tombstonesByLink([value], id);
     expect(tombstone?.key).toBe(value);
 
-    const changed = await client.updateType(id, {
+    const changed = await client.replaceType(id, {
       fields: { ...fields, note: { type: "string" } },
       link_field: "vendor_id",
       version: 2,
@@ -1065,7 +1065,7 @@ describe("a purge's tombstones", () => {
     // The witness: the purge left the value's tombstone under the old link.
     expect(await tombstonesByLink([value], id)).toHaveLength(1);
 
-    const moved = await client.updateType(id, {
+    const moved = await client.replaceType(id, {
       fields,
       version: 2,
       link_field: "remote_id",

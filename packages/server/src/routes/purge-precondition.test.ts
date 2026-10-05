@@ -43,7 +43,7 @@ async function trash(id: string): Promise<void> {
   expect(res.status).toBe(200);
 }
 
-describe("DELETE /items/{id}/purge?version=", () => {
+describe("POST /items/{id}/purge?version=", () => {
   it("trashing leaves the version where it was", async () => {
     const id = await createNote();
     const before = await ctx.storage.items.get(id);
@@ -62,14 +62,9 @@ describe("DELETE /items/{id}/purge?version=", () => {
     expect(patched.status).toBe(200);
     await trash(id);
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${id}/purge?version=1`,
-      {
-        key: ctx.workingKey,
-      },
-    );
+    const res = await request(ctx.app, "POST", `/items/${id}/purge?version=1`, {
+      key: ctx.workingKey,
+    });
     const body = (await res.json()) as {
       error: { code: string; status: number };
       current: { version: number; id: string };
@@ -86,14 +81,9 @@ describe("DELETE /items/{id}/purge?version=", () => {
   it("purges at the version the row holds", async () => {
     const id = await createNote();
     await trash(id);
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${id}/purge?version=1`,
-      {
-        key: ctx.workingKey,
-      },
-    );
+    const res = await request(ctx.app, "POST", `/items/${id}/purge?version=1`, {
+      key: ctx.workingKey,
+    });
     expect(res.status).toBe(200);
     expect(await ctx.storage.items.getIncludingTrashed(id)).toBeNull();
   });
@@ -121,7 +111,7 @@ describe("DELETE /items/{id}/purge?version=", () => {
     try {
       const res = await request(
         ctx.app,
-        "DELETE",
+        "POST",
         `/items/${id}/purge?version=1`,
         { key: ctx.workingKey },
       );
@@ -140,7 +130,7 @@ describe("DELETE /items/{id}/purge?version=", () => {
     await trash(id);
     const res = await request(
       ctx.app,
-      "DELETE",
+      "POST",
       `/items/${id}/purge?version=one`,
       { key: ctx.workingKey },
     );
@@ -151,12 +141,9 @@ describe("DELETE /items/{id}/purge?version=", () => {
   it("refuses a query parameter it does not declare rather than purging", async () => {
     const id = await createNote();
     await trash(id);
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${id}/purge?verison=1`,
-      { key: ctx.workingKey },
-    );
+    const res = await request(ctx.app, "POST", `/items/${id}/purge?verison=1`, {
+      key: ctx.workingKey,
+    });
     const body = (await res.json()) as { error: { code: string } };
     expect(res.status).toBe(400);
     expect(body.error.code).toBe("validation_error");

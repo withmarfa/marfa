@@ -344,7 +344,7 @@ it.each([false, true])(
         .success,
     ).toBe(true);
     const remove = () =>
-      request(ctx.app, "DELETE", `/admin/platform-types/${retired.id}`, {
+      request(ctx.app, "DELETE", `/platform-types/${retired.id}`, {
         key: ctx.operatorKey,
       });
     if (rollback)

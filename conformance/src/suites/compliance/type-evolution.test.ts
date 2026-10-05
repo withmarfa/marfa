@@ -122,7 +122,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     await register(own, issue(id));
     const fields = issue(id).fields as Definition;
 
-    const added = await own.updateType(
+    const added = await own.replaceType(
       id,
       replaced(id, {
         fields: { ...fields, labels: { type: "array", items_type: "string" } },
@@ -132,7 +132,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     await expectMatchesSchema("PUT", "/types/{id}", 200, added.data);
     expect(await fieldsOf(id)).toContain("labels");
 
-    const presentational = await own.updateType(
+    const presentational = await own.replaceType(
       id,
       replaced(id, {
         label: "Vendor issue",
@@ -218,7 +218,7 @@ describe("a key whose type map reaches a type evolves it", () => {
       await register(own, issue(id));
       const before = (await client.getType(id)).data;
 
-      const refused = await own.updateType(id, build(id));
+      const refused = await own.replaceType(id, build(id));
       expect(refused.status).toBe(403);
       expect(refusal(refused)?.code).toBe("forbidden");
       expect(refusal(refused)?.details?.required_scope).toBe("schema.write");
@@ -227,7 +227,7 @@ describe("a key whose type map reaches a type evolves it", () => {
       expect((await client.getType(id)).data).toEqual(before);
 
       // The witness: the replacement is one the door takes.
-      const landed = await (await curator(ns)).updateType(id, build(id));
+      const landed = await (await curator(ns)).replaceType(id, build(id));
       expect(landed.status, JSON.stringify(landed.error)).toBe(200);
       expect((await client.getType(id)).data).not.toEqual(before);
     },
@@ -259,7 +259,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     });
 
     for (const name of ["held_0", "held_1", "held_2"]) {
-      const refused = await own.updateType(id, withFields(name));
+      const refused = await own.replaceType(id, withFields(name));
       expect(refused.status, name).toBe(403);
       expect(refusal(refused)?.code).toBe("forbidden");
       expect(refusal(refused)?.details?.required_scope).toBe("schema.write");
@@ -269,10 +269,10 @@ describe("a key whose type map reaches a type evolves it", () => {
 
     // The witnesses: a name no row holds lands, and a held one lands for a key
     // with schema.write.
-    expect((await own.updateType(id, withFields("fresh"))).status).toBe(200);
+    expect((await own.replaceType(id, withFields("fresh"))).status).toBe(200);
     const landed = await (
       await curator(ns)
-    ).updateType(id, {
+    ).replaceType(id, {
       fields: { title: { type: "string" }, held_0: { type: "string" } },
     });
     expect(landed.status, JSON.stringify(landed.error)).toBe(200);
@@ -296,7 +296,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     trackItem(ctx, made.data.item.id);
 
-    const refused = await own.updateType(base, {
+    const refused = await own.replaceType(base, {
       fields: { title: { type: "string" }, inherited: { type: "string" } },
     });
     expect(refused.status).toBe(403);
@@ -304,7 +304,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(refusal(refused)?.details?.changes).toEqual(["fields.inherited"]);
 
     // The witness: a name no row of either type holds lands.
-    const landed = await own.updateType(base, {
+    const landed = await own.replaceType(base, {
       fields: { title: { type: "string" }, fresh: { type: "string" } },
     });
     expect(landed.status, JSON.stringify(landed.error)).toBe(200);
@@ -327,14 +327,14 @@ describe("a key whose type map reaches a type evolves it", () => {
     trackItem(ctx, made.data.item.id);
 
     const withoutSecret = { fields: { title: { type: "string" } } };
-    const removing = await own.updateType(id, withoutSecret);
+    const removing = await own.replaceType(id, withoutSecret);
     expect(removing.status).toBe(403);
     expect(refusal(removing)?.details?.changes).toEqual(["fields.secret"]);
 
     expect(
-      (await (await curator(ns)).updateType(id, withoutSecret)).status,
+      (await (await curator(ns)).replaceType(id, withoutSecret)).status,
     ).toBe(200);
-    const bringingBack = await own.updateType(id, {
+    const bringingBack = await own.replaceType(id, {
       fields: { title: { type: "string" }, secret: { type: "string" } },
     });
     expect(bringingBack.status).toBe(403);
@@ -357,7 +357,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     trackItem(ctx, made.data.item.id);
     expect(
-      (await curated.updateType(id, { fields: { title: { type: "string" } } }))
+      (await curated.replaceType(id, { fields: { title: { type: "string" } } }))
         .status,
     ).toBe(200);
 
@@ -395,7 +395,7 @@ describe("a key whose type map reaches a type evolves it", () => {
 
     const refused = await (
       await connector(other)
-    ).updateType(id, replaced(id, {}));
+    ).replaceType(id, replaced(id, {}));
     expect(refused.status).toBe(403);
     expect(refusal(refused)?.code).toBe("type_not_permitted");
     expect(refusal(refused)?.message).toContain(id);
@@ -404,14 +404,14 @@ describe("a key whose type map reaches a type evolves it", () => {
       metadata: false,
       types: { [`${ns}.*`]: "write" },
     });
-    const noPermission = await bare.updateType(id, replaced(id, {}));
+    const noPermission = await bare.replaceType(id, replaced(id, {}));
     expect(noPermission.status).toBe(403);
     expect(refusal(noPermission)?.code).toBe("forbidden");
     expect(refusal(noPermission)?.details?.required_scope).toBe("schema.write");
 
     // The witness: the same replacement lands for the key that owns the type.
     expect(
-      (await (await connector(ns)).updateType(id, replaced(id, {}))).ok,
+      (await (await connector(ns)).replaceType(id, replaced(id, {}))).ok,
     ).toBe(true);
   });
 });
@@ -429,7 +429,7 @@ describe("a change to a parent is judged against the subtypes it has", () => {
       parent: `${ns}.base`,
       fields: { extra: { type: "string" } },
     });
-    const grown = await curated.updateType(`${ns}.base`, {
+    const grown = await curated.replaceType(`${ns}.base`, {
       fields: {
         title: { type: "string" },
         constructor: { type: "string" },
@@ -455,7 +455,7 @@ describe("a change to a parent is judged against the subtypes it has", () => {
       display_hints: { title_field: "flag" },
       merge_policy: { fields: { flag: "keep_both_copies" } },
     });
-    const refused = await curated.updateType(base, {
+    const refused = await curated.replaceType(base, {
       fields: { title: { type: "string" } },
     });
     expect(refused.status).toBe(400);
@@ -470,7 +470,7 @@ describe("a change to a parent is judged against the subtypes it has", () => {
     // The witness: once the subtype stops naming it, the field goes.
     expect(
       (
-        await curated.updateType(leaf, {
+        await curated.replaceType(leaf, {
           parent: base,
           fields: { extra: { type: "string" } },
         })
@@ -478,7 +478,7 @@ describe("a change to a parent is judged against the subtypes it has", () => {
     ).toBe(true);
     expect(
       (
-        await curated.updateType(base, {
+        await curated.replaceType(base, {
           fields: { title: { type: "string" } },
         })
       ).ok,
@@ -565,7 +565,7 @@ describe("a parent is named only within the key's reach", () => {
 
     // The type's own key keeps editing it while it keeps its parent.
     const own = await connector(mine);
-    const kept = await own.updateType(id, {
+    const kept = await own.replaceType(id, {
       parent: foreign,
       fields: { size: { type: "integer" }, more: { type: "string" } },
     });
@@ -587,7 +587,7 @@ describe("a parent is named only within the key's reach", () => {
       id: elsewhere,
       fields: { name: { type: "string" } },
     });
-    const refused = await curated.updateType(id, {
+    const refused = await curated.replaceType(id, {
       parent: elsewhere,
       fields: { size: { type: "integer" } },
     });
@@ -598,7 +598,7 @@ describe("a parent is named only within the key's reach", () => {
     expect((await client.getType(id)).data.parent).toBe(foreign);
 
     // Moving it to a parent the map reaches lands.
-    const moved = await curated.updateType(id, {
+    const moved = await curated.replaceType(id, {
       parent: target,
       fields: { size: { type: "integer" } },
     });

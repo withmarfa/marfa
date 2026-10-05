@@ -46,10 +46,10 @@ async function seedDriftedType(ctx: TestContext): Promise<string> {
   return id;
 }
 
-describe("GET /admin/platform-types/drift", () => {
+describe("GET /platform-types/drift", () => {
   it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
-    const res = await request(ctx.app, "GET", "/admin/platform-types/drift");
+    const res = await request(ctx.app, "GET", "/platform-types/drift");
     expect(res.status).toBe(401);
   });
 
@@ -57,7 +57,7 @@ describe("GET /admin/platform-types/drift", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
 
-    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/drift", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
@@ -84,7 +84,7 @@ describe("GET /admin/platform-types/drift", () => {
       source_id: "drift-1",
     });
 
-    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/drift", {
       key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
@@ -95,13 +95,13 @@ describe("GET /admin/platform-types/drift", () => {
   });
 });
 
-describe("DELETE /admin/platform-types/{id}", () => {
+describe("DELETE /platform-types/{id}", () => {
   it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
     const res = await request(
       ctx.app,
       "DELETE",
-      "/admin/platform-types/core.anything",
+      "/platform-types/core.anything",
     );
     expect(res.status).toBe(401);
   });
@@ -116,24 +116,16 @@ describe("DELETE /admin/platform-types/{id}", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      "/admin/platform-types/drift",
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", "/platform-types/drift", {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("type_not_found");
 
-    const listed = await request(
-      ctx.app,
-      "GET",
-      "/admin/platform-types/drift",
-      {
-        key: ctx.operatorKey,
-      },
-    );
+    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+      key: ctx.operatorKey,
+    });
     expect(listed.status).toBe(200);
     // The seeded row is the witness. An empty listing would satisfy the
     // status on its own, so the assertion below is what shows the GET was
@@ -146,12 +138,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${id}`,
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(200);
 
     const rows = await ctx.storage.types.loadAll();
@@ -175,12 +164,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
     });
     expect(before.status).toBe(200);
 
-    const removed = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${id}`,
-      { key: ctx.operatorKey },
-    );
+    const removed = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
     expect(removed.status).toBe(200);
 
     const after = await request(ctx.app, "GET", `/types/${id}`, {
@@ -205,12 +191,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
     const ctx = await newContext();
     setPlatformDrift([]);
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      "/admin/platform-types/core.note",
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", "/platform-types/core.note", {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("conflict");
@@ -239,12 +222,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
       { origin: "platform" },
     );
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${parent}`,
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", `/platform-types/${parent}`, {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(409);
 
     const rows = await ctx.storage.types.loadAll();
@@ -265,7 +245,7 @@ describe("DELETE /admin/platform-types/{id}", () => {
       { origin: "platform" },
     );
 
-    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
+    const res = await request(ctx.app, "GET", "/platform-types/drift", {
       key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
@@ -288,12 +268,9 @@ describe("DELETE /admin/platform-types/{id}", () => {
       source_id: "drift-2",
     });
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${id}`,
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(409);
 
     const rows = await ctx.storage.types.loadAll();
@@ -301,7 +278,7 @@ describe("DELETE /admin/platform-types/{id}", () => {
   });
 });
 
-describe("DELETE /admin/platform-types/{id} decides in one transaction", () => {
+describe("DELETE /platform-types/{id} decides in one transaction", () => {
   it("never leaves an item written during the removal without its type", async () => {
     // An item of the type written after the count and before the delete
     // must either be counted, so the removal is refused, or be refused
@@ -335,12 +312,9 @@ describe("DELETE /admin/platform-types/{id} decides in one transaction", () => {
       return counted;
     };
 
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${id}`,
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
     const created = await creating;
     items.countByType = count;
 
@@ -361,12 +335,9 @@ describe("DELETE /admin/platform-types/{id} decides in one transaction", () => {
   it("names the key that removed the type in its audit row", async () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/admin/platform-types/${id}`,
-      { key: ctx.operatorKey },
-    );
+    const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(200);
     const operator = (await ctx.storage.keys.list()).find(
       (key) => key.is_operator,

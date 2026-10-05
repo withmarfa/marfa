@@ -51,9 +51,9 @@ const DriftedTypeSchema = z
   .openapi("DriftedPlatformType");
 
 const listDriftRoute = createRoute({
-  operationId: "adminListPlatformTypeDrift",
+  operationId: "listPlatformTypeDrift",
   method: "get",
-  path: "/platform-types/drift",
+  path: "/drift",
   // Filed under the type registry, which is what a drifted row is a row of.
   // Both operations here published no tag at all, so they were the only two
   // in the reference that belonged to no heading.
@@ -62,7 +62,7 @@ const listDriftRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
     200: {
       content: {
@@ -91,10 +91,10 @@ const listDriftRoute = createRoute({
   },
 });
 
-const removeDriftedTypeRoute = createRoute({
-  operationId: "adminRemovePlatformType",
+const deletePlatformTypeRoute = createRoute({
+  operationId: "deletePlatformType",
   method: "delete",
-  path: "/platform-types/{id}",
+  path: "/{id}",
   tags: ["Types"],
   summary: "Delete a stale platform type",
   security: [{ bearerAuth: [] }],
@@ -175,7 +175,7 @@ async function declaredChildrenOf(
     .sort();
 }
 
-export function adminPlatformTypeRoutes(storage: Storage) {
+export function platformTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listDriftRoute, async (c) => {
@@ -195,7 +195,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     return c.json({ data: types, next_cursor: null }, 200);
   });
 
-  router.openapi(removeDriftedTypeRoute, async (c) => {
+  router.openapi(deletePlatformTypeRoute, async (c) => {
     const { id } = c.req.valid("param");
 
     // Asked of this boot's derived set rather than of the row, and the

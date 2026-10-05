@@ -171,7 +171,7 @@ export class SqliteConnectorStateStore implements ConnectorStateStore {
     });
   }
 
-  async findAgreements(
+  async lookupAgreements(
     source: string,
     itemIds: string[],
     readable: (type: string) => boolean,

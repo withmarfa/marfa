@@ -295,7 +295,7 @@ describe("what the report counts as a reference", () => {
         })
       ).status,
     ).toBe(200);
-    const purge = await request(ctx.app, "DELETE", `/items/${fileId}/purge`, {
+    const purge = await request(ctx.app, "POST", `/items/${fileId}/purge`, {
       key: ctx.workingKey,
     });
     expect(purge.status, await purge.clone().text()).toBe(200);
@@ -658,7 +658,7 @@ describe("a reference added or removed between runs", () => {
       key: ctx.workingKey,
     });
     expect(trashed.status).toBe(200);
-    const purged = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+    const purged = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
       key: ctx.workingKey,
     });
     expect(purged.status, await purged.clone().text()).toBe(200);
@@ -807,7 +807,7 @@ describe("a purge that takes the rows naming a blob", () => {
     ).toBe(200);
     const purged = await request(
       ctx.app,
-      "DELETE",
+      "POST",
       `/items/${String(ids[0])}/purge`,
       {
         key: ctx.workingKey,

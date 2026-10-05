@@ -212,7 +212,7 @@ describe("type registration and listing", () => {
     });
     expect(registered.status).toBe(201);
 
-    const r = await client.updateType(id, {
+    const r = await client.replaceType(id, {
       fields: {
         name: { type: "string" },
         capture_latitude: { type: "number" },
@@ -232,14 +232,14 @@ describe("type registration and listing", () => {
     expect(registered.status).toBe(201);
 
     // core.note requires `body`; the replacement drops it.
-    const missingField = await client.updateType(id, {
+    const missingField = await client.replaceType(id, {
       fields: { extra: { type: "string" } },
       compatible_with: "core.note",
     });
     expect(missingField.status).toBe(422);
     expect(missingField.error?.error.code).toBe("compatible_with_violation");
 
-    const unknownTarget = await client.updateType(id, {
+    const unknownTarget = await client.replaceType(id, {
       fields: { body: { type: "string", required: true } },
       compatible_with: "no.such-type-exists",
     });

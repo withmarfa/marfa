@@ -132,6 +132,9 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
     "moves an existing row; `storage.items.transition` validates the graph",
   "POST /items/:id/restore":
     "a transition by another name; gated in the store beside `transition`",
+  "POST /items/:id/purge": "deletes a trashed row, reaches no row's state",
+  "POST /items/bulk-actions/jobs/:id/cancel":
+    "ends a queued job, reaches no row's state",
   "POST /items/bulk-actions":
     "its transition action runs through `storage.items.transition`, so the graph is enforced per row in the store",
   "POST /items/bulk-get": "read-only batch fetch",
@@ -176,7 +179,7 @@ describe("every route that can set an item's state on create is accounted for", 
     // URL prefix, so it covers routes mounted under `/items` and nothing
     // else. Twenty-eight files call an item write; two of them are route
     // files under `/items`. The rest reach the store from `/credentials`,
-    // `/auth`, `/admin` and `/connections`, and from the connections
+    // `/auth`, `/restore` and `/connections`, and from the connections
     // pipeline, which serves no route at all.
     //
     // `idempotent-write-doors.test.ts` derives its scope from the tree

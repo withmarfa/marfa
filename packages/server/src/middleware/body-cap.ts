@@ -6,7 +6,7 @@
 export type BodyCap = "none" | "bulk" | "request" | "inbound";
 
 export function bodyCapFor(path: string): BodyCap {
-  if (path.startsWith("/blobs") || path === "/admin/restore-archive") {
+  if (path.startsWith("/blobs") || path === "/restore") {
     return "none";
   }
   if (path.startsWith("/inbound/")) return "inbound";

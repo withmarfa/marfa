@@ -609,7 +609,7 @@ const doors: Door[] = [
     survivesBreakage: false,
   },
   {
-    name: "DELETE /items/{id}/purge removes an item and its edges",
+    name: "POST /items/{id}/purge removes an item and its edges",
     family: "item",
     transactions: 1,
     setup: async () => {
@@ -622,7 +622,7 @@ const doors: Door[] = [
       return { item, other, edge };
     },
     act: async (s) => {
-      const res = await request(ctx.app, "DELETE", `/items/${s.item}/purge`, {
+      const res = await request(ctx.app, "POST", `/items/${s.item}/purge`, {
         key: ctx.workingKey,
       });
       return res.status === 200;
@@ -1325,7 +1325,7 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
  * rather than omitted so the next reader can see the decision and reopen it.
  */
 const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
-  "routes/admin-archive.ts": {
+  "routes/restore-archive.ts": {
     sites: 2,
     why: "archive restore, an admin surface: the items it wrote and the edges between them, in that order",
   },

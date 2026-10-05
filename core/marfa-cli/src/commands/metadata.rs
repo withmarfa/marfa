@@ -22,7 +22,7 @@ pub enum MetadataCommand {
         tags: Vec<String>,
     },
     /// Add the named tags, leaving the rest.
-    Merge {
+    Update {
         /// The item id.
         id: String,
         /// A tag, repeatable.
@@ -41,7 +41,7 @@ pub fn replace_request(id: &str, tags: &[String]) -> Request {
     Request::put(&["items", id, "metadata"]).json(json!({ "tags": tags }))
 }
 
-pub fn merge_request(id: &str, tags: &[String]) -> Request {
+pub fn update_request(id: &str, tags: &[String]) -> Request {
     Request::patch(&["items", id, "metadata"]).json(json!({ "tags": tags }))
 }
 
@@ -53,7 +53,7 @@ pub fn run(command: MetadataCommand, remote: &Remote, out: &Printer) -> Result<(
     let request = match &command {
         MetadataCommand::Get { id } => get_request(id),
         MetadataCommand::Replace { id, tags } => replace_request(id, tags),
-        MetadataCommand::Merge { id, tags } => merge_request(id, tags),
+        MetadataCommand::Update { id, tags } => update_request(id, tags),
         MetadataCommand::Tags => tags_request(),
     };
     out.value(&remote.json(&request)?)

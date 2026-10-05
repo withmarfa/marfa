@@ -229,7 +229,8 @@ fn a_bulk_action_wraps_the_filter_and_names_its_action() {
     assert_eq!(job.path(), "/items/bulk-actions/jobs/j");
     let cancel =
         items::bulk_action_request(&items::BulkActionCommand::Cancel { id: "j".into() }).unwrap();
-    assert_eq!(cancel.method, Method::Delete);
+    assert_eq!(cancel.method, Method::Post);
+    assert_eq!(cancel.path(), "/items/bulk-actions/jobs/j/cancel");
 }
 
 #[test]
@@ -378,7 +379,7 @@ fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
     assert_eq!(types::get_request("core.note").path(), "/types/core.note");
     assert_eq!(types::register_request(json!({})).method, Method::Post);
     assert_eq!(
-        types::update_request("user.x", json!({})).method,
+        types::replace_request("user.x", json!({})).method,
         Method::Put
     );
     assert_eq!(
@@ -389,10 +390,10 @@ fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
         query(&types::delete_request("user.x", false), "force"),
         None
     );
-    assert_eq!(types::drift_request().path(), "/admin/platform-types/drift");
+    assert_eq!(types::drift_request().path(), "/platform-types/drift");
     assert_eq!(
         types::prune_request("core.gone").path(),
-        "/admin/platform-types/core.gone"
+        "/platform-types/core.gone"
     );
     assert_eq!(
         edge_types::register_request(json!({})).path(),
@@ -973,9 +974,9 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
         "{named_twice:?}"
     );
 
-    let found = connectors::agreements_find_request("c1", &["i1".into(), "i2".into()]);
+    let found = connectors::agreements_lookup_request("c1", &["i1".into(), "i2".into()]);
     assert_eq!(found.method, Method::Post);
-    assert_eq!(found.path(), "/connectors/c1/agreements/find");
+    assert_eq!(found.path(), "/connectors/c1/agreements/lookup");
     assert_eq!(found.body, Body::Json(json!({ "item_ids": ["i1", "i2"] })));
 
     let listed = connectors::agreements_list_request(
@@ -1001,7 +1002,7 @@ fn restore_posts_the_archive_under_its_own_type() {
         file: PathBuf::from("/nowhere/archive.tar.gz"),
     });
     assert_eq!(request.method, Method::Post);
-    assert_eq!(request.path(), "/admin/restore-archive");
+    assert_eq!(request.path(), "/restore");
     match &request.body {
         Body::File { path, content_type } => {
             assert_eq!(path, &PathBuf::from("/nowhere/archive.tar.gz"));

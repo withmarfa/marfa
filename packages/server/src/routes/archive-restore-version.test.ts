@@ -111,9 +111,9 @@ describe("a restore does not rewind a row's version", () => {
       .find((line) => line.item.id === note.id);
     expect(itemLine?.item.version).toBe(archivedItem?.version);
 
-    // `/admin/restore-archive` is an operator route, and the operator key is
+    // `/restore` is an operator route, and the operator key is
     // the only credential that reaches it.
-    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+    const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${destination.operatorKey}`,

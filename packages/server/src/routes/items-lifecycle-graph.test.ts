@@ -6,7 +6,7 @@
  * `active | archived | trashed` graph. Every door that moves or names an
  * item's `state` asks `validateTransition` about it: `delete()`,
  * `transition()` and `restore()` in the store, because each is a
- * transition; `POST /items` and `POST /admin/restore-archive` in the route,
+ * transition; `POST /items` and `POST /restore` in the route,
  * because a create is not a transition and the store's `create` is the
  * writer both doors share. A `system.*` row in `trashed` would be
  * reachable by no transition and leavable by none, so no door writes one.
@@ -227,7 +227,7 @@ const MANIFEST = {
   blobs: {},
 };
 
-describe("POST /admin/restore-archive — an archive names a state the type's lifecycle contains", () => {
+describe("POST /restore — an archive names a state the type's lifecycle contains", () => {
   it("refuses the whole archive when a system row is recorded in trashed, and writes nothing", async () => {
     ctx = await createTestContext();
     const c = ctx;
@@ -255,7 +255,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
       }),
     ]);
 
-    const res = await c.app.request(`/admin/restore-archive`, {
+    const res = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${c.operatorKey}`,
@@ -273,7 +273,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
 
     // `archived` is as unreachable for a system row as `trashed`.
     const archivedId = generateId();
-    const archived = await c.app.request(`/admin/restore-archive`, {
+    const archived = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${c.operatorKey}`,
@@ -298,7 +298,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
 
     // A state that is no state at all is refused the same way, since the
     // store would otherwise write it as it came.
-    const numeric = await c.app.request(`/admin/restore-archive`, {
+    const numeric = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${c.operatorKey}`,
@@ -347,7 +347,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
       }),
     ]);
 
-    const res = await c.app.request(`/admin/restore-archive`, {
+    const res = await c.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${c.operatorKey}`,

@@ -125,7 +125,7 @@ describe("a device matches as the server does", () => {
         (hit) => hit.item.id,
       ),
     ).toEqual([id("blimp")]);
-    const updated = await client.updateType(typeId, {
+    const updated = await client.replaceType(typeId, {
       id: typeId,
       version: 1,
       fields: { ...MATCHING_FIELDS, secret: { type: "string" } },

@@ -1075,7 +1075,7 @@ describe("bulk_action async-job lifecycle", () => {
     expect(res.error?.error.code).toBe("bulk_job_not_found");
   });
 
-  it("DELETE on a terminal job answers 200 with its final state unchanged", async () => {
+  it("cancel on a terminal job answers 200 with its final state unchanged", async () => {
     // The worker takes a job the moment it is queued and a local run of a
     // few hundred rows completes before a second request can land, so the
     // queued and in-flight cancellations are not reachable over the wire.
@@ -1095,8 +1095,8 @@ describe("bulk_action async-job lifecycle", () => {
     const del = await client.bulkActionCancel(queued.id);
     expect(del.status).toBe(200);
     await expectMatchesSchema(
-      "DELETE",
-      "/items/bulk-actions/jobs/{id}",
+      "POST",
+      "/items/bulk-actions/jobs/{id}/cancel",
       200,
       del.data,
     );
@@ -1131,14 +1131,14 @@ describe("bulk_action async-job lifecycle", () => {
     expect(cancel.status).toBe(403);
     expect(cancel.error?.error.code).toBe("forbidden");
     await expectMatchesSchema(
-      "DELETE",
-      "/items/bulk-actions/jobs/{id}",
+      "POST",
+      "/items/bulk-actions/jobs/{id}/cancel",
       403,
       cancel.error,
     );
   });
 
-  it("DELETE on an unknown id returns 404 bulk_job_not_found", async () => {
+  it("cancel on an unknown id returns 404 bulk_job_not_found", async () => {
     const res = await client.bulkActionCancel(`baj-doesnt-exist-${ctx.runId}`);
     expect(res.ok).toBe(false);
     expect(res.status).toBe(404);

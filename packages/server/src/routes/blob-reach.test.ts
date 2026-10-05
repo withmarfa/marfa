@@ -596,7 +596,7 @@ describe("what proves holding the bytes", () => {
 
     await itemWrites(ctx.storage).transition(item.id, "trashed");
     await itemWrites(ctx.storage).purge(item.id);
-    const restored = await ctx.app.request("/admin/restore-archive", {
+    const restored = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,

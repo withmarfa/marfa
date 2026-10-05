@@ -1,6 +1,6 @@
 /**
  * The preconditions a purge may carry (`items.md` 28 and 33): the version
- * the caller read on `DELETE /items/{id}/purge`, and the ids a dry run
+ * the caller read on `POST /items/{id}/purge`, and the ids a dry run
  * returned on a bulk purge. A purge cannot be undone, so a change made after
  * the person confirmed is refused or left alone, never destroyed unseen.
  */
@@ -58,7 +58,7 @@ async function runToCompletion(
   return final.result!;
 }
 
-describe("DELETE /items/{id}/purge with version", () => {
+describe("POST /items/{id}/purge with version", () => {
   it("refuses a stale version with version_conflict, and the row survives", async () => {
     const tag = `purge-stale-${ctx.runId}`;
     const r = await client.createItem(
@@ -77,7 +77,7 @@ describe("DELETE /items/{id}/purge with version", () => {
     const stale = await client.purgeItem(id, { version: 1 });
     expect(stale.status).toBe(409);
     expect(stale.error?.error.code).toBe("version_conflict");
-    await expectMatchesSchema("DELETE", "/items/{id}/purge", 409, stale.error);
+    await expectMatchesSchema("POST", "/items/{id}/purge", 409, stale.error);
     const body = stale.error as unknown as {
       error: { status: number };
       current: { id: string; version: number };

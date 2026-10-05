@@ -202,7 +202,7 @@ describe("an edge lends read on the blobs its properties name", () => {
     );
     expect(await read(ctx, aboutReader, hash)).toBe(200);
     await json(
-      await request(ctx.app, "DELETE", `/items/${source}/purge`, {
+      await request(ctx.app, "POST", `/items/${source}/purge`, {
         key: owner,
       }),
       200,
@@ -511,7 +511,7 @@ describe("an extension lends read on the blobs its namespace names", () => {
     );
     expect(await read(ctx, second, hash)).toBe(200);
     await json(
-      await request(ctx.app, "DELETE", `/items/${item}/purge`, { key: owner }),
+      await request(ctx.app, "POST", `/items/${item}/purge`, { key: owner }),
       200,
     );
     expect(await read(ctx, second, hash)).toBe(404);
@@ -715,7 +715,7 @@ describe("an export archive and its restore carry the lending", () => {
       carried: [viaExtension],
     });
 
-    const restored = await destination.app.request("/admin/restore-archive", {
+    const restored = await destination.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${destination.operatorKey}`,
@@ -817,7 +817,7 @@ describe("an export archive and its restore carry the lending", () => {
     });
     const hand = await createTestContext();
     try {
-      const restored = await hand.app.request("/admin/restore-archive", {
+      const restored = await hand.app.request("/restore", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${hand.operatorKey}`,
@@ -864,13 +864,13 @@ describe("an export archive and its restore carry the lending", () => {
       const audit = failing.storage.audit;
       const log = audit.log.bind(audit);
       audit.log = (entry, id) => {
-        if (entry.action === "admin.restore_archive") {
+        if (entry.action === "restore_archive") {
           throw new Error("the audit write fails");
         }
         return log(entry, id);
       };
       const run = () =>
-        failing.app.request("/admin/restore-archive", {
+        failing.app.request("/restore", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${failing.operatorKey}`,

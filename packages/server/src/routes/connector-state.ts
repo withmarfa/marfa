@@ -275,8 +275,8 @@ const putStateRoute = createRoute({
   },
 });
 
-const clearStateRoute = createRoute({
-  operationId: "clearConnectorState",
+const deleteStateRoute = createRoute({
+  operationId: "deleteConnectorState",
   method: "delete",
   path: "/{id}/state",
   tags: ["Connectors"],
@@ -329,10 +329,10 @@ const writeAgreementsRoute = createRoute({
   },
 });
 
-const findAgreementsRoute = createRoute({
-  operationId: "findConnectorAgreements",
+const lookupAgreementsRoute = createRoute({
+  operationId: "lookupConnectorAgreements",
   method: "post",
-  path: "/{id}/agreements/find",
+  path: "/{id}/agreements/lookup",
   tags: ["Connectors"],
   summary: "Look up agreements",
   description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${CONNECTOR_KEY_ONLY}`,
@@ -481,7 +481,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     return c.json(written, 200);
   });
 
-  router.openapi(clearStateRoute, async (c) => {
+  router.openapi(deleteStateRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKeyOrOperator(connector.key_id, key);
@@ -491,7 +491,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       (cleared) => ({
         client_ip: c.get("clientIp") ?? null,
         key_id: key.id,
-        action: "connector_state.clear",
+        action: "connector_state.delete",
         resource_type: "connector",
         resource_id: connector.id,
         details: { source: connector.source, ...cleared },
@@ -541,7 +541,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     return c.json(written, 200);
   });
 
-  router.openapi(findAgreementsRoute, async (c) => {
+  router.openapi(lookupAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
@@ -549,7 +549,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const { item_ids } = c.req.valid("json");
     return c.json(
       {
-        data: await storage.connectorState.findAgreements(
+        data: await storage.connectorState.lookupAgreements(
           connector.source,
           item_ids,
           (type) => mayReadType(key, type),

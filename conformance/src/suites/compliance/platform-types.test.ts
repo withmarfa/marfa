@@ -35,12 +35,7 @@ describe("platform type maintenance", () => {
   it("lists no drift on an instance whose platform types match the build", async () => {
     const r = await operator.listPlatformTypeDrift();
     expect(r.ok).toBe(true);
-    await expectMatchesSchema(
-      "GET",
-      "/admin/platform-types/drift",
-      200,
-      r.data,
-    );
+    await expectMatchesSchema("GET", "/platform-types/drift", 200, r.data);
     expect(r.data.data).toEqual([]);
   });
 
@@ -70,7 +65,7 @@ describe("platform type maintenance", () => {
   });
 
   it("refuses to remove a type the build still ships", async () => {
-    const r = await operator.removePlatformType("core.note");
+    const r = await operator.deletePlatformType("core.note");
     expect(r.status).toBe(409);
     expect(r.error?.error.code).toBe("conflict");
     expect(r.error?.error.details?.type).toBe("core.note");
@@ -84,13 +79,13 @@ describe("platform type maintenance", () => {
     // is for an identifier a row does carry and the build still ships,
     // which is a refusal about the state of the row rather than about
     // whether there is one.
-    const r = await operator.removePlatformType("core.never-existed");
+    const r = await operator.deletePlatformType("core.never-existed");
     expect(r.status).toBe(404);
     expect(r.error?.error.code).toBe("type_not_found");
   });
 
   it("refuses removal to a working key", async () => {
-    const r = await client.removePlatformType("core.note");
+    const r = await client.deletePlatformType("core.note");
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("forbidden");
   });

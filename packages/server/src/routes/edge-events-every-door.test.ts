@@ -199,7 +199,7 @@ describe("edge events on every door", () => {
     const inboundHeard = nextEdgeEvent(
       (e) => e.type === "edge_deleted" && e.edge.id === inbound,
     );
-    const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${doomed}/purge`, {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);

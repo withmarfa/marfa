@@ -303,7 +303,7 @@ describe("a write raced against a retype is refused on every door", () => {
     delete: "DELETE /items/{id}",
     transition: "POST /items/{id}/transition",
     restore: "POST /items/{id}/restore",
-    purge: "DELETE /items/{id}/purge",
+    purge: "POST /items/{id}/purge",
   } as const;
   for (const door of Object.keys(
     LIFECYCLE_DOORS,
@@ -325,7 +325,7 @@ describe("a write raced against a retype is refused on every door", () => {
                 key: narrowKey,
               })
             : door === "purge"
-              ? await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+              ? await request(ctx.app, "POST", `/items/${id}/purge`, {
                   key: narrowKey,
                 })
               : await request(ctx.app, "POST", `/items/${id}/${door}`, {

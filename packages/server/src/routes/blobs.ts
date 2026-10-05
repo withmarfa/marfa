@@ -493,8 +493,8 @@ const listBlobLocationsRoute = createRoute({
   },
 });
 
-const dropBlobLocationRoute = createRoute({
-  operationId: "dropBlobLocation",
+const deleteBlobLocationRoute = createRoute({
+  operationId: "deleteBlobLocation",
   method: "delete",
   path: "/{hash}/locations/{store}",
   tags: ["Blobs"],
@@ -900,7 +900,7 @@ export function blobRoutes(
   });
 
   // DELETE /blobs/:hash/locations/:store — drop one store's copy
-  router.openapi(dropBlobLocationRoute, async (c) => {
+  router.openapi(deleteBlobLocationRoute, async (c) => {
     const params = c.req.valid("param");
     const hash = normalizeHash(params.hash);
     if (!(await storage.blobs.get(hash))) {
