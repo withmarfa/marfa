@@ -114,7 +114,7 @@ export const HARNESS_CODES: Readonly<Record<string, string>> = {
 export const RACE_CODES: Readonly<Record<string, string>> = {
   idempotency_key_in_flight:
     "a second request under a key whose first is still being written, which two concurrent requests draw when they interleave",
-  housekeeping_job_running:
+  background_job_running:
     "a run already holding the job, which a request draws when the scheduler has started one, as an upload does",
 };
 

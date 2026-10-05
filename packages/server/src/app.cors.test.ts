@@ -5,7 +5,7 @@ import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
-import { Housekeeping } from "./housekeeping/scheduler.js";
+import { BackgroundJobs } from "./background-jobs/scheduler.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -41,7 +41,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const app = createApp(
     storage,
     blobs,
-    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
+    new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
     {
       isProduction,
       port: 0,

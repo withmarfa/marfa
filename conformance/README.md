@@ -105,7 +105,7 @@ leaving it to the boot script's default, so an ambient variable cannot flip
 the instance every file shares. What that allowance is, and what a caller
 past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
 server booted for it; nothing in the fixtures asserts enrichment. Two of the copy rules' settings are
-set for the fixtures that drive them through the housekeeping door: the
+set for the fixtures that drive them through the background job door: the
 orphan sweep's grace is zero, so the run after a report purges, and
 replication's cadence is an hour, so nothing copies on a clock of its own
 between an upload's wake and the fixture's runs. The env file also carries

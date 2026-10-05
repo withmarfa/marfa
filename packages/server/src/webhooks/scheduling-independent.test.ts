@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
+import { registerBackgroundJobs } from "../background-jobs/registrations.js";
 
 let ctx: TestContext;
 beforeEach(async () => {
@@ -66,8 +66,8 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
   if (!address || typeof address === "string")
     throw new Error("receiver did not bind");
   const hooks: string[] = [];
-  let scheduling: ReturnType<typeof ctx.housekeeping.runNow> | undefined;
-  let polling: ReturnType<typeof ctx.housekeeping.runNow> | undefined;
+  let scheduling: ReturnType<typeof ctx.backgroundJobs.runNow> | undefined;
+  let polling: ReturnType<typeof ctx.backgroundJobs.runNow> | undefined;
   try {
     for (let n = 0; n < 151; n++) {
       const response = await request(ctx.app, "POST", "/webhooks", {
@@ -91,14 +91,14 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
         })
       ).status,
     ).toBe(201);
-    registerHousekeepingJobs(
-      ctx.housekeeping,
+    registerBackgroundJobs(
+      ctx.backgroundJobs,
       ctx.storage,
       ctx.blobs,
       ctx.config,
     );
-    await ctx.housekeeping.start();
-    scheduling = ctx.housekeeping.runNow("webhook-schedule");
+    await ctx.backgroundJobs.start();
+    scheduling = ctx.backgroundJobs.runNow("webhook-schedule");
     const first = await Promise.race([
       scheduling,
       reached.promise.then(() => ({ kind: "receiver_waiting" as const })),
@@ -106,14 +106,18 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
     expect(first.kind).toBe("ran");
     if (first.kind !== "ran") throw new Error("scheduler did not run");
     expect(first.run.result).toMatchObject({ scheduled: 50 });
-    polling = ctx.housekeeping.runNow("webhook-poll");
+    polling = ctx.backgroundJobs.runNow("webhook-poll");
     await deadline(reached.promise);
-    const second = await deadline(ctx.housekeeping.runNow("webhook-schedule"));
+    const second = await deadline(
+      ctx.backgroundJobs.runNow("webhook-schedule"),
+    );
     expect(second.kind).toBe("ran");
     if (second.kind !== "ran") throw new Error("scheduler did not continue");
     expect(second.run.result).toMatchObject({ scheduled: 50 });
     for (const scheduled of [50, 1]) {
-      const next = await deadline(ctx.housekeeping.runNow("webhook-schedule"));
+      const next = await deadline(
+        ctx.backgroundJobs.runNow("webhook-schedule"),
+      );
       expect(next.kind).toBe("ran");
       if (next.kind !== "ran")
         throw new Error("scheduler did not finish backlog");
@@ -126,7 +130,7 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
         })
       ).data,
     ).toHaveLength(1);
-    expect(await ctx.housekeeping.runNow("webhook-poll")).toEqual({
+    expect(await ctx.backgroundJobs.runNow("webhook-poll")).toEqual({
       kind: "running",
     });
     expect(maximum).toBeLessThanOrEqual(50);
@@ -134,11 +138,11 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
     held!.end();
     const firstPoll = await polling;
     expect(firstPoll.kind).toBe("ran");
-    const row = await ctx.storage.housekeeping.get("webhook-poll");
+    const row = await ctx.storage.backgroundJobs.get("webhook-poll");
     expect(Date.parse(row!.next_run_at)).toBeLessThanOrEqual(Date.now() + 1);
     for (let batch = 0; batch < 3; batch++) {
-      await ctx.housekeeping.poll();
-      await ctx.housekeeping.settle();
+      await ctx.backgroundJobs.poll();
+      await ctx.backgroundJobs.settle();
     }
     expect(fast).toBe(150);
     for (const hook of hooks) {
@@ -163,7 +167,7 @@ it("queues beyond a held attempt batch and preserves a wake during the active po
       held.end();
     }
     await Promise.allSettled([scheduling, polling]);
-    await ctx.housekeeping.stop();
+    await ctx.backgroundJobs.stop();
     receiver.closeAllConnections();
     await new Promise<void>((resolve) =>
       receiver.close(() => {
@@ -188,7 +192,7 @@ it("shutdown waits for a held tracked attempt and starts no further poll", async
   const address = receiver.address();
   if (!address || typeof address === "string")
     throw new Error("receiver did not bind");
-  let polling: ReturnType<typeof ctx.housekeeping.runNow> | undefined;
+  let polling: ReturnType<typeof ctx.backgroundJobs.runNow> | undefined;
   let stopping: Promise<void> | undefined;
   try {
     const response = await request(ctx.app, "POST", "/webhooks", {
@@ -208,25 +212,25 @@ it("shutdown waits for a held tracked attempt and starts no further poll", async
         })
       ).status,
     ).toBe(201);
-    registerHousekeepingJobs(
-      ctx.housekeeping,
+    registerBackgroundJobs(
+      ctx.backgroundJobs,
       ctx.storage,
       ctx.blobs,
       ctx.config,
     );
-    await ctx.housekeeping.start();
-    expect((await ctx.housekeeping.runNow("webhook-schedule")).kind).toBe(
+    await ctx.backgroundJobs.start();
+    expect((await ctx.backgroundJobs.runNow("webhook-schedule")).kind).toBe(
       "ran",
     );
-    polling = ctx.housekeeping.runNow("webhook-poll");
+    polling = ctx.backgroundJobs.runNow("webhook-poll");
     await deadline(reached.promise);
     let stopped = false;
-    stopping = ctx.housekeeping.stop().then(() => {
+    stopping = ctx.backgroundJobs.stop().then(() => {
       stopped = true;
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(stopped).toBe(false);
-    await ctx.housekeeping.poll();
+    await ctx.backgroundJobs.poll();
     expect(hits).toBe(1);
     held!.writeHead(204);
     held!.end();
@@ -238,7 +242,7 @@ it("shutdown waits for a held tracked attempt and starts no further poll", async
         .data[0],
     ).toMatchObject({ status: "success", attempt: 1 });
     expect(
-      (await ctx.storage.housekeeping.get("webhook-poll"))?.running_since,
+      (await ctx.storage.backgroundJobs.get("webhook-poll"))?.running_since,
     ).toBeNull();
   } finally {
     if (held && !held.writableEnded) {
@@ -246,7 +250,7 @@ it("shutdown waits for a held tracked attempt and starts no further poll", async
       held.end();
     }
     await Promise.allSettled([polling, stopping]);
-    await ctx.housekeeping.stop();
+    await ctx.backgroundJobs.stop();
     receiver.closeAllConnections();
     await new Promise<void>((resolve) =>
       receiver.close(() => {
@@ -294,32 +298,32 @@ it("a saturated refused batch wakes once without retrying before row eligibility
     const now = Date.now();
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(now);
-    registerHousekeepingJobs(
-      ctx.housekeeping,
+    registerBackgroundJobs(
+      ctx.backgroundJobs,
       ctx.storage,
       ctx.blobs,
       ctx.config,
     );
-    await ctx.housekeeping.start();
-    await ctx.housekeeping.runNow("webhook-schedule");
-    const first = await ctx.housekeeping.runNow("webhook-poll");
+    await ctx.backgroundJobs.start();
+    await ctx.backgroundJobs.runNow("webhook-schedule");
+    const first = await ctx.backgroundJobs.runNow("webhook-poll");
     expect(first.kind).toBe("ran");
     if (first.kind !== "ran") throw new Error("poll did not run");
     expect(first.run.result).toMatchObject({ attempted: 50 });
     expect(hits).toBe(50);
     vi.setSystemTime(now + 1);
-    await ctx.housekeeping.poll();
-    await ctx.housekeeping.settle();
+    await ctx.backgroundJobs.poll();
+    await ctx.backgroundJobs.settle();
     expect(hits).toBe(50);
-    expect(await ctx.storage.housekeeping.get("webhook-poll")).toMatchObject({
+    expect(await ctx.storage.backgroundJobs.get("webhook-poll")).toMatchObject({
       last_result: { attempted: 0 },
       next_run_at: new Date(now + 30001).toISOString(),
     });
-    await ctx.housekeeping.poll();
-    await ctx.housekeeping.settle();
+    await ctx.backgroundJobs.poll();
+    await ctx.backgroundJobs.settle();
     expect(hits).toBe(50);
   } finally {
-    await ctx.housekeeping.stop();
+    await ctx.backgroundJobs.stop();
     receiver.closeAllConnections();
     await new Promise<void>((resolve) =>
       receiver.close(() => {

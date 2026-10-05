@@ -29,13 +29,13 @@ import {
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { NextCursorSchema, pageOf } from "./_schemas.js";
-import type { Housekeeping } from "../housekeeping/scheduler.js";
+import type { BackgroundJobs } from "../background-jobs/scheduler.js";
 import {
   CopiesBelowMinimum,
   LocationNotFound,
   dropBlobCopy,
   finishCopyDeletion,
-} from "../housekeeping/blob-delete.js";
+} from "../background-jobs/blob-delete.js";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -565,7 +565,7 @@ const listBlobOrphansRoute = createRoute({
   tags: ["Blobs"],
   summary: "List orphaned blobs",
   description:
-    "The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.",
+    "The orphan report: every registered blob the last run of the `blob-orphans` background job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
@@ -612,7 +612,7 @@ function normalizeHash(raw: string): string {
 export function blobRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  housekeeping: Pick<Housekeeping, "wake">,
+  backgroundJobs: Pick<BackgroundJobs, "wake">,
   config: Pick<AppConfig, "authBaseUrl" | "authSecret" | "blobMinCopies">,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
@@ -804,7 +804,7 @@ export function blobRoutes(
     // The other stores get their copies at replication's next run, which
     // this brings forward; a wake is a hint, so a scheduler that is not
     // running loses nothing but the hurry.
-    await housekeeping.wake("blob-replicate");
+    await backgroundJobs.wake("blob-replicate");
 
     return c.json({ hash, mime_type: recorded, size_bytes: sizeBytes }, 201);
   });

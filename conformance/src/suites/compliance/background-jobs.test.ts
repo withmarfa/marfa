@@ -12,7 +12,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "housekeeping"));
+  ({ ctx, client } = await createTestContext("compliance", "background-jobs"));
 });
 
 afterAll(async () => {
@@ -31,11 +31,11 @@ const ALWAYS_LISTED = [
   "webhook-schedule",
 ];
 
-describe("the housekeeping the server runs on itself", () => {
-  it("lists the housekeeping jobs to the operator key", async () => {
-    const listed = await getOperatorClient().listHousekeeping();
+describe("the background jobs the server runs on itself", () => {
+  it("lists the background jobs to the operator key", async () => {
+    const listed = await getOperatorClient().listBackgroundJobs();
     expect(listed.status).toBe(200);
-    await expectMatchesSchema("GET", "/housekeeping", 200, listed.data);
+    await expectMatchesSchema("GET", "/background-jobs", 200, listed.data);
     const names = listed.data.data.map((row) => row.name);
     for (const name of ALWAYS_LISTED) expect(names).toContain(name);
     for (const row of listed.data.data) {
@@ -47,19 +47,19 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("refuses the listing to a working key", async () => {
-    expect((await getOperatorClient().listHousekeeping()).status).toBe(200);
-    const listed = await client.listHousekeeping();
+    expect((await getOperatorClient().listBackgroundJobs()).status).toBe(200);
+    const listed = await client.listBackgroundJobs();
     expect(listed.status).toBe(403);
     expect(listed.error?.error.code).toBe("forbidden");
   });
 
-  it("runs a housekeeping job on demand and the listing records the run", async () => {
+  it("runs a background job on demand and the listing records the run", async () => {
     const operator = getOperatorClient();
-    const run = await operator.runHousekeeping("rate-limit-cleanup");
+    const run = await operator.runBackgroundJob("rate-limit-cleanup");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     await expectMatchesSchema(
       "POST",
-      "/housekeeping/{name}/run",
+      "/background-jobs/{name}/run",
       200,
       run.data,
     );
@@ -73,7 +73,7 @@ describe("the housekeeping the server runs on itself", () => {
     // rate limiting is off for a run, so no window row ever expires.
     expect(run.data.result).toEqual({ deleted: 0 });
 
-    const listed = await operator.listHousekeeping();
+    const listed = await operator.listBackgroundJobs();
     const row = listed.data.data.find(
       (candidate) => candidate.name === "rate-limit-cleanup",
     );
@@ -96,23 +96,23 @@ describe("the housekeeping the server runs on itself", () => {
 
   it("answers 404 for a name the instance does not run, where a listed one runs", async () => {
     const operator = getOperatorClient();
-    expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);
+    expect((await operator.runBackgroundJob("trash-purge")).status).toBe(200);
     // A name no registration carries. A name switched off by configuration
     // answers the same, and the referee, which boots with enrichment off,
     // cannot show that name listed; the server's own suite proves that
     // side from both ends.
-    const unknown = await operator.runHousekeeping("nothing-runs-this");
+    const unknown = await operator.runBackgroundJob("nothing-runs-this");
     expect(unknown.status).toBe(404);
-    expect(unknown.error?.error.code).toBe("housekeeping_job_not_found");
+    expect(unknown.error?.error.code).toBe("background_job_not_found");
   });
 
   it("refuses a malformed name and a working key", async () => {
     const operator = getOperatorClient();
-    expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);
-    const malformed = await operator.runHousekeeping("Not%20A%20Job");
+    expect((await operator.runBackgroundJob("trash-purge")).status).toBe(200);
+    const malformed = await operator.runBackgroundJob("Not%20A%20Job");
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("validation_error");
-    const working = await client.runHousekeeping("trash-purge");
+    const working = await client.runBackgroundJob("trash-purge");
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
   });

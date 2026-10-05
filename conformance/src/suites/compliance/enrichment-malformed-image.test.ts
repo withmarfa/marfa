@@ -35,7 +35,7 @@ beforeAll(async () => {
     MARFA_ENRICHMENT_TESSDATA_DIR:
       process.env.MARFA_ENRICHMENT_TESSDATA_DIR ??
       join(homedir(), ".cache", "marfa-tessdata"),
-    // Driven through the housekeeping door rather than the scheduler.
+    // Driven through the background job door rather than the scheduler.
     MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   client = new MarfaClient({
@@ -95,7 +95,7 @@ describe("a malformed image", () => {
       { extracted: 0, skipped: 0, failed: 0 },
     ];
     for (const [i, result] of expected.entries()) {
-      const run = await operator.runHousekeeping("enrichment-sweep");
+      const run = await operator.runBackgroundJob("enrichment-sweep");
       const label = `sweep ${String(i + 1)}`;
       expect(run.status, label).toBe(200);
       expect(run.data.outcome, label).toBe("ok");

@@ -201,7 +201,7 @@ const UNFILTERED_READERS: Record<string, string> = {
     "the update, which reads the base snapshot and merges against it only where the writer's may_read_type admits its type",
   "storage/version-thinner.ts":
     "the thinner, which decides what to keep for no credential and answers nobody",
-  "housekeeping/blob-orphans.ts":
+  "background-jobs/blob-orphans.ts":
     "the orphan sweep, which reads snapshot properties for the digests they hold, for no credential, and answers nobody",
 };
 

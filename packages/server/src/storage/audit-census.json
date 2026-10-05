@@ -91,7 +91,7 @@
       "writeItem": 1
     }
   },
-  "housekeeping/blob-delete.ts": {
+  "background-jobs/blob-delete.ts": {
     "boundary": "Audited logical copy deletion/purge claims and settlements, external bytes outside writer; external-audit.test.ts.",
     "calls": {
       "BlobRegistry.beginCopyDeletionAttempt": 1,
@@ -103,7 +103,7 @@
       "runAuditedTransaction": 2
     }
   },
-  "housekeeping/blob-integrity.ts": {
+  "background-jobs/blob-integrity.ts": {
     "boundary": "Audited missing/corrupt copy registry changes; verified-at bookkeeping is operational; external-audit.test.ts.",
     "calls": {
       "BlobRegistry.markVerified": 1,
@@ -112,20 +112,20 @@
       "runAuditedTransaction": 1
     }
   },
-  "housekeeping/blob-orphans.ts": {
+  "background-jobs/blob-orphans.ts": {
     "boundary": "Existing operational mark-and-sweep observation retains orphan detection timestamps; no blob removal here. Actual removal is audited in blob-delete.",
     "calls": {
       "BlobRegistry.retainOrphans": 1
     }
   },
-  "housekeeping/blob-replicate.ts": {
+  "background-jobs/blob-replicate.ts": {
     "boundary": "Audited registry copy publication after external I/O; external-audit.test.ts.",
     "calls": {
       "BlobRegistry.recordLocation": 1,
       "runAuditedTransaction": 1
     }
   },
-  "housekeeping/registrations.ts": {
+  "background-jobs/registrations.ts": {
     "boundary": "Existing operational retention of audit/event/idempotency/inbound/delivery logs; deleting the audit trail does not recursively audit itself.",
     "calls": {
       "AuditStore.cleanup": 1,
@@ -135,16 +135,16 @@
       "WebhookDeliveryStore.cleanup": 1
     }
   },
-  "housekeeping/scheduler.ts": {
+  "background-jobs/scheduler.ts": {
     "boundary": "Existing operational exemption: scheduler leases, due times and run results.",
     "calls": {
-      "HousekeepingStore.claim": 1,
-      "HousekeepingStore.claimDue": 1,
-      "HousekeepingStore.clearRunning": 1,
-      "HousekeepingStore.finish": 2,
-      "HousekeepingStore.removeExcept": 1,
-      "HousekeepingStore.upsert": 1,
-      "HousekeepingStore.wake": 1
+      "BackgroundJobStore.claim": 1,
+      "BackgroundJobStore.claimDue": 1,
+      "BackgroundJobStore.clearRunning": 1,
+      "BackgroundJobStore.finish": 2,
+      "BackgroundJobStore.removeExcept": 1,
+      "BackgroundJobStore.upsert": 1,
+      "BackgroundJobStore.wake": 1
     }
   },
   "middleware/auth.ts": {

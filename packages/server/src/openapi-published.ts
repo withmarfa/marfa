@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
-import { Housekeeping } from "./housekeeping/scheduler.js";
+import { BackgroundJobs } from "./background-jobs/scheduler.js";
 import { createApp } from "./app.js";
 import {
   finalizeOpenAPISpec,
@@ -78,7 +78,7 @@ export async function buildPublishedOpenAPISpec(): Promise<
     const app = createApp(
       storage,
       await createBlobLayer(storage, config),
-      new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
+      new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
       config,
       // A literal, not a mint. The document describes the shape of a
       // response, not this run's value, and an id in it would change the

@@ -18,7 +18,7 @@ export interface IntegrityBounds {
 }
 
 // A type alias rather than an interface: an interface carries no index
-// signature, so it cannot satisfy the `HousekeepingReport` the scheduler
+// signature, so it cannot satisfy the `BackgroundJobReport` the scheduler
 // takes from a job's run.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type IntegrityResult = {

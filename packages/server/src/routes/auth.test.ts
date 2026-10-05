@@ -5,7 +5,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
+import { BackgroundJobs } from "../background-jobs/scheduler.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
@@ -58,7 +58,7 @@ describe("bootstrap mode", () => {
     const app = createApp(
       storage,
       blobs,
-      new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
+      new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
       {
         port: 0,
         sqlitePath: "",

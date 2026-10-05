@@ -16,9 +16,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    audit, blobs, config, connectors, edge_types, edges, events, export, extensions, housekeeping,
-    items, keys, login, logout, metadata, operations, owner, restore, search, status, types,
-    webhooks, whoami,
+    audit, background_jobs, blobs, config, connectors, edge_types, edges, events, export,
+    extensions, items, keys, login, logout, metadata, operations, owner, restore, search, status,
+    types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, Exit, exit_codes_help};
@@ -140,10 +140,10 @@ enum Command {
     Audit(audit::AuditArgs),
     /// The event stream, one frame per line.
     Events(events::EventsArgs),
-    /// The housekeeping jobs the server runs on itself. Operator key only.
-    Housekeeping {
+    /// The background jobs the server runs on itself. Operator key only.
+    BackgroundJobs {
         #[command(subcommand)]
-        command: housekeeping::HousekeepingCommand,
+        command: background_jobs::BackgroundJobsCommand,
     },
     /// Processes that write on a key's behalf: registered, heard from, and
     /// reporting their runs. A key registers itself; the operator key sees
@@ -267,7 +267,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),
-        Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
+        Command::BackgroundJobs { command } => background_jobs::run(command, &remote()?, &out),
         Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }
     .map(|()| Exit::Done)

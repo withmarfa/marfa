@@ -45,7 +45,7 @@ pub struct Remote {
 
 /// How long a command waits for a server to answer, and to send an answer
 /// whole. Some doors do their work before they answer: a restore, a bulk
-/// write, a housekeeping job run on the spot.
+/// write, a background job run on the spot.
 const ANSWER_BUDGET: Duration = Duration::from_secs(90);
 
 /// How long a streamed answer may stay silent before a read of it fails. The

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { Housekeeping } from "./scheduler.js";
+import { BackgroundJobs } from "./scheduler.js";
 
 let ctx: TestContext | undefined;
 
@@ -56,18 +56,18 @@ const T0 = Date.parse("2026-09-20T12:00:00.000Z");
 
 /** A scheduler over the context's store that never polls on its own:
  *  the test calls `poll()` and `settle()` itself. */
-function scheduler(nowFn: () => Date): Housekeeping {
-  return new Housekeeping(ctx!.storage.housekeeping, {
+function scheduler(nowFn: () => Date): BackgroundJobs {
+  return new BackgroundJobs(ctx!.storage.backgroundJobs, {
     pollIntervalMs: 3_600_000,
     nowFn,
   });
 }
 
 async function names(): Promise<string[]> {
-  return (await ctx!.storage.housekeeping.list()).map((row) => row.name);
+  return (await ctx!.storage.backgroundJobs.list()).map((row) => row.name);
 }
 
-describe("Housekeeping", () => {
+describe("BackgroundJobs", () => {
   describe("register", () => {
     it("refuses a bad name, a duplicate, a non-positive interval, and a late registration", async () => {
       ctx = await createTestContext();
@@ -80,7 +80,7 @@ describe("Housekeeping", () => {
       hk.register({ name: "fine", ...job });
       expect(() => {
         hk.register({ name: "Not Fine", ...job });
-      }).toThrow(/not a housekeeping job name/);
+      }).toThrow(/not a background job name/);
       expect(() => {
         hk.register({ name: "fine", ...job });
       }).toThrow(/twice/);
@@ -114,7 +114,7 @@ describe("Housekeeping", () => {
       });
       await first.start();
       await first.stop();
-      const rows = await ctx.storage.housekeeping.list();
+      const rows = await ctx.storage.backgroundJobs.list();
       expect(rows.map((row) => [row.name, row.next_run_at])).toEqual([
         ["later", new Date(T0 + 30_000).toISOString()],
         ["soon", new Date(T0 + 5_000).toISOString()],
@@ -147,7 +147,7 @@ describe("Housekeeping", () => {
       await first.poll();
       await first.settle();
       await first.stop();
-      const ran = await ctx.storage.housekeeping.get("daily");
+      const ran = await ctx.storage.backgroundJobs.get("daily");
       expect(ran?.last_outcome).toBe("ok");
       expect(ran?.next_run_at).toBe(new Date(T0 + 86_400_000).toISOString());
 
@@ -163,7 +163,7 @@ describe("Housekeeping", () => {
       });
       await second.start();
       await second.stop();
-      expect((await ctx.storage.housekeeping.get("daily"))?.next_run_at).toBe(
+      expect((await ctx.storage.backgroundJobs.get("daily"))?.next_run_at).toBe(
         new Date(T0 + 86_400_000).toISOString(),
       );
 
@@ -178,14 +178,14 @@ describe("Housekeeping", () => {
       });
       await third.start();
       await third.stop();
-      expect((await ctx.storage.housekeeping.get("daily"))?.next_run_at).toBe(
+      expect((await ctx.storage.backgroundJobs.get("daily"))?.next_run_at).toBe(
         new Date(T0 + 3_600_000).toISOString(),
       );
     });
 
     it("schedules one poll, once, and stop() leaves no timer behind", async () => {
       ctx = await createTestContext();
-      const hk = new Housekeeping(ctx.storage.housekeeping, {
+      const hk = new BackgroundJobs(ctx.storage.backgroundJobs, {
         pollIntervalMs: 1_000,
         nowFn: clock(T0).nowFn,
       });
@@ -213,7 +213,7 @@ describe("Housekeeping", () => {
     it("clears a run marker left by a process that died mid-run, and says so", async () => {
       ctx = await createTestContext();
       const c = clock(T0);
-      const store = ctx.storage.housekeeping;
+      const store = ctx.storage.backgroundJobs;
       await store.upsert("stuck", 60_000, c.nowFn().toISOString());
       expect(
         await store.claim("stuck", c.nowFn().toISOString()),
@@ -237,7 +237,7 @@ describe("Housekeeping", () => {
       expect(captured.lines).toContainEqual(
         expect.objectContaining({
           level: "warn",
-          message: "Housekeeping runs left unfinished by an earlier process",
+          message: "Background job runs left unfinished by an earlier process",
         }),
       );
       expect((await store.get("stuck"))?.running_since).toBeNull();
@@ -275,7 +275,7 @@ describe("Housekeeping", () => {
       await hk.poll();
       await hk.settle();
       expect(runs).toBe(1);
-      const row = await ctx.storage.housekeeping.get("counter");
+      const row = await ctx.storage.backgroundJobs.get("counter");
       expect(row).toMatchObject({
         running_since: null,
         last_started_at: new Date(T0 + 10_000).toISOString(),
@@ -321,10 +321,10 @@ describe("Housekeeping", () => {
       expect(captured.lines).toContainEqual(
         expect.objectContaining({
           level: "error",
-          message: "Housekeeping faulty error",
+          message: "Background job faulty error",
         }),
       );
-      const row = await ctx.storage.housekeeping.get("faulty");
+      const row = await ctx.storage.backgroundJobs.get("faulty");
       expect(row).toMatchObject({
         running_since: null,
         last_outcome: "error",
@@ -383,9 +383,9 @@ describe("Housekeeping", () => {
       await vi.waitFor(() => {
         expect(quickRuns).toBe(1);
       });
-      expect((await ctx.storage.housekeeping.get("slow"))?.running_since).toBe(
-        new Date(T0).toISOString(),
-      );
+      expect(
+        (await ctx.storage.backgroundJobs.get("slow"))?.running_since,
+      ).toBe(new Date(T0).toISOString());
       // A second poll while `slow` holds its row does not start it again,
       // and `runNow` is refused the same way.
       await hk.poll();
@@ -393,10 +393,10 @@ describe("Housekeeping", () => {
       expect(slowRuns).toBe(1);
       releaseSlow();
       await hk.settle();
-      expect((await ctx.storage.housekeeping.get("slow"))?.running_since).toBe(
-        null,
-      );
-      // The witness: once released, the same housekeeping job runs again on
+      expect(
+        (await ctx.storage.backgroundJobs.get("slow"))?.running_since,
+      ).toBe(null);
+      // The witness: once released, the same background job runs again on
       // demand.
       const again = hk.runNow("slow");
       await vi.waitFor(() => {
@@ -434,7 +434,7 @@ describe("Housekeeping", () => {
       await hk.settle();
       expect(runs).toBe(1);
       expect(
-        (await ctx.storage.housekeeping.get("wakeable"))?.next_run_at,
+        (await ctx.storage.backgroundJobs.get("wakeable"))?.next_run_at,
       ).toBe(new Date(T0 + 3_600_000).toISOString());
 
       // Woken while running: the wake is not lost to the finish's
@@ -479,14 +479,14 @@ describe("Housekeeping", () => {
       // Claimed at T0 and woken at T0: the wake is recorded a millisecond
       // after the start, so the finish can tell it from the schedule.
       await hk.wake("instant");
-      expect((await ctx.storage.housekeeping.get("instant"))?.next_run_at).toBe(
-        new Date(T0 + 1).toISOString(),
-      );
+      expect(
+        (await ctx.storage.backgroundJobs.get("instant"))?.next_run_at,
+      ).toBe(new Date(T0 + 1).toISOString());
       releaseRun();
       await hk.settle();
-      expect((await ctx.storage.housekeeping.get("instant"))?.next_run_at).toBe(
-        new Date(T0 + 1).toISOString(),
-      );
+      expect(
+        (await ctx.storage.backgroundJobs.get("instant"))?.next_run_at,
+      ).toBe(new Date(T0 + 1).toISOString());
       await hk.stop();
     });
 
@@ -505,7 +505,7 @@ describe("Housekeeping", () => {
         },
       });
       await hk.start();
-      const store = ctx.storage.housekeeping;
+      const store = ctx.storage.backgroundJobs;
       const claimDue = store.claimDue.bind(store);
       store.claimDue = () => Promise.reject(dbError("SQLITE_BUSY"));
       const captured = captureLog();
@@ -518,7 +518,7 @@ describe("Housekeeping", () => {
       expect(captured.lines).toContainEqual(
         expect.objectContaining({
           level: "error",
-          message: "Housekeeping poll error",
+          message: "Background job poll error",
         }),
       );
       expect(runs).toBe(0);
@@ -572,13 +572,15 @@ describe("Housekeeping", () => {
       captured.restore();
       expect(claimedRuns).toBe(1);
       expect(captured.lines).not.toContainEqual(
-        expect.objectContaining({ message: "Housekeeping poll error" }),
+        expect.objectContaining({ message: "Background job poll error" }),
       );
       expect(Date.now() - started).toBeLessThan(2_000);
-      expect((await storage.housekeeping.get("holder"))?.last_outcome).toBe(
+      expect((await storage.backgroundJobs.get("holder"))?.last_outcome).toBe(
         "ok",
       );
-      expect((await storage.housekeeping.get("next"))?.last_outcome).toBe("ok");
+      expect((await storage.backgroundJobs.get("next"))?.last_outcome).toBe(
+        "ok",
+      );
       await hk.stop();
     });
 
@@ -610,7 +612,7 @@ describe("Housekeeping", () => {
         },
       });
       await hk.start();
-      const store = ctx.storage.housekeeping;
+      const store = ctx.storage.backgroundJobs;
       const listDue = store.listDue.bind(store);
       let reads = 0;
       store.listDue = (now) => {
@@ -650,7 +652,7 @@ describe("Housekeeping", () => {
       if (answered.kind === "ran") {
         expect(answered.run).toHaveProperty("result", null);
       }
-      expect(await ctx.storage.housekeeping.get("silent")).toMatchObject({
+      expect(await ctx.storage.backgroundJobs.get("silent")).toMatchObject({
         last_outcome: "ok",
         last_result: null,
       });
@@ -667,7 +669,7 @@ describe("Housekeeping", () => {
         run: () => Promise.resolve({ swept: 1 }),
       });
       await hk.start();
-      const store = ctx.storage.housekeeping;
+      const store = ctx.storage.backgroundJobs;
       const finish = store.finish.bind(store);
       store.finish = () => Promise.reject(dbError("SQLITE_BUSY"));
       const captured = captureLog();
@@ -685,7 +687,7 @@ describe("Housekeeping", () => {
       expect(captured.lines).toContainEqual(
         expect.objectContaining({
           level: "error",
-          message: "Housekeeping unrecorded record error",
+          message: "Background job unrecorded record error",
         }),
       );
       // The name stays held until the record lands, which the next pass
@@ -730,7 +732,7 @@ describe("Housekeeping", () => {
       });
       // A run ahead of schedule leaves the schedule where it was.
       expect(
-        (await ctx.storage.housekeeping.get("on-demand"))?.next_run_at,
+        (await ctx.storage.backgroundJobs.get("on-demand"))?.next_run_at,
       ).toBe(new Date(T0 + 3_600_000).toISOString());
       expect(await hk.runNow("nothing-here")).toEqual({ kind: "unknown" });
       await hk.stop();
@@ -745,7 +747,7 @@ describe("Housekeeping", () => {
         firstRunDelayMs: 0,
         run: () => Promise.resolve(null),
       });
-      // No row yet: to a caller, a housekeeping job the instance does not run.
+      // No row yet: to a caller, a background job the instance does not run.
       expect(await hk.runNow("not-yet")).toEqual({ kind: "unknown" });
       await hk.start();
       expect((await hk.runNow("not-yet")).kind).toBe("ran");
@@ -864,7 +866,7 @@ describe("Housekeeping", () => {
       await hk.start();
       // The claim of `slow` waits, as one that met the write lock does, and
       // the stop lands while it waits.
-      const store = ctx.storage.housekeeping;
+      const store = ctx.storage.backgroundJobs;
       const claimDue = store.claimDue.bind(store);
       let releaseClaim: () => void = () => undefined;
       const claimHeld = new Promise<void>((resolve) => {
@@ -915,7 +917,7 @@ describe("Housekeeping", () => {
       expect(running.lines).toContainEqual(
         expect.objectContaining({
           level: "error",
-          message: "Housekeeping interrupted error",
+          message: "Background job interrupted error",
         }),
       );
 
@@ -928,7 +930,7 @@ describe("Housekeeping", () => {
       expect(stopped.lines).toContainEqual(
         expect.objectContaining({
           level: "info",
-          message: "Housekeeping interrupted stood down",
+          message: "Background job interrupted stood down",
         }),
       );
     });
@@ -971,7 +973,7 @@ describe("one scheduler owns every cadence and the level of every failure", () =
     const source = here("./registrations.ts");
     // The witness: the registrations are here, more than a dozen of them.
     expect(
-      (source.match(/housekeeping\.register\(\{/g) ?? []).length,
+      (source.match(/backgroundJobs\.register\(\{/g) ?? []).length,
     ).toBeGreaterThanOrEqual(15);
     expect(source).not.toContain("setInterval(");
     expect(source).not.toContain("logJobTickFailure(");
@@ -990,9 +992,9 @@ describe("one scheduler owns every cadence and the level of every failure", () =
 
   it("index.ts wires the scheduler and keeps no timer of its own", () => {
     const source = here("../index.ts");
-    expect(source).toContain("registerHousekeepingJobs(");
-    expect(source).toContain("await housekeeping.start()");
+    expect(source).toContain("registerBackgroundJobs(");
+    expect(source).toContain("await backgroundJobs.start()");
     expect(source).not.toContain("setInterval(");
-    expect(source).not.toContain("housekeeping.register(");
+    expect(source).not.toContain("backgroundJobs.register(");
   });
 });

@@ -1222,7 +1222,7 @@ export const idempotencyRecords = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// housekeeping — the server's own periodic work, one row per housekeeping
+// background_jobs — the server's own periodic work, one row per background
 // job.
 //
 // The row is the schedule and the record in one: the scheduler polls it for
@@ -1232,7 +1232,7 @@ export const idempotencyRecords = sqliteTable(
 // restart, so a daily sweep that ran two hours before a deploy runs in
 // twenty-two hours rather than at boot.
 // ---------------------------------------------------------------------------
-export const housekeeping = sqliteTable("housekeeping", {
+export const backgroundJobs = sqliteTable("background_jobs", {
   name: text("name").primaryKey(),
   interval_ms: integer("interval_ms").notNull(),
   next_run_at: text("next_run_at").notNull(),

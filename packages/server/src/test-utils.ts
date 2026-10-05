@@ -11,8 +11,8 @@ import { instantColumnValues } from "./storage/instant-columns.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
 import { DiskBlobStore, type BlobStore } from "./storage/blob-store.js";
-import type { Stores } from "./housekeeping/blob-delete.js";
-import { Housekeeping } from "./housekeeping/scheduler.js";
+import type { Stores } from "./background-jobs/blob-delete.js";
+import { BackgroundJobs } from "./background-jobs/scheduler.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { PersistedEvent, Storage } from "./storage/interface.js";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -138,9 +138,9 @@ export interface TestContext {
   app: TestApp;
   storage: Storage;
   blobs: BlobLayer;
-  /** The scheduler behind `/housekeeping`, with nothing registered and not
+  /** The scheduler behind `/background-jobs`, with nothing registered and not
    *  started: a test registers what it wants to see run. */
-  housekeeping: Housekeeping;
+  backgroundJobs: BackgroundJobs;
   /** What the app was built with, so a test can build a second app over
    *  the same database. */
   config: AppConfig;
@@ -439,7 +439,7 @@ export interface UnbootstrappedTestApp {
   app: TestApp;
   storage: Storage;
   blobs: BlobLayer;
-  housekeeping: Housekeeping;
+  backgroundJobs: BackgroundJobs;
   config: AppConfig;
   tmpDir: string;
   cleanup: () => Promise<void>;
@@ -492,13 +492,13 @@ async function buildUnbootstrappedApp(
     ...overrides,
   };
   const blobs = await createBlobLayer(storage, config);
-  const housekeeping = new Housekeeping(storage.housekeeping, {
+  const backgroundJobs = new BackgroundJobs(storage.backgroundJobs, {
     pollIntervalMs: 1_000,
   });
   const app = createApp(
     storage,
     blobs,
-    housekeeping,
+    backgroundJobs,
     config,
     await ensureInstanceId(storage.settings),
   );
@@ -510,7 +510,7 @@ async function buildUnbootstrappedApp(
     app,
     storage,
     blobs,
-    housekeeping,
+    backgroundJobs,
     config,
     tmpDir,
     auth: app.auth,
@@ -551,7 +551,7 @@ async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
-  const { app, storage, blobs, housekeeping, config, cleanup, auth } =
+  const { app, storage, blobs, backgroundJobs, config, cleanup, auth } =
     await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -611,7 +611,7 @@ async function buildTestContext(
     app,
     storage,
     blobs,
-    housekeeping,
+    backgroundJobs,
     config,
     operatorKey: rawKey,
     workingKey: workingRawKey,
@@ -1150,7 +1150,7 @@ export function collectItemEvents(signal: AbortSignal): {
  * the copy rules do not care which kind holds a copy, and a second folder
  * is a second store to the log. Attached the way the layer attaches one,
  * so it has an id and a row, and added to the context's layer so the doors
- * and the housekeeping see it too.
+ * and the background jobs see it too.
  */
 export async function withSecondStore(
   ctx: TestContext,

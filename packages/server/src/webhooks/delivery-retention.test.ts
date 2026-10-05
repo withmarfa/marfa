@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { Housekeeping } from "../housekeeping/scheduler.js";
-import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
+import { BackgroundJobs } from "../background-jobs/scheduler.js";
+import { registerBackgroundJobs } from "../background-jobs/registrations.js";
 import { writeInstanceConfig } from "../storage/instance-config.js";
 
 let ctx: TestContext;
@@ -58,16 +58,16 @@ async function age(id: string, days: number): Promise<void> {
 }
 
 async function runAuditCleanup(): Promise<void> {
-  const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+  const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
     pollIntervalMs: 3_600_000,
   });
-  registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
-  await housekeeping.start();
+  registerBackgroundJobs(backgroundJobs, ctx.storage, ctx.blobs, ctx.config);
+  await backgroundJobs.start();
   try {
-    const ran = await housekeeping.runNow("audit-cleanup");
+    const ran = await backgroundJobs.runNow("audit-cleanup");
     expect(ran.kind).toBe("ran");
   } finally {
-    await housekeeping.stop();
+    await backgroundJobs.stop();
   }
 }
 

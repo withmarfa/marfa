@@ -5,7 +5,7 @@ import { createSqliteStorage } from "../../src/storage/sqlite/index.js";
 import { createBlobLayer } from "../../src/storage/blob-layer.js";
 import { ensureInstanceId } from "../../src/storage/instance-id.js";
 import { createApp } from "../../src/app.js";
-import { Housekeeping } from "../../src/housekeeping/scheduler.js";
+import { BackgroundJobs } from "../../src/background-jobs/scheduler.js";
 import { initEventLog } from "../../src/pubsub.js";
 
 /**
@@ -23,13 +23,13 @@ process.once(
         blobPath: join(message.dir, "blobs"),
       };
       const blobs = await createBlobLayer(storage, config);
-      const housekeeping = new Housekeeping(storage.housekeeping, {
+      const backgroundJobs = new BackgroundJobs(storage.backgroundJobs, {
         pollIntervalMs: 3_600_000,
       });
       const app = createApp(
         storage,
         blobs,
-        housekeeping,
+        backgroundJobs,
         config,
         await ensureInstanceId(storage.settings),
       );

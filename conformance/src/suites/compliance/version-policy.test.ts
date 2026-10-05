@@ -174,7 +174,7 @@ describe("the version policy a type inherits", () => {
       unconstrained: await itemWithSnapshots(unconstrained),
     };
 
-    const run = await getOperatorClient().runHousekeeping("version-thinning");
+    const run = await getOperatorClient().runBackgroundJob("version-thinning");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("ok");
 

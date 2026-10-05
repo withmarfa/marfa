@@ -31,7 +31,7 @@ export interface ShutdownParts {
   bulkActionWorker: { stop(): Promise<void> };
   /** Stops polling; settles once every run in flight has ended, the
    *  webhook deliveries among them. */
-  housekeeping: { stop(): Promise<void> };
+  backgroundJobs: { stop(): Promise<void> };
   /** Ends each open event stream with its closing frame. */
   streams: { endAll(): number };
   server: {
@@ -81,7 +81,7 @@ export async function shutdownInOrder(
   // it has to get out.
   log("info", "Shutting down...");
   const bulkActionsStopped = parts.bulkActionWorker.stop();
-  const housekeepingStopped = parts.housekeeping.stop();
+  const backgroundJobsStopped = parts.backgroundJobs.stop();
 
   let streamsEnded = 0;
   try {
@@ -115,9 +115,9 @@ export async function shutdownInOrder(
         });
       },
     ),
-    withTimeout(housekeepingStopped, bounds.inFlightWorkTimeoutMs).catch(
+    withTimeout(backgroundJobsStopped, bounds.inFlightWorkTimeoutMs).catch(
       (error: unknown) => {
-        log("warn", "Graceful shutdown: housekeeping did not stop in time", {
+        log("warn", "Graceful shutdown: background jobs did not stop in time", {
           error: serializeError(error),
         });
       },
