@@ -70,6 +70,8 @@ enum Literal {
     Text(String),
     Number(f64),
     Bool(bool),
+    /// No value: the operator takes none. A `null` in the expression is
+    /// refused, never read as this.
     Null,
 }
 
@@ -340,12 +342,6 @@ struct Token {
     pos: usize,
 }
 
-/// JavaScript's `\s`, which is where the server ends an edge reference's
-/// word.
-fn is_js_space(ch: char) -> bool {
-    (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
-}
-
 /// `edge[<type>]` or `backref[<type>]`, whole: the type is anything but a
 /// closing bracket or whitespace, and not nothing.
 fn edge_ref(word: &str) -> Option<(bool, &str)> {
@@ -355,7 +351,7 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
         (true, word.strip_prefix("backref[")?)
     };
     let edge_type = rest.strip_suffix(']')?;
-    if edge_type.is_empty() || edge_type.contains(']') || edge_type.chars().any(is_js_space) {
+    if edge_type.is_empty() || edge_type.contains(']') || edge_type.chars().any(js::is_space) {
         return None;
     }
     Some((backref, edge_type))
@@ -445,7 +441,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
         if ch == 'e' || ch == 'b' {
             let end = chars[i..]
                 .iter()
-                .position(|c| is_js_space(*c))
+                .position(|c| js::is_space(*c))
                 .map_or(chars.len(), |offset| i + offset);
             let word = raw(i, end);
             if edge_ref(&word).is_some() {
@@ -607,12 +603,32 @@ fn term(field: Field, op: Op) -> Result<Term> {
     })
 }
 
-fn value(token: &Token) -> Result<Literal> {
+/// A comparison with null is unknown in SQL and never matches, so the server
+/// refuses the literal and names the operator that asks the question.
+fn refuse_null(token: &Token, term: &Term, op: Op) -> CoreError {
+    let never = format!(
+        "Null is not a value to compare with, so \"{} null\" never matches at position {}.",
+        op.name(),
+        token.pos
+    );
+    refused(match term {
+        Term::Property { .. } => format!(
+            "{never} Use \"not_exists\" to ask for a property that is absent or null, and \"exists\" for one that has a value"
+        ),
+        Term::Edge { .. } => format!(
+            "{never} Use \"not_exists\" to ask for rows that draw no edge of this type, and \"exists\" for rows that draw one"
+        ),
+        Term::System { column, .. } => format!("{never} Compare \"{column}\" with a value"),
+        Term::TagHeld | Term::TagsPresent(_) => format!("{never} Name the tag to look for"),
+    })
+}
+
+fn value(token: &Token, term: &Term, op: Op) -> Result<Literal> {
     Ok(match &token.kind {
         TokenKind::Text(text) => Literal::Text(text.clone()),
         TokenKind::Number(number) => Literal::Number(*number),
         TokenKind::Bool(flag) => Literal::Bool(*flag),
-        TokenKind::Null => Literal::Null,
+        TokenKind::Null => return Err(refuse_null(token, term, op)),
         TokenKind::Identifier(_) => {
             return Err(refused(format!(
                 "Expected value at position {}, got \"{}\"",
@@ -659,7 +675,7 @@ fn parse(input: &str) -> Result<Expression> {
         pos += 1;
         let term = term(field, op)?;
         let value = if matches!(op, Op::Compare(_)) {
-            let literal = value(expect(&tokens, pos, "value")?)?;
+            let literal = value(expect(&tokens, pos, "value")?, &term, op)?;
             pos += 1;
             literal
         } else {
@@ -779,6 +795,46 @@ mod tests {
         ] {
             assert_eq!(code(input), refusal, "{input:?} was not refused");
         }
+    }
+
+    #[test]
+    fn refuses_a_null_literal_and_names_the_test_that_asks_for_absence() {
+        for op in [
+            "eq",
+            "neq",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "contains",
+            "starts_with",
+        ] {
+            let input = format!("properties.note {op} null");
+            let Err(CoreError::Validation { code, message }) = parse(&input) else {
+                panic!("{input} was accepted");
+            };
+            assert_eq!(code, "validation_error");
+            assert!(message.contains(&format!("\"{op} null\" never matches")));
+            assert!(message.contains("\"not_exists\""), "{message}");
+        }
+        for (input, advice) in [
+            ("edge[about] eq null", "rows that draw no edge"),
+            ("source_id eq null", "Compare \"source_id\" with a value"),
+            ("tags contains null", "Name the tag to look for"),
+            ("state eq \"a\" OR properties.n neq null", "never matches"),
+        ] {
+            let Err(CoreError::Validation { message, .. }) = parse(input) else {
+                panic!("{input} was accepted");
+            };
+            assert!(message.contains(advice), "{input}: {message}");
+        }
+        // The word is text when it is quoted, and the presence test is
+        // still how absence is asked for.
+        assert_eq!(
+            parse("properties.note eq \"null\"").unwrap().conditions[0].value,
+            Literal::Text("null".into())
+        );
+        assert!(parse("properties.note not_exists").is_ok());
     }
 
     #[test]
@@ -918,7 +974,6 @@ mod tests {
             filtered("properties.note starts_with \"a\""),
             ["child", "grandchild"]
         );
-        assert_eq!(filtered("properties.note eq null"), Vec::<String>::new());
         assert_eq!(filtered("tags contains \"5.0\""), ["root"]);
         assert_eq!(filtered("tags contains 5"), Vec::<String>::new());
         assert_eq!(filtered("edge[references] eq \"stranger\""), ["child"]);

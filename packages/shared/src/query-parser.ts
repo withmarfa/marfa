@@ -392,12 +392,45 @@ function parseOp(token: Token): ComparisonOp {
   return op as ComparisonOp;
 }
 
+/**
+ * A comparison with null is unknown in SQL and never matches, so the literal
+ * is refused and the message names the operator that asks the question.
+ */
+function refuseNullComparison(
+  token: Token,
+  field: FieldRef,
+  op: ComparisonOp,
+): MarfaError {
+  const never = `Null is not a value to compare with, so "${op} null" never matches at position ${String(token.pos)}.`;
+  switch (field.kind) {
+    case "property":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Use "not_exists" to ask for a property that is absent or null, and "exists" for one that has a value`,
+      );
+    case "edge":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Use "not_exists" to ask for rows that draw no edge of this type, and "exists" for rows that draw one`,
+      );
+    case "system":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Compare "${field.column}" with a value`,
+      );
+    case "tags":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${never} Name the tag to look for`,
+      );
+  }
+}
+
 function parseValue(token: Token): FilterValue {
   switch (token.kind) {
     case TokenKind.String:
     case TokenKind.Number:
     case TokenKind.Boolean:
-    case TokenKind.Null:
       return token.value;
     default:
       throw new MarfaError(
@@ -480,6 +513,9 @@ export function parseFilter(input: string): FilterExpression {
     let value: FilterValue = null;
     if (!UNARY_OPS.has(op)) {
       const valToken = expectToken(tokens, pos, "value");
+      if (valToken.kind === TokenKind.Null) {
+        throw refuseNullComparison(valToken, field, op);
+      }
       value = parseValue(valToken);
       pos++;
     }

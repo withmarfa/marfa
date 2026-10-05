@@ -71,9 +71,13 @@ describe("parseFilter", () => {
       expect(result.conditions[0]!.value).toBe(false);
     });
 
-    it("parses null value", () => {
-      const result = parseFilter("properties.subtitle eq null");
-      expect(result.conditions[0]!.value).toBeNull();
+    it("parses a presence test that takes no value", () => {
+      const result = parseFilter("properties.subtitle not_exists");
+      expect(result.conditions[0]).toEqual({
+        field: { kind: "property", path: "subtitle" },
+        op: "not_exists",
+        value: null,
+      });
     });
 
     it("parses neq operator", () => {
@@ -255,6 +259,55 @@ describe("parseFilter", () => {
   // ---------------------------------------------------------------------------
 
   describe("error handling", () => {
+    it("refuses a null literal on every operator, naming not_exists where absence can be asked", () => {
+      for (const op of [
+        "eq",
+        "neq",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "contains",
+        "starts_with",
+      ]) {
+        const failure = (() => {
+          try {
+            parseFilter(`properties.subtitle ${op} null`);
+          } catch (error) {
+            return error;
+          }
+          return undefined;
+        })();
+        expect(failure, `${op} null was accepted`).toBeInstanceOf(MarfaError);
+        const refusal = failure as MarfaError;
+        expect(refusal.code).toBe(ErrorCode.VALIDATION_ERROR);
+        expect(refusal.message).toContain(`"${op} null" never matches`);
+        expect(refusal.message).toContain('"not_exists"');
+      }
+      expect(() => parseFilter("edge[about] eq null")).toThrow(
+        "rows that draw no edge",
+      );
+      expect(() => parseFilter("source_id eq null")).toThrow(
+        'Compare "source_id" with a value',
+      );
+      expect(() => parseFilter("tags contains null")).toThrow(
+        "Name the tag to look for",
+      );
+      expect(() => parseFilter("state eq null AND tags exists")).toThrow(
+        "never matches",
+      );
+    });
+
+    it("takes the word null as text when it is quoted", () => {
+      expect(
+        parseFilter('properties.subtitle eq "null"').conditions[0],
+      ).toEqual({
+        field: { kind: "property", path: "subtitle" },
+        op: "eq",
+        value: "null",
+      });
+    });
+
     it("rejects empty string", () => {
       expect(() => parseFilter("")).toThrow("cannot be empty");
     });

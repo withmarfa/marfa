@@ -71,6 +71,13 @@ const OUTSIDE_THE_GRAMMAR: Array<[string, string]> = [
     "2049 characters",
   ],
   [`properties.rank gt 1${"0".repeat(400)}`, "a number no double holds"],
+  ["properties.title eq null", "a null literal after eq"],
+  ["properties.title neq null", "a null literal after neq"],
+  ["properties.rank gte null", "a null literal after gte"],
+  ["properties.title starts_with null", "a null literal after starts_with"],
+  ["edge[parent-of] eq null", "a null literal after an edge's eq"],
+  ["source_id eq null", "a null literal on a system field"],
+  ["tags contains null", "a null literal after tags contains"],
 ];
 
 /**

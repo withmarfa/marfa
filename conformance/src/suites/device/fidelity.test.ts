@@ -2749,7 +2749,6 @@ describe("a local read answers the listing grammar as the server does", () => {
       "properties.rating not_exists",
       "properties.flag eq true",
       "properties.flag eq false",
-      "properties.status eq null",
       'tags contains "birds"',
       "tags not_exists",
       `edge[parent-of] eq "${child}"`,
@@ -2791,6 +2790,30 @@ describe("a local read answers the listing grammar as the server does", () => {
       ).toEqual(expected);
       if (expected.length > 0 && expected.length < names.size) {
         selective.push(filter);
+      }
+    }
+    // A null literal matches nothing, so the server refuses it and names the
+    // test that asks for absence. The copy refuses with the same words, not
+    // as a filter that matched nothing.
+    for (const filter of [
+      "properties.status eq null",
+      "properties.status neq null",
+      "properties.status contains null",
+      "edge[parent-of] eq null",
+      "source_id eq null",
+      "tags contains null",
+    ]) {
+      const served = await client.listItems({ type, filter, limit: 100 });
+      expect(served.status, `the server answered ${filter}`).toBe(400);
+      expect(served.error?.error.code).toBe("validation_error");
+      const local = await device.list({ filter });
+      expect(local.ok, `the device answered ${filter}`).toBe(false);
+      if (!local.ok) {
+        const envelope = JSON.parse(local.refusal.raw) as {
+          error: { code: string; message: string };
+        };
+        expect(envelope.error.code).toBe("validation");
+        expect(envelope.error.message).toContain(served.error!.error.message);
       }
     }
     // The witness: agreement on expressions that select everything or

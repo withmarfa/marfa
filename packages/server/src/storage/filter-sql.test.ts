@@ -174,10 +174,11 @@ describe("filterToRawSql", () => {
       expect(result.params).toEqual(["$.is_draft", false]);
     });
 
-    it("handles null", () => {
-      const expr = parseFilter("properties.subtitle eq null");
+    it("compiles not_exists to a null test that takes no parameter value", () => {
+      const expr = parseFilter("properties.subtitle not_exists");
       const result = filterToRawSql(expr, "i");
-      expect(result.params).toEqual(["$.subtitle", null]);
+      expect(result.clause).toContain("IS NULL");
+      expect(result.params).toEqual(["$.subtitle"]);
     });
   });
 });
