@@ -57,26 +57,6 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 35. A bulk-action filter takes the item's own time under `occurred_after` and `occurred_before`, both exclusive, and refuses a field it does not declare. `compliance/bulk.test.ts › narrows a match set by the item's own time`, `› refuses a filter field it does not declare, naming it`, `sync/time-filters.test.ts › refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row`.
 36. A bulk purge takes `items.purge`: a key without it is refused `403 forbidden`. `compliance/bulk.test.ts › purge is refused to a key holding no permissions`.
 
-### The skip reason of a bulk entry
-
-65. WHEN a bulk entry is `skipped`, the server MUST report its `reason` as `duplicate_source`, `duplicate_id` or `trashed` on `POST /items/bulk`, and as `duplicate_edge` on `POST /edges/bulk`.
-
-    Reason: the document declares `reason` as a closed enumeration of these four values, so a generated client branches on it with every case known, and a value outside the list would be one no client was told to expect. `duplicate_source` and `trashed` are stated in 30, and `duplicate_edge` in `edges.md` 13.
-
-    Tests: `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed rows, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
-
-66. WHEN a bulk entry is created, updated or errored, the server MUST NOT carry a `reason` on its result.
-
-    Reason: a reason says why a write did not happen, so one beside a written row would tell a client to branch on a case that is not there.
-
-    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
-
-67. WHEN an entry of `POST /items/bulk` in `create_only` mode names an `id` that an existing item holds, in the bin or not, and its natural key resolves no row (5), the server MUST skip the entry with `reason: "duplicate_id"` naming that item's `id`, and MUST NOT write the item.
-
-    Reason: an id the caller minted is the caller's own, so its repeat is an acknowledgment and not a refusal; a repeat landing on a row since moved to the bin would otherwise fall through to a create the store refuses as a duplicate, and under the default `atomic` roll back every page that re-syncs it. A natural key that resolves a row decides first, and the entry is a `duplicate_source` (30).
-
-    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`.
-
 ## Metadata, tags and extensions
 
 37. Tags are set on create, and a tag write to an item in the bin is refused `404 item_not_found` with `details.trashed` to a key that may read its type (`errors.md` 12); merged as a set union by `PATCH /items/{id}/metadata`, added by `POST /items/{id}/tags`, replaced wholesale by `PUT /items/{id}/metadata`, removed one at a time by `DELETE /items/{id}/tags/{tag}`, and read back on the item and at `GET /items/{id}/metadata`, which names the `item_id`. `correctness/tags.test.ts › creates an item with tags and returns them correctly`, `› updates tags via metadata PATCH`, `› favorite can be removed via DELETE /items/:id/tags/favorite`, `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
@@ -131,3 +111,23 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
     Reason: the server and a working copy must give the same verdict for a string containing characters outside the Basic Multilingual Plane (`device.md` 57); such a character uses two UTF-16 code units.
 
     Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/server/src/routes/items.test.ts › matches working-copy field validation at Unicode and format boundaries`.
+
+## The skip reason of a bulk entry
+
+65. WHEN a bulk entry is `skipped`, the server MUST report its `reason` as `duplicate_source`, `duplicate_id` or `trashed` on `POST /items/bulk`, and as `duplicate_edge` on `POST /edges/bulk`.
+
+    Reason: the document declares `reason` as a closed enumeration of these four values, so a generated client branches on it with every case known, and a value outside the list would be one no client was told to expect. `duplicate_source` and `trashed` are stated in 30, and `duplicate_edge` in `edges.md` 13.
+
+    Tests: `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed rows, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+
+66. WHEN a bulk entry is created, updated or errored, the server MUST NOT carry a `reason` on its result.
+
+    Reason: a reason says why a write did not happen, so one beside a written row would tell a client to branch on a case that is not there.
+
+    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+
+67. WHEN an entry of `POST /items/bulk` in `create_only` mode names an `id` that an existing item holds, in the bin or not, and its natural key resolves no row (5), the server MUST skip the entry with `reason: "duplicate_id"` naming that item's `id`, and MUST NOT write the item.
+
+    Reason: an id the caller minted is the caller's own, so its repeat is an acknowledgment and not a refusal; a repeat landing on a row since moved to the bin would otherwise fall through to a create the store refuses as a duplicate, and under the default `atomic` roll back every page that re-syncs it. A natural key that resolves a row decides first, and the entry is a `duplicate_source` (30).
+
+    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`.

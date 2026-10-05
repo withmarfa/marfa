@@ -142,8 +142,37 @@ impl Settings {
             }
         }
         if let Some(filter) = &self.search.filter {
-            crate::filter::check(filter)?;
+            crate::filter::check(filter).map_err(|error| match error {
+                CoreError::Validation { code, message } => CoreError::Validation {
+                    code,
+                    message: format!(
+                        "the folder's search.filter is refused: {message}. Change the filter with `marfa folders change`"
+                    ),
+                },
+                other => other,
+            })?;
         }
+        // The server holds the same defaults to the same bounds, so a new
+        // file is never made with a tag or a property name it would refuse.
+        let named = |setting: &str, refusal: Result<()>| {
+            refusal.map_err(|error| match error {
+                CoreError::Validation { code, message } => CoreError::Validation {
+                    code,
+                    message: format!(
+                        "the folder's {setting} is refused: {message}. Change it with `marfa folders change`"
+                    ),
+                },
+                other => other,
+            })
+        };
+        named(
+            "defaults.tags",
+            crate::validation::tags(&self.defaults.tags),
+        )?;
+        named(
+            "defaults.properties",
+            crate::validation::property_names(&self.defaults.properties),
+        )?;
         self.lists()?;
         if let Some(fraction) = self.removal_threshold.fraction
             && !(0.0..=1.0).contains(&fraction)
@@ -276,6 +305,48 @@ mod tests {
         let empty = Map::new();
         assert!(Settings::read("f", FOLDER_TYPE, "revoked", &empty).is_err());
         assert!(Settings::read("f", "core.note", "active", &empty).is_err());
+    }
+
+    #[test]
+    fn a_setting_the_server_would_refuse_is_named_with_the_way_to_change_it() {
+        let refused = |properties: Value| match read(properties) {
+            Err(CoreError::Validation { code, message }) => {
+                assert_eq!(code, "validation_error");
+                message
+            }
+            other => panic!("{other:?}"),
+        };
+        let filter = refused(json!({
+            "search": { "filter": "properties.a eq \"x\" OR properties.b eq null" }
+        }));
+        assert!(filter.contains("search.filter"), "{filter}");
+        assert!(
+            filter.contains("Null is not a value to compare with"),
+            "{filter}"
+        );
+        assert!(filter.contains("marfa folders change"), "{filter}");
+        for (properties, setting) in [
+            (json!({ "defaults": { "tags": [""] } }), "defaults.tags"),
+            (
+                json!({ "defaults": { "tags": ["a".repeat(129)] } }),
+                "defaults.tags",
+            ),
+            (
+                json!({ "defaults": { "properties": { "": 1 } } }),
+                "defaults.properties",
+            ),
+        ] {
+            let message = refused(properties);
+            assert!(message.contains(setting), "{message}");
+            assert!(message.contains("marfa folders change"), "{message}");
+        }
+        // The witness: defaults at the bound are taken.
+        assert!(
+            read(json!({
+                "defaults": { "tags": ["a".repeat(128)], "properties": { "named": 1 } }
+            }))
+            .is_ok()
+        );
     }
 
     #[test]

@@ -46,20 +46,6 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 26. A device never writes to a store it does not hold the writer handle for, and never to one bound to another server. `device/local-refusals.test.ts › refuses a write from a reading handle`, `› refuses a write to a store bound to another server`, `› refuses a hydration, a catch-up and a follow from a reading handle`.
 27. **A device never expires an item.** The event log has a retention and items do not. A device that swept its own copy by age would drop rows the server still holds and go on reporting the slice as complete, and the feed is not a place things fall out of. `device/working-copy.test.ts › keeps an item however old it is`.
 
-### Names a write carries
-
-60. WHEN a write carries a tag that is empty, is blank as JavaScript's `trim` reads blank, or exceeds 128 UTF-16 code units, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything, on every door that adds a tag: a create, a tag add, a metadata merge or replace, and a file added with tags.
-
-    Reason: a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items.md` 62) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
-
-    Tests: `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
-
-61. WHEN a create or an edit names a property with no characters, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything.
-
-    Reason: the server refuses such a name on every door that writes properties (`items.md` 63), and a device that took it would hold a row the server never will.
-
-    Tests: `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
-
 ## Blobs
 
 28. A blob's bytes are fetched on demand and are not held by hydration. An item that references bytes is held with the reference and without them. `device/working-copy.test.ts › holds an item whose bytes it has not fetched`.
@@ -155,6 +141,20 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 **Reason:** A failed response or an ended stream must not replace an explicit stop with a network or replay failure. A stopped head read must not start another attempt. An attributed credential ending still expires the copy before the call reports cancellation (53).
 
 **Tests:** `device/stop.test.ts › reports canceled after a stopped head read ends or is refused, without retrying or changing the queue`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`. Core `stop_tests::a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame`, `a_stopped_hydration_reports_canceled_after_a_failed_read`, `a_stopped_catch_up_reports_canceled_after_a_failed_read`, `a_stopped_drain_records_the_in_flight_answer_before_ending`, `a_stopped_read_still_expires_a_copy_when_the_credential_ended`.
+
+## Names a write carries
+
+60. WHEN a write carries a tag that is empty, is blank as JavaScript's `trim` reads blank, or exceeds 128 UTF-16 code units, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything, on every door that adds a tag: a create, a tag add, a metadata merge or replace, a file added with tags, and a folder's sync of a document's tags in (`folders.md` 55).
+
+    Reason: a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items.md` 62) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
+
+    Tests: `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
+
+61. WHEN a create or an edit names a property with no characters, including one a folder's sync of a document carries (`folders.md` 55), a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything.
+
+    Reason: the server refuses such a name on every door that writes properties (`items.md` 63), and a device that took it would hold a row the server never will.
+
+    Tests: `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
 
 ## What the real server cannot be made to produce
 
