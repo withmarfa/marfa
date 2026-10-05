@@ -105,6 +105,8 @@ export const HARNESS_CODES: Readonly<Record<string, string>> = {
     "the body cap, drawn on the doors whose own chapter says what it means there",
   write_contention:
     "the database's write lock, drawn by holding it from outside the server on the doors `errors.md` 10 names",
+  internal_error:
+    "a fault the server holds no refusal for, which no request provokes; drawn once, on `GET /audit`, by renaming a table in the fixture server's own file",
 };
 
 /**
@@ -128,8 +130,6 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
 export const UNREACHED: Readonly<Record<string, string>> = {
   "DELETE /platform-types/{id} 200":
     "a platform row this build does not ship, which only an earlier build writes; drawing it means writing that row into the store and restarting the server, which this suite does not arrange",
-  "GET /types/{id} 409":
-    "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; drawing it means writing the chain into the store and restarting the server, which this suite does not arrange",
 };
 
 /**

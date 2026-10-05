@@ -129,7 +129,7 @@ describe("what a change runs", () => {
     [
       "the contract's specification",
       ["conformance/spec/items.md"],
-      ["ci-sqlite", "conformance"],
+      ["ci-sqlite", "workspace", "conformance"],
     ],
     ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
     [
@@ -332,13 +332,16 @@ describe("what a change runs", () => {
     const docs = RULES.find(([pattern]) => pattern.test("README.md"))?.[0];
     expect(docs?.test("packages/server/src/fixtures/note.md")).toBe(false);
     // The witnesses: the contract and a package's README reach a job.
-    expect(beyond("conformance/spec/items.md")).toEqual(["conformance"]);
+    expect(beyond("conformance/spec/items.md")).toEqual([
+      "workspace",
+      "conformance",
+    ]);
     expect(beyond("packages/client/README.md")).toEqual(["version-fields"]);
     const markdown = tracked().filter((path) => path.endsWith(".md"));
     expect(markdown.length).toBeGreaterThan(0);
     for (const path of markdown) {
       if (path.startsWith("conformance/spec/")) {
-        expect(beyond(path), path).toEqual(["conformance"]);
+        expect(beyond(path), path).toEqual(["workspace", "conformance"]);
       } else if (docs?.test(path)) {
         expect(beyond(path), path).toEqual(
           /^(packages|core)\/.+\/README[^/]*$/.test(path)

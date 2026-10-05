@@ -86,7 +86,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   - `id_reused`: `id` belongs to a different item. `details.differs` says what differs.
   ```
 
-- **The shared responses, `401`, `413`, `429` and `503`, take their text from one definition in `openapi-finalize.ts`**, which adds them to each operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
+- **The shared responses, `401`, `413`, `429`, `500` and `503`, take their text from one definition in `openapi-finalize.ts`**, which adds them to each operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
 - **(checked: at most 400 characters)**
 
 ## Streams and requests Marfa sends

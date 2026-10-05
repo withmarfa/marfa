@@ -14,7 +14,7 @@ The periodic work the server does on itself, including the trash purge, version 
 
 A background job switched off by configuration is not listed and answers `404` the same way, while one whose retention `/config` can set is listed whatever the instance default. The referee's shared server boots with enrichment off and so cannot show that name listed under any setting; `packages/server/src/background-jobs/registrations.test.ts` proves each gate from both sides.
 
-A background job never overlaps itself: a run started while another holds the name answers `409 background_job_running`. Every run through the door is inline and the referee cannot hold one open, so the refusal is not a statement here, and neither is the `error` outcome, which no background job produces on demand over the wire; the server's own suite produces both (`packages/server/src/routes/background-jobs.test.ts`).
+A background job never overlaps itself: a run started while another holds the name answers `409 background_job_running` (`errors.md` 23). The `error` outcome is not a statement here, because no background job produces it on demand over the wire; the server's own suite produces it (`packages/server/src/routes/background-jobs.test.ts`).
 
 ## What is not observable over HTTP
 

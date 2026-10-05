@@ -292,6 +292,7 @@ describe("the status checker", () => {
     expect(report.staleCodes).toEqual([
       "background_job_running",
       "idempotency_key_in_flight",
+      "internal_error",
       "rate_limited",
       "write_contention",
     ]);

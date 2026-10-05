@@ -196,6 +196,7 @@ describe("the API description follows API-STYLE.md", () => {
       ["413", "RequestTooLargeRefusal"],
       ["429", "RateLimitedRefusal"],
       ["503", "WriteContentionRefusal"],
+      ["500", "InternalErrorRefusal"],
     ]);
     const texts = new Map<string, Set<string>>();
     for (const { operation } of operations()) {
