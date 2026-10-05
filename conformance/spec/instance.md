@@ -127,8 +127,20 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
 ## The root in a browser
 
-20. When a request to `GET /` names `text/html` in `Accept` and either does not name `application/json` or names it after `text/html`, the server SHALL answer `200` with an HTML page, and in every other case, a request with no `Accept` among them, it SHALL answer the JSON of statement 1. Both answers carry `Vary: Accept`.
+20. When a request to `GET /` names `text/html` in `Accept` and either does not name `application/json` or names it after `text/html`, the server SHALL answer `200` with an HTML page.
 
-    Reason: a person who opens the server's address in a browser was handed the instance's description as raw JSON, with nothing in it to read and nothing to do next. A program asking for that description must never be handed a page, so the page is for the caller that ranks it first, and `*/*`, which is what a program sends by default, is the description.
+    Reason: a person who opens the server's address in a browser was handed the instance's description as raw JSON, with nothing in it to read and nothing to do next.
 
     Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`; `packages/server/src/app.root.test.ts › answers a browser with a page and a program with the JSON`.
+
+21. When any other request is made to `GET /`, a request with no `Accept` among them, the server SHALL answer the JSON description of statements 1, 3 and 4.
+
+    Reason: a program asking for the description must never be handed a page, and `*/*`, which is what a program sends by default, is the description.
+
+    Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`; `packages/server/src/app.root.test.ts › answers a browser with a page and a program with the JSON`.
+
+22. The server SHALL send `Vary: Accept` on every answer to `GET /`.
+
+    Reason: the one address answers a page or the description by what the caller asks for, and a cache must not hand one the other's.
+
+    Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`.

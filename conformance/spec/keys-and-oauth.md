@@ -139,38 +139,86 @@
 
 ## What the sign-in pages say
 
-52. WHEN the browser consent page or the device approval page names an app that registered itself, the server SHALL show a caution that Marfa has not verified the app, and SHALL NOT show it beside an app that authenticates with a secret.
+52. WHEN the browser consent page or the device approval page names an app that registered itself, the server SHALL show a caution that Marfa has not verified the app.
 
     Reason: registration needs no credential, so any program can pick any name, and the device flow is where a code from a stranger is likeliest to be typed in. A caution on one page and not the other leaves the second as the way round the first.
 
-    Tests: `packages/server/src/routes/auth-consent.test.ts › flags a public/DCR client as unverified on the consent screen`, `› does NOT flag a confidential client as unverified`; `packages/server/src/routes/device-grant.test.ts › warns on the approval screen that Marfa has not verified an app that registered itself`, `› does not warn about an app that authenticates with a secret`.
+    Tests: `packages/server/src/routes/auth-consent.test.ts › flags a public/DCR client as unverified on the consent screen`; `packages/server/src/routes/device-grant.test.ts › warns on the approval screen that Marfa has not verified an app that registered itself`.
 
-53. WHEN a sign-in with the form fails, the server SHALL send the browser back to the sign-in page carrying the typed email, which the page SHALL show in the email field, and SHALL NOT carry or show the password.
+53. WHEN the browser consent page or the device approval page names an app that authenticates with a secret, the server SHALL NOT show the caution of statement 52.
+
+    Reason: a caution shown beside every app says nothing about any of them.
+
+    Tests: `packages/server/src/routes/auth-consent.test.ts › does NOT flag a confidential client as unverified`; `packages/server/src/routes/device-grant.test.ts › does not warn about an app that authenticates with a secret`.
+
+54. WHEN a sign-in with the form fails, the server SHALL redirect the browser to the sign-in page carrying the typed email.
 
     Reason: a person who mistyped one character of a password should not retype the address with it.
 
     Tests: `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`.
 
-54. WHEN an authorization the instance signed, and whose window is open, sends a person to sign in, the sign-in page SHALL name the app, with the caution of statement 52 when the app registered itself, and for any other request, a link edited after it was signed included, it SHALL name no app.
+55. WHEN the sign-in page is opened carrying an email, it SHALL show that email in the email field.
 
-    Reason: the name is whatever the app registered under, so one taken from a request nobody signed would put a stranger's words on a page the real instance serves.
+    Reason: the redirect of statement 54 is of no use to a person unless the form they land on holds what they typed.
+
+    Tests: `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`; `packages/server/src/routes/sign-in-page.test.ts › returns the email after a wrong password, and only the email`.
+
+56. The server SHALL NOT carry the typed password in the redirect of statement 54 or show it on the sign-in page.
+
+    Reason: a password in an address is kept in history and in logs.
+
+    Tests: `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`.
+
+57. WHEN an authorization the instance signed, and whose window is open, sends a person to sign in, the sign-in page SHALL name the app.
+
+    Reason: a person signing in for an app should be able to see which app it is.
 
     Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`.
 
-55. WHEN a person who holds a session opens `GET /auth/sign-in` and no authorization sent them, the server SHALL answer a page that says they are signed in and holds no sign-in form, and WHEN an authorization sent them it SHALL answer the sign-in form.
+58. The sign-in page SHALL name no app for a request that is not an authorization the instance signed whose window is open, a link edited after it was signed included.
 
-    Reason: a form that reads as though nobody were signed in leaves a person unsure whether they are. The provider sends a signed-in person to sign in again when an app asks for a fresh sign-in, and only a new session satisfies it, so a page with no form there would send them round the same loop.
+    Reason: the name is whatever the app registered under, so one taken from a request nobody signed would put a stranger's words on a page the real instance serves.
 
-    Tests: `compliance/sign-in-surface.test.ts › tells a person who is signed in so, and shows the form to one an authorization sent to sign in again`; `packages/server/src/routes/sign-in-page.test.ts › ends at the server's address, which tells a browser it is signed in`.
+    Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`; `packages/server/src/routes/sign-in-page.test.ts › names nothing when the request was never signed`.
 
-56. WHEN an authorization link carries a signature the instance did not make, or was edited after it was signed, the server SHALL refuse it with the page that says it could not be verified, and SHALL say a request has expired only of one the instance signed whose window has closed.
+59. WHEN the sign-in page names an app that registered itself, it SHALL show the caution of statement 52.
+
+    Reason: the name is as unvetted on the page before the sign-in as on the page after it.
+
+    Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`.
+
+60. WHEN a person who holds a session opens `GET /auth/sign-in` and no authorization sent them, the server SHALL answer a page that says they are signed in and holds no sign-in form.
+
+    Reason: a form that reads as though nobody were signed in leaves a person unsure whether they are.
+
+    Tests: `compliance/sign-in-surface.test.ts › tells a person who is signed in so, and shows the form to one an authorization sent to sign in again`; `packages/server/src/routes/sign-in-page.test.ts › tells somebody already signed in so, on the sign-in page`.
+
+61. WHEN a person who holds a session opens `GET /auth/sign-in` and an authorization sent them, the server SHALL answer the sign-in form.
+
+    Reason: the provider sends a signed-in person to sign in again when an app asks for a fresh sign-in, and only a new session satisfies it, so a page with no form there would send them round the same loop.
+
+    Tests: `compliance/sign-in-surface.test.ts › tells a person who is signed in so, and shows the form to one an authorization sent to sign in again`; `packages/server/src/routes/sign-in-page.test.ts › still shows the form to a signed-in person an authorization sent to sign in afresh`.
+
+62. WHEN an authorization link carries a signature the instance did not make, or was edited after it was signed, the server SHALL refuse it with the page that says it could not be verified.
+
+    Reason: such a link is one nobody signed, and an honest person told so knows to start again at the app.
+
+    Tests: `compliance/sign-in-surface.test.ts › tells a link edited after it was signed that it is invalid, not that it has expired`; `packages/server/src/routes/auth-consent.test.ts › tells a signed link edited after signing that it is invalid, whether or not its window has closed`.
+
+63. The server SHALL say that an authorization request has expired only of one the instance signed whose window has closed.
 
     Reason: the expiry is a signed field, so a link whose expiry was edited into the past would otherwise be told it had merely timed out, and an honest person would look for a clock fault.
 
-    Tests: `compliance/sign-in-surface.test.ts › tells a link edited after it was signed that it is invalid, not that it has expired`; `packages/server/src/routes/auth-consent.test.ts › tells a link whose exp was edited into the past that it is invalid, not that it expired`.
+    Tests: `packages/server/src/routes/auth-consent.test.ts › tells a link whose exp was edited into the past that it is invalid, not that it expired`, `› REGRESSION: refuses to render a genuinely signed query past its exp`.
 
-57. WHEN a browser, which `Accept` and `Sec-Fetch-Mode` say it is, asks `GET /auth/oauth2/end-session` with no session and no `id_token_hint`, the server SHALL answer `200` with an HTML page that says the person is signed out, and WHEN a program asks it SHALL answer the provider's JSON refusal.
+64. WHEN a request names `text/html` in `Accept` before any `application/json` and asks `GET /auth/oauth2/end-session` with no session and no `id_token_hint`, the server SHALL answer `200` with an HTML page that says the person is signed out.
 
     Reason: the page a person follows a logout link to showed raw JSON.
+
+    Tests: `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`; `packages/server/src/routes/end-session.test.ts › shows a browser with no session a page, and never JSON`.
+
+65. WHEN a request that does not name `text/html` before `application/json` asks `GET /auth/oauth2/end-session` with no session, the server SHALL answer the provider's JSON refusal.
+
+    Reason: a program calling the logout door needs its refusal in a form it can read, and must never be handed a page.
 
     Tests: `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`; `packages/server/src/routes/end-session.test.ts › shows a browser with no session a page, and never JSON`.
