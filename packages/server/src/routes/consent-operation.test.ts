@@ -224,10 +224,9 @@ describe("a consent row states the operation, not only the type", () => {
       );
     const open = [parse("core.*:read"), parse("*:read")];
     const closed = [parse("core.note:read")];
-    // Wildcards: each screen prints the line under every open-ended row. The
-    // authorize screen may also print an expansion line beneath a wildcard it
-    // can enumerate, which the device screen does not have, so the shared line
-    // is what has to be on both.
+    // Wildcards: each screen prints the line under every open-ended row. With
+    // no enumeration given, as here, the line is the plain open-ended one; the
+    // enumerated form is held by the next test.
     expect(secondLines(device(open))).toEqual([
       "Covers what exists today plus anything added later",
       "Covers what exists today plus anything added later",

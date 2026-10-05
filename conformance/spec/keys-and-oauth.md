@@ -241,7 +241,7 @@
 
     Reason: a grant that grows as types are added is a larger grant than it reads, and the fact must not depend on which page a person approved it on.
 
-    Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`, `› names the types an enumerable wildcard covers in the same line on both screens`.
+    Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`, `› names the types an enumerable wildcard covers in the same line on both screens`; `packages/server/src/routes/device-grant.test.ts › names the types a wildcard covers today on the approval screen, as the authorize screen does`; `packages/server/src/routes/auth-consent.test.ts › enumerates the registered custom types under a requested user.* wildcard`.
 
 69. WHEN the browser consent page and the device approval page offer a grant that reaches one type, neither SHALL state a reach beyond it.
 

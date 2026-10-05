@@ -528,8 +528,7 @@ function summarize(group: ScopeGroup): string {
  *
  * **A label may be shorter than its description. It may never be narrower
  * than its scope.** An entry here wins over the description, so it is the
- * whole of what this screen says about that grant, while the device screen
- * has no label field and reads the description out in full. A label naming a
+ * whole of what either screen says about that grant. A label naming a
  * proper subset of what its pattern reaches therefore puts the smaller
  * answer on the screen where somebody is ticking boxes, and the direction is
  * what makes that a defect rather than a matter of taste: a grant that
