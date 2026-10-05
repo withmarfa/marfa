@@ -28,7 +28,8 @@ import {
   verifyBlobLink,
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import { NextCursorSchema, pageOf } from "./_schemas.js";
+import { NextCursorSchema } from "./_schemas.js";
+import { READ_REFUSED } from "./_item-refusals.js";
 import type { BackgroundJobs } from "../background-jobs/scheduler.js";
 import {
   CopiesBelowMinimum,
@@ -53,56 +54,135 @@ import {
 // ---------------------------------------------------------------------------
 
 const BlobUploadResponseSchema = z.object({
-  hash: z.string(),
-  mime_type: z.string(),
-  size_bytes: z.number(),
+  hash: z
+    .string()
+    .describe("The blob's hash: `sha256:` and 64 hexadecimal characters."),
+  mime_type: z
+    .string()
+    .describe(
+      "The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes.",
+    ),
+  size_bytes: z.number().describe("The blob's size in bytes."),
 });
 
 const BlobUrlResponseSchema = z.object({
-  url: z.string(),
-  expires_in: z.number(),
+  url: z.string().describe("A URL that serves the bytes without a credential."),
+  expires_in: z.number().describe("Seconds until the URL stops working."),
 });
 
 const BlobStoreSchema = z
   .object({
-    id: z.string(),
-    kind: z.enum(["disk", "s3"]),
-    locator: z.string(),
-    policy: z.string(),
-    attached_at: z.string(),
-    detached_at: z.string().nullable(),
+    id: z.string().describe("Unique identifier for the store."),
+    kind: z
+      .enum(["disk", "s3"])
+      .describe(
+        "The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.",
+      ),
+    locator: z
+      .string()
+      .describe(
+        "Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store.",
+      ),
+    policy: z
+      .string()
+      .describe(
+        "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob.",
+      ),
+    attached_at: z
+      .string()
+      .describe("When the instance first attached the store, in UTC."),
+    detached_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. A detached store stays listed, because the location log still describes it.",
+      ),
   })
-  .openapi("BlobStore");
+  .openapi("BlobStore", {
+    description:
+      "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket.",
+  });
 
 const BlobLocationSchema = z
   .object({
-    store_id: z.string(),
-    kind: z.enum(["disk", "s3"]),
-    policy: z.string(),
-    detached: z.boolean(),
-    recorded_at: z.string(),
-    verified_at: z.string().nullable(),
+    store_id: z.string().describe("The ID of the store that holds the copy."),
+    kind: z
+      .enum(["disk", "s3"])
+      .describe(
+        "The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.",
+      ),
+    policy: z
+      .string()
+      .describe(
+        "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob.",
+      ),
+    detached: z
+      .boolean()
+      .describe(
+        "`true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`.",
+      ),
+    recorded_at: z.string().describe("When Marfa recorded the copy, in UTC."),
+    verified_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When a check last found the copy present and intact, in UTC, or `null` if none has.",
+      ),
   })
-  .openapi("BlobLocation");
+  .openapi("BlobLocation", {
+    description: "A location is one store's copy of a blob.",
+  });
 
 const BlobOrphanSchema = z
   .object({
-    hash: z.string(),
-    mime_type: z.string(),
-    size_bytes: z.number().int(),
-    reported_at: z.string(),
+    hash: z.string().describe("The blob's hash."),
+    mime_type: z.string().describe("The MIME type Marfa serves the blob with."),
+    size_bytes: z.number().int().describe("The blob's size in bytes."),
+    reported_at: z
+      .string()
+      .describe(
+        "When a run of the `blob-orphans` background job first found nothing referencing the blob, in UTC.",
+      ),
   })
-  .openapi("BlobOrphan");
+  .openapi("BlobOrphan", {
+    description:
+      "An orphan is a blob that nothing references, waiting to be purged.",
+  });
+
+/**
+ * A page that never continues: the stores, one blob's locations and the
+ * orphan report are each answered whole.
+ */
+function wholeListOf<T extends z.ZodType>(
+  row: T,
+  name: string,
+  noun: string,
+  extra: z.ZodRawShape = {},
+) {
+  return z
+    .object({
+      data: z.array(row).describe(`Every ${noun}.`),
+      next_cursor: NextCursorSchema.describe(
+        `Always \`null\`: Marfa returns every ${noun} in one page.`,
+      ),
+      ...extra,
+    })
+    .openapi(name, { description: `A page holding every ${noun}.` });
+}
+
+/** Who may read a blob: the rule each reading door states on its `hash`. */
+const READ_RULE =
+  "You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob.";
 
 const HashParam = z.object({
-  hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+  hash: z.string().describe(`The blob's hash, \`sha256:<hex>\`. ${READ_RULE}`),
 });
 
 const HashAndStoreParam = z.object({
-  hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
+  hash: z.string().describe("The blob's hash, `sha256:<hex>`."),
   store: z
     .string()
-    .describe("A store's `id`, as `GET /blobs/stores` lists it."),
+    .describe("The ID of the store, as `GET /blobs/stores` lists it."),
 });
 
 /** The headers a served blob carries, declared once for both doors. */
@@ -153,18 +233,25 @@ const UNSATISFIABLE_HEADERS = {
  */
 const BINARY_BODY = { type: "string" as const, format: "binary" as const };
 
-/**
- * The refusal of a credential whose type map reaches nothing a blob door could
- * answer it for: no type to read a referencing item of, or none to write one.
- */
-const TYPE_NOT_PERMITTED_RESPONSE = {
+/** The refusal of a credential reaching no type to read a referencing item of. */
+const READ_REFUSED_RESPONSE = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema(["type_not_permitted"]),
+    },
+  },
+  description: READ_REFUSED,
+};
+
+/** The refusal of a credential that writes no registered type. */
+const UPLOAD_REFUSED_RESPONSE = {
   content: {
     "application/json": {
       schema: makeErrorResponseSchema(["type_not_permitted"]),
     },
   },
   description:
-    "The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read.",
+    "- `type_not_permitted`: your credential has no write on any registered type. Marfa refuses the upload before it reads the body.",
 };
 
 /** What a reading door answers for a blob the credential may not read. */
@@ -175,27 +262,50 @@ const UNREADABLE_BLOB_RESPONSE = {
     },
   },
   description:
-    "No blob with this hash that an item the credential may read references",
+    "- `blob_not_found`: no blob has this hash, or nothing you can read references it.",
 };
 
-/**
- * The rule every reading door states, written once so the descriptions
- * cannot drift apart.
- */
-const READ_RULE =
-  "A working key or a signed-in app reads a blob only when something it may read references the blob's digest with a reference that lends: an item of a type it may read, in any lifecycle state, naming it in its properties; an edge it may read, by its edge permissions and the type of its source, naming it in its properties; or an extension namespace it may read, by its extension permissions and the item's type, naming it. A reference lends when a write sent it for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.";
+const OPERATOR_ONLY_RESPONSE = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema(["forbidden"]),
+    },
+  },
+  description: "- `forbidden`: your key isn't an operator key.",
+};
+
+const INVALID_HASH_RESPONSE = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema(["validation_error"]),
+    },
+  },
+  description: "- `validation_error`: the hash is malformed.",
+};
+
+const unauthorized = {
+  401: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["unauthorized"]),
+      },
+    },
+    description: "Unauthorized",
+  },
+};
 
 const bytesResponses = {
   200: {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: BYTES_HEADERS,
     description:
-      "The bytes, with the content type the blob was first uploaded under, as a download.",
+      "Returns the bytes, with the `Content-Type` the blob was first uploaded under, as a download.",
   },
   206: {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: RANGE_HEADERS,
-    description: "The one range asked for.",
+    description:
+      "Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range` it returns the whole blob.",
   },
   404: {
     content: {
@@ -203,7 +313,8 @@ const bytesResponses = {
         schema: makeErrorResponseSchema(["blob_not_found"]),
       },
     },
-    description: "No blob with this hash, or no store holding its bytes.",
+    description:
+      "- `blob_not_found`: no blob has this hash, or no store holds its bytes.",
   },
   416: {
     content: {
@@ -212,7 +323,8 @@ const bytesResponses = {
       },
     },
     headers: UNSATISFIABLE_HEADERS,
-    description: "The range asked for lies outside the blob.",
+    description:
+      "- `range_not_satisfiable`: the range starts past the end of the blob, or ends before it starts. `Content-Range` gives the blob's size.",
   },
 };
 
@@ -227,12 +339,14 @@ const uploadBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. Send the bytes themselves, not `multipart/form-data`. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
+    "Stores the request body as a blob and returns its `sha256:` hash. Uploading bytes Marfa already holds returns the same hash, and there is no size limit. To read the blob back, first write its hash into an item, edge or extension.",
   security: [{ bearerAuth: [] }],
   middleware: uploadsBlobs,
   request: {
     body: {
       required: true,
+      description:
+        "The bytes to store, sent as they are, not as `multipart/form-data`. Set `Content-Type` to their MIME type.",
       content: {
         "application/octet-stream": {
           schema: BINARY_BODY,
@@ -248,7 +362,7 @@ const uploadBlobRoute = createRoute({
         },
       },
       description:
-        "Blob stored. `mime_type` is the type the blob is served with: the type sent, or, for bytes already held, the type the upload that first stored them sent.",
+        "Returns the blob's `hash`, `mime_type` and `size_bytes`. If Marfa already held these bytes, `mime_type` is the type of the first upload, not the one you sent.",
     },
     400: {
       content: {
@@ -256,17 +370,11 @@ const uploadBlobRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "An empty body, or a multipart one",
+      description:
+        "- `validation_error`: the body is empty, or is `multipart/form-data`.",
     },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: TYPE_NOT_PERMITTED_RESPONSE,
+    ...unauthorized,
+    403: UPLOAD_REFUSED_RESPONSE,
   },
 });
 
@@ -277,40 +385,27 @@ const listBlobStoresRoute = createRoute({
   tags: ["Blobs"],
   summary: "List blob stores",
   description:
-    "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least. Operator key only.",
+    "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z
-            .object({
-              data: z.array(BlobStoreSchema),
-              next_cursor: NextCursorSchema,
-              min_copies: z.number().int(),
-            })
-            .openapi("BlobStorePage"),
+          schema: wholeListOf(BlobStoreSchema, "BlobStorePage", "store", {
+            min_copies: z
+              .number()
+              .int()
+              .describe(
+                "The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/locations/{store}` won't delete a copy that would leave fewer.",
+              ),
+          }),
         },
       },
-      description: "The stores",
+      description: "Returns every store, in one page.",
     },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Operator key required",
-    },
+    ...unauthorized,
+    403: OPERATOR_ONLY_RESPONSE,
   },
 });
 
@@ -320,7 +415,8 @@ const getBlobRoute = createRoute({
   path: "/{hash}",
   tags: ["Blobs"],
   summary: "Download a blob",
-  description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. ${READ_RULE}`,
+  description:
+    "Returns the bytes of a blob, from whichever store holds them, as a download. Send one `Range` to get part of it. `HEAD` returns the headers alone.",
   security: [{ bearerAuth: [] }],
   middleware: readsBlobs,
   request: {
@@ -328,26 +424,13 @@ const getBlobRoute = createRoute({
   },
   responses: {
     ...bytesResponses,
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Invalid blob hash",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: TYPE_NOT_PERMITTED_RESPONSE,
+    400: INVALID_HASH_RESPONSE,
+    ...unauthorized,
+    403: READ_REFUSED_RESPONSE,
     404: {
       ...UNREADABLE_BLOB_RESPONSE,
-      description: `${UNREADABLE_BLOB_RESPONSE.description}, or no store holding its bytes`,
+      description:
+        "- `blob_not_found`: no blob has this hash, nothing you can read references it, or no store holds its bytes.",
     },
   },
 });
@@ -358,7 +441,8 @@ const getBlobUrlRoute = createRoute({
   path: "/{hash}/url",
   tags: ["Blobs"],
   summary: "Get a blob URL",
-  description: `Answers a URL a client fetches the bytes from without a credential, and \`expires_in\`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. \`ttl\` is capped at seven days. ${READ_RULE} The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.`,
+  description:
+    "Returns a URL that serves the blob's bytes without a credential, and `expires_in`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.",
   security: [{ bearerAuth: [] }],
   middleware: readsBlobs,
   request: {
@@ -371,7 +455,7 @@ const getBlobUrlRoute = createRoute({
         .optional()
         .default(3600)
         .describe(
-          "Link lifetime in seconds, capped at 604800 (seven days), which the answer's `expires_in` reports.",
+          "How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `expires_in`.",
         ),
     }),
   },
@@ -383,7 +467,7 @@ const getBlobUrlRoute = createRoute({
         },
       },
       description:
-        "A link and its lifetime. Either link serves the blob's recorded type as a download (`Content-Disposition: attachment`).",
+        "Returns the `url` and `expires_in`. The URL serves the blob with its recorded `Content-Type`, as a download.",
     },
     400: {
       content: {
@@ -391,17 +475,11 @@ const getBlobUrlRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Invalid blob hash or `ttl`",
+      description:
+        "- `validation_error`: the hash is malformed, or `ttl` isn't a positive integer.",
     },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: TYPE_NOT_PERMITTED_RESPONSE,
+    ...unauthorized,
+    403: READ_REFUSED_RESPONSE,
     404: UNREADABLE_BLOB_RESPONSE,
   },
 });
@@ -422,7 +500,9 @@ const fetchBlobRoute = createRoute({
     "Serves the bytes to whoever holds a link minted by `GET /blobs/{hash}/url`. The `expires` and `signature` query values are the credential.",
   security: [],
   request: {
-    params: HashParam,
+    params: z.object({
+      hash: z.string().describe("The blob's hash, `sha256:<hex>`."),
+    }),
     query: z.object({
       expires: z.string().describe("Unix seconds the link stops working at."),
       signature: z
@@ -432,21 +512,15 @@ const fetchBlobRoute = createRoute({
   },
   responses: {
     ...bytesResponses,
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Invalid blob hash",
-    },
+    400: INVALID_HASH_RESPONSE,
     401: {
       content: {
         "application/json": {
           schema: makeErrorResponseSchema(["unauthorized"]),
         },
       },
-      description: "The link has expired or was not minted here for this blob",
+      description:
+        "- `unauthorized`: the link has expired or was not minted here for this blob.",
     },
   },
 });
@@ -457,7 +531,8 @@ const listBlobLocationsRoute = createRoute({
   path: "/{hash}/locations",
   tags: ["Blobs"],
   summary: "List a blob's locations",
-  description: `The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (\`verified_at\`, \`null\` until one has). A store the configuration no longer names is shown \`detached\` and does not count as a copy. ${READ_RULE}`,
+  description:
+    "Returns the stores that hold a copy of the blob, with when each copy was recorded and when a check last found it intact.",
   security: [{ bearerAuth: [] }],
   middleware: readsBlobs,
   request: {
@@ -467,28 +542,18 @@ const listBlobLocationsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(BlobLocationSchema, "BlobLocationPage"),
+          schema: wholeListOf(
+            BlobLocationSchema,
+            "BlobLocationPage",
+            "location",
+          ),
         },
       },
-      description: "The locations",
+      description: "Returns every location, in one page.",
     },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Invalid blob hash",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: TYPE_NOT_PERMITTED_RESPONSE,
+    400: INVALID_HASH_RESPONSE,
+    ...unauthorized,
+    403: READ_REFUSED_RESPONSE,
     404: UNREADABLE_BLOB_RESPONSE,
   },
 });
@@ -500,7 +565,7 @@ const deleteBlobLocationRoute = createRoute({
   tags: ["Blobs"],
   summary: "Delete a blob's copy in a store",
   description:
-    "Removes the copy of the blob that one store holds, and its row in the location log. Operator key only.",
+    "Deletes the copy of a blob that one store holds, and its row in the location log. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: HashAndStoreParam },
@@ -509,32 +574,12 @@ const deleteBlobLocationRoute = createRoute({
       content: {
         "application/json": { schema: OkResponseSchema },
       },
-      description: "The copy is gone",
+      description:
+        "Returns `ok: true`. The location log no longer lists the copy.",
     },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Invalid blob hash",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Operator key required",
-    },
+    400: INVALID_HASH_RESPONSE,
+    ...unauthorized,
+    403: OPERATOR_ONLY_RESPONSE,
     404: {
       content: {
         "application/json": {
@@ -545,7 +590,7 @@ const deleteBlobLocationRoute = createRoute({
         },
       },
       description:
-        "- `blob_not_found`: no such blob.\n- `blob_location_not_found`: the store holds no copy of the blob, or is not attached.",
+        "- `blob_not_found`: no blob has this hash.\n- `blob_location_not_found`: the store holds no copy of the blob, or isn't attached.",
     },
     409: {
       content: {
@@ -553,7 +598,8 @@ const deleteBlobLocationRoute = createRoute({
           schema: makeErrorResponseSchema(["copies_below_minimum"]),
         },
       },
-      description: "The drop would leave fewer live copies than the minimum",
+      description:
+        "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`. Nothing changes.",
     },
   },
 });
@@ -565,34 +611,21 @@ const listBlobOrphansRoute = createRoute({
   tags: ["Blobs"],
   summary: "List orphaned blobs",
   description:
-    "The orphan report: every registered blob the last run of the `blob-orphans` background job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.",
+    "Returns the blobs that nothing references, as the last run of the `blob-orphans` background job found them, oldest first. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(BlobOrphanSchema, "BlobOrphanPage"),
+          schema: wholeListOf(BlobOrphanSchema, "BlobOrphanPage", "orphan"),
         },
       },
-      description: "The report, oldest first",
+      description:
+        "Returns every orphan, in one page. A later run purges a blob once it has been listed longer than the grace period. It leaves the list if something references it again or you upload its bytes again.",
     },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Operator key required",
-    },
+    ...unauthorized,
+    403: OPERATOR_ONLY_RESPONSE,
   },
 });
 

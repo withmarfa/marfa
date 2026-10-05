@@ -21,7 +21,7 @@ import {
   ALL_STATES,
   ItemSchema,
   MetadataSchema,
-  pageOf,
+  NextCursorSchema,
   resolveStateFilter,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
@@ -75,12 +75,37 @@ function searchFingerprint(query: Record<string, unknown>): string {
 // drops the component name.
 const SearchResultSchema = z
   .object({
-    item: ItemSchema,
-    metadata: MetadataSchema,
-    relevance_score: z.number(),
-    snippet_html: z.string().optional(),
+    item: ItemSchema.describe("The matching item."),
+    metadata: MetadataSchema.describe(
+      "The item's tags and the extensions you can read.",
+    ),
+    relevance_score: z
+      .number()
+      .describe(
+        "How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the rows indexed, so compare them only within one search.",
+      ),
+    snippet_html: z
+      .string()
+      .optional()
+      .describe(
+        "An excerpt of at most 32 words from the text that matches best, with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none.",
+      ),
   })
-  .openapi("SearchResult");
+  .openapi("SearchResult", {
+    description:
+      "A search result is an item that matches the query, with its metadata and how well it matches.",
+  });
+
+const SearchResultPageSchema = z
+  .object({
+    data: z
+      .array(SearchResultSchema)
+      .describe("The results, best match first."),
+    next_cursor: NextCursorSchema,
+  })
+  .openapi("SearchResultPage", {
+    description: "One page of search results.",
+  });
 
 const searchRoute = createRoute({
   operationId: "searchItems",
@@ -89,7 +114,7 @@ const searchRoute = createRoute({
   tags: ["Search"],
   summary: "Search items",
   description:
-    "Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`.",
+    "Returns a page of the items you can read whose text properties or tags match `q`, ranked by BM25 relevance, with ties ordered by item ID.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -98,53 +123,48 @@ const searchRoute = createRoute({
         .string()
         .min(1, "Query parameter 'q' is required")
         .refine((q) => !q.includes("\0"), "Query parameter 'q' holds a NUL")
-        .describe("Full-text search query."),
+        .describe(
+          "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase.",
+        ),
       type: z
         .string()
         .describe(
-          "Restrict to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches.",
+          "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
         )
         .optional(),
       state: z
         .string()
         .describe(
-          `Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. \`${ALL_STATES}\` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value.`,
+          `Only return items in this lifecycle state. Without it, you get \`active\` items. \`${ALL_STATES}\` searches every state, but trashed items are never searchable.`,
         )
         .optional(),
       tier: z
         .enum(["library", "feed", "all"])
-        .describe("Filter by tier; `all` or absent means unfiltered.")
+        .describe(
+          "Only return items in this tier. Omit it or send `all` for both tiers.",
+        )
         .optional(),
       /** The rule deciding whether `system` applies, and why, is in
        *  `_system-type-visibility.ts`, shared by every door that takes it. */
       include: z
         .string()
         .describe(
-          "Comma-separated opt-in inclusions. `system` widens the row set to " +
-            "include `system.*` items, which are excluded by default. A `type` " +
-            "filter in the `system.` namespace, concrete or wildcard, opts in " +
-            "on its own without the token. " +
-            "It is the only token this route reads.",
+          "Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same.",
         )
         .optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
       tags: z
         .string()
-        .describe("Comma-separated tags; items must match all (AND).")
+        .describe(
+          "Comma-separated tags. Only return items that carry all of them.",
+        )
         .optional(),
       limit: pageLimit({ max: 100, default: 20 }),
       cursor: pageCursor(),
       filter: z
         .string()
         .describe(
-          "Structured filter expression, as on `GET /items`, including " +
-            "its edge terms and their refusals: a term naming an edge " +
-            "type the credential may not read is refused " +
-            "`403 edge_permission_denied`. A `backref` term counts only " +
-            "edges whose source the credential may read, so one anchored " +
-            "on an item it may not read matches as one anchored on an id " +
-            "no row holds; an `edge` term matches every edge it may read, " +
-            "one to an item it may not read included.",
+          "A filter expression, as on `GET /items`. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type.",
         )
         .optional(),
       occurred_after: z
@@ -152,14 +172,14 @@ const searchRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.",
+          "Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time.",
         ),
       occurred_before: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive).",
+          "Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time.",
         ),
     }),
   },
@@ -167,10 +187,11 @@ const searchRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(SearchResultSchema, "SearchResultPage"),
+          schema: SearchResultPageSchema,
         },
       },
-      description: "Search results",
+      description:
+        "Returns a page of results. Each page runs the search again, so a change between two pages can repeat or skip a result. Marfa reads at most 10,000 results deep: the page that reaches that depth has `next_cursor: null`.",
     },
     400: {
       content: {
@@ -183,9 +204,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` when `q` is absent. An invalid type pattern, a time bound that is not an instant, " +
-        "a `state` that is neither a lifecycle state nor the widening " +
-        "sentinel, or an unrecognized query parameter.",
+        "- `missing_required_field`: `q` is missing.\n- `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -205,7 +224,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. `edge_permission_denied` where a filter term names an edge type it cannot read: a term naming a relationship is a question, so it is refused rather than dropped.",
+        "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
     },
   },
 });

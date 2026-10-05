@@ -643,7 +643,7 @@ export interface paths {
         };
         /**
          * Search items
-         * @description Full-text search across every item the caller can read, indexing textual properties and tags, ranked by BM25 relevance, hits of equal rank by item identifier. Accepts the same filters as `GET /items` (including its two time bounds, which read the item's own time) and pages by cursor like every list: pass `next_cursor` back as `cursor`. The ranking is recomputed on every page, so a row whose score moves between two reads can be seen twice or missed; absolute scores aren't stable across index rebuilds. The ranking is read at most 10,000 rows deep, and the page that reaches that depth answers `next_cursor: null`.
+         * @description Returns a page of the items you can read whose text properties or tags match `q`, ranked by BM25 relevance, with ties ordered by item ID.
          */
         get: operations["searchItems"];
         put?: never;
@@ -705,7 +705,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a blob
-         * @description Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. Send the bytes themselves, not `multipart/form-data`. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.
+         * @description Stores the request body as a blob and returns its `sha256:` hash. Uploading bytes Marfa already holds returns the same hash, and there is no size limit. To read the blob back, first write its hash into an item, edge or extension.
          */
         post: operations["uploadBlob"];
         delete?: never;
@@ -723,7 +723,7 @@ export interface paths {
         };
         /**
          * List orphaned blobs
-         * @description The orphan report: every registered blob the last run of the `blob-orphans` background job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.
+         * @description Returns the blobs that nothing references, as the last run of the `blob-orphans` background job found them, oldest first. Requires the operator key.
          */
         get: operations["listBlobOrphans"];
         put?: never;
@@ -743,7 +743,7 @@ export interface paths {
         };
         /**
          * List blob stores
-         * @description Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least. Operator key only.
+         * @description Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires the operator key.
          */
         get: operations["listBlobStores"];
         put?: never;
@@ -763,7 +763,7 @@ export interface paths {
         };
         /**
          * Download a blob
-         * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A working key or a signed-in app reads a blob only when something it may read references the blob's digest with a reference that lends: an item of a type it may read, in any lifecycle state, naming it in its properties; an edge it may read, by its edge permissions and the type of its source, naming it in its properties; or an extension namespace it may read, by its extension permissions and the item's type, naming it. A reference lends when a write sent it for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.
+         * @description Returns the bytes of a blob, from whichever store holds them, as a download. Send one `Range` to get part of it. `HEAD` returns the headers alone.
          */
         get: operations["downloadBlob"];
         put?: never;
@@ -783,7 +783,7 @@ export interface paths {
         };
         /**
          * Get a blob URL
-         * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when something it may read references the blob's digest with a reference that lends: an item of a type it may read, in any lifecycle state, naming it in its properties; an edge it may read, by its edge permissions and the type of its source, naming it in its properties; or an extension namespace it may read, by its extension permissions and the item's type, naming it. A reference lends when a write sent it for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
+         * @description Returns a URL that serves the blob's bytes without a credential, and `expires_in`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.
          */
         get: operations["getBlobUrl"];
         put?: never;
@@ -803,7 +803,7 @@ export interface paths {
         };
         /**
          * List a blob's locations
-         * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when something it may read references the blob's digest with a reference that lends: an item of a type it may read, in any lifecycle state, naming it in its properties; an edge it may read, by its edge permissions and the type of its source, naming it in its properties; or an extension namespace it may read, by its extension permissions and the item's type, naming it. A reference lends when a write sent it for a credential that had uploaded the bytes or could read the blob as it wrote. The operator key reads every blob.
+         * @description Returns the stores that hold a copy of the blob, with when each copy was recorded and when a check last found it intact.
          */
         get: operations["listBlobLocations"];
         put?: never;
@@ -826,7 +826,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a blob's copy in a store
-         * @description Removes the copy of the blob that one store holds, and its row in the location log. Operator key only.
+         * @description Deletes the copy of a blob that one store holds, and its row in the location log. Requires the operator key.
          */
         delete: operations["deleteBlobLocation"];
         options?: never;
@@ -1177,7 +1177,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder
-         * @description Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map. Each setting is validated before the write.
+         * @description Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. This is the only endpoint that writes a `system.folder`.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -1201,7 +1201,7 @@ export interface paths {
         head?: never;
         /**
          * Update a folder
-         * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges.
+         * @description Updates a folder's title and settings. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.
          */
         patch: operations["updateFolder"];
         trace?: never;
@@ -1217,7 +1217,7 @@ export interface paths {
         put?: never;
         /**
          * Revoke a folder
-         * @description Moves the folder to `revoked`, its terminal state, stamps `revoked_at`, and publishes it as `item.state_changed`. Items placed in it keep their `in-folder` edges.
+         * @description Revokes a folder: moves it to `revoked`, a terminal state, and sets `revoked_at`. The items placed in it keep their `in-folder` edges.
          */
         post: operations["revokeFolder"];
         delete?: never;
@@ -2805,15 +2805,20 @@ export interface components {
                 };
             };
         };
+        /** @description One page of search results. */
         SearchResultPage: {
+            /** @description The results, best match first. */
             data: components["schemas"]["SearchResult"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description A search result is an item that matches the query, with its metadata and how well it matches. */
         SearchResult: {
-            item: components["schemas"]["Item"];
-            metadata: components["schemas"]["Metadata"];
+            item: components["schemas"]["Item"] & unknown;
+            metadata: components["schemas"]["Metadata"] & unknown;
+            /** @description How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the rows indexed, so compare them only within one search. */
             relevance_score: number;
+            /** @description An excerpt of at most 32 words from the text that matches best, with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
         };
         OccurrencePage: {
@@ -2868,30 +2873,49 @@ export interface components {
             tag: string;
             count: number;
         };
+        /** @description A page holding every orphan. */
         BlobOrphanPage: {
+            /** @description Every orphan. */
             data: components["schemas"]["BlobOrphan"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every orphan in one page. */
             next_cursor: string | null;
         };
+        /** @description An orphan is a blob that nothing references, waiting to be purged. */
         BlobOrphan: {
+            /** @description The blob's hash. */
             hash: string;
+            /** @description The MIME type Marfa serves the blob with. */
             mime_type: string;
+            /** @description The blob's size in bytes. */
             size_bytes: number;
+            /** @description When a run of the `blob-orphans` background job first found nothing referencing the blob, in UTC. */
             reported_at: string;
         };
+        /** @description A page holding every store. */
         BlobStorePage: {
+            /** @description Every store. */
             data: components["schemas"]["BlobStore"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every store in one page. */
             next_cursor: string | null;
+            /** @description The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/locations/{store}` won't delete a copy that would leave fewer. */
             min_copies: number;
         };
+        /** @description A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket. */
         BlobStore: {
+            /** @description Unique identifier for the store. */
             id: string;
-            /** @enum {string} */
+            /**
+             * @description The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.
+             * @enum {string}
+             */
             kind: "disk" | "s3";
+            /** @description Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store. */
             locator: string;
+            /** @description Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob. */
             policy: string;
+            /** @description When the instance first attached the store, in UTC. */
             attached_at: string;
+            /** @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. A detached store stays listed, because the location log still describes it. */
             detached_at: string | null;
         };
         /** @description An error response. */
@@ -2928,18 +2952,29 @@ export interface components {
                 };
             };
         };
+        /** @description A page holding every location. */
         BlobLocationPage: {
+            /** @description Every location. */
             data: components["schemas"]["BlobLocation"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every location in one page. */
             next_cursor: string | null;
         };
+        /** @description A location is one store's copy of a blob. */
         BlobLocation: {
+            /** @description The ID of the store that holds the copy. */
             store_id: string;
-            /** @enum {string} */
+            /**
+             * @description The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.
+             * @enum {string}
+             */
             kind: "disk" | "s3";
+            /** @description Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob. */
             policy: string;
+            /** @description `true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`. */
             detached: boolean;
+            /** @description When Marfa recorded the copy, in UTC. */
             recorded_at: string;
+            /** @description When a check last found the copy present and intact, in UTC, or `null` if none has. */
             verified_at: string | null;
         };
         /** @description An error response. */
@@ -3226,32 +3261,37 @@ export interface components {
         };
         /** @description Which items the folder holds. */
         FolderSearch: {
-            /** @description Type identifiers, each with its subtypes. Empty or absent holds every type the folder's key reads. */
+            /** @description The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`. */
             types?: string[];
             tier?: components["schemas"]["Tier"] & unknown;
-            /** @description The states the folder holds; absent is both. */
+            /** @description The states the folder holds. Absent means both. */
             state?: ("active" | "archived")[];
-            /** @description An expression in the listing grammar's `filter`. */
+            /** @description A filter expression, as on `GET /items`, that narrows what the folder holds. */
             filter?: string;
-            /** @description An item id: that item and everything under it by `parent-of`. */
+            /** @description An item ID. The folder holds that item and everything under it by `parent-of`, at any depth. */
             beneath?: string;
         };
         /** @description What a new file takes where its frontmatter leaves a blank. */
         FolderDefaults: {
+            /** @description The type a new file becomes if its frontmatter names none. */
             type?: string;
-            tier?: components["schemas"]["Tier"];
+            tier?: components["schemas"]["Tier"] & unknown;
+            /** @description Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property. */
             properties?: {
                 [key: string]: unknown;
             };
+            /** @description Tags a new file takes if its frontmatter has no `tags` line. */
             tags?: string[];
-            /** @description A map from edge type to the item ids a new file takes an edge with: at most 100 edge types, each with at most 100 ids. Each edge runs from the new file to the item named, except `parent-of`, which runs from the item named to the new file, making the new file its child. */
+            /** @description Edges a new file takes, as a map from edge type to item IDs: at most 100 edge types, 100 IDs each. An edge runs from the new file to the item, except `parent-of`, which makes the new file its child. */
             edges?: {
                 [key: string]: string[];
             };
         };
-        /** @description A removal pauses when it is more than `files` files and more than `fraction` of the folder; absent members are 10 and 0.25. */
+        /** @description A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files. */
         FolderRemovalThreshold: {
+            /** @description A removal waits to be confirmed only if it takes more than this many files. Absent means 10. */
             files?: number;
+            /** @description A removal waits to be confirmed only if it takes more than this fraction of the folder's files. Absent means 0.25. */
             fraction?: number;
         };
         /** @description An error response. */
@@ -10172,27 +10212,27 @@ export interface operations {
     searchItems: {
         parameters: {
             query: {
-                /** @description Full-text search query. */
+                /** @description The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase. */
                 q: string;
-                /** @description Restrict to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches. */
+                /** @description Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix. */
                 type?: string;
-                /** @description Filter by lifecycle state. Omitting the parameter answers the active state, as a listing does, so a search never answers a row a listing hides. `any` widens to every state, the same sentinel the listing takes. A row in the bin is not indexed, so it is not matched under any value. */
+                /** @description Only return items in this lifecycle state. Without it, you get `active` items. `any` searches every state, but trashed items are never searchable. */
                 state?: string;
-                /** @description Filter by tier; `all` or absent means unfiltered. */
+                /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated opt-in inclusions. `system` widens the row set to include `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. It is the only token this route reads. */
+                /** @description Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same. */
                 include?: string;
-                /** @description Comma-separated tags; items must match all (AND). */
+                /** @description Comma-separated tags. Only return items that carry all of them. */
                 tags?: string;
                 /** @description The maximum number of results to return. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
-                /** @description Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                /** @description A filter expression, as on `GET /items`. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. */
                 filter?: string;
-                /** @description Lower bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time. */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is after this RFC 3339 time. */
                 occurred_after?: string;
-                /** @description Upper bound on the item's own time: `occurred_at`, falling back to `created_at` (exclusive). */
+                /** @description Only return items whose own time (`occurred_at`, else `created_at`) is before this RFC 3339 time. */
                 occurred_before?: string;
             };
             header?: never;
@@ -10201,7 +10241,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Search results */
+            /** @description Returns a page of results. Each page runs the search again, so a change between two pages can repeat or skip a result. Marfa reads at most 10,000 results deep: the page that reaches that depth has `next_cursor: null`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10215,7 +10255,11 @@ export interface operations {
                     "application/json": components["schemas"]["SearchResultPage"];
                 };
             };
-            /** @description `missing_required_field` when `q` is absent. An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter. */
+            /**
+             * @description - `missing_required_field`: `q` is missing.
+             *     - `validation_error`: a parameter is unknown or invalid, such as a `state` that isn't a lifecycle state or `any`, a time that isn't an instant, or a `cursor` from another search.
+             *     - `unknown_type`: `type` is a concrete type that nothing registers.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10245,7 +10289,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential reaches no type, or `type` names a registered type it cannot read and none under it. `edge_permission_denied` where a filter term names an edge type it cannot read: a term naming a relationship is a question, so it is refused rather than dropped. */
+            /**
+             * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
+             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10513,13 +10560,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description The bytes to store, sent as they are, not as `multipart/form-data`. Set `Content-Type` to their MIME type. */
         requestBody: {
             content: {
                 "application/octet-stream": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
-            /** @description Blob stored. `mime_type` is the type the blob is served with: the type sent, or, for bytes already held, the type the upload that first stored them sent. */
+            /** @description Returns the blob's `hash`, `mime_type` and `size_bytes`. If Marfa already held these bytes, `mime_type` is the type of the first upload, not the one you sent. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10531,13 +10579,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description The blob's hash: `sha256:` and 64 hexadecimal characters. */
                         hash: string;
+                        /** @description The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes. */
                         mime_type: string;
+                        /** @description The blob's size in bytes. */
                         size_bytes: number;
                     };
                 };
             };
-            /** @description An empty body, or a multipart one */
+            /** @description - `validation_error`: the body is empty, or is `multipart/form-data`. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10567,7 +10618,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
+            /** @description - `type_not_permitted`: your credential has no write on any registered type. Marfa refuses the upload before it reads the body. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10624,7 +10675,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The report, oldest first */
+            /** @description Returns every orphan, in one page. A later run purges a blob once it has been listed longer than the grace period. It leaves the list if something references it again or you upload its bytes again. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10668,7 +10719,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10725,7 +10776,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The stores */
+            /** @description Returns every store, in one page. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10769,7 +10820,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10822,14 +10873,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Content-addressed `sha256:<hex>` blob hash. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
                 hash: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The bytes, with the content type the blob was first uploaded under, as a download. */
+            /** @description Returns the bytes, with the `Content-Type` the blob was first uploaded under, as a download. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10851,7 +10902,7 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description The one range asked for. */
+            /** @description Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range` it returns the whole blob. */
             206: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10875,7 +10926,7 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description Invalid blob hash */
+            /** @description - `validation_error`: the hash is malformed. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10905,7 +10956,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10920,7 +10971,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No blob with this hash that an item the credential may read references, or no store holding its bytes */
+            /** @description - `blob_not_found`: no blob has this hash, nothing you can read references it, or no store holds its bytes. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10935,7 +10986,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobNotFoundRefusal"];
                 };
             };
-            /** @description The range asked for lies outside the blob. */
+            /** @description - `range_not_satisfiable`: the range starts past the end of the blob, or ends before it starts. `Content-Range` gives the blob's size. */
             416: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10988,19 +11039,19 @@ export interface operations {
     getBlobUrl: {
         parameters: {
             query?: {
-                /** @description Link lifetime in seconds, capped at 604800 (seven days), which the answer's `expires_in` reports. */
+                /** @description How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `expires_in`. */
                 ttl?: number;
             };
             header?: never;
             path: {
-                /** @description Content-addressed `sha256:<hex>` blob hash. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
                 hash: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A link and its lifetime. Either link serves the blob's recorded type as a download (`Content-Disposition: attachment`). */
+            /** @description Returns the `url` and `expires_in`. The URL serves the blob with its recorded `Content-Type`, as a download. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11012,12 +11063,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description A URL that serves the bytes without a credential. */
                         url: string;
+                        /** @description Seconds until the URL stops working. */
                         expires_in: number;
                     };
                 };
             };
-            /** @description Invalid blob hash or `ttl` */
+            /** @description - `validation_error`: the hash is malformed, or `ttl` isn't a positive integer. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11047,7 +11100,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11062,7 +11115,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No blob with this hash that an item the credential may read references */
+            /** @description - `blob_not_found`: no blob has this hash, or nothing you can read references it. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11115,14 +11168,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Content-addressed `sha256:<hex>` blob hash. */
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The operator key reads every blob. */
                 hash: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The locations */
+            /** @description Returns every location, in one page. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11136,7 +11189,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobLocationPage"];
                 };
             };
-            /** @description Invalid blob hash */
+            /** @description - `validation_error`: the hash is malformed. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11166,7 +11219,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none. An upload is refused before the body is read. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11181,7 +11234,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No blob with this hash that an item the credential may read references */
+            /** @description - `blob_not_found`: no blob has this hash, or nothing you can read references it. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11234,16 +11287,16 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Content-addressed `sha256:<hex>` blob hash. */
+                /** @description The blob's hash, `sha256:<hex>`. */
                 hash: string;
-                /** @description A store's `id`, as `GET /blobs/stores` lists it. */
+                /** @description The ID of the store, as `GET /blobs/stores` lists it. */
                 store: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The copy is gone */
+            /** @description Returns `ok: true`. The location log no longer lists the copy. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11257,7 +11310,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Invalid blob hash */
+            /** @description - `validation_error`: the hash is malformed. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11287,7 +11340,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11303,8 +11356,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `blob_not_found`: no such blob.
-             *     - `blob_location_not_found`: the store holds no copy of the blob, or is not attached.
+             * @description - `blob_not_found`: no blob has this hash.
+             *     - `blob_location_not_found`: the store holds no copy of the blob, or isn't attached.
              */
             404: {
                 headers: {
@@ -11320,7 +11373,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobLocationNotFoundOrBlobNotFoundRefusal"];
                 };
             };
-            /** @description The drop would leave fewer live copies than the minimum */
+            /** @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`. Nothing changes. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14406,14 +14459,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The folder's title. */
                     title: string;
                     search?: components["schemas"]["FolderSearch"];
                     defaults?: components["schemas"]["FolderDefaults"];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name. */
+                    /** @description Gitignore patterns, relative to the folder's root, for the paths the folder takes. Empty or absent takes every path. A dot-led name is taken only if a pattern names it. Secrets and files a machine or editor writes for itself are never taken. */
                     include?: string[];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says. */
+                    /** @description Gitignore patterns, relative to the folder's root, for the paths the folder leaves alone. They win over `include`. */
                     ignore?: string[];
-                    /** @description A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears. */
+                    /** @description Where an item made elsewhere first appears in the folder: a map from type identifier to a directory relative to the folder's root. The most specific matching type wins. */
                     first_placement?: {
                         [key: string]: string;
                     };
@@ -14422,7 +14476,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Folder created */
+            /** @description Returns the new folder, a `system.folder` item, and its metadata. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14437,7 +14491,11 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. */
+            /**
+             * @description - `validation_error`: a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it.
+             *     - `missing_required_field`: `title` is missing.
+             *     - `unknown_type`: a setting names a type that isn't registered.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14468,7 +14526,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type map does not grant write on `system.folder`. */
+            /** @description - `type_not_permitted`: you don't have write on `system.folder`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14573,7 +14631,7 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description The folder's `system.folder` item id */
+                /** @description The ID of the folder. */
                 id: string;
             };
             cookie?: never;
@@ -14581,16 +14639,17 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The version the caller read. */
+                    /** @description The version of the folder you read. If the folder has changed since, Marfa merges your change where nothing collides. */
                     version: number;
+                    /** @description A new title for the folder. */
                     title?: string;
                     search?: components["schemas"]["FolderSearch"];
                     defaults?: components["schemas"]["FolderDefaults"];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name. */
+                    /** @description Gitignore patterns, relative to the folder's root, for the paths the folder takes. Empty or absent takes every path. A dot-led name is taken only if a pattern names it. Secrets and files a machine or editor writes for itself are never taken. */
                     include?: string[];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says. */
+                    /** @description Gitignore patterns, relative to the folder's root, for the paths the folder leaves alone. They win over `include`. */
                     ignore?: string[];
-                    /** @description A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears. */
+                    /** @description Where an item made elsewhere first appears in the folder: a map from type identifier to a directory relative to the folder's root. The most specific matching type wins. */
                     first_placement?: {
                         [key: string]: string;
                     };
@@ -14599,7 +14658,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Folder changed */
+            /** @description Returns the updated folder and its metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14614,7 +14673,13 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `validation_error` is also a query parameter, such as `conflict`, which this door does not take. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
+            /**
+             * @description - `validation_error`: a setting is malformed (`details.errors[0].path` names it), the body names no setting, or the query has a parameter such as `conflict`, which this endpoint doesn't take.
+             *     - `missing_required_field`: `version` is missing.
+             *     - `unknown_type`: a setting names a type that isn't registered.
+             *     - `invalid_id`: the ID is malformed.
+             *     - `invalid_transition`: the folder is revoked.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14645,7 +14710,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type map does not grant write on `system.folder`. */
+            /** @description - `type_not_permitted`: you don't have write on `system.folder`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14660,7 +14725,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No `system.folder` has this id. */
+            /** @description - `item_not_found`: no `system.folder` has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14676,7 +14741,10 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: a setting this change names was changed since `version`. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held. */
+            /**
+             * @description - `version_conflict`: a setting you sent has changed since `version`. `conflicting_fields` names it.
+             *     - `ancestor_unavailable`: Marfa holds no snapshot of `version` to merge from.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14766,14 +14834,14 @@ export interface operations {
                 "Idempotency-Key"?: string;
             };
             path: {
-                /** @description The folder's `system.folder` item id */
+                /** @description The ID of the folder. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Folder revoked */
+            /** @description Returns the revoked folder and its metadata. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14823,7 +14891,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type map does not grant write on `system.folder`. */
+            /** @description - `type_not_permitted`: you don't have write on `system.folder`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14838,7 +14906,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No `system.folder` has this id. */
+            /** @description - `item_not_found`: no `system.folder` has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
