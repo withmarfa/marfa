@@ -17824,7 +17824,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. */
+            /** @description An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17836,7 +17836,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"] | {
                         /** @enum {string} */
                         error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope";
                         error_description?: string;
