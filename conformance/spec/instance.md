@@ -161,7 +161,7 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
 ## An unfinished database
 
-25. WHEN the server starts on a database that holds some of its own tables and lacks the rest, and none of the tables it creates holds a row, it SHALL create the tables it lacks and start, and statement 15 does not apply to that database.
+25. WHEN the server starts on a database that holds some of its own tables and lacks the rest, and none of the tables it creates holds a row, it SHALL create the tables it lacks and start, unless statement 15 refuses the database for holding a retired registry table or the retired setting `space_config`.
 
     Reason: the server creates its tables one statement at a time, so a start that is stopped partway leaves a database with the first of them. Nothing is written to the server's own tables before the last is made, so none holds a row, and creating the rest leaves what a new database holds. A table the server does not create, such as a replication sidecar's, may hold rows and does not count. Refusing the database would send an owner looking for another build when no other build wrote it. A database that lacks tables and holds a row in one the server creates is not this case, and statement 15 refuses it.
 
