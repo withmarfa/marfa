@@ -177,3 +177,19 @@ updates:
     open-pull-requests-limit: 2
     labels:
       - "dependencies"
+    ignore:
+      # `uniffi` stays on 0.31 because `build.sh` generates the Swift glue with
+      # `cargo-swift`, which embeds one UniFFI bindgen, `=0.31.1` in its
+      # newest release, 0.11.1. A crate built with 0.32 writes metadata that
+      # bindgen cannot read, and the build stops at "Could not generate
+      # UniFFI bindings". The `uniffi_*` crates are not declared here, so
+      # this entry covers all of them. Patch releases still flow.
+      #
+      # Lift it when `cargo info cargo-swift` shows a release that embeds the
+      # 0.32 bindgen, and only once `build.sh` passes with that release and
+      # `uniffi = "0.32"`. The `Core checks` step "Build the Swift package"
+      # fails a pull request for which it does not.
+      - dependency-name: "uniffi"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"

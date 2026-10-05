@@ -55,7 +55,7 @@ Then the same three in `bindings/swift`. Every test binary runs under `scripts/t
 Three jobs check the core. `scripts/ci-required.ts` decides from the changed paths which of them a pull request runs. A draft pull request runs none of them; marking it ready for review, and every push after, runs the ones its changes name.
 
 - **`Core checks (Linux)`** (`ci.yml`, Ubuntu) runs the three commands above for the core workspace. It is the only job that lints the credential store used when the operating system is not macOS, and the only one that tests the in-memory test keychain the tests use in its place. A pull request runs it when it changes the core, `openapi.json` or `ci.yml`; a change to the Swift crate alone does not.
-- **`Core checks`** (`ci.yml`, macOS) runs the same three commands, with the tests under a check that the login keychain is unchanged, then the three in `bindings/swift`. It keeps the macOS keychain and the Apple builds. A pull request runs it when it changes the core, `openapi.json` or `ci.yml`.
+- **`Core checks`** (`ci.yml`, macOS) runs the same three commands, with the tests under a check that the login keychain is unchanged, then the three in `bindings/swift`. It keeps the macOS keychain and the Apple builds. A pull request runs it when it changes the core, `openapi.json` or `ci.yml`. Its last step runs `bindings/swift/build.sh`, as `withmarfa/marfa-swift` does, when the change reaches the Swift crate, its lockfile or the script, so a dependency bump that stops the Swift glue from generating fails here.
 - **`Core (Rust, bindings, live)`** (`core.yml`, macOS) runs the tests that need a live server (`scripts/server-up.sh` boots one; `--run-ignored only` runs them), builds the Swift crate in release mode for the Apple targets, builds and tests the Node module, and proves the Node binding against a booted server. A pull request runs it when it changes the core, `openapi.json` or `core.yml`. The Node module's JavaScript, test and script files run only here.
 
 A push to `main` runs `ci.yml` in full unless it reaches only the format check and `ci.yml` passed on the commit before it. It runs `core.yml` when it changes the core, `openapi.json`, `core.yml`, or the server and the packages the live tests boot it from. The nightly run and a manual dispatch run every job.
@@ -65,6 +65,8 @@ A pull request that changes the server and leaves `openapi.json` alone runs none
 ## Bindings
 
 Swift: `bindings/swift/build.sh` builds the XCFramework and its glue for macOS, iOS and the simulator. `withmarfa/marfa-swift` runs it at the commit it pins.
+
+`cargo-swift` embeds one UniFFI bindgen, and the crate's `uniffi` has to write the metadata that bindgen reads. `build.sh` pins `cargo-swift`; `Cargo.toml` and `.github/dependabot.yml` keep `uniffi` to the version that `cargo-swift` embeds. To move to a newer `uniffi`, wait for a `cargo-swift` release that embeds the matching bindgen, then change the `cargo-swift` pin, `uniffi` and the Dependabot ignore in one pull request.
 
 Node: it sits outside the pnpm workspace, so every pnpm call carries `--ignore-workspace`:
 
