@@ -53,7 +53,7 @@ pub(crate) fn search(
         .collect();
     values.push(Value::from(limit as i64));
     let mut statement = conn.prepare(&format!(
-        "SELECT items.id, bm25(items_fts), snippet(items_fts, -1, '<mark>', '</mark>', '...', 32)
+        "SELECT items.id, bm25(items_fts), snippet(items_fts, -1, '{MARK_OPEN}', '{MARK_CLOSE}', '...', 32)
          FROM items_fts
          JOIN items ON items.seq = items_fts.rowid
          WHERE items_fts MATCH ?{narrowing}
@@ -79,10 +79,50 @@ pub(crate) fn search(
             Some(SearchHit {
                 item,
                 score: -rank,
-                snippet,
+                snippet: snippet_html(&snippet),
             })
         })
         .collect())
+}
+
+// FTS5 puts these private-use characters around each match in place of the
+// tags, so the excerpt is escaped whole before they become `<mark>` and
+// `</mark>`. A row's own text can hold them as well, so each opens only a
+// closed mark and closes only an open one.
+const MARK_OPEN: char = '\u{E000}';
+const MARK_CLOSE: char = '\u{E001}';
+
+/// The excerpt FTS5 cut, as HTML whose only markup is `<mark>` around
+/// matches, written as the server writes `snippet_html`.
+fn snippet_html(excerpt: &str) -> String {
+    let mut html = String::with_capacity(excerpt.len());
+    let mut open = false;
+    for character in excerpt.chars() {
+        match character {
+            MARK_OPEN => {
+                if !open {
+                    html.push_str("<mark>");
+                }
+                open = true;
+            }
+            MARK_CLOSE => {
+                if open {
+                    html.push_str("</mark>");
+                }
+                open = false;
+            }
+            '&' => html.push_str("&amp;"),
+            '<' => html.push_str("&lt;"),
+            '>' => html.push_str("&gt;"),
+            '"' => html.push_str("&quot;"),
+            '\'' => html.push_str("&#39;"),
+            other => html.push(other),
+        }
+    }
+    if open {
+        html.push_str("</mark>");
+    }
+    html
 }
 
 /// The server's reading of a query, which `search-and-filters.md` states: a
@@ -226,6 +266,44 @@ mod tests {
         .collect();
         ids.sort();
         assert_eq!(ids, vec!["body", "filed", "tag", "title"]);
+    }
+
+    #[test]
+    fn an_excerpt_escapes_the_text_and_marks_only_the_match() {
+        let conn = conn();
+        store::upsert_item(
+            &conn,
+            &note(
+                "markup",
+                "Plain",
+                "<b>numbat</b> & \"q\" 'p'",
+                "2026-01-01T00:00:00Z",
+            ),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+        let hits = search(
+            &conn,
+            &Catalog::load(&conn).unwrap(),
+            "numbat",
+            &SearchFilters::default(),
+            10,
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].snippet,
+            "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;"
+        );
+    }
+
+    #[test]
+    fn markers_the_text_holds_itself_make_only_well_formed_marks() {
+        assert_eq!(
+            snippet_html("\u{E001}a \u{E000}\u{E000}b\u{E001}\u{E001} c \u{E000}d"),
+            "a <mark>b</mark> c <mark>d</mark>"
+        );
     }
 
     #[test]

@@ -6,12 +6,14 @@ import {
   MATCHING_CASES,
   MATCHING_FIELDS,
   MATCHING_ROWS,
+  MARKUP_QUERY,
+  MARKUP_SNIPPET,
   SNIPPET_QUERY,
 } from "../../utils/search-matching.js";
 
 /**
  * How a query is read, which words and fields it matches, and how the hits
- * are ordered and excerpted: `search-and-filters.md` 42 to 49. The device
+ * are ordered and excerpted: `search-and-filters.md` 42 to 49 and 87. The device
  * holds itself to the same cases in `device/search-live.test.ts`.
  */
 
@@ -104,5 +106,16 @@ describe("search matching", () => {
     expect(result.ok).toBe(true);
     const hit = result.data.data.find((entry) => entry.item.id === id("marsh"));
     expect(hit?.snippet_html).toBe("A quiet <mark>landscape</mark>");
+  });
+
+  it("escapes the row's text in an excerpt and marks only the match", async () => {
+    const result = await client.search(MARKUP_QUERY, {
+      type: typeId,
+      limit: 50,
+    });
+    expect(result.ok).toBe(true);
+    expect(
+      result.data.data.map((entry) => [entry.item.id, entry.snippet_html]),
+    ).toEqual([[id("markup"), MARKUP_SNIPPET]]);
   });
 });

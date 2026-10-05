@@ -10,13 +10,15 @@ import {
   MATCHING_CASES,
   MATCHING_FIELDS,
   MATCHING_ROWS,
+  MARKUP_QUERY,
+  MARKUP_SNIPPET,
   SNIPPET_QUERY,
 } from "../../utils/search-matching.js";
 import { requireBinary } from "./harness.js";
 
 /**
  * A device matches a query as the server does (`search-and-filters.md` 42 to
- * 49): the same corpus and the same queries against the real server and the
+ * 49 and 87): the same corpus and the same queries against the real server and the
  * real binary, with the same hits and the same excerpt. The order is held
  * to the server's for a corpus whose ranking does not turn on rows the device
  * does not hold, which is the only order a device holding a slice can promise
@@ -116,6 +118,17 @@ describe("a device matches as the server does", () => {
     const long = value(await device.search(SNIPPET_QUERY, { type: typeId }));
     expect(long[0]?.snippet).toContain("<mark>needle</mark>");
     expect(long[0]?.snippet.startsWith("...")).toBe(true);
+  });
+
+  it("escapes the row's text in an excerpt as the server does", async () => {
+    const local = value(await device.search(MARKUP_QUERY, { type: typeId }));
+    const remote = await served(MARKUP_QUERY);
+    expect(local.map((hit) => [hit.item.id, hit.snippet])).toEqual([
+      [id("markup"), MARKUP_SNIPPET],
+    ]);
+    expect(remote.map((hit) => [hit.item.id, hit.snippet_html])).toEqual([
+      [id("markup"), MARKUP_SNIPPET],
+    ]);
   });
 
   it("holds a changed type's searchable fields against rows it already holds", async () => {

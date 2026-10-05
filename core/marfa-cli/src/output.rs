@@ -173,13 +173,30 @@ pub fn hits(hits: &[SearchHit], json: bool) -> Result<(), CliError> {
     for hit in hits {
         writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item))?;
         if !hit.snippet.is_empty() {
-            writeln!(out, "         {}", hit.snippet.replace('\n', " "))?;
+            writeln!(
+                out,
+                "         {}",
+                snippet_text(&hit.snippet).replace('\n', " ")
+            )?;
         }
     }
     if hits.is_empty() {
         eprintln!("(no matches)");
     }
     Ok(())
+}
+
+/// The excerpt as the text it was cut from: the marks dropped and the
+/// escapes the core writes read back, `&amp;` last so that escaped text stays
+/// text.
+fn snippet_text(html: &str) -> String {
+    html.replace("<mark>", "")
+        .replace("</mark>", "")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 }
 
 fn line(item: &Item) -> String {
@@ -690,8 +707,18 @@ pub fn titles(answer: &Value) -> impl Iterator<Item = (String, String)> + '_ {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{describe, edges_from};
+    use super::{describe, edges_from, snippet_text};
     use serde_json::json;
+
+    #[test]
+    fn a_snippet_prints_as_the_text_it_was_cut_from() {
+        assert_eq!(
+            snippet_text(
+                "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp;lt; &amp; &quot;q&quot; &#39;p&#39; &lt;mark&gt;"
+            ),
+            "<b>numbat</b> &lt; & \"q\" 'p' <mark>"
+        );
+    }
 
     #[test]
     fn drain_exit_distinguishes_undelivered_held_and_credential_stopped() {

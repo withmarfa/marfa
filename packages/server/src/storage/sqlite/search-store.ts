@@ -39,6 +39,41 @@ function buildFtsQuery(query: string): string {
     .join(" ");
 }
 
+/**
+ * FTS5 puts these private-use characters around each match in place of the
+ * tags, so the excerpt is escaped whole before they become `<mark>` and
+ * `</mark>`. A row's own text can hold them as well, so each opens only a
+ * closed mark and closes only an open one.
+ */
+const MARK_OPEN = "\uE000";
+const MARK_CLOSE = "\uE001";
+
+const HTML_ESCAPES: Readonly<Record<string, string>> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/** The excerpt FTS5 cut, as HTML whose only markup is `<mark>` around matches. */
+export function snippetHtml(excerpt: string): string {
+  let html = "";
+  let open = false;
+  for (const character of excerpt) {
+    if (character === MARK_OPEN) {
+      if (!open) html += "<mark>";
+      open = true;
+    } else if (character === MARK_CLOSE) {
+      if (open) html += "</mark>";
+      open = false;
+    } else {
+      html += HTML_ESCAPES[character] ?? character;
+    }
+  }
+  return open ? `${html}</mark>` : html;
+}
+
 type Executor = DrizzleDb | SqliteTxContext;
 
 /**
@@ -296,7 +331,7 @@ export class SqliteSearchStore implements SearchStore {
 
     const rawSql = `
       SELECT
-        snippet(items_fts, -1, '<mark>', '</mark>', '...', 32) AS snippet,
+        snippet(items_fts, -1, '${MARK_OPEN}', '${MARK_CLOSE}', '...', 32) AS snippet,
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
@@ -340,7 +375,8 @@ export class SqliteSearchStore implements SearchStore {
         extensions: (row.extensions as string | null) ?? "{}",
       }),
       relevance_score: Math.abs(row.rank as number),
-      snippet_html: (row.snippet as string) || undefined,
+      snippet_html:
+        snippetHtml((row.snippet as string | null) ?? "") || undefined,
     }));
   }
 }

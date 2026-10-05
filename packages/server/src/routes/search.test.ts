@@ -47,6 +47,30 @@ describe("GET /search happy path", () => {
   });
 });
 
+describe("GET /search excerpts", () => {
+  it("escapes the item's text and marks only the matched word", async () => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        properties: { body: `<b>numbat</b> & "q" 'p'` },
+      },
+    });
+    expect(created.status).toBe(201);
+
+    const res = await request(ctx.app, "GET", "/search?q=numbat", {
+      key: ctx.workingKey,
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as {
+      data: { snippet_html?: string }[];
+    };
+    expect(data.map((hit) => hit.snippet_html)).toEqual([
+      "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;",
+    ]);
+  });
+});
+
 describe("GET /search indexes tags", () => {
   it("finds an item by a tag that appears nowhere in its text, from the moment the tag is set", async () => {
     const tag = `wombatry${String(Date.now())}`;
