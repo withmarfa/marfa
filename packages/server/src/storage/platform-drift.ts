@@ -66,6 +66,18 @@ export function setPlatformDrift(ids: readonly string[]): void {
 }
 
 /**
+ * Take one identifier out of what this boot found, once its row is gone.
+ *
+ * Still derived and never stored: this only keeps the in-memory set true to
+ * the rows between boots, and the next boot recomputes it from the rows
+ * either way. Call it after the delete has committed, never inside the
+ * transaction, so a rolled-back delete leaves the type listed.
+ */
+export function forgetPlatformDrift(id: string): void {
+  driftedIds = driftedIds.filter((drifted) => drifted !== id);
+}
+
+/**
  * What this boot found. Empty until a boot records something, which is the
  * honest answer for a process that has not looked: a fresh instance and an
  * instance mid-boot both genuinely know of no drift.

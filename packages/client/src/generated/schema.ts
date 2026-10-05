@@ -17549,7 +17549,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts. */
+            /** @description Returns the stale types. A type you delete drops out of the list at once. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17732,8 +17732,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_not_found`: no platform type has this identifier.
-             *     - `not_found`: the type was deleted after the server started.
+             * @description - `type_not_found`: no platform type has this identifier, including one you already deleted.
+             *     - `not_found`: another request deleted the type first.
              */
             404: {
                 headers: {

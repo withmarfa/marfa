@@ -184,6 +184,66 @@ describe("DELETE /platform-types/{id}", () => {
     expect(ids).not.toContain(id);
   });
 
+  it("drops the removed type from the drift list and refuses a second removal", async () => {
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+    const other = `${id}_kept`;
+    await ctx.storage.types.create(
+      { id: other, version: 1, fields: { name: { type: "string" } } },
+      { origin: "platform" },
+    );
+    setPlatformDrift([id, other]);
+
+    const listedIds = async (): Promise<string[]> => {
+      const res = await request(ctx.app, "GET", "/platform-types/drift", {
+        key: ctx.operatorKey,
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: { id: string }[] }).data.map(
+        (t) => t.id,
+      );
+    };
+    // The witness: both are listed before the removal, so the absence
+    // after it is the removal's doing.
+    expect(await listedIds()).toEqual([id, other].sort());
+
+    const removed = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(removed.status).toBe(200);
+
+    expect(await listedIds()).toEqual([other]);
+
+    const again = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(again.status).toBe(404);
+    const body = (await again.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_not_found");
+  });
+
+  it("keeps a type listed when its removal is refused", async () => {
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+    await itemWrites(ctx.storage).create({
+      type: id,
+      properties: { name: "still here" },
+      source: "test",
+      source_id: "drift-refused",
+    });
+
+    const res = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(res.status).toBe(409);
+
+    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+      key: ctx.operatorKey,
+    });
+    const seen = (await listed.json()) as { data: { id: string }[] };
+    expect(seen.data.map((t) => t.id)).toEqual([id]);
+  });
+
   it("refuses a type the build still ships", async () => {
     // The guard that matters most: a row exists for every shipped type
     // too, so testing existence alone would make this able to remove a
