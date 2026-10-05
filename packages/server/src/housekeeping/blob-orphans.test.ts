@@ -753,8 +753,8 @@ describe("a reference added or removed between runs", () => {
   });
 });
 
-describe("a purge that takes the rows naming a blob restarts the grace", () => {
-  it("restarts the grace for a blob only an extension and an edge of a purged item named", async () => {
+describe("a purge that takes the rows naming a blob", () => {
+  it("leaves a blob only an extension and an edge of the purged item named to be reported and purged", async () => {
     ctx = await createTestContext();
     const viaExtension = await upload(
       ctx,

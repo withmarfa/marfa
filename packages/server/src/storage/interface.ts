@@ -610,11 +610,9 @@ export interface RestoredRowInput {
  * Whether the credential a write is made for has proved it holds the bytes
  * a digest names, by having uploaded them or being able to read the blob as
  * the write is made. A digest entering the row lends its reach only where
- * this answers true. Absent for a write the server makes for no credential,
+ * this answers true. Null for a write the server makes for no credential,
  * whose digests never lend.
  */
-/** The proof a write carries, or null for one made for no credential, which
- *  proves nothing. */
 export type BlobProof = ((hash: string) => Promise<boolean>) | null;
 
 export interface BlobProofInput {

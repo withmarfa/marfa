@@ -295,8 +295,8 @@ describe("an edge lends read on the blobs its properties name", () => {
       200,
     );
     expect(await read(ctx, aboutReader, upserted)).toBe(200);
-    // The edge's property set only grows, so the first cover is replaced by
-    // the merge and no longer named.
+    // The upsert merges over the edge's properties, so the new cover replaces
+    // the first, which the edge no longer names.
     expect(await read(ctx, aboutReader, created)).toBe(404);
   });
 });
