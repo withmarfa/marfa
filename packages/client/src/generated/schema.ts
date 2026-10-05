@@ -161,7 +161,7 @@ export interface paths {
          * Merge tags into an item
          * @description Merges the tags you send into the item's tags as a set union, and returns its metadata. Existing tags stay. To replace them, use `PUT /items/{id}/metadata`.
          */
-        patch: operations["mergeItemMetadata"];
+        patch: operations["updateItemMetadata"];
         trace?: never;
     };
     "/items/{id}/tags": {
@@ -193,12 +193,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
         /**
          * Purge an item
          * @description Permanently deletes a trashed item with its edges, metadata and extensions. Requires `items.purge` and write on the item's type. Marfa keeps a tombstone of the item's link and natural key, which `POST /items/lookup` reads.
          */
-        delete: operations["purgeItem"];
+        post: operations["purgeItem"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -278,11 +278,27 @@ export interface paths {
         get: operations["getBulkActionJob"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/items/bulk-actions/jobs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
         /**
          * Cancel a bulk-action job
          * @description Cancels a bulk-action job and returns it. Items the job already processed stay processed. A job that has already finished is left as it is.
          */
-        delete: operations["cancelBulkActionJob"];
+        post: operations["cancelBulkActionJob"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -535,7 +551,7 @@ export interface paths {
          * Register an edge type
          * @description Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. A registered edge type is flat with no inheritance.
          */
-        post: operations["createEdgeType"];
+        post: operations["registerEdgeType"];
         delete?: never;
         options?: never;
         head?: never;
@@ -571,7 +587,7 @@ export interface paths {
         };
         /**
          * List types
-         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /admin/platform-types/drift` names them and `DELETE /admin/platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.
+         * @description Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /platform-types/drift` names them and `DELETE /platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.
          */
         get: operations["listTypes"];
         put?: never;
@@ -602,7 +618,7 @@ export interface paths {
          * Replace a type
          * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once. The old link's tombstones go with it, since they hold another field's values.
          */
-        put: operations["updateType"];
+        put: operations["replaceType"];
         post?: never;
         /**
          * Delete a type
@@ -812,7 +828,7 @@ export interface paths {
          * Delete a blob's copy in a store
          * @description Removes the copy of the blob that one store holds, and its row in the location log. Operator key only.
          */
-        delete: operations["dropBlobLocation"];
+        delete: operations["deleteBlobLocation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1100,7 +1116,7 @@ export interface paths {
          * Delete the state document
          * @description Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
          */
-        delete: operations["clearConnectorState"];
+        delete: operations["deleteConnectorState"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1130,7 +1146,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/connectors/{id}/agreements/find": {
+    "/connectors/{id}/agreements/lookup": {
         parameters: {
             query?: never;
             header?: never;
@@ -1143,7 +1159,7 @@ export interface paths {
          * Look up agreements
          * @description The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. The connector's own key only.
          */
-        post: operations["findConnectorAgreements"];
+        post: operations["lookupConnectorAgreements"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1310,7 +1326,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/restore-archive": {
+    "/restore": {
         parameters: {
             query?: never;
             header?: never;
@@ -1323,14 +1339,14 @@ export interface paths {
          * Restore from an archive
          * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Duplicate items retain their live metadata, dates and history. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
          */
-        post: operations["adminRestoreArchive"];
+        post: operations["restoreArchive"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/admin/platform-types/drift": {
+    "/platform-types/drift": {
         parameters: {
             query?: never;
             header?: never;
@@ -1339,9 +1355,9 @@ export interface paths {
         };
         /**
          * List stale platform types
-         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
+         * @description Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.
          */
-        get: operations["adminListPlatformTypeDrift"];
+        get: operations["listPlatformTypeDrift"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1350,7 +1366,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/platform-types/{id}": {
+    "/platform-types/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1364,7 +1380,7 @@ export interface paths {
          * Delete a stale platform type
          * @description Removes exactly one platform type row this build does not ship. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.
          */
-        delete: operations["adminRemovePlatformType"];
+        delete: operations["deletePlatformType"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1403,7 +1419,7 @@ export interface paths {
         };
         /**
          * Export items and edges
-         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, `lending_blobs`, the digests in that row's properties that lend its reach, and `lending_extensions`, the digests that lend its reach in each extension namespace the line carries. Each archive edge line carries `lending_blobs`, the digests in that edge's properties that lend its reach. A restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.
+         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /restore` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, `lending_blobs`, the digests in that row's properties that lend its reach, and `lending_extensions`, the digests that lend its reach in each extension namespace the line carries. Each archive edge line carries `lending_blobs`, the digests in that edge's properties that lend its reach. A restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.
          */
         get: operations["exportData"];
         put?: never;
@@ -5559,7 +5575,7 @@ export interface operations {
             };
         };
     };
-    mergeItemMetadata: {
+    updateItemMetadata: {
         parameters: {
             query?: never;
             header?: never;
@@ -9182,7 +9198,7 @@ export interface operations {
             };
         };
     };
-    createEdgeType: {
+    registerEdgeType: {
         parameters: {
             query?: never;
             header?: never;
@@ -9836,7 +9852,7 @@ export interface operations {
             };
         };
     };
-    updateType: {
+    replaceType: {
         parameters: {
             query?: never;
             header?: never;
@@ -11213,7 +11229,7 @@ export interface operations {
             };
         };
     };
-    dropBlobLocation: {
+    deleteBlobLocation: {
         parameters: {
             query?: never;
             header?: never;
@@ -13813,7 +13829,7 @@ export interface operations {
             };
         };
     };
-    clearConnectorState: {
+    deleteConnectorState: {
         parameters: {
             query?: never;
             header?: never;
@@ -14238,7 +14254,7 @@ export interface operations {
             };
         };
     };
-    findConnectorAgreements: {
+    lookupConnectorAgreements: {
         parameters: {
             query?: never;
             header?: never;
@@ -15819,7 +15835,7 @@ export interface operations {
             };
         };
     };
-    adminRestoreArchive: {
+    restoreArchive: {
         parameters: {
             query?: never;
             header?: never;
@@ -15974,7 +15990,7 @@ export interface operations {
             };
         };
     };
-    adminListPlatformTypeDrift: {
+    listPlatformTypeDrift: {
         parameters: {
             query?: never;
             header?: never;
@@ -16075,7 +16091,7 @@ export interface operations {
             };
         };
     };
-    adminRemovePlatformType: {
+    deletePlatformType: {
         parameters: {
             query?: never;
             header?: never;
@@ -16500,7 +16516,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack. */
+            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /restore` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

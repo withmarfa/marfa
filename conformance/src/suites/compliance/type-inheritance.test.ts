@@ -139,7 +139,7 @@ describe("type inheritance rule", () => {
     });
     expect(cr.ok, JSON.stringify(cr.error)).toBe(true);
 
-    const changed = await client.updateType(parentId, {
+    const changed = await client.replaceType(parentId, {
       id: parentId,
       version: 2,
       fields: { name: { type: "string" }, count: { type: "integer" } },
@@ -160,7 +160,7 @@ describe("type inheritance rule", () => {
     ]);
     // The witness: the parent gaining the field as its child declares it is
     // taken.
-    const same = await client.updateType(parentId, {
+    const same = await client.replaceType(parentId, {
       id: parentId,
       version: 2,
       fields: { name: { type: "string" }, count: { type: "string" } },

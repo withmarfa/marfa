@@ -390,7 +390,7 @@ describe("connectors from the terminal", () => {
     const found = await connector.json<{ data: { item_id: string }[] }>([
       "connectors",
       "agreements",
-      "find",
+      "lookup",
       registered.id,
       note.item.id,
     ]);
@@ -429,14 +429,14 @@ describe("connectors from the terminal", () => {
       registered.id,
     ]);
     expect(notItsOwn.envelope.error.server?.status).toBe(403);
-    await c.operator.json(["connectors", "state", "clear", registered.id]);
+    await c.operator.json(["connectors", "state", "delete", registered.id]);
     expect(
       await connector.json(["connectors", "state", "get", registered.id]),
     ).toEqual({ state: {}, updated_at: null });
     const none = await connector.json<{ data: unknown[] }>([
       "connectors",
       "agreements",
-      "find",
+      "lookup",
       registered.id,
       note.item.id,
     ]);

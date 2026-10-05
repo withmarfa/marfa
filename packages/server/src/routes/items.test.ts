@@ -2049,7 +2049,7 @@ describe("GET /items?sort=properties.<field>", () => {
   });
 });
 
-describe("DELETE /items/:id/purge", () => {
+describe("POST /items/:id/purge", () => {
   it("permanently deletes a trashed item", async () => {
     // Create and trash an item
     const createRes = await request(ctx.app, "POST", "/items", {
@@ -2068,12 +2068,9 @@ describe("DELETE /items/:id/purge", () => {
     });
 
     // Purge the trashed item
-    const purgeRes = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${item.id}/purge`,
-      { key: ctx.workingKey },
-    );
+    const purgeRes = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
+      key: ctx.workingKey,
+    });
     expect(purgeRes.status).toBe(200);
 
     // Verify the item is gone
@@ -2095,12 +2092,9 @@ describe("DELETE /items/:id/purge", () => {
       item: { id: string };
     };
 
-    const purgeRes = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${item.id}/purge`,
-      { key: ctx.workingKey },
-    );
+    const purgeRes = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
+      key: ctx.workingKey,
+    });
     expect(purgeRes.status).toBe(400);
   });
 });

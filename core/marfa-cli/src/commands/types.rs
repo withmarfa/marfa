@@ -20,7 +20,7 @@ pub enum TypesCommand {
     /// Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
     ///
     /// `metadata.types:write` alone covers adding optional fields that no stored row holds a value under, and changing the label, description, display hints and version. Any other change, removing a field included, needs `schema.write`.
-    Update {
+    Replace {
         /// The type id.
         id: String,
         #[command(flatten)]
@@ -55,7 +55,7 @@ pub fn register_request(definition: serde_json::Value) -> Request {
     Request::post(&["types"]).json(definition)
 }
 
-pub fn update_request(id: &str, definition: serde_json::Value) -> Request {
+pub fn replace_request(id: &str, definition: serde_json::Value) -> Request {
     Request::put(&["types", id]).json(definition)
 }
 
@@ -64,11 +64,11 @@ pub fn delete_request(id: &str, force: bool) -> Request {
 }
 
 pub fn drift_request() -> Request {
-    Request::get(&["admin", "platform-types", "drift"])
+    Request::get(&["platform-types", "drift"])
 }
 
 pub fn prune_request(id: &str) -> Request {
-    Request::delete(&["admin", "platform-types", id])
+    Request::delete(&["platform-types", id])
 }
 
 pub fn run(command: TypesCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -76,7 +76,7 @@ pub fn run(command: TypesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
         TypesCommand::Register(body) => register_request(body.read()?),
-        TypesCommand::Update { id, body } => update_request(id, body.read()?),
+        TypesCommand::Replace { id, body } => replace_request(id, body.read()?),
         TypesCommand::Delete { id, force } => delete_request(id, *force),
         TypesCommand::Drift => drift_request(),
         TypesCommand::Prune { id } => prune_request(id),

@@ -10,7 +10,7 @@
  *
  * 2. **The operator tier is a flag on the row and nothing else.**
  *    `checkOperatorKey` reads `is_operator`, so a working credential reaches
- *    none of `/admin/*` however it came to exist.
+ *    none of the operator doors however it came to exist.
  *
  * Each layer is tested on its own, because either fence holding says nothing
  * about the other.

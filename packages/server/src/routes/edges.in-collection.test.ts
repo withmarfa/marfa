@@ -286,12 +286,9 @@ describe("in-collection deletion", () => {
     await request(ctx.app, "DELETE", `/items/${collection}`, {
       key: ctx.workingKey,
     });
-    const purge = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${collection}/purge`,
-      { key: ctx.workingKey },
-    );
+    const purge = await request(ctx.app, "POST", `/items/${collection}/purge`, {
+      key: ctx.workingKey,
+    });
     expect(purge.status).toBe(200);
 
     expect(await stateOf(member)).toBe("active");
@@ -342,7 +339,7 @@ describe("in-collection media membership", () => {
     await request(ctx.app, "DELETE", `/items/${series}`, {
       key: ctx.workingKey,
     });
-    const purge = await request(ctx.app, "DELETE", `/items/${series}/purge`, {
+    const purge = await request(ctx.app, "POST", `/items/${series}/purge`, {
       key: ctx.workingKey,
     });
     expect(purge.status).toBe(200);

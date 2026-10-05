@@ -72,7 +72,7 @@ To carry your data into a new build:
 
 1. With the running build, take an export: `GET /export?format=archive`, with the operator key.
 2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the last replica onto an empty volume, and that replica is the old build's database, which the new build refuses, so give the new instance a new bucket.
-3. Restore the archive: `POST /admin/restore-archive`, with the operator key.
+3. Restore the archive: `POST /restore`, with the operator key.
 
 Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `conformance/spec/search-and-filters.md` 27 states that promise.
 
@@ -115,7 +115,7 @@ Restore from any of these like this:
 
 The instance applies the log at start. A copy's integrity can be checked first with `sqlite3 marfa.db "PRAGMA integrity_check"`, which answers `ok`.
 
-`GET /export` and `POST /admin/restore-archive` move data between machines and between builds that share a schema. They are not a machine backup. `conformance/spec/instance.md` states what a restore promises.
+`GET /export` and `POST /restore` move data between machines and between builds that share a schema. They are not a machine backup. `conformance/spec/instance.md` states what a restore promises.
 
 ## Restoring by hand
 

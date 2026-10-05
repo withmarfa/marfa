@@ -55,7 +55,7 @@ const HTTP_METHODS = ["get", "post", "put", "patch", "delete"];
 /** Doors in the document whose body is not JSON, each with why. */
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob, under their own Content-Type",
-  "POST /admin/restore-archive": "a gzip archive streamed to disk",
+  "POST /restore": "a gzip archive streamed to disk",
 };
 
 /** Doors in the document that take JSON and another handler answers. */

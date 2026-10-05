@@ -48,7 +48,7 @@ pub enum BlobsCommand {
     },
     /// Remove one store's copy of a blob, where enough live copies remain.
     /// Operator key only.
-    Drop {
+    Delete {
         /// The blob hash, `sha256:<hex>`.
         hash: String,
         /// The store whose copy goes, as `blobs stores` names it.
@@ -76,7 +76,7 @@ pub fn locations_request(hash: &str) -> Request {
     Request::get(&["blobs", hash, "locations"])
 }
 
-pub fn drop_request(hash: &str, store: &str) -> Request {
+pub fn delete_location_request(hash: &str, store: &str) -> Request {
     Request::delete(&["blobs", hash, "locations", store])
 }
 
@@ -118,8 +118,8 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         BlobsCommand::Url { hash, ttl } => out.value(&remote.json(&url_request(&hash, ttl))?),
         BlobsCommand::Stores => out.value(&remote.json(&stores_request())?),
         BlobsCommand::Locations { hash } => out.value(&remote.json(&locations_request(&hash))?),
-        BlobsCommand::Drop { hash, store } => {
-            out.value(&remote.json(&drop_request(&hash, &store))?)
+        BlobsCommand::Delete { hash, store } => {
+            out.value(&remote.json(&delete_location_request(&hash, &store))?)
         }
         BlobsCommand::Orphans => out.value(&remote.json(&orphans_request())?),
     }

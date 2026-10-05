@@ -444,9 +444,9 @@ describe("a body of bytes", () => {
   it("labels an archive with the media type its door declares", async () => {
     const server = recordingServer();
     const archive = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]);
-    await make(server).POST("/admin/restore-archive", { body: archive });
+    await make(server).POST("/restore", { body: archive });
     // The same door reached through `request`, method in lower case.
-    await make(server).request("post", "/admin/restore-archive", {
+    await make(server).request("post", "/restore", {
       body: archive,
     });
     expect(server.sent).toEqual([

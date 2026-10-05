@@ -617,7 +617,7 @@ pub fn transition_request(id: &str, state: TransitionState) -> Request {
 }
 
 pub fn purge_request(id: &str) -> Request {
-    Request::delete(&["items", id, "purge"])
+    Request::post(&["items", id, "purge"])
 }
 
 pub fn versions_request(id: &str, page: &PageArgs) -> Request {
@@ -826,7 +826,13 @@ pub fn bulk_action_request(command: &BulkActionCommand) -> Result<Request, CliEr
             return Ok(Request::get(&["items", "bulk-actions", "jobs", id]));
         }
         BulkActionCommand::Cancel { id } => {
-            return Ok(Request::delete(&["items", "bulk-actions", "jobs", id]));
+            return Ok(Request::post(&[
+                "items",
+                "bulk-actions",
+                "jobs",
+                id,
+                "cancel",
+            ]));
         }
     };
     Ok(Request::post(&["items", "bulk-actions"]).json(body))

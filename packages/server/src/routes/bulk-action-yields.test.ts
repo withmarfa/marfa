@@ -226,8 +226,8 @@ describe("bulk actions give other requests an event-loop turn", () => {
             };
             const canceled = await request(
               ctx.app,
-              "DELETE",
-              `/items/bulk-actions/jobs/${job.id}`,
+              "POST",
+              `/items/bulk-actions/jobs/${job.id}/cancel`,
               { key: ctx.workingKey },
             );
             expect(canceled.status).toBe(200);

@@ -5,7 +5,7 @@
  * to an omitted `state` is not the same on all three. A listing and a
  * search answer what the reader is working with, which is the active
  * state. An export answers a copy of the corpus, and the archive it writes
- * is what `POST /admin/restore-archive` reads back, so dropping the rows a
+ * is what `POST /restore` reads back, so dropping the rows a
  * person deliberately archived would lose them on the round trip.
  *
  * The divergence is the point of this file. Each door is asserted on the

@@ -1,6 +1,6 @@
 /**
  * `GET /export?format=archive`: the `marfa-archive-v0.tar.gz` that
- * `POST /admin/restore-archive` reads.
+ * `POST /restore` reads.
  *
  * The export reads the whole selection before it sends a byte, because the
  * manifest comes first and carries the counts and the blob list, and a tar
@@ -47,7 +47,7 @@ export interface ArchiveManifest {
   /**
    * The instance that produced the archive.
    *
-   * Provenance, and nothing acts on it: `POST /admin/restore-archive` does
+   * Provenance, and nothing acts on it: `POST /restore` does
    * not read it, because restoring an instance's own archive into itself and
    * restoring another's are both supported and neither is an error to
    * detect. What it answers is the question a directory of `.tar.gz` files

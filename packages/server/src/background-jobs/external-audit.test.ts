@@ -31,7 +31,7 @@ import { VersionThinner } from "../storage/version-thinner.js";
 import {
   planArchiveTypes,
   writeArchiveTypes,
-} from "../routes/admin-archive-types.js";
+} from "../routes/restore-archive-types.js";
 import { itemWrites } from "../storage/item-writes.js";
 
 const commitFault = vi.hoisted(() => ({
@@ -208,7 +208,7 @@ async function archive(
   return gzipSync(Buffer.concat(chunks));
 }
 async function restore(body: Buffer) {
-  return ctx.app.request("/admin/restore-archive", {
+  return ctx.app.request("/restore", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.operatorKey}`,
@@ -411,7 +411,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     const id = generateId();
     const typeId = "user.audit_archive";
     const body = await archive(blob, id, typeId, true);
-    await refuse("admin.restore_archive");
+    await refuse("restore_archive");
     expect((await restore(body)).status).toBe(500);
     expect(await ctx.storage.items.get(id)).toBeNull();
     expect((await ctx.storage.edges.list()).data).toEqual([]);
@@ -419,16 +419,16 @@ describe("external and background audit units with real SQLite and disk", () => 
     expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
     expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
     expect(getTypeSchema(typeId)).toBeUndefined();
-    expect((await audits("admin.restore_archive.type")).data).toEqual([]);
-    expect((await audits("admin.restore_archive.blobs")).data).toEqual([]);
+    expect((await audits("restore_archive.type")).data).toEqual([]);
+    expect((await audits("restore_archive.blobs")).data).toEqual([]);
     await allow();
     expect((await restore(body)).status).toBe(200);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
     expect(await ctx.storage.eventLog.getAfter(0n, 100)).toHaveLength(2);
     expect((await ctx.storage.edges.list()).data).toHaveLength(1);
-    expect((await audits("admin.restore_archive")).data).toHaveLength(1);
-    expect((await audits("admin.restore_archive.type")).data).toHaveLength(1);
-    expect((await audits("admin.restore_archive.blobs")).data).toHaveLength(1);
+    expect((await audits("restore_archive")).data).toHaveLength(1);
+    expect((await audits("restore_archive.type")).data).toHaveLength(1);
+    expect((await audits("restore_archive.blobs")).data).toHaveLength(1);
     expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(getTypeSchema(typeId)).toBeDefined();
   });
@@ -440,16 +440,14 @@ describe("external and background audit units with real SQLite and disk", () => 
       const blob = { bytes, hash: digest(bytes) };
       const typeId = "user.audit_refused";
       const body = await archive(blob, generateId(), typeId);
-      await refuse(`admin.restore_archive.${unit}`);
+      await refuse(`restore_archive.${unit}`);
       expect((await restore(body)).status).toBe(500);
       expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
       expect(await ctx.blobs.disk.has(blob.hash)).toBeNull();
       if (unit === "type") expect(getTypeSchema(typeId)).toBeUndefined();
       await allow();
       expect((await restore(body)).status).toBe(200);
-      expect((await audits(`admin.restore_archive.${unit}`)).data).toHaveLength(
-        1,
-      );
+      expect((await audits(`restore_archive.${unit}`)).data).toHaveLength(1);
     },
   );
 
@@ -467,7 +465,7 @@ describe("external and background audit units with real SQLite and disk", () => 
         await planArchiveTypes(ctx.storage, [edge]),
         { client_ip: null },
       );
-    await refuse("admin.restore_archive.edge_type");
+    await refuse("restore_archive.edge_type");
     await expect(register()).rejects.toThrow();
     expect(getEdgeTypeSchema("custom.audit_edge")).toBeUndefined();
     expect(await ctx.storage.edgeTypes.list()).not.toContainEqual(
@@ -476,9 +474,7 @@ describe("external and background audit units with real SQLite and disk", () => 
     await allow();
     expect((await register()).edgeTypesRegistered).toBe(1);
     expect(getEdgeTypeSchema("custom.audit_edge")).toBeDefined();
-    expect((await audits("admin.restore_archive.edge_type")).data).toHaveLength(
-      1,
-    );
+    expect((await audits("restore_archive.edge_type")).data).toHaveLength(1);
   });
 
   it("rolls back enrichment item, version and event together and permits a later retry", async () => {

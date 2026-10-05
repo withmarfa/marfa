@@ -140,7 +140,7 @@ describe("a thumbnail field", () => {
       fields: { preview: { type: "thumbnail" } },
     });
     expect(child.ok, JSON.stringify(child.error)).toBe(true);
-    const widened = await client.updateType(parent, {
+    const widened = await client.replaceType(parent, {
       id: parent,
       version: 2,
       fields: { label: { type: "string" }, cover: { type: "thumbnail" } },
@@ -150,7 +150,7 @@ describe("a thumbnail field", () => {
       "a parent gained a thumbnail beside its child's, so the child's items carry two and a device reads one of them",
     ).toBe(400);
     // The witness: the same update without the thumbnail is taken.
-    const plain = await client.updateType(parent, {
+    const plain = await client.replaceType(parent, {
       id: parent,
       version: 2,
       fields: { label: { type: "string" }, note: { type: "string" } },
@@ -174,7 +174,7 @@ describe("a thumbnail field", () => {
       fields: { cover: { type: "string" }, preview: { type: "thumbnail" } },
     });
     expect(child.ok, JSON.stringify(child.error)).toBe(true);
-    const texted = await client.updateType(parent, {
+    const texted = await client.replaceType(parent, {
       id: parent,
       version: 2,
       fields: { label: { type: "string" }, cover: { type: "thumbnail" } },
@@ -192,7 +192,7 @@ describe("a thumbnail field", () => {
     ]);
     // The same name and the same shape is the child redeclaring what its
     // parent now declares, not a second thumbnail beside it.
-    const same = await client.updateType(parent, {
+    const same = await client.replaceType(parent, {
       id: parent,
       version: 2,
       fields: { label: { type: "string" }, preview: { type: "thumbnail" } },

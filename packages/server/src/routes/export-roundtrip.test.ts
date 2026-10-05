@@ -153,7 +153,7 @@ describe("export → restore round trip", () => {
     expect(manifest.edge_count).toBe(2);
     expect(entries.has("edges.ndjson")).toBe(true);
 
-    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+    const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${destination.operatorKey}`,
@@ -250,7 +250,7 @@ describe("export → restore round trip", () => {
       { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
-    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+    const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${destination.operatorKey}`,
@@ -303,7 +303,7 @@ describe("export → restore round trip", () => {
     const archive = Buffer.from(await exportRes.arrayBuffer());
 
     const restore = () =>
-      source.app.request(`/admin/restore-archive`, {
+      source.app.request(`/restore`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${source.operatorKey}`,
@@ -367,7 +367,7 @@ describe("export → restore round trip", () => {
       ],
     );
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -502,7 +502,7 @@ describe("an archive's blobs", () => {
 
     // And the round trip, which is what the archive is for: restore into a
     // database that has never seen these bytes and read one back.
-    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+    const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${destination.operatorKey}`,

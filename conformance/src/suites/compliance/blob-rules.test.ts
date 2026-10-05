@@ -182,7 +182,7 @@ describe("the rules that keep a blob's bytes", () => {
     // Through the drop door rather than the instant after an upload,
     // because the server's own scheduler replicates an upload within a
     // second of it.
-    expect((await operator.dropBlobLocation(first, s3.id)).status).toBe(200);
+    expect((await operator.deleteBlobLocation(first, s3.id)).status).toBe(200);
     const served = await client.getBlobUrl(first);
     expect(served.status).toBe(200);
     expect(new URL(served.data.url).host).toBe(
@@ -257,14 +257,14 @@ describe("the rules that keep a blob's bytes", () => {
     // Two copies: a working key is refused the drop the minimum would
     // allow, and the copy stays; the operator's drop takes the object
     // store's copy, bytes and row, which replication then puts back.
-    const workingFirst = await client.dropBlobLocation(hash, s3.id);
+    const workingFirst = await client.deleteBlobLocation(hash, s3.id);
     expect(workingFirst.status).toBe(403);
     expect(workingFirst.error?.error.code).toBe("forbidden");
     expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
-    const dropped = await operator.dropBlobLocation(hash, s3.id);
+    const dropped = await operator.deleteBlobLocation(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     await expectMatchesSchema(
       "DELETE",
@@ -283,8 +283,8 @@ describe("the rules that keep a blob's bytes", () => {
 
     // One copy left after the next drop: the last is refused and the
     // bytes still answer.
-    expect((await operator.dropBlobLocation(hash, s3.id)).status).toBe(200);
-    const refused = await operator.dropBlobLocation(hash, disk.id);
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    const refused = await operator.deleteBlobLocation(hash, disk.id);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("copies_below_minimum");
     expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
@@ -294,10 +294,10 @@ describe("the rules that keep a blob's bytes", () => {
 
     // A store that no longer holds a copy, one that is not attached, and a
     // working key.
-    const nowhere = await operator.dropBlobLocation(hash, s3.id);
+    const nowhere = await operator.deleteBlobLocation(hash, s3.id);
     expect(nowhere.status).toBe(404);
     expect(nowhere.error?.error.code).toBe("blob_location_not_found");
-    const unattached = await operator.dropBlobLocation(hash, "no-such-store");
+    const unattached = await operator.deleteBlobLocation(hash, "no-such-store");
     expect(unattached.status).toBe(404);
     expect(unattached.error?.error.code).toBe("blob_location_not_found");
   });

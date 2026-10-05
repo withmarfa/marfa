@@ -1,5 +1,5 @@
 /**
- * POST /admin/restore-archive: operator key only, tar.gz body.
+ * POST /restore: operator key only, tar.gz body.
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
@@ -51,11 +51,14 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { planArchiveTypes, writeArchiveTypes } from "./admin-archive-types.js";
+import {
+  planArchiveTypes,
+  writeArchiveTypes,
+} from "./restore-archive-types.js";
 import type {
   ArchiveTypeEntry,
   ArchiveTypePlan,
-} from "./admin-archive-types.js";
+} from "./restore-archive-types.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -63,9 +66,9 @@ import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
 import { blobPrincipal } from "./_blob-reach.js";
 import { sourceTypesFor } from "./_edge-visibility.js";
-import { archiveDates, archiveVersions } from "./admin-archive-history.js";
-import { archiveLines, readArchive } from "./admin-archive-read.js";
-import type { PendingBlob, ReadArchive } from "./admin-archive-read.js";
+import { archiveDates, archiveVersions } from "./restore-archive-history.js";
+import { archiveLines, readArchive } from "./restore-archive-read.js";
+import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 
 function archiveScalarRefusal(
@@ -140,9 +143,9 @@ function archiveExtensions(
 }
 
 const restoreArchiveRoute = createRoute({
-  operationId: "adminRestoreArchive",
+  operationId: "restoreArchive",
   method: "post",
-  path: "/restore-archive",
+  path: "/",
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
@@ -564,7 +567,7 @@ async function restoreRows(
           },
           {
             ...actor,
-            action: "admin.restore_archive.blobs",
+            action: "restore_archive.blobs",
             resource_type: "blob",
             details: { hashes: batch.map((blob) => blob.hash) },
           },
@@ -886,8 +889,8 @@ async function restoreRows(
     },
     (result) => ({
       ...actor,
-      action: "admin.restore_archive",
-      resource_type: "admin.restore_archive",
+      action: "restore_archive",
+      resource_type: "restore_archive",
       details: {
         imported: result.imported,
         duplicates: result.duplicates,
@@ -906,7 +909,7 @@ async function restoreRows(
   );
 }
 
-export function adminArchiveRoutes(
+export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
   limits: { maxRowBytes: number },

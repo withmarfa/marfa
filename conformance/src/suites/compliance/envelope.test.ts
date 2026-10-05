@@ -158,8 +158,8 @@ describe("one envelope for every list and search", () => {
       path: () => `/blobs/${blobHash}/locations`,
     },
     {
-      template: "/admin/platform-types/drift",
-      path: () => "/admin/platform-types/drift",
+      template: "/platform-types/drift",
+      path: () => "/platform-types/drift",
       operator: true,
     },
     {

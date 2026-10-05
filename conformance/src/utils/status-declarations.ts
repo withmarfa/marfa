@@ -126,7 +126,7 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
  * unlisted fails.
  */
 export const UNREACHED: Readonly<Record<string, string>> = {
-  "DELETE /admin/platform-types/{id} 200":
+  "DELETE /platform-types/{id} 200":
     "a platform row this build does not ship, which only an earlier build writes; drawing it means writing that row into the store and restarting the server, which this suite does not arrange",
   "GET /types/{id} 409":
     "a stored inheritance chain with a cycle or past the resolution depth, which the type doors refuse to write; drawing it means writing the chain into the store and restarting the server, which this suite does not arrange",

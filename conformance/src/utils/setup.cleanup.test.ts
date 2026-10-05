@@ -404,7 +404,7 @@ describe("type tracking records the declared parent", () => {
     return {
       registerType: (schema: { id: string }) =>
         Promise.resolve({ ok: true, status: 201, data: { type: schema } }),
-      updateType: (_id: string, _schema: object) =>
+      replaceType: (_id: string, _schema: object) =>
         Promise.resolve({ ok: true, status: 200, data: {} }),
     };
   }
@@ -467,7 +467,7 @@ describe("type tracking records the declared parent", () => {
       id: "user.b",
       parent: "user.a",
     });
-    await (client.updateType as (i: string, s: object) => Promise<unknown>)(
+    await (client.replaceType as (i: string, s: object) => Promise<unknown>)(
       "user.b",
       { parent: "user.z" },
     );
@@ -493,7 +493,7 @@ describe("type tracking records the declared parent", () => {
     // A field-only edit, which is what every update in the suite is.
     // Reading the absent key as "no parent" would order this type alongside
     // its own parent and race the pair the ordering exists to separate.
-    await (client.updateType as (i: string, s: object) => Promise<unknown>)(
+    await (client.replaceType as (i: string, s: object) => Promise<unknown>)(
       "user.b",
       { fields: { url: { type: "string" } } },
     );

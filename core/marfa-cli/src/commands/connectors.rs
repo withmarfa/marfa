@@ -108,7 +108,7 @@ pub enum StateCommand {
     },
     /// Remove the state document and every agreement. The connector's own
     /// key, or the operator key.
-    Clear {
+    Delete {
         /// The connector id.
         id: String,
     },
@@ -127,7 +127,7 @@ pub enum AgreementsCommand {
         body: BodySource,
     },
     /// The agreements of the rows named, each once, in the order first named.
-    Find {
+    Lookup {
         /// The connector id.
         id: String,
         /// The item ids.
@@ -381,8 +381,8 @@ pub fn agreements_write_request(
     Ok(Request::post(&["connectors", id, "agreements"]).json(Value::Object(body)))
 }
 
-pub fn agreements_find_request(id: &str, items: &[String]) -> Request {
-    Request::post(&["connectors", id, "agreements", "find"]).json(json!({ "item_ids": items }))
+pub fn agreements_lookup_request(id: &str, items: &[String]) -> Request {
+    Request::post(&["connectors", id, "agreements", "lookup"]).json(json!({ "item_ids": items }))
 }
 
 pub fn agreements_list_request(id: &str, waiting: Option<bool>, page: &PageArgs) -> Request {
@@ -396,7 +396,7 @@ fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), Cl
     let request = match command {
         StateCommand::Get { id } => Request::get(&["connectors", &id, "state"]),
         StateCommand::Put { id, process, body } => state_put_request(&id, &process, body.read()?)?,
-        StateCommand::Clear { id } => Request::delete(&["connectors", &id, "state"]),
+        StateCommand::Delete { id } => Request::delete(&["connectors", &id, "state"]),
     };
     out.value(&remote.json(&request)?)
 }
@@ -406,7 +406,7 @@ fn agreements(command: AgreementsCommand, remote: &Remote, out: &Printer) -> Res
         AgreementsCommand::Write { id, process, body } => {
             agreements_write_request(&id, &process, body.read()?)?
         }
-        AgreementsCommand::Find { id, items } => agreements_find_request(&id, &items),
+        AgreementsCommand::Lookup { id, items } => agreements_lookup_request(&id, &items),
         AgreementsCommand::List { id, waiting, page } => {
             agreements_list_request(&id, waiting, &page)
         }

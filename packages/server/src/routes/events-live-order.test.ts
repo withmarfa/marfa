@@ -78,7 +78,7 @@ describe("a live stream", () => {
         key: ctx.workingKey,
       });
       expect(trashed.status).toBe(200);
-      const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+      const purged = await request(ctx.app, "POST", `/items/${id}/purge`, {
         key: ctx.workingKey,
       });
       expect(purged.status).toBe(200);

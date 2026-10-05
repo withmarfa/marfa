@@ -105,7 +105,7 @@ it("matches a real server's field decisions and keeps queued writes across a cat
   expect(schema.ok).toBe(true);
   expect(
     (
-      await client.updateType(type, {
+      await client.replaceType(type, {
         version: schema.data.version,
         fields: { ...fields, added: { type: "string", required: true } },
       })

@@ -210,7 +210,7 @@ describe("what reaches the full-text index", () => {
       key: ctx.workingKey,
     });
     expect(trash.status).toBe(200);
-    const purge = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+    const purge = await request(ctx.app, "POST", `/items/${item.id}/purge`, {
       key: ctx.workingKey,
     });
     expect(purge.status).toBe(200);

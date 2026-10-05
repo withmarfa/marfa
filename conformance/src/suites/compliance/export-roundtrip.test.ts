@@ -2,7 +2,7 @@
  * The round trip that matters: export a slice of the dataset, hard-purge it,
  * restore the archive, and get the same content back — items under their
  * original ids, tags, extensions, and the edges between them. The sibling
- * admin-archive suite proves the archive format is accepted; this one proves
+ * restore-archive suite proves the archive format is accepted; this one proves
  * a restore actually reconstructs what an export claims to carry, which is
  * the property a backup exists for.
  *

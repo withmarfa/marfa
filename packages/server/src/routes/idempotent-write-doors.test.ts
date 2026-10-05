@@ -72,7 +72,7 @@ const WRITE_METHODS: readonly string[] = [
 const WRITERS: Record<string, string> = {
   // --- Behind an idempotent door ---
   "routes/items.ts":
-    "POST /items, PATCH /items/{id}, DELETE /items/{id} and DELETE /items/{id}/purge, all in IDEMPOTENT_WRITE_DOORS",
+    "POST /items, PATCH /items/{id}, DELETE /items/{id} and POST /items/{id}/purge, all in IDEMPOTENT_WRITE_DOORS",
   "routes/items-lifecycle.ts":
     "POST /items/{id}/restore and POST /items/{id}/transition, both in IDEMPOTENT_WRITE_DOORS",
   "routes/edges.ts":
@@ -87,7 +87,7 @@ const WRITERS: Record<string, string> = {
     "POST /items/bulk resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding — the collision this mechanism removes is not reachable there. POST /items/bulk-actions queues a job rather than writing, and is in IDEMPOTENT_WRITE_DOORS",
   "routes/edges-bulk.ts":
     "POST /edges/bulk upserts on the (source, target, type) triple, so a retry converges. A batch response is also megabytes, and storing one per key trades an unbounded table for a property the door already has",
-  "routes/admin-archive.ts":
+  "routes/restore-archive.ts":
     "archive restore is idempotent by construction — an existing row is reported skipped — and it is an operator-key operation over a file rather than a write a client retries",
 
   // --- Writes with no request behind them, so no header to carry ---
@@ -237,7 +237,7 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones":
     "moves a time only ever later, so a repeat is already a no-op",
-  "DELETE /items/bulk-actions/jobs/:id":
+  "POST /items/bulk-actions/jobs/:id/cancel":
     "requests cancellation of a job, and asking twice is already a no-op on a terminal job",
   "POST /edges/bulk": "upserts on the triple, so a retry converges",
   "POST /items/:id/tags":

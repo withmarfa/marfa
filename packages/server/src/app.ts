@@ -47,8 +47,8 @@ import { folderRoutes } from "./routes/folders.js";
 import type { BackgroundJobs } from "./background-jobs/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
-import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
+import { restoreArchiveRoutes } from "./routes/restore-archive.js";
+import { platformTypeRoutes } from "./routes/platform-types.js";
 import { ownerRoutes } from "./routes/owner.js";
 import { authRoutes } from "./routes/auth-pages.js";
 import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
@@ -318,7 +318,7 @@ export function createApp(
     "audit",
     "metrics",
     "edges",
-    "admin_archive",
+    "restore",
     "connectors",
     "inbound_webhooks",
   ];
@@ -640,10 +640,10 @@ export function createApp(
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));
   app.route(
-    "/admin",
-    adminArchiveRoutes(storage, blobs, { maxRowBytes: bulkBodyCap(config) }),
+    "/restore",
+    restoreArchiveRoutes(storage, blobs, { maxRowBytes: bulkBodyCap(config) }),
   );
-  app.route("/admin", adminPlatformTypeRoutes(storage));
+  app.route("/platform-types", platformTypeRoutes(storage));
   // The owner door creates the account on the sign-in surface, so it is
   // served exactly when that surface is.
   if (auth) app.route("/owner", ownerRoutes(storage, auth));

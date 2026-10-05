@@ -41,11 +41,11 @@ describe("PUT /types and a type's version", () => {
     const typeId = `user.versioning-shape-${ctx.runId}`;
     const initial = await registerInitial(typeId);
 
-    const malformed = await client.updateType("not a type id", initial);
+    const malformed = await client.replaceType("not a type id", initial);
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("validation_error");
 
-    const wrongShape = await client.updateType(typeId, {
+    const wrongShape = await client.replaceType(typeId, {
       ...initial,
       fields: { body: { type: "not-a-field-type" } },
     } as unknown as TypeSchema);
@@ -87,7 +87,7 @@ describe("PUT /types and a type's version", () => {
       },
     ];
     for (const { label, schema } of steps) {
-      const r = await client.updateType(typeId, { ...schema, version: 0 });
+      const r = await client.replaceType(typeId, { ...schema, version: 0 });
       expect(r.status, label).toBe(200);
       expect(r.data?.type.version, label).toBe(0);
       expect(Object.keys(r.data?.type.fields ?? {}), label).toEqual(
@@ -100,11 +100,11 @@ describe("PUT /types and a type's version", () => {
     const typeId = `user.versioning-given-${ctx.runId}`;
     const initial = await registerInitial(typeId);
 
-    const named = await client.updateType(typeId, { ...initial, version: 3 });
+    const named = await client.replaceType(typeId, { ...initial, version: 3 });
     expect(named.status).toBe(200);
     expect(named.data?.type.version).toBe(3);
 
-    const unnamed = await client.updateType(typeId, initial);
+    const unnamed = await client.replaceType(typeId, initial);
     expect(unnamed.status).toBe(200);
     expect(unnamed.data?.type.version).toBe(0);
   });

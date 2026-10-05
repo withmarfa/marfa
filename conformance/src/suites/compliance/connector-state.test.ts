@@ -52,7 +52,7 @@ const made: Connector[] = [];
 afterAll(async () => {
   // A source's state outlives its registration, so it goes first.
   for (const mine of made) {
-    await getOperatorClient().clearConnectorState(mine.id);
+    await getOperatorClient().deleteConnectorState(mine.id);
   }
   await cleanup(ctx);
 });
@@ -104,7 +104,7 @@ async function mintUnder(source: string, label: string): Promise<MarfaClient> {
 }
 
 async function found(mine: Connector, ids: string[]): Promise<string[]> {
-  const res = await mine.client.findConnectorAgreements(mine.id, ids);
+  const res = await mine.client.lookupConnectorAgreements(mine.id, ids);
   expect(res.status).toBe(200);
   return res.data.data.map((row) => row.item_id);
 }
@@ -354,7 +354,7 @@ describe("the hold on an instance that names its window", () => {
   }) {
     return {
       state: (await own.getConnectorState(id)).data.state,
-      records: (await own.findConnectorAgreements(id, [row])).data.data.map(
+      records: (await own.lookupConnectorAgreements(id, [row])).data.data.map(
         (r) => r.record,
       ),
     };
@@ -585,7 +585,7 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(written.status).toBe(200);
     const read = await call<{ data: { record: unknown }[] }>(
-      "/agreements/find",
+      "/agreements/lookup",
       "POST",
       { item_ids: [row.id] },
     );
@@ -679,7 +679,7 @@ describe("what a connector keeps on the instance", () => {
       skipped: [task.data.item.id, missing],
     });
 
-    const read = await mine.client.findConnectorAgreements(mine.id, [
+    const read = await mine.client.lookupConnectorAgreements(mine.id, [
       trashed.id,
       task.data.item.id,
       missing,
@@ -689,7 +689,7 @@ describe("what a connector keeps on the instance", () => {
     expect(read.status).toBe(200);
     await expectMatchesSchema(
       "POST",
-      "/connectors/{id}/agreements/find",
+      "/connectors/{id}/agreements/lookup",
       200,
       read.data,
     );
@@ -721,7 +721,7 @@ describe("what a connector keeps on the instance", () => {
       cleared: 1,
       skipped: [task.data.item.id, missing],
     });
-    const after = await mine.client.findConnectorAgreements(mine.id, [
+    const after = await mine.client.lookupConnectorAgreements(mine.id, [
       kept.id,
       waiting.id,
     ]);
@@ -838,12 +838,12 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(mine, [row.id])).toEqual([]);
 
     for (const ids of [[], [row.id, ...many(500)]]) {
-      const refused = await mine.client.findConnectorAgreements(mine.id, ids);
+      const refused = await mine.client.lookupConnectorAgreements(mine.id, ids);
       expect(refused.status, `find ${String(ids.length)}`).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
     }
     const unnamed = await mine.client.rawRequest<unknown>(
-      `/connectors/${mine.id}/agreements/find`,
+      `/connectors/${mine.id}/agreements/lookup`,
       { method: "POST", body: {} },
     );
     expect(unnamed.status).toBe(400);
@@ -867,7 +867,7 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(cleared.status).toBe(200);
     expect(cleared.data).toMatchObject({ written: 0, cleared: 0 });
-    const read = await mine.client.findConnectorAgreements(mine.id, [
+    const read = await mine.client.lookupConnectorAgreements(mine.id, [
       row.id,
       ...many(499),
     ]);
@@ -937,7 +937,7 @@ describe("what a connector keeps on the instance", () => {
     ).toBe(1);
     await refusedFor(
       "POST",
-      "agreements/find",
+      "agreements/lookup",
       { item_ids: [row.id], waiting: true },
       "waiting",
     );
@@ -1202,7 +1202,7 @@ describe("what a connector keeps on the instance", () => {
     ).toEqual([kept.id]);
 
     // Reads join the rows, so only the clear's count shows the store itself.
-    expect((await mine.client.clearConnectorState(mine.id)).status).toBe(200);
+    expect((await mine.client.deleteConnectorState(mine.id)).status).toBe(200);
     const audited = await client.listAudit({
       resource_id: mine.id,
       action: "connector_state.clear",
@@ -1302,7 +1302,8 @@ describe("what a connector keeps on the instance", () => {
       written.data,
     );
     expect(
-      (await mine.client.findConnectorAgreements(mine.id, [row.id])).data.data,
+      (await mine.client.lookupConnectorAgreements(mine.id, [row.id])).data
+        .data,
     ).toMatchObject([{ record: { etag: "h" } }]);
   });
 
@@ -1345,8 +1346,8 @@ describe("what a connector keeps on the instance", () => {
           }),
         ],
         [
-          "POST agreements/find",
-          await c.findConnectorAgreements(mine.id, [row.id]),
+          "POST agreements/lookup",
+          await c.lookupConnectorAgreements(mine.id, [row.id]),
         ],
         ["GET agreements", await c.listConnectorAgreements(mine.id)],
       ] as const) {
@@ -1388,7 +1389,7 @@ describe("what a connector keeps on the instance", () => {
     };
     await seed();
 
-    const refused = await other.clearConnectorState(mine.id);
+    const refused = await other.deleteConnectorState(mine.id);
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("forbidden");
     expect((await mine.client.getConnectorState(mine.id)).data.state).toEqual({
@@ -1401,7 +1402,7 @@ describe("what a connector keeps on the instance", () => {
       ),
     ).toHaveLength(2);
 
-    const own = await mine.client.clearConnectorState(mine.id);
+    const own = await mine.client.deleteConnectorState(mine.id);
     expect(own.status).toBe(200);
     await expectMatchesSchema(
       "DELETE",
@@ -1426,7 +1427,7 @@ describe("what a connector keeps on the instance", () => {
       "/keys/current",
     );
     expect(current.status).toBe(200);
-    const operator = await getOperatorClient().clearConnectorState(mine.id);
+    const operator = await getOperatorClient().deleteConnectorState(mine.id);
     expect(operator.status).toBe(200);
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: {},
@@ -1472,7 +1473,9 @@ describe("what a connector keeps on the instance", () => {
       const own = [
         { item_id: row.id, waiting: true, record: { etag: mine.id } },
       ];
-      const read = await mine.client.findConnectorAgreements(mine.id, [row.id]);
+      const read = await mine.client.lookupConnectorAgreements(mine.id, [
+        row.id,
+      ]);
       expect(read.data.data.map(({ updated_at: _, ...rest }) => rest)).toEqual(
         own,
       );
@@ -1491,7 +1494,7 @@ describe("what a connector keeps on the instance", () => {
     expect(cleared.data).toEqual({ written: 0, cleared: 1, skipped: [] });
     expect(await found(a, [row.id])).toEqual([]);
     expect(
-      (await b.client.findConnectorAgreements(b.id, [row.id])).data.data.map(
+      (await b.client.lookupConnectorAgreements(b.id, [row.id])).data.data.map(
         (r) => r.record,
       ),
     ).toEqual([{ etag: b.id }]);
@@ -1520,7 +1523,7 @@ describe("what a connector keeps on the instance", () => {
     expect(bState.status).toBe(200);
     expect((await a.client.getConnectorState(a.id)).data).toEqual(aState.data);
 
-    expect((await a.client.clearConnectorState(a.id)).status).toBe(200);
+    expect((await a.client.deleteConnectorState(a.id)).status).toBe(200);
     // The witness: A's own went.
     expect((await a.client.getConnectorState(a.id)).data).toEqual({
       state: {},
@@ -1566,7 +1569,9 @@ describe("what a connector keeps on the instance", () => {
     expect((await next.client.getConnectorState(next.id)).data).toEqual(
       state.data,
     );
-    const handed = await next.client.findConnectorAgreements(next.id, [row.id]);
+    const handed = await next.client.lookupConnectorAgreements(next.id, [
+      row.id,
+    ]);
     expect(handed.data.data).toHaveLength(1);
     expect(handed.data.data[0]).toMatchObject({
       item_id: row.id,
@@ -1588,7 +1593,7 @@ describe("what a connector keeps on the instance", () => {
       state: { cursor: "live" },
     });
     expect(live.status).toBe(200);
-    expect((await operator.clearConnectorState(first.id)).status).toBe(200);
+    expect((await operator.deleteConnectorState(first.id)).status).toBe(200);
     expect((await next.client.getConnectorState(next.id)).data).toEqual({
       state: {},
       updated_at: null,
@@ -1645,7 +1650,7 @@ describe("what a connector keeps on the instance", () => {
       { cursor: "left behind" },
     );
     expect(await found(later, [row.id])).toEqual([row.id]);
-    expect((await operator.clearConnectorState(later.id)).status).toBe(200);
+    expect((await operator.deleteConnectorState(later.id)).status).toBe(200);
     expect((await later.client.getConnectorState(later.id)).data).toEqual({
       state: {},
       updated_at: null,

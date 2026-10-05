@@ -101,7 +101,7 @@ async function unpack(bytes: Buffer) {
 
 function restore(target: TestContext, archive: Buffer) {
   initEventLog(target.storage.eventLog);
-  return target.app.request("/admin/restore-archive", {
+  return target.app.request("/restore", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${target.operatorKey}`,

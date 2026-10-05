@@ -130,7 +130,7 @@ describe("attaching a file", () => {
       const outcome = await c.operator.run([
         "--json",
         "blobs",
-        "drop",
+        "delete",
         attached.blob.hash,
         "--store",
         store,

@@ -174,7 +174,7 @@ it("commits enqueue before wake and audits only accepted cancellation transition
     { id: job.id },
   ]);
   const cancel = () =>
-    request(ctx.app, "DELETE", `/items/bulk-actions/jobs/${job.id}`, {
+    request(ctx.app, "POST", `/items/bulk-actions/jobs/${job.id}/cancel`, {
       key: ctx.workingKey,
     });
   await sql(

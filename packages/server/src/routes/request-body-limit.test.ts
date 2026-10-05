@@ -140,7 +140,7 @@ describe("global request-body size cap", () => {
     const archive = Buffer.concat(chunks);
     expect(archive.length).toBeGreaterThan(REQUEST_CAP * 32);
 
-    const res = await ctx.app.request("/admin/restore-archive", {
+    const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,

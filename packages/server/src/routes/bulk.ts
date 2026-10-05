@@ -426,8 +426,8 @@ const bulkActionStatusRoute = createRoute({
 // queued or running, and answers what it wrote; a row already terminal is
 // left alone and answered as it stands.
 const bulkActionCancelRoute = createRoute({
-  method: "delete",
-  path: "/bulk-actions/jobs/{id}",
+  method: "post",
+  path: "/bulk-actions/jobs/{id}/cancel",
   operationId: "cancelBulkActionJob",
   tags: ["Bulk actions"],
   summary: "Cancel a bulk-action job",
@@ -1146,7 +1146,7 @@ export function bulkRoutes(storage: Storage) {
     return c.json(jobRowToEnvelope(job), 200);
   });
 
-  // DELETE /items/bulk-actions/jobs/:id — request cancellation.
+  // POST /items/bulk-actions/jobs/:id/cancel — request cancellation.
   router.openapi(bulkActionCancelRoute, async (c) => {
     requireAuth(c);
     const id = c.req.valid("param").id;

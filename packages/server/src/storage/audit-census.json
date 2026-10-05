@@ -182,7 +182,7 @@
       "EdgeStore.deleteBySource": 1
     }
   },
-  "routes/admin-archive-types.ts": {
+  "routes/restore-archive-types.ts": {
     "boundary": "Audited registration units nested in the restore's one transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
     "calls": {
       "EdgeTypeStore.create": 1,
@@ -190,7 +190,7 @@
       "runAuditedTransaction": 2
     }
   },
-  "routes/admin-archive.ts": {
+  "routes/restore-archive.ts": {
     "boundary": "One audited restore transaction holding the registrations, blob rows, items, metadata, history, edges and events; blob bytes are placed before it opens, each behind an unaudited copy-deletion record that the transaction clears, as the cleanup queue's bookkeeping. Native failure coverage in external-audit.test.ts, archive-complete-roundtrip.test.ts and archive-restore-bounds.test.ts.",
     "calls": {
       "BlobRegistry.queueCopyDeletion": 1,
@@ -204,8 +204,8 @@
       "finalizeArchiveItem": 1
     }
   },
-  "routes/admin-platform-types.ts": {
-    "boundary": "Audited platform type removal, registry settlement inside transaction; admin-platform-types.test.ts.",
+  "routes/platform-types.ts": {
+    "boundary": "Audited platform type removal, registry settlement inside transaction; platform-types.test.ts.",
     "calls": {
       "TypeStore.deletePlatformType": 1,
       "runAuditedTransaction": 1

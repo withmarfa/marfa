@@ -418,7 +418,7 @@ export async function writeArchiveTypes(
           wrote
             ? {
                 ...actor,
-                action: "admin.restore_archive.type",
+                action: "restore_archive.type",
                 resource_type: "type",
                 resource_id: schema.id,
                 details: { provenance: entry.provenance },
@@ -455,7 +455,7 @@ export async function writeArchiveTypes(
       },
       {
         ...actor,
-        action: "admin.restore_archive.edge_type",
+        action: "restore_archive.edge_type",
         resource_type: "edge_type",
         resource_id: schema.id,
       },

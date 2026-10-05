@@ -23,7 +23,7 @@ import {
 } from "../pubsub.js";
 import { setBusyBudgetMs } from "../storage/sqlite/connection.js";
 import { finishPendingCopyDeletions } from "../background-jobs/blob-delete.js";
-import { MAX_ARCHIVE_TEXT_BYTES } from "./admin-archive-read.js";
+import { MAX_ARCHIVE_TEXT_BYTES } from "./restore-archive-read.js";
 
 let ctx: TestContext;
 beforeEach(async () => {
@@ -186,7 +186,7 @@ function rows(count: number, type: string, withEdges = true) {
 
 function restore(archive: Buffer): Promise<Response> {
   return Promise.resolve(
-    ctx.app.request("/admin/restore-archive", {
+    ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -212,7 +212,7 @@ async function countRows(table: string): Promise<number> {
   return Number(row?.n);
 }
 
-describe("POST /admin/restore-archive in bounded memory", () => {
+describe("POST /restore in bounded memory", () => {
   it("steps past a 600 MB entry it does not read without holding it", async () => {
     const { items } = rows(1, "core.note", false);
     const archive = await buildArchive([
@@ -293,7 +293,7 @@ describe("POST /admin/restore-archive in bounded memory", () => {
   });
 });
 
-describe("POST /admin/restore-archive all or nothing", () => {
+describe("POST /restore all or nothing", () => {
   it("leaves no registration, row or event when it fails after registering the archive's types", async () => {
     const { ids, items, edges } = rows(3, TYPE);
     const archive = await buildArchive([MANIFEST, TYPES, items, edges]);
@@ -325,9 +325,9 @@ describe("POST /admin/restore-archive all or nothing", () => {
     expect(await ctx.storage.items.get(ids[0] ?? "")).toBeNull();
     expect(await ctx.storage.eventLog.getAfter(0n, 100)).toEqual([]);
     for (const action of [
-      "admin.restore_archive",
-      "admin.restore_archive.type",
-      "admin.restore_archive.edge_type",
+      "restore_archive",
+      "restore_archive.type",
+      "restore_archive.edge_type",
     ]) {
       expect((await ctx.storage.audit.list({ action })).data).toEqual([]);
     }
@@ -435,7 +435,7 @@ describe("POST /admin/restore-archive all or nothing", () => {
     const log = audit.log.bind(audit);
     let heapAtCommit = 0;
     audit.log = (entry, id) => {
-      if (entry.action === "admin.restore_archive") heapAtCommit = liveHeap();
+      if (entry.action === "restore_archive") heapAtCommit = liveHeap();
       return log(entry, id);
     };
     // Read back after the commit to tell subscribers, a page at a time.
@@ -585,7 +585,7 @@ describe("POST /admin/restore-archive all or nothing", () => {
     initEventLog(small.storage.eventLog);
     const post = (archive: Buffer) =>
       Promise.resolve(
-        small.app.request("/admin/restore-archive", {
+        small.app.request("/restore", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${small.operatorKey}`,
@@ -952,7 +952,7 @@ function next(child: ChildProcess, kind: string): Promise<Message> {
   });
 }
 
-describe("POST /admin/restore-archive killed partway", () => {
+describe("POST /restore killed partway", () => {
   it("leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup", async () => {
     const children: ChildProcess[] = [];
     const boot = async (stopAfter?: number) => {
@@ -986,7 +986,7 @@ describe("POST /admin/restore-archive killed partway", () => {
       ]);
       const first = await boot(150);
       const stopped = next(first.child, "stopped");
-      const answer = fetch(`${first.url}/admin/restore-archive`, {
+      const answer = fetch(`${first.url}/restore`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1019,7 +1019,7 @@ describe("POST /admin/restore-archive killed partway", () => {
       expect(await countRows("items WHERE source = 'bounds'")).toBe(0);
       expect(await countRows("event_log")).toBe(0);
       expect(
-        await countRows("audit_log WHERE action LIKE 'admin.restore_archive%'"),
+        await countRows("audit_log WHERE action LIKE 'restore_archive%'"),
       ).toBe(0);
 
       // The bytes were placed before the transaction and are still there,
@@ -1040,7 +1040,7 @@ describe("POST /admin/restore-archive killed partway", () => {
       expect(await ctx.storage.blobs.listPendingCopyDeletions(100)).toEqual([]);
 
       // The same archive restores whole into the restarted server.
-      const restored = await fetch(`${second.url}/admin/restore-archive`, {
+      const restored = await fetch(`${second.url}/restore`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,

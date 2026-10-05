@@ -271,7 +271,7 @@ export class MarfaClient {
         ? `?version=${String(options.version)}`
         : "";
     return this.request<{ ok: boolean }>(`/items/${id}/purge${query}`, {
-      method: "DELETE",
+      method: "POST",
     });
   }
 
@@ -385,7 +385,7 @@ export class MarfaClient {
     return this.request<TypeSchema>(`/types/${typeId}`);
   }
 
-  async updateType(
+  async replaceType(
     typeId: string,
     schema: object,
   ): Promise<ApiResponse<{ type: TypeSchema }>> {
@@ -594,8 +594,8 @@ export class MarfaClient {
   /** Request cancellation of a bulk-action job. Idempotent on terminal rows. */
   async bulkActionCancel(jobId: string): Promise<ApiResponse<BulkActionJob>> {
     return this.request<BulkActionJob>(
-      `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
-      { method: "DELETE" },
+      `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
     );
   }
 
@@ -639,7 +639,7 @@ export class MarfaClient {
     archive: ArrayBuffer | Uint8Array,
   ): Promise<ApiResponse<RestoreArchiveResponse>> {
     return this.requestBinary<RestoreArchiveResponse>(
-      "/admin/restore-archive",
+      "/restore",
       archive,
       "application/gzip",
     );
@@ -803,7 +803,7 @@ export class MarfaClient {
   }
 
   /** `DELETE /blobs/{hash}/locations/{store}`: drop one store's copy. */
-  async dropBlobLocation(
+  async deleteBlobLocation(
     hash: string,
     store: string,
   ): Promise<ApiResponse<{ ok: true }>> {
@@ -931,7 +931,7 @@ export class MarfaClient {
     });
   }
 
-  async clearConnectorState(id: string): Promise<ApiResponse<{ ok: true }>> {
+  async deleteConnectorState(id: string): Promise<ApiResponse<{ ok: true }>> {
     return this.request<{ ok: true }>(`/connectors/${id}/state`, {
       method: "DELETE",
     });
@@ -947,12 +947,12 @@ export class MarfaClient {
     );
   }
 
-  async findConnectorAgreements(
+  async lookupConnectorAgreements(
     id: string,
     itemIds: string[],
   ): Promise<ApiResponse<{ data: ConnectorAgreementRow[] }>> {
     return this.request<{ data: ConnectorAgreementRow[] }>(
-      `/connectors/${id}/agreements/find`,
+      `/connectors/${id}/agreements/lookup`,
       { method: "POST", body: { item_ids: itemIds } },
     );
   }
@@ -1312,7 +1312,7 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `GET /admin/platform-types/drift`: the operator key only. */
+  /** `GET /platform-types/drift`: the operator key only. */
   async listPlatformTypeDrift(): Promise<
     ApiResponse<
       PaginatedResult<{
@@ -1323,21 +1323,21 @@ export class MarfaClient {
       }>
     >
   > {
-    return this.request("/admin/platform-types/drift");
+    return this.request("/platform-types/drift");
   }
 
   /**
-   * `DELETE /admin/platform-types/{id}`: the operator key only.
+   * `DELETE /platform-types/{id}`: the operator key only.
    *
    * Encoded because the identifier is the last segment: a `?` or a `#`
    * in one would otherwise end the path early and the door would answer a
    * plausible refusal about a shorter identifier than the fixture sent.
    */
-  async removePlatformType(
+  async deletePlatformType(
     id: string,
   ): Promise<ApiResponse<{ removed: true; id: string }>> {
     return this.request<{ removed: true; id: string }>(
-      `/admin/platform-types/${encodeURIComponent(id)}`,
+      `/platform-types/${encodeURIComponent(id)}`,
       { method: "DELETE" },
     );
   }

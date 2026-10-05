@@ -354,6 +354,9 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "POST /items/:id/transition":
     "lifecycle state axis, not the item's properties",
   "POST /items/:id/restore": "lifecycle state axis, not the item's properties",
+  "POST /items/:id/purge": "deletes a trashed row, writes no properties",
+  "POST /items/bulk-actions/jobs/:id/cancel":
+    "ends a queued job, writes no properties",
 };
 
 // ---------------------------------------------------------------------------
@@ -457,7 +460,7 @@ describe("every route that can write an item is accounted for", () => {
 
     // **And what it cannot see, stated rather than implied.** The scope is a
     // URL prefix, so it covers routes mounted under `/items` and nothing
-    // else; other files reach the store from `/auth` and `/admin`.
+    // else; other files reach the store from `/auth` and `/restore`.
     //
     // `idempotent-write-doors.test.ts` derives its scope from the tree
     // instead, and its header argues against exactly this walk. Bringing

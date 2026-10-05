@@ -41,16 +41,16 @@ const WRITING = [
   "PATCH /items/:id",
   "POST /items/bulk",
   "POST /items/bulk-actions",
-  "POST /admin/restore-archive",
+  "POST /restore",
 ];
 
 /** Doors under `/items` that write no property, with what they write. */
 const NOT_WRITING: Record<string, string> = {
   "DELETE /items/:id": "moves a row to the bin",
-  "DELETE /items/:id/purge": "removes a row",
+  "POST /items/:id/purge": "removes a row",
   "DELETE /items/:id/extensions/:namespace": "an extension, not a property",
   "DELETE /items/:id/tags/:tag": "a tag",
-  "DELETE /items/bulk-actions/jobs/:id": "cancels a queued job",
+  "POST /items/bulk-actions/jobs/:id/cancel": "cancels a queued job",
   "PATCH /items/:id/metadata": "metadata",
   "PUT /items/:id/metadata": "metadata",
   "PUT /items/:id/extensions/:namespace": "an extension, not a property",
@@ -70,7 +70,7 @@ function itemDoors(): string[] {
           (r) =>
             r.path === "/items" ||
             r.path.startsWith("/items/") ||
-            r.path === "/admin/restore-archive",
+            r.path === "/restore",
         )
         .filter((r) => r.method !== "ALL" && r.method !== "GET")
         .map((r) => `${r.method} ${r.path}`),
@@ -310,7 +310,7 @@ describe("every item write door holds an event's schedule to one rule", () => {
     expect((await propertiesOf(id)).recurrence).toBeUndefined();
   });
 
-  it("refuses the whole archive on POST /admin/restore-archive", async () => {
+  it("refuses the whole archive on POST /restore", async () => {
     const id = "01912345-0000-7000-8000-00000000ca5e";
     const line = (properties: Record<string, unknown>) => ({
       item: {
@@ -323,7 +323,7 @@ describe("every item write door holds an event's schedule to one rule", () => {
       metadata: { item_id: id, tags: [], extensions: {} },
     });
     const restore = async (archive: Buffer) =>
-      ctx.app.request("/admin/restore-archive", {
+      ctx.app.request("/restore", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,

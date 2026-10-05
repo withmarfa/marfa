@@ -102,7 +102,7 @@ async function makeEdge(source: string, target: string): Promise<string> {
 // purge: the outbound edges, the inbound edges, and the row
 // ---------------------------------------------------------------------------
 
-describe("DELETE /items/{id}/purge", () => {
+describe("POST /items/{id}/purge", () => {
   it("keeps the edges when the item cannot be removed", async () => {
     const target = await makeNote("to purge");
     const other = await makeNote("pointing at it");
@@ -115,7 +115,7 @@ describe("DELETE /items/{id}/purge", () => {
     const broken = breakWrite(itemWrites(ctx.storage), "purge");
     let status: number;
     try {
-      const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
+      const res = await request(ctx.app, "POST", `/items/${target}/purge`, {
         key: ctx.workingKey,
       });
       status = res.status;
@@ -143,7 +143,7 @@ describe("DELETE /items/{id}/purge", () => {
       key: ctx.workingKey,
     });
 
-    const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${target}/purge`, {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);

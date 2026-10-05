@@ -162,7 +162,7 @@ describe("FTS — searchable:false honoring", () => {
     expect(await matches()).toBe(true);
 
     const flip = async (searchable: boolean) => {
-      const updated = await client.updateType(typeId, {
+      const updated = await client.replaceType(typeId, {
         id: typeId,
         version: 1,
         fields: { blurb: { type: "string", searchable } },

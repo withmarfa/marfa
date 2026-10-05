@@ -10,7 +10,7 @@ import type { EnforcementSettings } from "@withmarfa/shared";
 /**
  * The strict-mode lever, as the item write doors ask it: `POST /items`,
  * `POST /items/bulk` on both halves of an upsert, `PATCH /items/{id}`,
- * `POST /admin/restore-archive`, and the job `POST /items/bulk-actions`
+ * `POST /restore`, and the job `POST /items/bulk-actions`
  * queues for `update_properties`, per row it patches.
  *
  * **One reading, because the lever belongs to the type and not to the

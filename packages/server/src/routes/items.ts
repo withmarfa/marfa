@@ -1142,7 +1142,7 @@ const putMetadataRoute = createRoute({
 });
 
 const patchMetadataRoute = createRoute({
-  operationId: "mergeItemMetadata",
+  operationId: "updateItemMetadata",
   method: "patch",
   path: "/{id}/metadata",
   tags: ["Metadata"],
@@ -1334,7 +1334,7 @@ const removeTagRoute = createRoute({
 
 const purgeItemRoute = createRoute({
   operationId: "purgeItem",
-  method: "delete",
+  method: "post",
   path: "/{id}/purge",
   tags: ["Items"],
   summary: "Purge an item",

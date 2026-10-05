@@ -45,7 +45,7 @@ marfa() { "${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_A
 marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'
 marfa items create --type user.snapshot \
   --properties '{"title":"Held before","thumbnail":"not an image"}'
-marfa types update user.snapshot \
+marfa types replace user.snapshot \
   --body '{"version":2,"fields":{"title":{"type":"string"},"thumbnail":{"type":"thumbnail"}}}'
 marfa items create --type user.snapshot \
   --properties '{"title":"With an image","thumbnail":"data:image/png;base64,iVBORw0KGgpiaW5kaW5nIHByb29m"}'

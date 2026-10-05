@@ -163,7 +163,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
       expect(
         (await send({ method: "DELETE", path: `/items/${row.id}` })).status,
       ).toBe(200);
-      return { method: "DELETE", path: `/items/${row.id}/purge` };
+      return { method: "POST", path: `/items/${row.id}/purge` };
     },
   ],
   [
@@ -453,8 +453,7 @@ const doors: [string, () => Door | Promise<Door>][] = [
         (await send({ method: "DELETE", path: `/items/${row.id}` })).status,
       ).toBe(200);
       expect(
-        (await send({ method: "DELETE", path: `/items/${row.id}/purge` }))
-          .status,
+        (await send({ method: "POST", path: `/items/${row.id}/purge` })).status,
       ).toBe(200);
       return {
         method: "POST",

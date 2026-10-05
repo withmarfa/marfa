@@ -217,7 +217,7 @@ describe("registration", () => {
       200,
     );
     expect(
-      (await client.findConnectorAgreements(real.data.id, ["x"])).status,
+      (await client.lookupConnectorAgreements(real.data.id, ["x"])).status,
     ).toBe(200);
     expect(
       (await client.writeConnectorAgreements(real.data.id, { process: "p" }))
@@ -234,7 +234,7 @@ describe("registration", () => {
     expect((await client.releaseConnectorHold(real.data.id, "p")).status).toBe(
       200,
     );
-    expect((await client.clearConnectorState(real.data.id)).status).toBe(200);
+    expect((await client.deleteConnectorState(real.data.id)).status).toBe(200);
 
     const unknown = "01a0c000-0000-7000-8000-000000000000";
     for (const [door, res] of [
@@ -263,15 +263,15 @@ describe("registration", () => {
       ],
       [
         "DELETE /connectors/{id}/state",
-        await client.clearConnectorState(unknown),
+        await client.deleteConnectorState(unknown),
       ],
       [
         "POST /connectors/{id}/agreements",
         await client.writeConnectorAgreements(unknown, { process: "p" }),
       ],
       [
-        "POST /connectors/{id}/agreements/find",
-        await client.findConnectorAgreements(unknown, ["x"]),
+        "POST /connectors/{id}/agreements/lookup",
+        await client.lookupConnectorAgreements(unknown, ["x"]),
       ],
       [
         "GET /connectors/{id}/agreements",

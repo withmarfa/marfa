@@ -67,7 +67,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 const REFUSED_DATABASE_REMEDY =
   "Nothing is upgraded in place. To carry what this file holds into this build, export it " +
   "with the build that wrote it (`GET /export?format=archive`), start this build on a fresh file, " +
-  "and restore the archive there (`POST /admin/restore-archive`). Until the first public release " +
+  "and restore the archive there (`POST /restore`). Until the first public release " +
   "an archive is read only by the build that wrote it, so that restore can refuse it; the file " +
   "stays readable by the build that wrote it either way.";
 

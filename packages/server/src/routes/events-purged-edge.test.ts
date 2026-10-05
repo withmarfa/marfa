@@ -75,7 +75,7 @@ async function purgeABookmarkWithAnEdge(
   ).toBe(200);
   expect(
     (
-      await request(ctx.app, "DELETE", `/items/${bookmark}/purge`, {
+      await request(ctx.app, "POST", `/items/${bookmark}/purge`, {
         key: ctx.workingKey,
       })
     ).status,

@@ -105,7 +105,7 @@ describe("a purge reaches the stream", () => {
     // door already published, and an item with none of them was silent
     // outright — which is the case the edge suite cannot reach.
     const heard = await itemEventsDuring(async () => {
-      const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
+      const res = await request(ctx.app, "POST", `/items/${doomed}/purge`, {
         key: ctx.workingKey,
       });
       expect(res.status).toBe(200);
@@ -161,7 +161,7 @@ describe("a purge reaches the stream", () => {
     // Where the client's cursor stood when it went away.
     const cursor = await currentCursor();
 
-    const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
+    const res = await request(ctx.app, "POST", `/items/${doomed}/purge`, {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);

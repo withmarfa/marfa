@@ -2,7 +2,7 @@
  * `GET /export` can read every lifecycle state in one pass.
  *
  * Export exists to produce a complete copy, and the archive it writes is
- * what `POST /admin/restore-archive` reads back. Its `state` filter took a
+ * what `POST /restore` reads back. Its `state` filter took a
  * single lifecycle value or none, and none applies the same default every
  * item read applies — everything except `trashed`. So an export that
  * genuinely meant "everything stored" returned everything minus the bin,

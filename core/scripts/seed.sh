@@ -81,7 +81,7 @@ elif command == "folder":
 elif command == "trash":
     call("DELETE", f"/items/{args[0]}")
 elif command == "purge":
-    call("DELETE", f"/items/{args[0]}/purge")
+    call("POST", f"/items/{args[0]}/purge")
 else:
     sys.stderr.write(f"seed: unknown command {command!r}\n")
     sys.exit(2)

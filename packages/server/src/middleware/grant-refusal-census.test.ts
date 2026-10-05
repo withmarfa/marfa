@@ -231,9 +231,9 @@ describe("every door that refuses a missing grant names it", () => {
       grant: typeWrite,
     },
     {
-      door: "DELETE /items/{id}/purge",
+      door: "POST /items/{id}/purge",
       key: () => reader,
-      send: () => ["DELETE", `/items/${binned}/purge`],
+      send: () => ["POST", `/items/${binned}/purge`],
       grant: typeWrite,
     },
     {

@@ -92,7 +92,7 @@ async function exported(ctx: TestContext, query = "", key = ctx.workingKey) {
 
 function restore(ctx: TestContext, archive: Buffer) {
   initEventLog(ctx.storage.eventLog);
-  return ctx.app.request("/admin/restore-archive", {
+  return ctx.app.request("/restore", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.operatorKey}`,

@@ -218,7 +218,7 @@ describe("what a connector keeps", () => {
     expect(await agreements()).toHaveLength(1);
     expect(
       (
-        await request(ctx.app, "DELETE", `/items/${row.id}/purge`, {
+        await request(ctx.app, "POST", `/items/${row.id}/purge`, {
           key: ctx.workingKey,
         })
       ).status,
@@ -265,7 +265,7 @@ describe("what a connector keeps", () => {
     const found = await request(
       ctx.app,
       "POST",
-      `/connectors/${mine.id}/agreements/find`,
+      `/connectors/${mine.id}/agreements/lookup`,
       { key, body: { item_ids: [row.id] } },
     );
     expect(
@@ -483,7 +483,7 @@ describe("who reaches these doors", () => {
       ["PUT", `/connectors/${id}/state`, { process: "p", state: {} }],
       ["DELETE", `/connectors/${id}/state`, undefined],
       ["POST", `/connectors/${id}/agreements`, { process: "p" }],
-      ["POST", `/connectors/${id}/agreements/find`, { item_ids: ["x"] }],
+      ["POST", `/connectors/${id}/agreements/lookup`, { item_ids: ["x"] }],
       ["GET", `/connectors/${id}/agreements`, undefined],
       ["DELETE", `/connectors/${id}/hold?process=p`, undefined],
     ] as const;

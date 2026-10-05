@@ -134,7 +134,7 @@ function noteLine(
 
 /** The archive posted with the operator key. */
 async function postArchive(archive: Buffer): Promise<Response> {
-  return ctx.app.request("/admin/restore-archive", {
+  return ctx.app.request("/restore", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.operatorKey}`,
@@ -151,7 +151,7 @@ async function errorOf(
     .error;
 }
 
-describe("POST /admin/restore-archive", () => {
+describe("POST /restore", () => {
   it("imports items and blobs from an archive", async () => {
     const blob = makeBlobData("archive-import-blob-test");
     const source = `archive-restore-${Math.random().toString(36).slice(2)}`;
@@ -184,7 +184,7 @@ describe("POST /admin/restore-archive", () => {
       [blob],
     );
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -407,7 +407,7 @@ describe("POST /admin/restore-archive", () => {
       [],
     );
 
-    const res = await ctx.app.request("/admin/restore-archive", {
+    const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -497,7 +497,7 @@ describe("POST /admin/restore-archive", () => {
   });
 
   it("rejects empty bodies", async () => {
-    const res = await ctx.app.request("/admin/restore-archive", {
+    const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -512,7 +512,7 @@ describe("POST /admin/restore-archive", () => {
 
   it("refuses a body the gzip reader cannot parse and stays up", async () => {
     const postBody = (body: Uint8Array) =>
-      ctx.app.request("/admin/restore-archive", {
+      ctx.app.request("/restore", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,
@@ -581,7 +581,7 @@ describe("POST /admin/restore-archive", () => {
       [],
     );
 
-    const res = await ctx.app.request("/admin/restore-archive", {
+    const res = await ctx.app.request("/restore", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${rawKey}`,
@@ -621,7 +621,7 @@ describe("POST /admin/restore-archive", () => {
     expect(exportRes.status).toBe(200);
     const archiveData = Buffer.from(await exportRes.arrayBuffer());
 
-    const restoreRes = await ctx.app.request(`/admin/restore-archive`, {
+    const restoreRes = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -643,7 +643,7 @@ describe("POST /admin/restore-archive", () => {
   });
 });
 
-describe("POST /admin/restore-archive against the orphan sweep", () => {
+describe("POST /restore against the orphan sweep", () => {
   it("keeps bytes it found already stored when a purge is due for them", async () => {
     // The restore finds the bytes on disk, keeps them rather than its own
     // copy, and registers its rows a moment later. A purge landing between
@@ -710,7 +710,7 @@ describe("POST /admin/restore-archive against the orphan sweep", () => {
   });
 });
 
-describe("POST /admin/restore-archive refused after its blobs are stored", () => {
+describe("POST /restore refused after its blobs are stored", () => {
   it("never takes back bytes an upload was told are stored meanwhile", async () => {
     // The restore places the bytes, then is refused while it registers
     // them, and takes back what it placed. An upload of the same bytes
@@ -777,7 +777,7 @@ describe("POST /admin/restore-archive refused after its blobs are stored", () =>
   });
 });
 
-describe("POST /admin/restore-archive refused over bytes a purge left", () => {
+describe("POST /restore refused over bytes a purge left", () => {
   it("leaves the purge record naming the bytes it found on disk, for the sweep to finish", async () => {
     // A purge cut short: the row is gone, the bytes are still on disk and
     // the purge record waits. The restore registers the bytes it found,
@@ -840,7 +840,7 @@ describe("POST /admin/restore-archive refused over bytes a purge left", () => {
   });
 });
 
-describe("POST /admin/restore-archive — the edges it writes", () => {
+describe("POST /restore — the edges it writes", () => {
   /**
    * A restore is a write like any other from a subscriber's side. A client
    * connected while an archive is restored would otherwise receive the
@@ -900,7 +900,7 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     const { events, done } = collectEdgeEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1003,7 +1003,7 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     };
     let res: Response;
     try {
-      res = await ctx.app.request(`/admin/restore-archive`, {
+      res = await ctx.app.request(`/restore`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1050,7 +1050,7 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
  * was away reads, and a door that emitted without appending would pass an
  * emitter-only test.
  */
-describe("POST /admin/restore-archive — the items it writes", () => {
+describe("POST /restore — the items it writes", () => {
   it("announces each restored item, ahead of the edges between them", async () => {
     const source = `archive-items-${Math.random().toString(36).slice(2, 8)}`;
     const sourceId = "019537a0-7b80-7000-8000-000000000101";
@@ -1106,7 +1106,7 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1232,7 +1232,7 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     };
     let res: Response;
     try {
-      res = await ctx.app.request(`/admin/restore-archive`, {
+      res = await ctx.app.request(`/restore`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1318,7 +1318,7 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       [],
     );
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1370,7 +1370,7 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request(`/admin/restore-archive`, {
+    const res = await ctx.app.request(`/restore`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ctx.operatorKey}`,
@@ -1412,7 +1412,7 @@ describe("POST /admin/restore-archive — the items it writes", () => {
   });
 });
 
-describe("POST /admin/restore-archive scalar preflight", () => {
+describe("POST /restore scalar preflight", () => {
   function fixture() {
     const firstId = generateId();
     const lastId = generateId();
