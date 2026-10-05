@@ -637,20 +637,20 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
                 Ok(Some(Frame::Event { id, name, data })) => {
                     let payload =
                         crate::read_view::event_payload(name.as_deref(), id.as_deref(), &data)?;
-                    if id.is_some() || name.as_deref() != Some(payload.r#type.as_str()) {
+                    if id.is_some() || name.as_deref() != Some(payload.event_type.as_str()) {
                         return Err(crate::read_view::invalid());
                     }
-                    if payload.r#type == "stream_incomplete" {
+                    if payload.event_type == "stream_incomplete" {
                         return Err(CoreError::StreamIncomplete {
                             reason: payload.reason.unwrap_or_default(),
                         });
                     }
-                    if payload.r#type == "read_view_changed" {
+                    if payload.event_type == "read_view_changed" {
                         return Err(CoreError::CopyExpired {
                             reason: "read_view_changed".into(),
                         });
                     }
-                    if payload.r#type != "stream_cursor" {
+                    if payload.event_type != "stream_cursor" {
                         return Err(crate::read_view::invalid());
                     }
                     let cursor = payload.cursor.ok_or_else(crate::read_view::invalid)?;

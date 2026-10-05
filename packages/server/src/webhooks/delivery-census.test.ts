@@ -170,7 +170,7 @@ describe("a delivery driven end to end", () => {
       webhookId: id,
       eventType: "item.created",
       payload: JSON.stringify({
-        type: "item.created",
+        event_type: "item.created",
         item: { id: "01HCENSUSCENSUSCENSUSCEN0", type: "core.note" },
       }),
       webhookUrl: url,

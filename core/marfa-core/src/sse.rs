@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn parses_the_prologue_a_replay_and_a_ping() {
         let text = ": connected\n\n\
-                    event: stream_cursor\ndata: {\"type\":\"stream_cursor\",\"cursor\":\"42\"}\n\n\
-                    id: 41\nevent: item.created\ndata: {\"type\":\"item.created\"}\n\n\
+                    event: stream_cursor\ndata: {\"event_type\":\"stream_cursor\",\"cursor\":\"42\"}\n\n\
+                    id: 41\nevent: item.created\ndata: {\"event_type\":\"item.created\"}\n\n\
                     :ping\n\n\
                     id: 42\nevent: edge.deleted\ndata: {\"a\":1,\n\
                     data:  \"b\":2}\n\n";
@@ -123,12 +123,12 @@ mod tests {
                 Frame::Event {
                     id: None,
                     name: Some("stream_cursor".into()),
-                    data: "{\"type\":\"stream_cursor\",\"cursor\":\"42\"}".into(),
+                    data: "{\"event_type\":\"stream_cursor\",\"cursor\":\"42\"}".into(),
                 },
                 Frame::Event {
                     id: Some("41".into()),
                     name: Some("item.created".into()),
-                    data: "{\"type\":\"item.created\"}".into(),
+                    data: "{\"event_type\":\"item.created\"}".into(),
                 },
                 Frame::Comment("ping".into()),
                 Frame::Event {
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn terminal_frames_and_crlf_and_a_missing_final_blank_line() {
-        let text = "id: 7\r\nevent: catchup_too_old\r\ndata: {\"type\":\"catchup_too_old\"}\r\n\r\n\
+        let text = "id: 7\r\nevent: catchup_too_old\r\ndata: {\"event_type\":\"catchup_too_old\"}\r\n\r\n\
                     event: stream_incomplete\ndata: {\"reason\":\"replay_failed\"}";
         assert_eq!(
             frames(text),
@@ -150,7 +150,7 @@ mod tests {
                 Frame::Event {
                     id: Some("7".into()),
                     name: Some("catchup_too_old".into()),
-                    data: "{\"type\":\"catchup_too_old\"}".into(),
+                    data: "{\"event_type\":\"catchup_too_old\"}".into(),
                 },
                 Frame::Event {
                     id: None,

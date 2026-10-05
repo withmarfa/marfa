@@ -328,7 +328,7 @@ describe("GET /events says when it is live", () => {
     const frame = frameNamed(text, "cursor_ahead");
     expect(frame).not.toBeNull();
     expect(dataOf(frame ?? "")).toEqual({
-      type: "cursor_ahead",
+      event_type: "cursor_ahead",
       requested: String(head + 1n),
       head: String(head),
     });

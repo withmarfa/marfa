@@ -165,7 +165,7 @@ describe("copy stream snapshot decisions", () => {
       });
       await change;
       expect(marker(text, "read_view_changed")).toEqual({
-        type: "read_view_changed",
+        event_type: "read_view_changed",
       });
       expect(text.split("event: stream_live")).toHaveLength(2);
     } finally {
@@ -194,7 +194,7 @@ describe("copy stream snapshot decisions", () => {
         until: (text) => text.includes("event: read_view_changed"),
       });
       expect(marker(text, "read_view_changed")).toEqual({
-        type: "read_view_changed",
+        event_type: "read_view_changed",
       });
       expect(text).not.toContain("event: stream_live");
       expect(text).not.toContain("writer completes with replay queue blocked");
@@ -346,7 +346,7 @@ describe("copy stream snapshot decisions", () => {
       parked.open();
       const { text } = await reading;
       expect(marker(text, "read_view_changed")).toEqual({
-        type: "read_view_changed",
+        event_type: "read_view_changed",
       });
       expect(text).not.toContain("event: stream_live");
       expect(text).not.toMatch(/^id:/m);
@@ -408,7 +408,7 @@ describe("copy stream snapshot decisions", () => {
       expect(text).not.toContain("held release witness");
       expect(text).not.toContain("event: stream_live");
       expect(marker(text, "read_view_changed")).toEqual({
-        type: "read_view_changed",
+        event_type: "read_view_changed",
       });
     } finally {
       parkedHead.open();
@@ -469,7 +469,7 @@ describe("copy stream snapshot decisions", () => {
           item_id: item.id,
           edge_id: null,
           payload: JSON.stringify({
-            type: "item.updated",
+            event_type: "item.updated",
             item: {
               ...item,
               properties: { body: `multi-page-${String(index)}` },

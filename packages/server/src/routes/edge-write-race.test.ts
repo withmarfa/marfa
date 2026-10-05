@@ -89,13 +89,16 @@ function retype(id: string): () => Promise<void> {
 
 async function edgeEvents(
   edgeId: string,
-): Promise<{ type: string; edge: WireEdge }[]> {
+): Promise<{ event_type: string; edge: WireEdge }[]> {
   const rows = await raw().__sqliteAll(
     `SELECT payload FROM event_log WHERE edge_id = '${edgeId}' ORDER BY id`,
   );
   return rows.map(
     (row) =>
-      JSON.parse(row.payload as string) as { type: string; edge: WireEdge },
+      JSON.parse(row.payload as string) as {
+        event_type: string;
+        edge: WireEdge;
+      },
   );
 }
 
@@ -137,7 +140,7 @@ describe("two deletes of one edge", () => {
       ((await second.json()) as { error: { code: string } }).error.code,
     ).toBe("edge_not_found");
     const deleted = (await edgeEvents(made.id)).filter(
-      (event) => event.type === "edge.deleted",
+      (event) => event.event_type === "edge.deleted",
     );
     expect(deleted).toHaveLength(1);
     expect(await audits("edge.delete", made.id)).toBe(1);
@@ -169,7 +172,7 @@ describe("a delete raced by a move", () => {
     expect(moved?.status).toBe(200);
     expect(res.status).toBe(200);
     const deleted = (await edgeEvents(made.id)).filter(
-      (event) => event.type === "edge.deleted",
+      (event) => event.event_type === "edge.deleted",
     );
     expect(deleted).toHaveLength(1);
     expect(deleted[0]?.edge.source_id).toBe(after);

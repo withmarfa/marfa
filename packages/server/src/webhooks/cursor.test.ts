@@ -75,7 +75,7 @@ async function largeWrite(bytes: number) {
 }
 function quietPayload(): string {
   return JSON.stringify({
-    type: "item.created",
+    event_type: "item.created",
     item: {
       id: "quiet",
       type: "core.note",
@@ -351,7 +351,7 @@ describe("durable outbound event acknowledgement", () => {
     await write();
     await ctx.storage.eventLog.append({
       event_type: "created",
-      payload: JSON.stringify({ type: "item.created", item: null }),
+      payload: JSON.stringify({ event_type: "item.created", item: null }),
       enable_fanout: true,
     });
     await expect(scheduler.runOnce()).rejects.toThrow("inconsistent");
@@ -716,43 +716,59 @@ describe("durable outbound event acknowledgement", () => {
     {
       name: "null item",
       eventType: "created",
-      frame: { type: "item.created", item: null },
+      frame: { event_type: "item.created", item: null },
     },
     {
       name: "null no-fanout item",
       eventType: "created",
-      frame: { type: "item.created", item: null },
+      frame: { event_type: "item.created", item: null },
       fanout: false,
     },
     {
       name: "incomplete item",
       eventType: "created",
-      frame: { type: "item.created", item: { type: "core.note" } },
+      frame: { event_type: "item.created", item: { type: "core.note" } },
     },
     {
       name: "edge in an item event",
       eventType: "created",
-      frame: { type: "item.created", edge: {} },
+      frame: { event_type: "item.created", edge: {} },
     },
     {
       name: "null edge",
       eventType: "edge_created",
-      frame: { type: "edge.created", edge: null },
+      frame: { event_type: "edge.created", edge: null },
     },
     {
       name: "incomplete edge",
       eventType: "edge_created",
-      frame: { type: "edge.created", edge: { edge_type: "references" } },
+      frame: { event_type: "edge.created", edge: { edge_type: "references" } },
     },
     {
       name: "unknown discriminator",
       eventType: "unknown",
-      frame: { type: "item.unknown", item: {} },
+      frame: { event_type: "item.unknown", item: {} },
     },
     {
       name: "mismatched discriminator",
       eventType: "created",
-      frame: { type: "item.deleted", item: {} },
+      // A valid item, so the discriminator alone makes the frame invalid.
+      frame: {
+        event_type: "item.deleted",
+        item: {
+          id: "01HMISMATCHMISMATCHMISMAT0",
+          type: "core.note",
+          version: 1,
+          state: "active",
+          tier: "library",
+          source: "test",
+          schema_version: 1,
+          occurred_at: "2026-01-01T00:00:00.000Z",
+          properties: { title: "mismatch" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      },
     },
   ])(
     "fails the scheduling job on a $name without acknowledging it",

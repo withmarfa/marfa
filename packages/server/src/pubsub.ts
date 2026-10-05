@@ -87,7 +87,7 @@ export type PubsubEvent = ItemEvent | EdgeEvent;
 export function storedFrame(event: PubsubEvent): Record<string, unknown> {
   if (isEdgeEvent(event)) {
     return {
-      type: wireEventName(event.type),
+      event_type: wireEventName(event.type),
       edge: event.edge,
       ...(event.sourceType !== undefined && { source_type: event.sourceType }),
       ...(event.purgedWith !== undefined && { purged_with: event.purgedWith }),
@@ -95,7 +95,7 @@ export function storedFrame(event: PubsubEvent): Record<string, unknown> {
   }
   const { trashedWith, restoredWith } = event;
   return {
-    type: wireEventName(event.type),
+    event_type: wireEventName(event.type),
     item: trashedWith
       ? { ...event.item, ...cascadeMark(trashedWith, () => true) }
       : event.item,
@@ -293,7 +293,7 @@ function emitLogged(row: {
   enable_fanout: boolean;
 }): void {
   const frame = JSON.parse(row.payload) as Record<string, unknown>;
-  const type = eventTypeOf(frame.type);
+  const type = eventTypeOf(frame.event_type);
   if (row.edge_id !== null) {
     if (!type?.startsWith("edge_"))
       throw new Error(`Event ${String(row.id)} is not an edge event`);

@@ -79,7 +79,7 @@ describe("a stream when the instance stops", () => {
 
     expect(read.closed).toBe(true);
     expect(closingFrame(read.text)).toMatchObject({
-      type: "stream_incomplete",
+      event_type: "stream_incomplete",
       reason: "server_stopping",
       cursor: null,
     });

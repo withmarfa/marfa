@@ -131,8 +131,8 @@ describe("event stream contract", () => {
         signal,
       );
       expect(events[0].event).toBe("stream_cursor");
-      const data = events[0].data as { type: string; cursor: string };
-      expect(data.type).toBe("stream_cursor");
+      const data = events[0].data as { event_type: string; cursor: string };
+      expect(data.event_type).toBe("stream_cursor");
       expect(data.cursor).toBe(head.eventId);
       expect(events[0].id).toBeUndefined();
     } finally {
@@ -563,11 +563,11 @@ describe("event stream contract", () => {
       );
       const frame = events.find((e) => e.event === "cursor_ahead");
       const data = frame?.data as {
-        type: string;
+        event_type: string;
         requested: string;
         head: string;
       };
-      expect(data.type).toBe("cursor_ahead");
+      expect(data.event_type).toBe("cursor_ahead");
       expect(data.requested).toBe(ahead);
       expect(BigInt(data.head) >= BigInt(head.eventId)).toBe(true);
       expect(BigInt(data.head) < BigInt(ahead)).toBe(true);

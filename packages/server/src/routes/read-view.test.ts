@@ -48,7 +48,7 @@ async function proof(): Promise<string> {
   });
   const line = text
     .split("\n")
-    .find((l) => l.startsWith('data: {"type":"stream_cursor"'));
+    .find((l) => l.startsWith('data: {"event_type":"stream_cursor"'));
   expect(line).toBeDefined();
   const tuple = JSON.parse(line!.slice(6)) as {
     cursor: string;

@@ -2430,7 +2430,7 @@ describe("the scripted answers match the server's", () => {
       {
         // The sidecar rides on every item frame. A scripted frame without it
         // is a frame a device could never learn a cleared tag from.
-        same: ["type", "metadata.tags"],
+        same: ["event_type", "metadata.tags"],
         shape: [
           "item.id",
           "item.type",
@@ -2531,7 +2531,7 @@ describe("the scripted answers match the server's", () => {
       "the head of a replay",
       { status: 200, body: head.data },
       { kind: "json", status: 200, body: scriptedHead.data },
-      { same: ["type"], shape: ["cursor"] },
+      { same: ["event_type"], shape: ["cursor"] },
     );
     const first = frames[1]!;
     expect(
@@ -2576,7 +2576,7 @@ describe("the scripted answers match the server's", () => {
       "the frame a cursor past the head gets",
       { status: 200, body: ahead.data },
       { kind: "json", status: 200, body: cursorAhead(requested, "1").data },
-      { same: ["type", "requested"], shape: ["head"] },
+      { same: ["event_type", "requested"], shape: ["head"] },
     );
   });
 
@@ -2618,7 +2618,7 @@ describe("the scripted answers match the server's", () => {
       "the marker that ends a replay",
       { status: 200, body: live.data },
       { kind: "json", status: 200, body: scriptedLive.data },
-      { same: ["type"], shape: ["cursor"] },
+      { same: ["event_type"], shape: ["cursor"] },
     );
   });
 });
@@ -3061,7 +3061,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
       type,
       { status: 200, body: observed.data },
       { kind: "json", status: 200, body: expected.data },
-      { same: ["type"], shape: ["cursor", "instance_id", "read_view"] },
+      { same: ["event_type"], shape: ["cursor", "instance_id", "read_view"] },
     );
     const tuple = observed.data as {
       cursor: string;

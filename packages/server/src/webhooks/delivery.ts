@@ -186,7 +186,9 @@ export async function deliveryInReach(
     stored as Record<string, unknown>,
   );
   if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
-  delete frame.type;
+  // Deleted so the spread below cannot keep the frame's `event_type` first:
+  // the body's `event_type` follows the frame's own fields.
+  delete frame.event_type;
   const body = JSON.stringify({
     ...frame,
     event_type: delivery.event_type,
@@ -408,7 +410,7 @@ export function validWebhookFrame(
         MetadataSchema.safeParse(frame.metadata).success);
   return (
     WEBHOOK_EVENTS.some((known) => known === eventType) &&
-    frame.type === eventType &&
+    frame.event_type === eventType &&
     shapeValid
   );
 }
