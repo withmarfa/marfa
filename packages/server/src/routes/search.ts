@@ -89,7 +89,7 @@ const SearchResultSchema = z
       .string()
       .optional()
       .describe(
-        "An excerpt of at most 32 words from the text that matches best, with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none.",
+        "An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none.",
       ),
   })
   .openapi("SearchResult", {

@@ -270,6 +270,7 @@ pub struct SearchHit {
     pub item: Item,
     /// Higher is a better match.
     pub score: f64,
+    /// An excerpt as HTML: the text escaped and each match in `<mark>` tags.
     pub snippet: String,
 }
 

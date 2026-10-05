@@ -1,6 +1,6 @@
 /**
  * The corpus and the queries the server's search fixtures and the device's
- * hold to one answer (`search-and-filters.md` 42 to 49). Both halves create
+ * hold to one answer (`search-and-filters.md` 42 to 49 and 87). Both halves create
  * these rows under a type of their own and search that type, so a case names
  * the rows it expects by key and the other rows on the server cannot change
  * the answer.
@@ -64,6 +64,7 @@ export const MATCHING_ROWS: MatchingRow[] = [
       body: `${Array.from({ length: 60 }, (_, at) => `w${at}`).join(" ")} needle`,
     },
   },
+  { key: "markup", properties: { body: `<b>numbat</b> & "q" 'p'` } },
 ];
 
 /** `remark` is left undeclared on purpose: a property the type does not declare is not indexed. */
@@ -261,3 +262,10 @@ export const MATCHING_CASES: MatchingCase[] = [
 
 /** The words a hit's snippet is held to: a match deep in a long text. */
 export const SNIPPET_QUERY = "needle";
+
+/** A word in a row whose text holds the characters HTML gives meaning to. */
+export const MARKUP_QUERY = "numbat";
+
+/** The excerpt `MARKUP_QUERY` answers: the row's text escaped, the match marked. */
+export const MARKUP_SNIPPET =
+  "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;";

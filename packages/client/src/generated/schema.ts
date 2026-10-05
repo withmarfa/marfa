@@ -2881,7 +2881,7 @@ export interface components {
             metadata: components["schemas"]["Metadata"] & unknown;
             /** @description How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the rows indexed, so compare them only within one search. */
             relevance_score: number;
-            /** @description An excerpt of at most 32 words from the text that matches best, with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
+            /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
         };
         OccurrencePage: {

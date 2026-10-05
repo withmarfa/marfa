@@ -429,7 +429,7 @@ export interface SearchResult {
   item: Item;
   metadata: Metadata;
   relevance_score: number;
-  /** HTML snippet with `<mark>` tags highlighting matched terms. */
+  /** An excerpt as HTML: the text escaped and each match in `<mark>` tags. */
   snippet_html?: string;
 }
 
