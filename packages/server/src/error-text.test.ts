@@ -256,4 +256,36 @@ describe("the driver's reason beneath a failed query", () => {
     expect(errorReason(failed)).not.toContain("canaryzzq");
     expect(formatErrorSummary(failed)).toContain("SQLITE_ERROR");
   });
+
+  const FTS = ["create virtual table t using fts5(x)"];
+  it.each([
+    ["a CJK word", "東京", "select * from t where t match ?", FTS],
+    ["a Cyrillic word", "Привет", "select * from t where t match ?", FTS],
+    ["an accented word", "naïve", "select * from t where t match ?", FTS],
+    ["a two-character word", "ab", "select * from t where t match ?", FTS],
+    [
+      "a CJK word in a JSON path",
+      "名前",
+      "select json_extract(jsonb('{}'), ?)",
+      [],
+    ],
+  ])(
+    "is withheld when the driver quotes %s of what the statement was bound to",
+    async (_name, word, sql, setup) => {
+      const argument = sql.includes("json") ? `$."${word} x` : `${word}:x`;
+      const failed = await failure(sql, [argument], setup);
+      // The witness: the real driver repeats the word in its message.
+      expect(failed.cause!.message).toContain(word);
+
+      for (const text of [
+        formatErrorSummary(failed),
+        JSON.stringify(serializeError(failed)),
+        errorReason(failed),
+        JSON.stringify(reportableError(failed), ["message", "cause", "stack"]),
+      ]) {
+        expect(text).toContain("withheld");
+        expect(text).not.toContain(word);
+      }
+    },
+  );
 });

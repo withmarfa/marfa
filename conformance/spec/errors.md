@@ -102,11 +102,17 @@
 
     Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text-census.test.ts`.
 
-26. When the server reports a fault in which a database statement failed, the server SHALL carry in the report the statement, with placeholders where its values were, and the driver's own reason for the failure, except a reason that repeats a value the statement was bound to, which the report withholds.
+26. When the server reports an unhandled fault in which a database statement failed, the server SHALL carry both the statement, with placeholders where its values were, and the driver's own reason for the failure in the fault's log line, the telemetry record of that line, the exception it sends to error tracking and, for a request, the notification it sends to the error webhook and the exception event on the request's span, except a reason that repeats a value the statement was bound to, which the report withholds.
 
-    Reason: the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint. A driver sometimes quotes a token of the text it was given, such as a malformed search query, and that token is the value 25 keeps out.
+    Reason: the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint. A driver sometimes quotes a token of the text it was given, such as a malformed search query, in any script and at any length, and that token is the value 25 keeps out.
 
     Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text.test.ts`.
+
+27. When the server reports a failed database statement anywhere else, in a background job's record, the health answer, a bulk action's messages or a warning about an event stream, the server SHALL carry the statement or the driver's reason, and SHALL NOT carry a value the statement was bound to.
+
+    Reason: those reports have room for one line, so each keeps the part its reader needs, and the rule of 25 holds for all of them.
+
+    Tests: `packages/server/src/error-text.test.ts`, `packages/server/src/background-jobs/scheduler.test.ts`, `packages/server/src/routes/health.test.ts`.
 
 ## Codes the fixtures produce
 

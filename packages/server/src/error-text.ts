@@ -74,7 +74,7 @@ export function withoutQueryParameters(text: string): string {
   );
 }
 
-const WORD = /[A-Za-z0-9_]{3,}/g;
+const WORD = /[\p{L}\p{N}\p{M}_]+/gu;
 
 /** The words of the values each failed query was bound to, held for the driver errors beneath it. */
 const boundWords = new WeakMap<object, ReadonlySet<string>>();

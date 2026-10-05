@@ -303,6 +303,9 @@ export function exportRoutes(
     // holds the read to what the client has taken, so a large export is
     // never held in memory whole.
     let linesThisTurn = 1;
+    // A client that leaves cancels the stream while a pull is still reading,
+    // and that pull's enqueue then throws. Leaving is not a fault.
+    let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
@@ -319,6 +322,7 @@ export function exportRoutes(
             if ((controller.desiredSize ?? 0) <= 0) return;
           }
         } catch (err) {
+          if (cancelled) return;
           controller.error(
             streamFailure("Export stream failed", err, {
               request_id: c.get("requestId"),
@@ -328,6 +332,7 @@ export function exportRoutes(
         }
       },
       async cancel() {
+        cancelled = true;
         await lines.return(undefined);
       },
     });

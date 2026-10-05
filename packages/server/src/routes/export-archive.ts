@@ -219,6 +219,17 @@ export async function handleArchiveExport(
 
   void write()
     .catch((error: unknown) => {
+      // A client that leaves aborts the writer on purpose, which is not a
+      // fault. A failure also closes the body and so also sets the signal,
+      // but it rejects with the failure rather than with the abort.
+      if (
+        stopped.signal.aborted &&
+        error instanceof Error &&
+        error.name === "AbortError"
+      ) {
+        pack.destroy();
+        return;
+      }
       // Ending the body with the failure is what makes the client see a
       // connection cut short and a gzip stream with no end, an archive that
       // cannot be mistaken for a complete one.
