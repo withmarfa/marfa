@@ -3,9 +3,9 @@
  *
  * One derivation and two forms, in one module, for the reason
  * `scope-openness.ts` next door holds the same shape: the fact belongs to
- * the scope grammar, and it has to be stated on two surfaces that render
- * nothing alike. The authorize screen carries it on the row's name; the
- * device screen has no rows and appends a sentence.
+ * the scope grammar, and it has to be stated on every screen that names a
+ * grant. The row label carries it on the authorize and device screens alike,
+ * and the group summary states it once for a group.
  *
  * **Every term in the chains that resolve a row's copy is keyed on the type
  * pattern, and a type pattern carries no verb.** `SCOPE_LABELS`, the
@@ -110,12 +110,13 @@ const OPERATION_SUFFIX: Record<Operation, string> = {
 };
 
 /**
- * The device screen's form, and the group summary's: a sentence of its own.
+ * The form for a row named by a sentence, and the group summary's: a
+ * sentence of its own.
  *
- * That screen prints one line per grant and has no second line to put this
- * on, so it lands as a sentence after the description. The group summary
- * takes the same string where every scope in a group permits the same thing,
- * which is what keeps the two surfaces stating one grant in one vocabulary.
+ * A parenthesis would be stranded past a sentence's full stop, so a row named
+ * by one takes this after it. The group summary takes the same string where
+ * every scope in a group permits the same thing, which keeps every screen
+ * stating one grant in one vocabulary.
  */
 const OPERATION_SENTENCE: Record<Operation, string> = {
   read: "Read only.",
@@ -139,8 +140,8 @@ export function withOperation(scope: ParsedScope, name: string): string {
     : `${name}${OPERATION_SUFFIX[operation]}`;
 }
 
-/** The device screen's sentence for one scope, or `undefined` where the
- *  scope permits neither. */
+/** The sentence for one scope, or `undefined` where the scope permits
+ *  neither. */
 export function operationSentence(scope: ParsedScope): string | undefined {
   const operation = scopeOperation(scope);
   return operation === undefined ? undefined : OPERATION_SENTENCE[operation];

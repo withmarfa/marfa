@@ -583,9 +583,8 @@ function summarize(group: ScopeGroup): string {
  * **`CONSENT_SCOPE_DESCRIPTIONS` is under the same prohibition, for a
  * different reason.** A description cannot carry it because a description is
  * sometimes this label: `labelFor` falls through to one wherever nothing
- * curated names the pattern, so a futurity clause written there for the
- * device screen's sake lands on a toggle row already about to state the same
- * fact. Both screens compose their own sentence from {@link isOpenEnded}
+ * curated names the pattern, so a futurity clause written there lands on a
+ * toggle row already about to state the same fact. Both screens compose their own line from {@link isOpenEnded}
  * instead, so neither map has to hold one and no renderer has to read
  * English to find out whether a string it was handed has said it already.
  */
@@ -726,9 +725,11 @@ export function humanizeType(typePattern: string): string {
  * That is not a corner of this screen: every wildcard but `user.*`, every
  * edge type and three of the `system.*` types have no curated label at all,
  * and a runtime-registered type's description is whatever prose its author
- * wrote. A sentence therefore takes {@link operationSentence}, which is the
- * string the device screen already prints for the same scope, so the two
- * surfaces end up saying one grant one way wherever both fall this far.
+ * wrote. A sentence therefore takes {@link operationSentence}.
+ *
+ * **This is the one description of a grant, and every screen that names one
+ * asks it.** The device approval screen prints the same label for the same
+ * scope, so a grant reads the same wherever a person meets it.
  *
  * **Splitting the forms is also what makes the parenthesis's own reason
  * true.** {@link withOperation} is bracketed because {@link summarize}
@@ -741,7 +742,7 @@ export function humanizeType(typePattern: string): string {
  * The verb-less families take neither form, decided on `kind` in an
  * exhaustive switch rather than on which branch below returned.
  */
-function labelFor(
+export function labelFor(
   scope: ParsedScope,
   descriptions: Record<string, string> | undefined,
 ): string {
@@ -859,8 +860,8 @@ export function renderConsentScreen(params: ConsentParams): string {
     // through to the scope's description, so a line suppressed by asking
     // whether the label said "later" would repeat a clause phrased in other
     // words and go silent on a "later" meaning something else entirely. The
-    // copy states futurity on neither surface: `OPEN_ENDED_SENTENCE` is how
-    // the device screen gets it, composed there the same way.
+    // copy states futurity on neither surface: `OPEN_ENDED_LINE` is how
+    // the device screen gets it too, composed there the same way.
     //
     // The expansion line absorbs the clause where there is one, since that
     // line names today's members as well and a wildcard's reach reads as one
@@ -874,7 +875,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           ? OPEN_ENDED_LINE
           : "";
     const detail = detailText
-      ? `<span class="rmeta" style="display:block">${escapeHtml(detailText)}</span>`
+      ? `<span class="rmeta">${escapeHtml(detailText)}</span>`
       : "";
     // The per-type checkbox is what the form submits, so this attribute is
     // the whole of what `default_on: false` means: the literal is offered,

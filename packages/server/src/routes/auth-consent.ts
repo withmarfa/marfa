@@ -1417,19 +1417,17 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // **None of these sentences says that the grant reaches types nobody has
   // registered yet, and none of them may.** Both screens compose that from
-  // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
-  // line, `describeScope` appends `OPEN_ENDED_SENTENCE` to whichever
-  // of these it is about to print, and `isOpenEnded` is the single answer
-  // both read. So an entry here says what the grant reaches and stops.
+  // the grammar: both screens put `OPEN_ENDED_LINE` on the toggle row's
+  // second line, and `isOpenEnded` is the single answer both read. So an
+  // entry here says what the grant reaches and stops.
   //
   // **The prohibition is not tidiness, it is the only way the two screens
   // can be made to agree.** A futurity clause inside one of these sentences
-  // is tempting, because the device screen has no second line and the
-  // description is the whole of what it says about a grant. It cannot work:
-  // `scopeName` on the authorize screen falls through to this map wherever
-  // nothing curated names the pattern, so a clause written for one screen
-  // arrives as the other screen's toggle label, directly above a line about
-  // to state the same thing. Reconciling that needs a check on the copy, and
+  // is tempting, because a description reads as the whole of what a row says
+  // about a grant. It cannot work: `scopeName` falls through to this map
+  // wherever nothing curated names the pattern, so a clause written into it
+  // arrives as a toggle label, directly above a line about to state the same
+  // thing. Reconciling that needs a check on the copy, and
   // a check on the copy cannot tell a clause that means futurity from a word
   // that merely spells it — futurity phrased in other words is stated twice,
   // and a "later" carrying no futurity at all silences the line on a

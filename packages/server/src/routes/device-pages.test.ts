@@ -106,7 +106,7 @@ describe("renderDeviceConsentScreen", () => {
     // abandoned or satisfied by not submitting the scope. What has to stay
     // true is that nobody reads it.
     const html = renderDeviceConsentScreen(PARAMS);
-    expect(html).toContain("Text you created.");
+    expect(html).toContain("Notes (read only)");
     const visible = [...html.matchAll(/<span>([^<]*)<\/span>/g)].map(
       (m) => m[1] ?? "",
     );
@@ -121,7 +121,7 @@ describe("renderDeviceConsentScreen", () => {
     // they share the authorize screen's row markup and submit a literal each.
     expect(html).toContain('class="subrow"');
     expect(html).toContain('name="scopes"');
-    expect(html).toContain("Text you created.");
+    expect(html).toContain("Notes (read only)");
   });
 
   it("renders the user_code whole in a code tile, not an entry field", () => {
@@ -194,8 +194,8 @@ describe("renderDeviceConsentScreen", () => {
       ],
       descriptions: { "core.note": "Text you created." },
     });
-    expect(html.split("Text you created. Read only.").length - 1).toBe(1);
-    expect(html.split("Text you created. Read and write.").length - 1).toBe(1);
+    expect(html.split("Notes (read only)").length - 1).toBe(1);
+    expect(html.split("Notes (read and write)").length - 1).toBe(1);
   });
 });
 

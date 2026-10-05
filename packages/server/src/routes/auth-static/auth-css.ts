@@ -597,6 +597,9 @@ select:focus {
 /* Muted small line under a section label — used by the consent re-consent
    diff's "No longer needed" group to list dropped capabilities as a quiet
    line rather than toggle rows. */
+.subrow .rmeta {
+  display: block;
+}
 .rmeta {
   margin: 0;
   font-size: 13px;

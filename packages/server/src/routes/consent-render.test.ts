@@ -39,7 +39,6 @@ import { deriveWildcardDescription } from "./wildcard-copy.js";
 import {
   OPEN_ENDED_EXPANSION_TAIL,
   OPEN_ENDED_LINE,
-  OPEN_ENDED_SENTENCE,
 } from "./scope-openness.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 
@@ -848,11 +847,7 @@ describe("a grant that reaches things not yet created says so", () => {
 
   /** The sentences the renderers compose, which are the only statements of
    *  the property either screen is allowed to make. */
-  const COMPOSED = [
-    OPEN_ENDED_LINE,
-    OPEN_ENDED_EXPANSION_TAIL,
-    OPEN_ENDED_SENTENCE,
-  ];
+  const COMPOSED = [OPEN_ENDED_LINE, OPEN_ENDED_EXPANSION_TAIL];
 
   /** Strip every composed sentence out of `text`, returning how many came
    *  out and what was left behind. */
@@ -1105,7 +1100,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // looks for a second statement. A constant rewritten into something that
     // no longer says anything of the kind would leave every case above
     // green and observing nothing.
-    expect(COMPOSED.length).toBeGreaterThan(2);
+    expect(COMPOSED.length).toBeGreaterThan(1);
     for (const sentence of COMPOSED) {
       expect(sentence, sentence).toMatch(FUTURITY_VOCABULARY);
     }

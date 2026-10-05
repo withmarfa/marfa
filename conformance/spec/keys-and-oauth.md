@@ -222,3 +222,17 @@
     Reason: a program calling the logout door needs its refusal in a form it can read, and must never be handed a page.
 
     Tests: `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`; `packages/server/src/routes/end-session.test.ts › shows a browser with no session a page, and never JSON`.
+
+## How access is described
+
+66. The server SHALL describe a grant in the same words on the browser consent page and on the device approval page: the same name for what it reaches, and the same statement of what it permits.
+
+    Reason: a person approving access reads it once and should recognize it wherever else they meet it. Two pages that name one grant two ways leave them guessing whether the second is the same grant.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › gives every grant the same words on both screens`, `› says the same thing about one grant on the device screen`.
+
+67. WHEN the browser consent page and the device approval page offer a grant that reaches types not yet registered, each SHALL state how far it reaches in the same line, and SHALL state nothing of the kind for a grant that reaches one type.
+
+    Reason: a grant that grows as types are added is a larger grant than it reads, and the fact must not depend on which page a person approved it on.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`.
