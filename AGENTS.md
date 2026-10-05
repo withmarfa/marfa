@@ -38,7 +38,7 @@ A version exists only as a git tag, created only when a release is called for, e
 
 ## Secrets
 
-Software-consumed values live in Infisical, never in a file here. `.infisical.json` maps this repository to its project; run anything that needs them under `aic-infisical-run -- <command>`. `.env.example` carries names, never values.
+Software-consumed values live in Infisical, never in a file here. A local `.infisical.json`, which Git ignores, maps a checkout to its project; run anything that needs them under `aic-infisical-run -- <command>`. `.env.example` carries names, never values.
 
 ## Words
 
