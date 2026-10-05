@@ -50,7 +50,11 @@ import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OPERATOR_ONLY_RESPONSE,
+} from "../openapi.js";
 import {
   planArchiveTypes,
   writeArchiveTypes,
@@ -150,12 +154,14 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Duplicate items retain their live metadata, dates and history. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
+    "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: {
     body: {
       required: true,
+      description:
+        "The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it.",
       content: {
         "application/gzip": {
           // The archive is a gzipped tarball: bytes, as 3.1 spells them.
@@ -169,23 +175,47 @@ const restoreArchiveRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            imported: z.number(),
-            duplicates: z.number(),
-            edges_imported: z.number(),
-            edges_skipped: z.number(),
-            /** Why edges were skipped, keyed by reason. A silent skip and a
-             *  refused one are different signals, and a bare count cannot
-             *  tell an operator which they got. */
-            edges_skipped_reasons: z.record(z.string(), z.number()),
-            blobs_imported: z.number(),
-            types_registered: z.number(),
-            types_skipped: z.number(),
-            edge_types_registered: z.number(),
-            edge_types_skipped: z.number(),
+            imported: z.number().describe("How many items Marfa wrote."),
+            duplicates: z
+              .number()
+              .describe(
+                "How many items Marfa skipped because their ID, natural key or link is already taken.",
+              ),
+            edges_imported: z.number().describe("How many edges Marfa wrote."),
+            edges_skipped: z.number().describe("How many edges Marfa skipped."),
+            /** A silent skip and a refused one are different signals, and a
+             *  bare count cannot tell an operator which they got. */
+            edges_skipped_reasons: z
+              .record(z.string(), z.number())
+              .describe(
+                "How many edges Marfa skipped for each reason, such as `endpoint_missing` or `already_present`.",
+              ),
+            blobs_imported: z
+              .number()
+              .describe(
+                "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them.",
+              ),
+            types_registered: z
+              .number()
+              .describe("How many types Marfa registered."),
+            types_skipped: z
+              .number()
+              .describe(
+                "How many types Marfa skipped because the instance already registers them identically.",
+              ),
+            edge_types_registered: z
+              .number()
+              .describe("How many edge types Marfa registered."),
+            edge_types_skipped: z
+              .number()
+              .describe(
+                "How many edge types Marfa skipped because the instance already registers them identically.",
+              ),
           }),
         },
       },
-      description: "Restore result",
+      description:
+        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
     },
     400: {
       content: {
@@ -197,7 +227,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.\n\nThe restore writes nothing.",
+        "- `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.",
     },
     413: {
       content: {
@@ -206,7 +236,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "`request_too_large`: the request body is larger than this instance accepts.",
+        "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field.",
     },
     401: {
       content: {
@@ -216,14 +246,7 @@ const restoreArchiveRoute = createRoute({
       },
       description: "Unauthorized",
     },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Admin required",
-    },
+    403: OPERATOR_ONLY_RESPONSE,
     409: {
       content: {
         "application/json": {
@@ -231,7 +254,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n\nThe restore writes nothing.",
+        "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.",
     },
   },
 });

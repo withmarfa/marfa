@@ -992,29 +992,43 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Instance"],
       summary: "Describe the instance",
       description:
-        "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
+        "Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
       responses: {
         "400": UNDECLARED_QUERY_REFUSAL.response,
         "200": {
-          description: "The instance",
+          description:
+            "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
           content: {
             "application/json": {
               schema: {
                 type: "object",
                 properties: {
-                  name: { type: "string", const: "marfa" },
+                  name: {
+                    type: "string",
+                    const: "marfa",
+                    description: "Always `marfa`.",
+                  },
                   version: {
                     type: "string",
-                    description: "The deployed build.",
+                    description: "The build the instance runs.",
                   },
-                  instance_id: { type: "string" },
+                  instance_id: {
+                    type: "string",
+                    description:
+                      "Unique identifier for the instance. `GET /config` and an archive's manifest show the same value.",
+                  },
                   contract: {
                     type: "integer",
                     minimum: 0,
                     description:
-                      "The contract version, which stays at 0 until the first public release.",
+                      "The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release.",
                   },
-                  features: { type: "array", items: { type: "string" } },
+                  features: {
+                    type: "array",
+                    items: { type: "string" },
+                    description:
+                      "The features the instance serves, such as `items` and `webhooks`.",
+                  },
                 },
                 required: [
                   "name",
@@ -1109,7 +1123,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Access"],
       summary: "Register an OAuth client",
       description:
-        "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
+        "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
       requestBody: {
         required: true,
         content: {
@@ -1120,27 +1134,40 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 redirect_uris: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Required for the authorization_code grant.",
+                  description:
+                    "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
                 },
                 grant_types: {
                   type: "array",
                   items: { type: "string" },
-                  description: 'Defaults to ["authorization_code"].',
+                  description:
+                    "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`.",
                 },
                 response_types: {
                   type: "array",
                   items: { type: "string" },
-                  description: 'Defaults to ["code"].',
+                  description:
+                    "The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`.",
                 },
-                client_name: { type: "string" },
+                client_name: {
+                  type: "string",
+                  description:
+                    "The app's name, which Marfa shows a person asked to approve it.",
+                },
                 application_type: {
                   type: "string",
-                  description: 'Defaults to "web".',
+                  description:
+                    "`web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`.",
                 },
-                scope: { type: "string" },
+                scope: {
+                  type: "string",
+                  description:
+                    "Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows.",
+                },
                 token_endpoint_auth_method: {
                   type: "string",
-                  description: 'Defaults to "client_secret_basic".',
+                  description:
+                    "How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`.",
                 },
               },
             },
@@ -1149,31 +1176,74 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       },
       responses: {
         "201": {
-          description: "The registered client, including the issued client_id.",
+          description:
+            "Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`.",
           content: {
             "application/json": {
               schema: {
                 type: "object",
                 properties: {
-                  client_id: { type: "string" },
+                  client_id: {
+                    type: "string",
+                    description: "Unique identifier for the client.",
+                  },
                   client_secret: {
                     type: "string",
-                    description: "Confidential clients only.",
+                    description:
+                      "The secret the client proves itself with at the token endpoint. Absent for a public client.",
                   },
-                  client_id_issued_at: { type: "integer" },
-                  scope: { type: "string" },
-                  redirect_uris: { type: "array", items: { type: "string" } },
-                  grant_types: { type: "array", items: { type: "string" } },
-                  response_types: { type: "array", items: { type: "string" } },
-                  token_endpoint_auth_method: { type: "string" },
+                  client_id_issued_at: {
+                    type: "integer",
+                    description:
+                      "When the client was registered, in seconds since the Unix epoch.",
+                  },
+                  scope: {
+                    type: "string",
+                    description:
+                      "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows.",
+                  },
+                  redirect_uris: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "The redirect URIs, as registered.",
+                  },
+                  grant_types: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "The grants, as registered.",
+                  },
+                  response_types: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "The response types, as registered.",
+                  },
+                  token_endpoint_auth_method: {
+                    type: "string",
+                    description:
+                      "How the client proves itself at the token endpoint.",
+                  },
                   client_secret_expires_at: {
                     type: "integer",
-                    description: "0 for a secret that does not expire.",
+                    description:
+                      "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't.",
                   },
-                  client_name: { type: "string" },
-                  application_type: { type: "string" },
-                  disabled: { type: "boolean" },
-                  dpop_bound_access_tokens: { type: "boolean" },
+                  client_name: {
+                    type: "string",
+                    description: "The app's name, as registered.",
+                  },
+                  application_type: {
+                    type: "string",
+                    description: "`web` or `native`.",
+                  },
+                  disabled: {
+                    type: "boolean",
+                    description: "`true` if the client is disabled.",
+                  },
+                  dpop_bound_access_tokens: {
+                    type: "boolean",
+                    description:
+                      "`true` if the client always uses DPoP for its token requests.",
+                  },
                 },
               },
             },
@@ -1181,7 +1251,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         },
         "400": {
           description:
-            "An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint.",
+            "An error in the shape RFC 7591 defines:\n- `invalid_client_metadata`: a field is invalid, such as `grant_types` naming `client_credentials`.\n- `invalid_redirect_uri`: a redirect URI is missing, malformed or not allowed for the `application_type`.\n- `invalid_scope`: `scope` names a scope the instance doesn't allow.\n\nAn unknown query parameter gets Marfa's own `validation_error` instead.",
           content: {
             "application/json": {
               schema: {
@@ -1211,7 +1281,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         },
         "401": {
           description:
-            "The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential.",
+            "An error in the shape RFC 6750 defines:\n- `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.",
           content: {
             "application/json": {
               schema: {
@@ -1221,6 +1291,29 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   error_description: { type: "string" },
                 },
                 required: ["error"],
+              },
+            },
+          },
+        },
+        "415": {
+          description:
+            "An error with `message` and `code`, rather than Marfa's own shape:\n- `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  code: {
+                    type: "string",
+                    enum: ["UNSUPPORTED_MEDIA_TYPE"],
+                    description: REFUSAL_TEXT.code,
+                  },
+                  message: {
+                    type: "string",
+                    description: REFUSAL_TEXT.message,
+                  },
+                },
+                required: ["code", "message"],
               },
             },
           },

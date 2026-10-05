@@ -829,7 +829,7 @@ export interface paths {
         };
         /**
          * List housekeeping jobs
-         * @description Returns every housekeeping job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.
+         * @description Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.
          */
         get: operations["listHousekeeping"];
         put?: never;
@@ -851,7 +851,7 @@ export interface paths {
         put?: never;
         /**
          * Run a housekeeping job
-         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.
+         * @description Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.
          */
         post: operations["runHousekeeping"];
         delete?: never;
@@ -1221,21 +1221,13 @@ export interface paths {
         };
         /**
          * List API keys
-         * @description Returns the API keys within the caller's reach, the caller included, without plaintext, which is only ever returned at creation time. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.
+         * @description Returns the API keys you could have created, your own included, without their plaintext. The operator key gets every key. Requires `keys.mint` or the operator key.
          */
         get: operations["listKeys"];
         put?: never;
         /**
          * Create an API key
-         * @description Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.
-         *
-         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A signed-in app must hold `keys.mint` to reach this route at all.
-         *
-         *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source.
-         *
-         *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing.
-         *
-         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it). The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
+         * @description Creates an API key and returns it with its plaintext `key`, shown only here. If the body names none of `permissions`, the five permission maps and `sources`, the key gets everything you hold; if it names any, the key holds only what it names.
          */
         post: operations["createKey"];
         delete?: never;
@@ -1253,7 +1245,7 @@ export interface paths {
         };
         /**
          * Get the current key
-         * @description Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`.
+         * @description Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.
          */
         get: operations["getCurrentKey"];
         put?: never;
@@ -1276,14 +1268,14 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revokes the key immediately. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
+         * @description Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint` or the operator key.
          */
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable; revoke and recreate to change it. Requires `keys.mint`. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.
+         * @description Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint` or the operator key.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1297,12 +1289,12 @@ export interface paths {
         };
         /**
          * Get the configuration
-         * @description Returns the instance configuration (the optional `enforcement` levers plus the cleanup-job retention overrides) under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.
+         * @description Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.
          */
         get: operations["getConfig"];
         /**
          * Replace the configuration
-         * @description Overwrites the instance config with the supplied object: full replacement, not a merge. A cleanup-job retention override of `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing. Requires `config.manage`.
+         * @description Replaces the instance configuration with the body and returns it. A setting you leave out goes back to its default, so send the whole configuration with your change. Requires `config.manage`.
          */
         put: operations["replaceConfig"];
         post?: never;
@@ -1323,7 +1315,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Duplicate items retain their live metadata, dates and history. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.
+         * @description Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. Everything it writes commits together, so a failed restore writes nothing. Other writes wait until it ends. Requires the operator key.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -1381,13 +1373,13 @@ export interface paths {
         };
         /**
          * Get the owner
-         * @description Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. An instance boots with no owner, and `POST /owner` creates one. Operator key only.
+         * @description Returns the owner: the one account that can sign in to the instance and approve apps. A new instance has no owner until `POST /owner` creates one. Requires the operator key.
          */
         get: operations["getOwner"];
         put?: never;
         /**
          * Create the owner
-         * @description Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. The password is judged by the sign-in surface's own length rule. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.
+         * @description Creates the owner, the one account that can sign in to the instance, and returns it. The owner can sign in at once with the email address and password. No other route creates an account. Requires the operator key.
          */
         post: operations["createOwner"];
         delete?: never;
@@ -1405,7 +1397,7 @@ export interface paths {
         };
         /**
          * Export items and edges
-         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /restore` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, `lending_blobs`, the digests in that row's properties that lend its reach, and `lending_extensions`, the digests that lend its reach in each extension namespace the line carries. Each archive edge line carries `lending_blobs`, the digests in that edge's properties that lend its reach. A restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.
+         * @description Exports the items you can read, with their tags and readable extensions, followed by the edges between them. Without `state`, trashed items are left out. With `format=archive`, returns a file that `POST /restore` reads.
          */
         get: operations["exportData"];
         put?: never;
@@ -1517,7 +1509,7 @@ export interface paths {
         };
         /**
          * List audit log entries
-         * @description Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`.
+         * @description Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.
          */
         get: operations["listAuditLog"];
         put?: never;
@@ -1537,7 +1529,7 @@ export interface paths {
         };
         /**
          * Describe the instance
-         * @description Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.
+         * @description Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -1579,7 +1571,7 @@ export interface paths {
         put?: never;
         /**
          * Register an OAuth client
-         * @description Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.
+         * @description Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.
          */
         post: operations["registerOAuthClient"];
         delete?: never;
@@ -1613,6 +1605,36 @@ export interface webhooks {
 }
 export interface components {
     schemas: {
+        /** @description A lever that applies to the types it names. */
+        TypeLever: {
+            /** @description The types the lever applies to. */
+            types: string[];
+        };
+        /** @description A lever that applies to the types it names, and lets through the sources it names. */
+        TypeAndSourceLever: {
+            /** @description The types the lever applies to. */
+            types: string[];
+            /** @description The sources the lever lets through on those types. */
+            sources: string[];
+        };
+        /** @description A lever that applies to the types it names. */
+        TypeLeverStrict: {
+            /** @description The types the lever applies to. */
+            types: string[];
+        };
+        /** @description A lever that applies to the types it names, and lets through the sources it names. */
+        TypeAndSourceLeverStrict: {
+            /** @description The types the lever applies to. */
+            types: string[];
+            /** @description The sources the lever lets through on those types. */
+            sources: string[];
+        };
+        /** @description A key's own enforcement levers, in the shape `/config` uses. Each lever set here replaces the instance's for this key, looser or stricter; a lever left out stays the instance's. */
+        EnforcementOverride: {
+            strict_mode?: components["schemas"]["TypeLever"] & unknown;
+            source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
+            source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
+        };
         ItemWithMetadata: {
             item: components["schemas"]["Item"];
             metadata: components["schemas"]["Metadata"];
@@ -3077,33 +3099,55 @@ export interface components {
                 };
             };
         };
+        /** @description A page holding every housekeeping job. */
         HousekeepingJobPage: {
+            /** @description Every housekeeping job. */
             data: components["schemas"]["HousekeepingJob"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every housekeeping job in one page. */
             next_cursor: string | null;
         };
+        /** @description A housekeeping job: a task Marfa runs on itself on a schedule, and its last run. */
         HousekeepingJob: {
+            /** @description The job's name, such as `trash-purge`. */
             name: string;
+            /** @description How often the job runs, in milliseconds. */
             interval_ms: number;
+            /** @description When the job is next due, in UTC. */
             next_run_at: string;
+            /** @description When the current run started, in UTC, or `null` if the job isn't running. */
             running_since: string | null;
+            /** @description When the latest run started, in UTC, or `null` if the job has never run. */
             last_started_at: string | null;
+            /** @description When the last run finished, in UTC, or `null` if none has finished. */
             last_finished_at: string | null;
+            /** @description How the last run ended, or `null` if none has finished. */
             last_outcome: components["schemas"]["HousekeepingOutcome"] | null;
+            /** @description The error the last run hit, or `null` if it had none. */
             last_error: string | null;
+            /** @description What the last run reported, or `null` if it reported nothing. */
             last_result: components["schemas"]["HousekeepingReport"] | null;
         };
-        /** @enum {string} */
+        /**
+         * @description How a run ended: `ok` if it finished, `error` if it failed.
+         * @enum {string}
+         */
         HousekeepingOutcome: "ok" | "error";
+        /** @description What a run reports, under names its job chooses, such as `deleted` or `copied`. */
         HousekeepingReport: {
             [key: string]: number | boolean | string | null;
         };
+        /** @description One run of a housekeeping job. */
         HousekeepingRun: {
+            /** @description The job's name. */
             name: string;
+            /** @description When the run started, in UTC. */
             started_at: string;
+            /** @description When the run finished, in UTC. */
             finished_at: string;
-            outcome: components["schemas"]["HousekeepingOutcome"];
+            outcome: components["schemas"]["HousekeepingOutcome"] & unknown;
+            /** @description What the run reported, or `null` if it reported nothing. */
             result: components["schemas"]["HousekeepingReport"] | null;
+            /** @description The error the run hit, or `null` if it had none. */
             error: string | null;
         };
         /** @description An error response. */
@@ -3435,91 +3479,116 @@ export interface components {
                 };
             };
         };
+        /** @description A new API key, with its plaintext `key`. */
         KeyResponse: {
+            /** @description Unique identifier for the key. */
             id: string;
+            /** @description The plaintext key, which you send as a bearer token. Save it: no other response shows it. */
             key: string;
+            /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
+            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change. */
             source: string;
-            /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
+            /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
+            /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
+            /** @description The `client_id` of the app whose sign-in token created this key. Absent on every other key. */
             oauth_client_id?: string;
-            default_tier: components["schemas"]["Tier"];
+            default_tier: components["schemas"]["Tier"] & unknown;
+            /** @description `true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items. */
             is_operator: boolean;
+            /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
             edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both. */
             metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it. */
             profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            enforcement_override?: components["schemas"]["EnforcementOverride"];
+            enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
+            /** @description When the key was created, in UTC. */
             created_at: string;
+            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
             last_used_at: string | null;
         };
-        /** @enum {string} */
+        /**
+         * @description A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access.
+         * @enum {string}
+         */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage";
-        /** @enum {string} */
+        /**
+         * @description What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach.
+         * @enum {string}
+         */
         TypePermissionLevel: "read" | "write" | "none";
-        /** @enum {string} */
+        /**
+         * @description What a key may do with an entry: `read` it, or `write` it (which includes reading). A name no entry covers is denied.
+         * @enum {string}
+         */
         PermissionLevel: "read" | "write";
-        /** @description Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config. */
-        EnforcementOverride: {
-            strict_mode?: components["schemas"]["TypeLever"];
-            source_allowlist?: components["schemas"]["TypeAndSourceLever"];
-            source_filter?: components["schemas"]["TypeAndSourceLever"];
-        };
-        TypeLever: {
-            types: string[];
-        };
-        TypeAndSourceLever: {
-            types: string[];
-            sources: string[];
-        };
+        /** @description A page holding every key you can reach. */
         ApiKeyPage: {
+            /** @description Every key you can reach. */
             data: components["schemas"]["ApiKey"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every key you can reach in one page. */
             next_cursor: string | null;
         };
+        /** @description An API key, without its plaintext: what it may reach and when it was used. */
         ApiKey: {
+            /** @description Unique identifier for the key. */
             id: string;
+            /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
+            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change. */
             source: string;
-            /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
+            /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
-            /** @description The permissions this credential holds, as the literals themselves. Empty on a key that holds none. */
+            /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
-            /** @description The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly. */
+            /** @description The `client_id` of the app whose sign-in token created this key. Absent on every other key. */
             oauth_client_id?: string;
-            default_tier: components["schemas"]["Tier"];
+            default_tier: components["schemas"]["Tier"] & unknown;
+            /** @description `true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items. */
             is_operator: boolean;
+            /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
             edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both. */
             metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
+            /** @description What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it. */
             profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            enforcement_override?: components["schemas"]["EnforcementOverride"];
+            enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
+            /** @description When the key was created, in UTC. */
             created_at: string;
-            /** @description Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. The key listing omits it, and the change and revoke doors answer `404 api_key_not_found` for it. */
+            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires. */
             expires_at: string | null;
+            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
             last_used_at: string | null;
         };
         /** @description An error response. */
@@ -3539,25 +3608,26 @@ export interface components {
                 };
             };
         };
+        /** @description The instance configuration: its enforcement levers and retention settings, with the instance's ID. */
         InstanceConfig: {
+            /** @description Unique identifier for the instance, the same value `GET /` returns. */
             instance_id: string;
+            /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
             enforcement?: {
-                strict_mode?: components["schemas"]["TypeLever"];
-                source_allowlist?: components["schemas"]["TypeAndSourceLever"];
-                source_filter?: components["schemas"]["TypeAndSourceLever"];
+                strict_mode?: components["schemas"]["TypeLever"] & unknown;
+                source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
+                source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
             };
+            /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
             audit_retention_days?: number;
+            /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
             event_log_retention_hours?: number;
+            /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
             trash_retention_days?: number;
+            /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
             inbound_handled_retention_days?: number;
+            /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
             inbound_pending_retention_days?: number;
-        };
-        TypeLeverStrict: {
-            types: string[];
-        };
-        TypeAndSourceLeverStrict: {
-            types: string[];
-            sources: string[];
         };
         /** @description An error response. */
         InvalidPropertiesOrValidationErrorRefusal: {
@@ -3645,11 +3715,15 @@ export interface components {
                 };
             };
         };
+        /** @description The owner is the one person who can sign in to the instance. */
         Owner: {
+            /** @description Unique identifier for the owner's account. */
             id: string;
+            /** @description The owner's email address, in lowercase. */
             email: string;
+            /** @description The owner's name. */
             name: string;
-            /** @description ISO 8601 instant */
+            /** @description When the owner was created, in UTC. */
             created_at: string;
         };
         /** @description An error response. */
@@ -3760,19 +3834,30 @@ export interface components {
             /** @description When Marfa queued the delivery, in UTC. */
             created_at: string;
         };
+        /** @description One page of audit log entries. */
         AuditEntryPage: {
+            /** @description The entries, newest first. */
             data: components["schemas"]["AuditEntry"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An audit log entry records one action and who took it. */
         AuditEntry: {
+            /** @description Unique identifier for the entry. */
             id: string;
+            /** @description When Marfa recorded the entry, in UTC. */
             created_at: string;
+            /** @description The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping. */
             key_id: string | null;
+            /** @description What happened, such as `key.create` or `owner.created`. */
             action: string;
+            /** @description The kind of resource acted on, such as `key`. */
             resource_type: string;
+            /** @description The ID of the resource acted on, or `null` if there is none. */
             resource_id: string | null;
+            /** @description The IP address of the request that acted, or `null` if the entry records none. */
             client_ip: string | null;
+            /** @description More about the action. What it holds depends on `action`. */
             details: {
                 [key: string]: unknown;
             };
@@ -16639,7 +16724,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of API keys */
+            /** @description Returns the keys, in one page. A revoked key, or one past its `expires_at`, isn't listed. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16683,7 +16768,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller does not hold `keys.mint` */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16756,34 +16841,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description A name for the key, to tell it apart from your other keys. */
                     label: string;
+                    /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later. */
                     source: string;
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any. */
                     sources?: string[];
+                    /** @description The permissions to give the key, such as `audit.read`. */
                     permissions?: components["schemas"]["Permission"][];
-                    default_tier?: components["schemas"]["Tier"];
+                    default_tier?: components["schemas"]["Tier"] & unknown;
+                    /** @description `true` to create another operator key, which holds no permissions, maps or claimed sources. Only the operator key can create one. */
                     is_operator?: boolean;
+                    /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
                     edge_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both. */
                     metadata_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it. */
                     profile_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
-                    enforcement_override?: components["schemas"]["EnforcementOverride"];
+                    enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
                 };
             };
         };
         responses: {
-            /** @description API key created */
+            /** @description Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `*: write` on every map, and claims no source. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16797,7 +16891,10 @@ export interface operations {
                     "application/json": components["schemas"]["KeyResponse"];
                 };
             };
-            /** @description `missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, claimed more than 1,000 sources, or the bootstrap secret was refused. */
+            /**
+             * @description - `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.
+             *     - `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16827,7 +16924,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: you don't hold `keys.mint`, you asked for reach your credential doesn't cover (a working key may grant only its own `source` and what it claims), you gave reach to an operator key, or you minted an operator key without being one. `details.required_scope` names a missing permission and `details.source` a source you may not grant. A refused bootstrap mint leaves the secret unused. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it gives an operator key any reach; or it asks for an operator key and you aren't one. `details.required_scope` or `details.source` names what you lack. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16842,7 +16939,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The `source` is already another unrevoked key's own, named in `details.source`: no two unrevoked keys hold one source as their own. Keys that claim it in `sources` write under it too, so a row's source does not name the key that wrote it, and two keys share a natural key by both claiming a source in `sources`. */
+            /** @description - `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16929,7 +17026,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The calling key */
+            /** @description Returns your key. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16974,7 +17071,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential is a signed-in app's token, not a key */
+            /** @description - `forbidden`: your credential is a signed-in app's token, not a key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17058,14 +17155,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description ID of the API key to revoke */
+                /** @description The ID of the key. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Key revoked. The next request bearing it answers `401 unauthorized`. */
+            /** @description Returns `ok: true`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17079,7 +17176,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description Malformed key ID */
+            /** @description - `validation_error`: `id` isn't a valid key ID. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17109,7 +17206,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `keys.mint` required, unless the caller is the operator key */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17124,7 +17221,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `api_key_not_found`: no key was revoked. The ID is unknown, the key is already revoked or past its `expires_at`, or it is beyond your reach. The answer does not say which, so it does not reveal whether a key exists. Only the operator key is told whether an ID was unknown or the key already revoked. */
+            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The operator key's message says when the key was already revoked. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17204,7 +17301,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description ID of the API key to update */
+                /** @description The ID of the key. */
                 id: string;
             };
             cookie?: never;
@@ -17212,35 +17309,42 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description A name for the key, to tell it apart from your other keys. */
                     label?: string;
-                    default_tier?: components["schemas"]["Tier"];
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
+                    default_tier?: components["schemas"]["Tier"] & unknown;
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any. */
                     sources?: string[];
+                    /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`. */
                     edge_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both. */
                     metadata_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it. */
                     profile_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
+                    /** @description The permissions the key holds, such as `audit.read`. */
                     permissions?: components["schemas"]["Permission"][];
-                    /** @description `null` clears the override; an object replaces it whole. */
+                    /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
-                    /** @description A key's source is immutable: a body carrying this field is refused `400 validation_error`. Revoke the key and mint another to change it. */
+                    /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;
                 };
             };
         };
         responses: {
-            /** @description Key updated */
+            /** @description Returns the updated key. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17254,7 +17358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /** @description `validation_error`: the update is invalid, for example it carries `source`, which can't change. */
+            /** @description - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a lever in `enforcement_override` without `types` or `sources`, or a claimed source that starts with `oauth:`. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17266,7 +17370,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -17284,7 +17388,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: you don't hold `keys.mint` (the operator key needn't), or the edit widens a permission map past what you hold, or `sources` past your own `source` and what you claim. The operator key is no ceiling, but no map on an operator key can be widened by anyone. A key an app created can only be narrowed. `details.required_scope` and `details.source` name what is missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body gives the key a permission, map entry or source you don't hold; it gives an operator key any reach; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17299,7 +17403,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No key with this id is within the caller's reach */
+            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17383,7 +17487,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Instance config */
+            /** @description Returns the configuration. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17427,7 +17531,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Forbidden */
+            /** @description - `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17500,22 +17604,29 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
                     instance_id?: string;
+                    /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
                     enforcement?: {
-                        strict_mode?: components["schemas"]["TypeLeverStrict"];
-                        source_allowlist?: components["schemas"]["TypeAndSourceLeverStrict"];
-                        source_filter?: components["schemas"]["TypeAndSourceLeverStrict"];
+                        strict_mode?: components["schemas"]["TypeLeverStrict"] & unknown;
+                        source_allowlist?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
+                        source_filter?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                     };
+                    /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
                     audit_retention_days?: number;
+                    /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
                     event_log_retention_hours?: number;
+                    /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
                     trash_retention_days?: number;
+                    /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
                     inbound_handled_retention_days?: number;
+                    /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
                     inbound_pending_retention_days?: number;
                 };
             };
         };
         responses: {
-            /** @description Instance config updated */
+            /** @description Returns the configuration as stored. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17529,7 +17640,10 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
-            /** @description - `validation_error`: the body names a key Marfa does not recognize, a cleanup-job retention override below `0`, or an `instance_id` that names a different instance. */
+            /**
+             * @description - `missing_required_field`: a lever lacks `types` or `sources`.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17559,7 +17673,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Forbidden */
+            /** @description - `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17641,13 +17755,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/gzip": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
-            /** @description Restore result */
+            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17659,26 +17774,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description How many items Marfa wrote. */
                         imported: number;
+                        /** @description How many items Marfa skipped because their ID, natural key or link is already taken. */
                         duplicates: number;
+                        /** @description How many edges Marfa wrote. */
                         edges_imported: number;
+                        /** @description How many edges Marfa skipped. */
                         edges_skipped: number;
+                        /** @description How many edges Marfa skipped for each reason, such as `endpoint_missing` or `already_present`. */
                         edges_skipped_reasons: {
                             [key: string]: number;
                         };
+                        /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description How many types Marfa registered. */
                         types_registered: number;
+                        /** @description How many types Marfa skipped because the instance already registers them identically. */
                         types_skipped: number;
+                        /** @description How many edge types Marfa registered. */
                         edge_types_registered: number;
+                        /** @description How many edge types Marfa skipped because the instance already registers them identically. */
                         edge_types_skipped: number;
                     };
                 };
             };
             /**
-             * @description - `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
-             *     - `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.
-             *
-             *     The restore writes nothing.
+             * @description - `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.
+             *     - `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.
              */
             400: {
                 headers: {
@@ -17709,7 +17832,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Admin required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17727,8 +17850,6 @@ export interface operations {
             /**
              * @description - `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.
              *     - `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.
-             *
-             *     The restore writes nothing.
              */
             409: {
                 headers: {
@@ -17744,7 +17865,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"];
                 };
             };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18097,7 +18218,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The owner */
+            /** @description Returns the owner. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18141,7 +18262,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller is not the operator key */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18156,7 +18277,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description This instance has no owner yet */
+            /** @description - `owner_not_found`: the instance has no owner yet. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18229,16 +18350,20 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: email */
+                    /**
+                     * Format: email
+                     * @description The owner's email address, which they sign in with. Marfa stores it in lowercase.
+                     */
                     email: string;
+                    /** @description The password the owner signs in with. */
                     password: string;
-                    /** @description Falls back to the address's local part when absent or blank. */
+                    /** @description The owner's name. Leave it out or blank to use the part of `email` before the `@`. */
                     name?: string;
                 };
             };
         };
         responses: {
-            /** @description The owner, created */
+            /** @description Returns the new owner. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18252,7 +18377,10 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /** @description - `validation_error`: the body is malformed, or the password is outside the sign-in surface's length rule. For the password, the error names `password` and the bound. */
+            /**
+             * @description - `missing_required_field`: `email` or `password` is missing.
+             *     - `validation_error`: a field is invalid, such as an `email` that isn't an email address or a `password` shorter or longer than sign-in allows. For `password`, the message names the limit.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18282,7 +18410,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller is not the operator key */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18297,7 +18425,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `owner_exists`: this instance already has an owner, whatever the body. */
+            /** @description - `owner_exists`: the instance already has an owner. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18375,17 +18503,17 @@ export interface operations {
     exportData: {
         parameters: {
             query?: {
-                /** @description Filter to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches. */
+                /** @description Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix. */
                 type?: string;
-                /** @description Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass. */
+                /** @description Only export items in this lifecycle state. Without it, you get every state but `trashed`. Send `any` to include trashed items too. */
                 state?: string;
-                /** @description Narrow to rows stamped with this `source`. */
+                /** @description Only export items stamped with this source. */
                 source?: string;
-                /** @description Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time. */
+                /** @description Only export items whose own time (`occurred_at`, else `created_at`) is after this time. */
                 occurred_after?: string;
-                /** @description Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this. */
+                /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description Output format: `ndjson` (default) or `archive` */
+                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. */
                 format?: "ndjson" | "archive";
             };
             header?: never;
@@ -18394,7 +18522,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /restore` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18409,7 +18537,10 @@ export interface operations {
                     "application/gzip": string;
                 };
             };
-            /** @description Validation error */
+            /**
+             * @description - `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't a timestamp.
+             *     - `unknown_type`: `type` is a concrete type that nothing registers.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18439,7 +18570,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads. */
+            /** @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19506,15 +19637,15 @@ export interface operations {
     listAuditLog: {
         parameters: {
             query?: {
-                /** @description Filter to a single action. */
+                /** @description Only return entries with this action, such as `key.create`. */
                 action?: string;
-                /** @description Filter to a single resource type. */
+                /** @description Only return entries for this kind of resource, such as `key`. */
                 resource_type?: string;
-                /** @description Filter to a single resource id. */
+                /** @description Only return entries for the resource with this ID. */
                 resource_id?: string;
-                /** @description Include entries written strictly after this instant. */
+                /** @description Only return entries recorded after this time. */
                 created_after?: string;
-                /** @description Include entries written strictly before this instant. */
+                /** @description Only return entries recorded before this time. */
                 created_before?: string;
                 /** @description The maximum number of results to return. */
                 limit?: number;
@@ -19527,7 +19658,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Paginated audit log entries */
+            /** @description Returns a page of entries. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19541,7 +19672,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuditEntryPage"];
                 };
             };
-            /** @description A query parameter is outside what the door accepts. */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, such as a time that isn't a timestamp, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19571,7 +19702,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential does not hold `audit.read`. The operator key holds no permission, so it is refused too. */
+            /** @description - `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19643,7 +19774,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The instance */
+            /** @description Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19652,13 +19783,18 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @constant */
+                        /**
+                         * @description Always `marfa`.
+                         * @constant
+                         */
                         name: "marfa";
-                        /** @description The deployed build. */
+                        /** @description The build the instance runs. */
                         version: string;
+                        /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
                         instance_id: string;
-                        /** @description The contract version, which stays at 0 until the first public release. */
+                        /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
                         contract: number;
+                        /** @description The features the instance serves, such as `items` and `webhooks`. */
                         features: string[];
                     };
                 };
@@ -19867,23 +20003,25 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Required for the authorization_code grant. */
+                    /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
                     redirect_uris?: string[];
-                    /** @description Defaults to ["authorization_code"]. */
+                    /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. */
                     grant_types?: string[];
-                    /** @description Defaults to ["code"]. */
+                    /** @description The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`. */
                     response_types?: string[];
+                    /** @description The app's name, which Marfa shows a person asked to approve it. */
                     client_name?: string;
-                    /** @description Defaults to "web". */
+                    /** @description `web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`. */
                     application_type?: string;
+                    /** @description Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows. */
                     scope?: string;
-                    /** @description Defaults to "client_secret_basic". */
+                    /** @description How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`. */
                     token_endpoint_auth_method?: string;
                 };
             };
         };
         responses: {
-            /** @description The registered client, including the issued client_id. */
+            /** @description Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19895,25 +20033,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description Unique identifier for the client. */
                         client_id?: string;
-                        /** @description Confidential clients only. */
+                        /** @description The secret the client proves itself with at the token endpoint. Absent for a public client. */
                         client_secret?: string;
+                        /** @description When the client was registered, in seconds since the Unix epoch. */
                         client_id_issued_at?: number;
+                        /** @description Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows. */
                         scope?: string;
+                        /** @description The redirect URIs, as registered. */
                         redirect_uris?: string[];
+                        /** @description The grants, as registered. */
                         grant_types?: string[];
+                        /** @description The response types, as registered. */
                         response_types?: string[];
+                        /** @description How the client proves itself at the token endpoint. */
                         token_endpoint_auth_method?: string;
-                        /** @description 0 for a secret that does not expire. */
+                        /** @description When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't. */
                         client_secret_expires_at?: number;
+                        /** @description The app's name, as registered. */
                         client_name?: string;
+                        /** @description `web` or `native`. */
                         application_type?: string;
+                        /** @description `true` if the client is disabled. */
                         disabled?: boolean;
+                        /** @description `true` if the client always uses DPoP for its token requests. */
                         dpop_bound_access_tokens?: boolean;
                     };
                 };
             };
-            /** @description An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint. */
+            /**
+             * @description An error in the shape RFC 7591 defines:
+             *     - `invalid_client_metadata`: a field is invalid, such as `grant_types` naming `client_credentials`.
+             *     - `invalid_redirect_uri`: a redirect URI is missing, malformed or not allowed for the `application_type`.
+             *     - `invalid_scope`: `scope` names a scope the instance doesn't allow.
+             *
+             *     An unknown query parameter gets Marfa's own `validation_error` instead.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19932,7 +20088,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential. */
+            /**
+             * @description An error in the shape RFC 6750 defines:
+             *     - `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19961,6 +20120,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /**
+             * @description An error with `message` and `code`, rather than Marfa's own shape:
+             *     - `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.
+             */
+            415: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description A machine-readable code for the error. Use it in your logic.
+                         * @enum {string}
+                         */
+                        code: "UNSUPPORTED_MEDIA_TYPE";
+                        /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                        message: string;
+                    };
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

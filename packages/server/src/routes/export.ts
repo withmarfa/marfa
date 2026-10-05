@@ -49,7 +49,7 @@ const exportRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Export items and edges",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /restore` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, `lending_blobs`, the digests in that row's properties that lend its reach, and `lending_extensions`, the digests that lend its reach in each extension namespace the line carries. Each archive edge line carries `lending_blobs`, the digests in that edge's properties that lend its reach. A restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.",
+    "Exports the items you can read, with their tags and readable extensions, followed by the edges between them. Without `state`, trashed items are left out. With `format=archive`, returns a file that `POST /restore` reads.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -58,34 +58,36 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Filter to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches.",
+          "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
         ),
       state: z
         .string()
         .optional()
         .describe(
-          `Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. \`${ALL_STATES}\` adds the bin, in one pass.`,
+          `Only export items in this lifecycle state. Without it, you get every state but \`trashed\`. Send \`${ALL_STATES}\` to include trashed items too.`,
         ),
       source: z
         .string()
         .optional()
-        .describe("Narrow to rows stamped with this `source`."),
+        .describe("Only export items stamped with this source."),
       occurred_after: z
         .string()
         .optional()
         .describe(
-          "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time.",
+          "Only export items whose own time (`occurred_at`, else `created_at`) is after this time.",
         ),
       occurred_before: z
         .string()
         .optional()
         .describe(
-          "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this.",
+          "Only export items whose own time (`occurred_at`, else `created_at`) is before this time.",
         ),
       format: z
         .enum(["ndjson", "archive"])
         .optional()
-        .describe("Output format: `ndjson` (default) or `archive`"),
+        .describe(
+          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`.",
+        ),
     }),
   },
   responses: {
@@ -100,7 +102,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /restore` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack.",
+        "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack.",
     },
     400: {
       content: {
@@ -108,7 +110,8 @@ const exportRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't a timestamp.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
     },
     401: {
       content: {
@@ -125,7 +128,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads.",
+        "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.",
     },
   },
 });

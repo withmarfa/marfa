@@ -145,11 +145,11 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  */
 const CEILINGS = {
   summaryForm: 0,
-  descriptionLength: 13,
+  descriptionLength: 0,
   parameterUndescribed: 0,
-  parameterLength: 1,
-  schemaUndescribed: 54,
-  fieldUndescribed: 197,
+  parameterLength: 0,
+  schemaUndescribed: 35,
+  fieldUndescribed: 123,
   fieldLength: 6,
   responseLength: 0,
 };
@@ -215,11 +215,15 @@ describe("the API description follows API-STYLE.md", () => {
       ["503", "WriteContentionRefusal"],
       ["500", "InternalErrorRefusal"],
     ]);
+    // A restore takes no body cap, so its 413 is a row larger than a write
+    // takes, and it carries its own text, as API-STYLE.md allows.
+    const ownMeaning = new Set(["POST /restore 413"]);
     const texts = new Map<string, Set<string>>();
-    for (const { operation } of operations()) {
+    for (const { key, operation } of operations()) {
       for (const [status, response] of Object.entries(
         (operation.responses ?? {}) as Record<string, Json>,
       )) {
+        if (ownMeaning.has(`${key} ${status}`)) continue;
         const component = shared.get(status);
         const content = (response.content ?? {}) as Record<string, Json>;
         const schema = (content["application/json"]?.schema ?? {}) as Json;

@@ -8,13 +8,16 @@ import {
   makeErrorResponseSchema,
   OPERATOR_ONLY_RESPONSE,
 } from "../openapi.js";
-import { nullableRef, pageOf } from "./_schemas.js";
+import { nullableRef, wholeListOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
-const OutcomeSchema = z.enum(["ok", "error"]).openapi("HousekeepingOutcome");
+const OutcomeSchema = z
+  .enum(["ok", "error"])
+  .describe("How a run ended: `ok` if it finished, `error` if it failed.")
+  .openapi("HousekeepingOutcome");
 
 /**
  * What a run reports.
@@ -27,31 +30,68 @@ const OutcomeSchema = z.enum(["ok", "error"]).openapi("HousekeepingOutcome");
  */
 const HousekeepingReportSchema = z
   .record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()]))
+  .describe(
+    "What a run reports, under names its job chooses, such as `deleted` or `copied`.",
+  )
   .openapi("HousekeepingReport");
 
 const HousekeepingJobSchema = z
   .object({
-    name: z.string(),
-    interval_ms: z.number().int(),
-    next_run_at: z.string(),
-    running_since: z.string().nullable(),
-    last_started_at: z.string().nullable(),
-    last_finished_at: z.string().nullable(),
-    last_outcome: nullableRef(OutcomeSchema),
-    last_error: z.string().nullable(),
-    last_result: nullableRef(HousekeepingReportSchema),
+    name: z.string().describe("The job's name, such as `trash-purge`."),
+    interval_ms: z
+      .number()
+      .int()
+      .describe("How often the job runs, in milliseconds."),
+    next_run_at: z.string().describe("When the job is next due, in UTC."),
+    running_since: z
+      .string()
+      .nullable()
+      .describe(
+        "When the current run started, in UTC, or `null` if the job isn't running.",
+      ),
+    last_started_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When the latest run started, in UTC, or `null` if the job has never run.",
+      ),
+    last_finished_at: z
+      .string()
+      .nullable()
+      .describe(
+        "When the last run finished, in UTC, or `null` if none has finished.",
+      ),
+    last_outcome: nullableRef(OutcomeSchema).describe(
+      "How the last run ended, or `null` if none has finished.",
+    ),
+    last_error: z
+      .string()
+      .nullable()
+      .describe("The error the last run hit, or `null` if it had none."),
+    last_result: nullableRef(HousekeepingReportSchema).describe(
+      "What the last run reported, or `null` if it reported nothing.",
+    ),
   })
+  .describe(
+    "A housekeeping job: a task Marfa runs on itself on a schedule, and its last run.",
+  )
   .openapi("HousekeepingJob");
 
 const HousekeepingRunSchema = z
   .object({
-    name: z.string(),
-    started_at: z.string(),
-    finished_at: z.string(),
-    outcome: OutcomeSchema,
-    result: nullableRef(HousekeepingReportSchema),
-    error: z.string().nullable(),
+    name: z.string().describe("The job's name."),
+    started_at: z.string().describe("When the run started, in UTC."),
+    finished_at: z.string().describe("When the run finished, in UTC."),
+    outcome: OutcomeSchema.describe("How the run ended."),
+    result: nullableRef(HousekeepingReportSchema).describe(
+      "What the run reported, or `null` if it reported nothing.",
+    ),
+    error: z
+      .string()
+      .nullable()
+      .describe("The error the run hit, or `null` if it had none."),
   })
+  .describe("One run of a housekeeping job.")
   .openapi("HousekeepingRun");
 
 const NameParam = z.object({
@@ -84,14 +124,18 @@ const listHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "List housekeeping jobs",
   description:
-    "Returns every housekeeping job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
+    "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(HousekeepingJobSchema, "HousekeepingJobPage"),
+          schema: wholeListOf(
+            HousekeepingJobSchema,
+            "HousekeepingJobPage",
+            "housekeeping job",
+          ),
         },
       },
       description: "Returns every housekeeping job, in one page.",
@@ -107,7 +151,7 @@ const runHousekeepingRoute = createRoute({
   tags: ["Instance"],
   summary: "Run a housekeeping job",
   description:
-    "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
+    "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: NameParam },

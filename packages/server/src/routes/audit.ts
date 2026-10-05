@@ -13,19 +13,35 @@ import { pageOf } from "./_schemas.js";
 
 const AuditEntrySchema = z
   .object({
-    id: z.string(),
-    created_at: z.string(),
-    key_id: z.string().nullable(),
-    action: z.string(),
-    resource_type: z.string(),
-    resource_id: z.string().nullable(),
-    /**
-     * Resolved client IP for the action. Null for system-initiated audits
-     * with no Hono context.
-     */
-    client_ip: z.string().nullable(),
-    details: z.record(z.string(), z.unknown()),
+    id: z.string().describe("Unique identifier for the entry."),
+    created_at: z.string().describe("When Marfa recorded the entry, in UTC."),
+    key_id: z
+      .string()
+      .nullable()
+      .describe(
+        "The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping.",
+      ),
+    action: z
+      .string()
+      .describe("What happened, such as `key.create` or `owner.created`."),
+    resource_type: z
+      .string()
+      .describe("The kind of resource acted on, such as `key`."),
+    resource_id: z
+      .string()
+      .nullable()
+      .describe("The ID of the resource acted on, or `null` if there is none."),
+    client_ip: z
+      .string()
+      .nullable()
+      .describe(
+        "The IP address of the request that acted, or `null` if the entry records none.",
+      ),
+    details: z
+      .record(z.string(), z.unknown())
+      .describe("More about the action. What it holds depends on `action`."),
   })
+  .describe("An audit log entry records one action and who took it.")
   .openapi("AuditEntry");
 
 const listAuditRoute = createRoute({
@@ -35,28 +51,35 @@ const listAuditRoute = createRoute({
   tags: ["Instance"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`.",
+    "Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("audit.read"),
   request: {
     query: z.object({
-      action: z.string().optional().describe("Filter to a single action."),
+      action: z
+        .string()
+        .optional()
+        .describe(
+          "Only return entries with this action, such as `key.create`.",
+        ),
       resource_type: z
         .string()
         .optional()
-        .describe("Filter to a single resource type."),
+        .describe(
+          "Only return entries for this kind of resource, such as `key`.",
+        ),
       resource_id: z
         .string()
         .optional()
-        .describe("Filter to a single resource id."),
+        .describe("Only return entries for the resource with this ID."),
       created_after: z
         .string()
         .optional()
-        .describe("Include entries written strictly after this instant."),
+        .describe("Only return entries recorded after this time."),
       created_before: z
         .string()
         .optional()
-        .describe("Include entries written strictly before this instant."),
+        .describe("Only return entries recorded before this time."),
       limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
       cursor: pageCursor(),
     }),
@@ -65,10 +88,13 @@ const listAuditRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(AuditEntrySchema, "AuditEntryPage"),
+          schema: pageOf(AuditEntrySchema, "AuditEntryPage", {
+            page: "One page of audit log entries.",
+            data: "The entries, newest first.",
+          }),
         },
       },
-      description: "Paginated audit log entries",
+      description: "Returns a page of entries.",
     },
     401: {
       content: {
@@ -85,7 +111,7 @@ const listAuditRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: the credential does not hold `audit.read`. The operator key holds no permission, so it is refused too.",
+        "- `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it.",
     },
     400: {
       content: {
@@ -93,7 +119,8 @@ const listAuditRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "A query parameter is outside what the door accepts.",
+      description:
+        "- `validation_error`: a query parameter is unknown or invalid, such as a time that isn't a timestamp, or `cursor` is malformed or came from another listing.",
     },
   },
 });

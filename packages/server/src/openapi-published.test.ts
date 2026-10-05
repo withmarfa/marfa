@@ -49,13 +49,19 @@ function openRefusals(document: Record<string, unknown>): string[] {
       const found = (record.allOf as unknown[]).map(problem);
       return found.some((p) => p === undefined) ? undefined : found[0];
     }
-    const error = (
-      (record.properties ?? {}) as Record<
-        string,
-        { properties?: Record<string, unknown> }
-      >
-    ).error;
-    if (error === undefined) return "no code";
+    const properties = (record.properties ?? {}) as Record<
+      string,
+      { properties?: Record<string, unknown> }
+    >;
+    const error = properties.error;
+    if (error === undefined) {
+      // The registration's `415` is the sign-in library's own shape, which
+      // names its code beside the message rather than under `error`.
+      if (properties.code !== undefined) {
+        return closedCode(properties.code) ? undefined : "open";
+      }
+      return "no code";
+    }
     return closedCode(error.properties?.code ?? error) ? undefined : "open";
   };
   for (const [key, operation] of operationKeys(document)) {

@@ -65,6 +65,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { configRoutes } from "./routes/config.js";
+import { DESCRIBED_ONLY_BY_REFERENCE } from "./routes/_schemas.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
@@ -711,6 +712,9 @@ export function createApp(
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
   // OpenAPI spec — generated from route definitions
+  for (const [name, schema] of Object.entries(DESCRIBED_ONLY_BY_REFERENCE)) {
+    app.openAPIRegistry.register(name, schema);
+  }
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
     scheme: "bearer",

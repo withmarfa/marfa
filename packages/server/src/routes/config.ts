@@ -20,11 +20,15 @@ import { EnforcementReadSchema, EnforcementWriteSchema } from "./_schemas.js";
  * from the factory would register a second schema under the component names
  * the first one took.
  */
+const KEPT_FOREVER = "`0` keeps them with no age limit.";
+const SERVER_DEFAULT = "Absent: the server's default applies.";
+
 const instanceConfigShape = (strict: boolean) => ({
-  enforcement: (strict
-    ? EnforcementWriteSchema
-    : EnforcementReadSchema
-  ).optional(),
+  enforcement: (strict ? EnforcementWriteSchema : EnforcementReadSchema)
+    .optional()
+    .describe(
+      "The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on.",
+    ),
   // Retention overrides for the cleanup jobs. Each falls back to the
   // instance env default when unset. `0` disables the job (matches
   // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are
@@ -34,31 +38,46 @@ const instanceConfigShape = (strict: boolean) => ({
     .int()
     .min(0)
     .max(MAX_RETENTION_DAYS)
-    .optional(),
+    .optional()
+    .describe(
+      `Days Marfa keeps audit log entries and outbound webhook delivery history. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+    ),
   event_log_retention_hours: z
     .number()
     .int()
     .min(0)
     .max(MAX_RETENTION_HOURS)
-    .optional(),
+    .optional()
+    .describe(
+      `Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an \`Idempotency-Key\`. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+    ),
   trash_retention_days: z
     .number()
     .int()
     .min(0)
     .max(MAX_RETENTION_DAYS)
-    .optional(),
+    .optional()
+    .describe(
+      `Days an item stays in the trash before Marfa purges it. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+    ),
   inbound_handled_retention_days: z
     .number()
     .int()
     .min(0)
     .max(MAX_RETENTION_DAYS)
-    .optional(),
+    .optional()
+    .describe(
+      `Days Marfa keeps inbound webhook deliveries a connector has marked handled. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+    ),
   inbound_pending_retention_days: z
     .number()
     .int()
     .min(0)
     .max(MAX_RETENTION_DAYS)
-    .optional(),
+    .optional()
+    .describe(
+      `Days Marfa keeps inbound webhook deliveries no connector has marked handled. ${KEPT_FOREVER} ${SERVER_DEFAULT}`,
+    ),
 });
 
 /**
@@ -73,9 +92,16 @@ const instanceConfigShape = (strict: boolean) => ({
  */
 const InstanceConfigSchema = z
   .object({
-    instance_id: z.string(),
+    instance_id: z
+      .string()
+      .describe(
+        "Unique identifier for the instance, the same value `GET /` returns.",
+      ),
     ...instanceConfigShape(false),
   })
+  .describe(
+    "The instance configuration: its enforcement levers and retention settings, with the instance's ID.",
+  )
   .openapi("InstanceConfig");
 
 /**
@@ -98,12 +124,21 @@ const InstanceConfigWriteSchema = z.strictObject({
   // Silently dropping it instead would make `PUT` answer `200` to a body
   // addressed to a different instance, which is the failure a backup script
   // pointed at the wrong host produces.
-  instance_id: z.string().min(1).optional(),
+  instance_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing.",
+    ),
   ...instanceConfigShape(true),
 });
 
 /** Both configuration doors take `config.manage`. */
 const managesConfig = standingPermission("config.manage");
+
+const CONFIG_MANAGE_REFUSAL =
+  "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.";
 
 const getConfigRoute = createRoute({
   operationId: "getConfig",
@@ -112,7 +147,7 @@ const getConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Get the configuration",
   description:
-    "Returns the instance configuration (the optional `enforcement` levers plus the cleanup-job retention overrides) under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
+    "Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   responses: {
@@ -120,7 +155,7 @@ const getConfigRoute = createRoute({
       content: {
         "application/json": { schema: InstanceConfigSchema },
       },
-      description: "Instance config",
+      description: "Returns the configuration.",
     },
     401: {
       content: {
@@ -136,7 +171,7 @@ const getConfigRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Forbidden",
+      description: CONFIG_MANAGE_REFUSAL,
     },
   },
 });
@@ -148,7 +183,7 @@ const putConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Replace the configuration",
   description:
-    "Overwrites the instance config with the supplied object: full replacement, not a merge. A cleanup-job retention override of `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing. Requires `config.manage`.",
+    "Replaces the instance configuration with the body and returns it. A setting you leave out goes back to its default, so send the whole configuration with your change. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   request: {
@@ -163,7 +198,7 @@ const putConfigRoute = createRoute({
       content: {
         "application/json": { schema: InstanceConfigSchema },
       },
-      description: "Instance config updated",
+      description: "Returns the configuration as stored.",
     },
     400: {
       content: {
@@ -175,7 +210,7 @@ const putConfigRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body names a key Marfa does not recognize, a cleanup-job retention override below `0`, or an `instance_id` that names a different instance.",
+        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.",
     },
     401: {
       content: {
@@ -191,7 +226,7 @@ const putConfigRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Forbidden",
+      description: CONFIG_MANAGE_REFUSAL,
     },
   },
 });
