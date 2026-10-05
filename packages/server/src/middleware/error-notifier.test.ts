@@ -133,3 +133,49 @@ describe("the Telegram message format", () => {
     expect(body).toHaveProperty("error", "boom");
   });
 });
+
+describe("what the error webhook is sent", () => {
+  const VALUE = "bound-value-3e9d51c0";
+  const STATEMENT =
+    'Failed query: insert into "items" ("properties") values (?)';
+  let bodies: string[];
+
+  beforeEach(() => {
+    bodies = [];
+    vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it.each([
+    ["a generic endpoint", "https://example.invalid/hook"],
+    ["Telegram", "https://api.telegram.org/bot123/sendMessage"],
+  ])(
+    "keeps a failed query's values out of the message sent to %s",
+    async (_name, url) => {
+      const given = `${STATEMENT}\nparams: ${VALUE}`;
+      // The witness: what the caller hands over does carry the value.
+      expect(given).toContain(VALUE);
+      const { notifyError } = await freshNotifier();
+
+      notifyError(url, notification(given, "/items"));
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toContain("Failed query");
+      expect(bodies[0]).not.toContain(VALUE);
+    },
+  );
+
+  it("holds one failed statement to one alert in a window, whatever values it was bound to", async () => {
+    const { notifyError } = await freshNotifier();
+    notifyError(WEBHOOK, notification(`${STATEMENT}\nparams: a`, "/items"));
+    notifyError(WEBHOOK, notification(`${STATEMENT}\nparams: b`, "/items"));
+    expect(bodies).toHaveLength(1);
+  });
+});

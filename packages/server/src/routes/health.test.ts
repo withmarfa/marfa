@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { healthRoutes, operatorCaller, PROBE_TIMEOUT_MS } from "./health.js";
@@ -391,6 +392,31 @@ describe("GET /health error text from a wrapped failure", () => {
     expect(body.components.database_write?.error).toBe(
       "SQLITE_FULL: database or disk is full",
     );
+  });
+});
+
+describe("GET /health error text from a failed query with no failure inside it", () => {
+  it("names the statement and not the values it was bound to", async () => {
+    const value = "bound-value-3e9d51c0";
+    const bare = new DrizzleQueryError(
+      'insert into "settings" ("key", "value") values (?, ?)',
+      ["probe", value],
+      undefined,
+    );
+    // The witness: the library's own message carries the value.
+    expect(bare.message).toContain(value);
+    const res = await healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(null)),
+      {},
+      okProbes({ write: () => Promise.reject(bare) }),
+      theOperator,
+    ).request("/");
+
+    const body = (await res.json()) as HealthBody;
+
+    expect(body.components.database_write?.error).toContain("Failed query");
+    expect(JSON.stringify(body)).not.toContain(value);
   });
 });
 

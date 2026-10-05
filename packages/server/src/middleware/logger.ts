@@ -7,6 +7,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "./auth.js";
 import { toOpenApiPath } from "../openapi-path.js";
 import { loggablePath } from "../inbound/address.js";
+import { withoutParametersOf, withoutQueryParameters } from "../error-text.js";
 
 // ---------------------------------------------------------------------------
 // Structured log entry
@@ -126,10 +127,11 @@ export interface LogOptions {
  */
 export function log(
   level: LogLevel,
-  message: string,
+  rawMessage: string,
   data?: Record<string, unknown>,
   options?: LogOptions,
 ): void {
+  const message = withoutQueryParameters(rawMessage);
   let payload: Record<string, unknown>;
   let line: string;
   try {
@@ -224,7 +226,10 @@ function prepareLogPayload(data: Record<string, unknown> | undefined): {
     if (kind === "bigint" || kind === "symbol" || kind === "function") {
       return stringifyThrownValue(value);
     }
-    // Everything left that is not an object is a string, number or boolean.
+    // Every string is held to the failed-query rule: a caller that built its
+    // own text from an error has handed this function the values already.
+    if (kind === "string") return withoutQueryParameters(value as string);
+    // Everything left that is not an object is a number or boolean.
     if (kind !== "object") return value;
 
     if (isErrorLike(value)) {
@@ -463,7 +468,10 @@ function describeErrorValue(err: unknown): string {
   const rawMessage = readProperty(err, "message");
   const name =
     typeof rawName === "string" && rawName !== "" ? rawName : undefined;
-  const message = typeof rawMessage === "string" ? rawMessage.trim() : "";
+  const message =
+    typeof rawMessage === "string"
+      ? withoutParametersOf(err, rawMessage).trim()
+      : "";
 
   let text: string;
   if (message && name && name !== "Error") text = `${name}: ${message}`;
@@ -505,7 +513,8 @@ export function serializeError(err: unknown, depth = 0): unknown {
   const name = readProperty(err, "name");
   if (typeof name === "string" && name !== "") out.name = name;
   const message = readProperty(err, "message");
-  out.message = typeof message === "string" ? message : "";
+  out.message =
+    typeof message === "string" ? withoutParametersOf(err, message) : "";
 
   for (const key of ERROR_DETAIL_KEYS) {
     const value = readProperty(err, key);
@@ -516,7 +525,7 @@ export function serializeError(err: unknown, depth = 0): unknown {
 
   if (logStacks) {
     const stack = readProperty(err, "stack");
-    if (typeof stack === "string") out.stack = stack;
+    if (typeof stack === "string") out.stack = withoutParametersOf(err, stack);
   }
 
   if (depth < MAX_CAUSE_DEPTH) {

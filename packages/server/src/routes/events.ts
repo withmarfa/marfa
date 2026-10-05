@@ -32,6 +32,7 @@ import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata, TypeFilter } from "@withmarfa/shared";
 import { readableMetadata } from "./_extension-reach.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
+import { errorMessage } from "../error-text.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
 const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
@@ -662,7 +663,7 @@ export function eventRoutes(
               void refreshReach().catch((err: unknown) => {
                 if (state.closed) return;
                 console.warn(
-                  `[events] closing the stream: the credential could not be read again (${String(err)})`,
+                  `[events] closing the stream: the credential could not be read again (${errorMessage(err)})`,
                 );
                 failStream("live_delivery_failed");
               });
@@ -951,7 +952,7 @@ export function eventRoutes(
                   // the subscription ending, not a failure.
                   if (state.closed) return;
                   console.warn(
-                    `[events] closing the stream: live delivery failed (${String(err)})`,
+                    `[events] closing the stream: live delivery failed (${errorMessage(err)})`,
                   );
                   failStream("live_delivery_failed");
                 });
@@ -1476,7 +1477,7 @@ export function eventRoutes(
                 // thing that identifies which catch-up stopped and where,
                 // and it is the row after it that has to be looked at.
                 console.warn(
-                  `[events] closing the stream: the catch-up could not complete after event ${String(lastReplayedId)} (${String(err)})`,
+                  `[events] closing the stream: the catch-up could not complete after event ${String(lastReplayedId)} (${errorMessage(err)})`,
                 );
                 failStream("replay_failed");
                 return false;
@@ -1551,7 +1552,7 @@ export function eventRoutes(
                 // inside the prologue, whose rejection nothing else handles.
                 if (!state.closed) {
                   console.warn(
-                    `[events] closing the stream: the credential could not be read again (${String(err)})`,
+                    `[events] closing the stream: the credential could not be read again (${errorMessage(err)})`,
                   );
                   failStream("live_delivery_failed");
                 }
@@ -1632,7 +1633,7 @@ export function eventRoutes(
                 // the events in the gap. Closing hands it back to its own
                 // reconnect path, which is the only place it can recover.
                 console.warn(
-                  `[events] closing the stream: the event-log head could not be read (${String(err)})`,
+                  `[events] closing the stream: the event-log head could not be read (${errorMessage(err)})`,
                 );
                 endStream();
                 return false;

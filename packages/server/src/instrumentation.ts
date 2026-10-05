@@ -30,6 +30,7 @@
  */
 import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
+import { reportableError } from "./error-text.js";
 
 declare global {
   /**
@@ -212,7 +213,7 @@ async function start(): Promise<void> {
     globalThis.__marfaReportException = (err, properties) => {
       // No distinct id: the event is the instance's, and the client then
       // sends it without creating a person.
-      client.captureException(err, undefined, {
+      client.captureException(reportableError(err), undefined, {
         ...resourceAttributes,
         ...properties,
       });

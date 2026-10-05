@@ -1,5 +1,6 @@
 import { imageDimensionsFromData, type ImageType } from "image-dimensions";
 import { parseBuffer } from "music-metadata";
+import { errorMessage } from "../error-text.js";
 
 /**
  * The fields derivation can fill.
@@ -189,7 +190,7 @@ export async function deriveDimensions(
       )
     ).format;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       kind: "unreadable",
       reason: `media parse failed: ${message.slice(0, 200)}`,

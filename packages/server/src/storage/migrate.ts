@@ -8,6 +8,7 @@
  */
 import { loadConfig } from "../config.js";
 import { createConnection } from "./sqlite/connection.js";
+import { reportableError } from "../error-text.js";
 
 try {
   const { sqlitePath } = loadConfig();
@@ -17,6 +18,6 @@ try {
   console.log("Schema applied.");
   process.exit(0);
 } catch (err) {
-  console.error("Schema apply failed:", err);
+  console.error("Schema apply failed:", reportableError(err));
   process.exit(1);
 }

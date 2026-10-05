@@ -8,6 +8,7 @@ import {
   finishPendingCopyDeletions,
 } from "./blob-delete.js";
 import type { Stores } from "./blob-delete.js";
+import { errorMessage } from "../error-text.js";
 
 export interface ReplicationBounds {
   /** Most blobs one run copies. */
@@ -114,7 +115,7 @@ export class BlobReplicator {
         hash,
         from: source.id,
         to: target.id,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return false;
     }
@@ -144,7 +145,7 @@ export class BlobReplicator {
           log("error", "blob.orphaned_after_refused_replication", {
             hash,
             store_id: target.id,
-            error: String(cleanupErr),
+            error: errorMessage(cleanupErr),
           });
         }
       }

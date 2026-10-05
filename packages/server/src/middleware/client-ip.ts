@@ -35,6 +35,7 @@ import ipaddr from "ipaddr.js";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
+import { errorMessage } from "../error-text.js";
 
 type CidrRange = [ipaddr.IPv4 | ipaddr.IPv6, number];
 
@@ -51,9 +52,7 @@ export function parseTrustedProxyCidrs(raw: string | undefined): CidrRange[] {
         return ipaddr.parseCIDR(cidr);
       } catch (err) {
         throw new Error(
-          `TRUSTED_PROXY_CIDRS: invalid CIDR "${cidr}": ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `TRUSTED_PROXY_CIDRS: invalid CIDR "${cidr}": ${errorMessage(err)}`,
           { cause: err },
         );
       }

@@ -3,6 +3,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { log } from "../middleware/logger.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
@@ -188,7 +189,7 @@ export async function finishPendingCopyDeletions(
       log("error", "blob.copy_deletion_unfinished", {
         hash: copy.hash,
         store_id: copy.store_id,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     }
   }

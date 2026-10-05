@@ -110,6 +110,7 @@ import {
   isRegisteredResponseRedirect,
 } from "../auth/redirect-params.js";
 import { log } from "../middleware/logger.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * Query parameter carrying a consent-page error banner code back from the
@@ -932,7 +933,7 @@ async function verifySignedQuery(
     return expSeconds * 1000 < Date.now() ? "expired" : "valid";
   } catch (err) {
     log("warn", "consent: signed-query verification failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return "unsigned";
   }
@@ -1199,7 +1200,7 @@ async function resolveClient(
   } catch (err) {
     log("warn", "consent: resolveClient failed", {
       client_id: clientId,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return null;
   }
@@ -1223,7 +1224,7 @@ async function resolvePriorScopes(
   } catch (err) {
     log("warn", "consent: resolvePriorScopes failed", {
       client_id: clientId,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return undefined;
   }

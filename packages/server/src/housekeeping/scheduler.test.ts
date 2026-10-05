@@ -298,6 +298,53 @@ describe("Housekeeping", () => {
       await hk.stop();
     });
 
+    it("records a failed write's statement as the run's error and never the values it was bound to", async () => {
+      ctx = await createTestContext();
+      const value = "bound-value-3e9d51c0";
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun(
+        "CREATE TRIGGER refuse_inserts BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'refused by the fixture'); END",
+        [],
+      );
+      const write = () =>
+        itemWrites(ctx!.storage).create({
+          type: "core.note",
+          tier: "library",
+          state: "active",
+          properties: { body: value },
+          source: "test/job-failure",
+        });
+      // The witness: the failure the job meets does carry the value.
+      await expect(write()).rejects.toThrow(value);
+
+      const hk = scheduler(clock(T0).nowFn);
+      hk.register({
+        name: "writer",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        run: async () => {
+          await write();
+          return null;
+        },
+      });
+      await hk.start();
+      const captured = captureLog();
+      await hk.poll();
+      await hk.settle();
+      captured.restore();
+
+      const row = await ctx.storage.backgroundJobs.get("writer");
+      expect(row?.last_outcome).toBe("error");
+      expect(row?.last_error).toContain("Failed query: insert into");
+      expect(row?.last_error).not.toContain(value);
+      expect(JSON.stringify(captured.lines)).toContain("Failed query");
+      expect(JSON.stringify(captured.lines)).not.toContain(value);
+      await hk.stop();
+    });
+
     it("records a throw as the run's error and reschedules at the interval, never hotter", async () => {
       ctx = await createTestContext();
       const c = clock(T0);

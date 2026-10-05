@@ -70,6 +70,7 @@ import { archiveDates, archiveVersions } from "./restore-archive-history.js";
 import { archiveLines, readArchive } from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { errorMessage } from "../error-text.js";
 
 function archiveScalarRefusal(
   kind: "item" | "edge",
@@ -509,7 +510,7 @@ async function takeBackBytes(
     } catch (err) {
       log("error", "blob.orphaned_after_refused_restore", {
         hash,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     }
   }

@@ -1,3 +1,5 @@
+import { withoutQueryParameters } from "../error-text.js";
+
 /**
  * Fire-and-forget error webhook notifications with per-error-type debouncing.
  * Used by the error handler to send 500 alerts to a configured webhook URL.
@@ -60,9 +62,15 @@ function isTelegramUrl(webhookUrl: string): boolean {
 
 export function notifyError(
   webhookUrl: string,
-  notification: ErrorNotification,
+  reported: ErrorNotification,
   timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS,
 ): void {
+  // The channel is read by more people than the instance holds data for, so
+  // the text it is sent never carries a failed query's values, whoever built it.
+  const notification = {
+    ...reported,
+    error: withoutQueryParameters(reported.error),
+  };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
   const now = Date.now();
   const last = debounceMap.get(errorKey);

@@ -10,6 +10,7 @@ import {
   parseTrustedProxyHeader,
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
+import { errorMessage } from "./error-text.js";
 
 /**
  * The cap on every door under `/keys` when the instance names none.
@@ -485,7 +486,7 @@ function setting<T>(parse: (value: string) => T, fallback: () => T) {
       } catch (err) {
         ctx.addIssue({
           code: "custom",
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
         return z.NEVER;
       }
@@ -668,7 +669,7 @@ function fromThrowingParser<T>(parse: (raw: string) => T) {
       return parse(value);
     } catch (err) {
       // The parsers name the setting themselves; the schema names it again.
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       throw new Error(message.replace(/^[A-Z_]+:\s*/, ""), { cause: err });
     }
   };

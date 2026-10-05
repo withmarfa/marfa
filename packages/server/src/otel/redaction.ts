@@ -9,6 +9,7 @@ import type {
 } from "@opentelemetry/sdk-logs";
 import type { AnyValueMap } from "@opentelemetry/api-logs";
 import { loggablePath } from "../inbound/address.js";
+import { withoutQueryParameters } from "../error-text.js";
 
 /**
  * PII discipline for OpenTelemetry.
@@ -31,7 +32,8 @@ import { loggablePath } from "../inbound/address.js";
  * `marfa.request_id`, `http.request.method`, `http.route`,
  * `http.response.status_code`, Marfa `error.code`, and the OTel exception
  * trio (`exception.type` / `exception.message` / `exception.stacktrace`) —
- * error tracking is worthless without them and none match a deny rule.
+ * error tracking is worthless without them and none match a deny rule. The
+ * trio is kept without the values of a failed query, which no key names.
  *
  * The redaction runs in a SpanProcessor / LogRecordProcessor that is
  * registered BEFORE the exporting processor, so it mutates each record's
@@ -77,11 +79,44 @@ const URL_VALUE_KEYS: ReadonlySet<string> = new Set([
 
 const REDACTED = "[REDACTED]";
 
+/** The deepest a log record nests a value, as the logger itself bounds a payload. */
+const MAX_VALUE_DEPTH = 6;
+
 function stripQuery(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const q = value.indexOf("?");
   const kept = loggablePath(q === -1 ? value : value.slice(0, q));
   return q === -1 ? kept : `${kept}?${REDACTED}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * A failed query's message names the values it was bound to, and an exception
+ * event carries that message and a stack that repeats it. No attribute name
+ * says so, so every text value is held to it, however deeply a log record
+ * nests it: the message, the stack, and the serialized error an application
+ * log line carries.
+ */
+function withoutParameters(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return withoutQueryParameters(value);
+  if (depth >= MAX_VALUE_DEPTH) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => withoutParameters(item, depth + 1));
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key,
+        withoutParameters(nested, depth + 1),
+      ]),
+    );
+  }
+  return value;
 }
 
 /**
@@ -112,7 +147,7 @@ export function redactAttributes(
       out[key] = REDACTED;
       continue;
     }
-    out[key] = value;
+    out[key] = withoutParameters(value);
   }
   return out;
 }

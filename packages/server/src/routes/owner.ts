@@ -26,6 +26,7 @@ import type {
   SettingsStore,
   Storage,
 } from "../storage/interface.js";
+import { errorMessage } from "../error-text.js";
 
 const OwnerSchema = z
   .object({
@@ -196,7 +197,7 @@ async function give(settings: SettingsStore): Promise<void> {
     await settings.release(OWNER_CLAIM);
   } catch (error) {
     log("error", "the owner claim could not be released", {
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     });
   }
 }

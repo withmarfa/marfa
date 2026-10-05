@@ -22,6 +22,7 @@ import { ItemSchema, EdgeSchema, MetadataSchema } from "../routes/_schemas.js";
 import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
 import { frameInReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
+import { errorMessage } from "../error-text.js";
 
 /** Maps pubsub event types to webhook event types. Single entry point so
  *  the wire strings (item.*, metadata.changed, edge.*) stay consistent
@@ -332,7 +333,7 @@ export async function deliverWebhookAttempt(
   } catch (err) {
     log("error", "Webhook attempt failed", {
       ...logged,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
   }
 }

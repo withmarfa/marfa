@@ -3,6 +3,7 @@ import { collectBlobHashes } from "../storage/blob-utils.js";
 import { log } from "../middleware/logger.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
+import { errorMessage } from "../error-text.js";
 
 // A type alias rather than an interface: an interface carries no index
 // signature, so it cannot satisfy the `HousekeepingReport` the scheduler
@@ -52,7 +53,7 @@ export class BlobOrphanReporter {
       } catch (err) {
         log("error", "blob.purge_unfinished", {
           hash,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       }
     }
@@ -87,7 +88,7 @@ export class BlobOrphanReporter {
       } catch (err) {
         log("error", "blob.purge_failed", {
           hash,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       }
     }

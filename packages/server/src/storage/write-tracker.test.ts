@@ -1,3 +1,5 @@
+import { inspect } from "node:util";
+import { DrizzleQueryError } from "drizzle-orm";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { WriteTracker } from "./write-tracker.js";
 
@@ -29,6 +31,26 @@ describe("WriteTracker", () => {
       tracker.track(() => Promise.reject(new Error("write CONNECTION_ENDED"))),
     ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("logs a failed query's statement and not the values it was bound to", async () => {
+    const tracker = new WriteTracker("last-used");
+    const warn = vi.spyOn(console, "warn").mockImplementation(vi.fn());
+    const value = "bound-value-3e9d51c0";
+    const failed = new DrizzleQueryError(
+      "update oauth_grants set last_used_at = ? where id = ?",
+      [value, "grant"],
+      new Error("SQLITE_BUSY"),
+    );
+    // The witness: printed whole, the error names the value.
+    expect(inspect(failed)).toContain(value);
+
+    await tracker.track(() => Promise.reject(failed));
+
+    const printed = inspect(warn.mock.calls[0], { depth: 8 });
+    expect(printed).toContain("Failed query: update oauth_grants");
+    expect(printed).toContain("SQLITE_BUSY");
+    expect(printed).not.toContain(value);
   });
 
   it("drain() waits for all in-flight writes to settle before resolving", async () => {

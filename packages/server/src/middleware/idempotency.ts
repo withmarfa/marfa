@@ -14,6 +14,7 @@ import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { CONTRACT_VERSION } from "../contract.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * A write that is retried after a lost response learns what its first
@@ -586,7 +587,7 @@ async function recordOutcome(
     // in flight until its lease runs out, which is the same shape as a
     // crashed writer and recovers the same way.
     log("warn", "Failed to record idempotency outcome", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
   }
 }
