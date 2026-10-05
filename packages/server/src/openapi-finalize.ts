@@ -814,7 +814,7 @@ function eventSchemas(): Record<string, unknown> {
     CatchupTooOldFrame: {
       type: "object",
       description:
-        "The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. On an ordinary stream its `id:` is `min_retained_id`: don't resume from it.",
+        "The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream.",
       properties: {
         event_type: marker("catchup_too_old"),
         min_retained_id: {

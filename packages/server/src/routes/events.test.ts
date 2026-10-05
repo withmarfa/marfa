@@ -116,7 +116,7 @@ describe("GET /events — catchup_too_old", () => {
       frame,
       "a cursor behind the swept log was replayed nothing, so the events it missed are lost untold",
     ).not.toBeNull();
-    expect(frame!.id).toBe(String(newest));
+    expect(frame!.id).toBeUndefined();
     // The cases after this one arrange the log's oldest id themselves.
     await run("DELETE FROM event_log", []);
   });
@@ -151,7 +151,7 @@ describe("GET /events — catchup_too_old", () => {
     const { text, closed } = await readSse(res, { untilClosed: true });
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
-    expect(frame!.id).toBe(String(oldest));
+    expect(frame!.id).toBeUndefined();
     const payload = JSON.parse(frame!.data) as {
       event_type: string;
       min_retained_id: string;
@@ -171,6 +171,51 @@ describe("GET /events — catchup_too_old", () => {
     // offer. `events-cursor.test.ts` is the witness that a stream which
     // finishes its prologue does send it.
     expect(text).not.toContain("event: stream_live");
+  });
+
+  it("writes catchup_too_old with no id: line, so a client that ignores it is refused again", async () => {
+    // Rows earlier cases left would sit below `retired` and keep it from
+    // being the log's oldest id.
+    await (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun("DELETE FROM event_log", []);
+    const retired = await createNote("no-id-1");
+    const gone = await createNote("no-id-2");
+    const survivor = await createNote("no-id-3");
+    await retireEvent(retired);
+    await retireEvent(gone);
+
+    // The witness: the same server writes an `id:` line on a replayed
+    // event, so the absence below is a choice and not a stream that never
+    // writes one.
+    const served = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(survivor - 1n) },
+    });
+    const replay = await readSse(served, {
+      until: (t) => t.includes(`id: ${String(survivor)}\n`),
+    });
+    expect(replay.text).toContain(`id: ${String(survivor)}\n`);
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(retired) },
+    });
+    const { text, closed } = await readSse(res, { untilClosed: true });
+    expect(closed).toBe(true);
+    expect(text).toContain("event: catchup_too_old\n");
+    expect(
+      text.split("\n").filter((line) => line.startsWith("id:")),
+      "an id: on the terminal frame is the cursor an EventSource reconnects with, past the gap and past the event at min_retained_id",
+    ).toEqual([]);
+    const frame = findEvent(text, "catchup_too_old")!;
+    expect(JSON.parse(frame.data)).toMatchObject({
+      event_type: "catchup_too_old",
+      min_retained_id: String(survivor),
+      requested: String(retired),
+    });
   });
 
   it("refuses a replay the sweep overtakes after the cursor was checked", async () => {
@@ -222,7 +267,7 @@ describe("GET /events — catchup_too_old", () => {
       ).not.toContain("event: stream_live");
       const frame = findEvent(text, "catchup_too_old");
       expect(frame).not.toBeNull();
-      expect(frame!.id).toBe(String(newest));
+      expect(frame!.id).toBeUndefined();
     } finally {
       store.getAfter = real;
       await (

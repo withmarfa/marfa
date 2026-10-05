@@ -142,13 +142,13 @@ mod tests {
 
     #[test]
     fn terminal_frames_and_crlf_and_a_missing_final_blank_line() {
-        let text = "id: 7\r\nevent: catchup_too_old\r\ndata: {\"event_type\":\"catchup_too_old\"}\r\n\r\n\
+        let text = "event: catchup_too_old\r\ndata: {\"event_type\":\"catchup_too_old\"}\r\n\r\n\
                     event: stream_incomplete\ndata: {\"reason\":\"replay_failed\"}";
         assert_eq!(
             frames(text),
             vec![
                 Frame::Event {
-                    id: Some("7".into()),
+                    id: None,
                     name: Some("catchup_too_old".into()),
                     data: "{\"event_type\":\"catchup_too_old\"}".into(),
                 },
