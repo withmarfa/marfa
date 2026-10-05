@@ -37,7 +37,10 @@ function jsonResponse(
 
   if (prefersHtml(c.req.header("accept"))) {
     headers.set("Content-Type", "text/html; charset=utf-8");
-    return new Response(renderHttpErrorPage(status), { status, headers });
+    return new Response(renderHttpErrorPage(status, c.var.cspNonce), {
+      status,
+      headers,
+    });
   }
 
   headers.set("Content-Type", "application/json");

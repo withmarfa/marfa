@@ -12,6 +12,13 @@
 import { escapeHtml } from "./auth-html.js";
 
 interface AuthLayoutParams {
+  /**
+   * The nonce the response's content security policy names. The stylesheet
+   * link carries it, because the policy allows a style or script only with
+   * it: a source allowed by origin would also admit anything this origin
+   * serves under that type, a blob's bytes included.
+   */
+  nonce: string;
   /** Document title — rendered into <title>, escaped. */
   title: string;
   /**
@@ -59,7 +66,7 @@ export function renderAuthLayout(params: AuthLayoutParams): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle}</title>
-  <link rel="stylesheet" href="/auth/static/auth.css">
+  <link rel="stylesheet" href="/auth/static/auth.css" nonce="${escapeHtml(params.nonce)}">
 </head>
 <body>
   <main class="${cardClass}" aria-label="${safeAria}">

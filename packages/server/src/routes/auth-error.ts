@@ -46,7 +46,10 @@ const GENERIC_MESSAGE = "We couldn't finish signing you in.";
  * app. The raw error code is only ever used as a lookup key into the curated
  * message map — it is never reflected into the output.
  */
-export function renderAuthErrorPage(errorCode: string | null): string {
+export function renderAuthErrorPage(
+  errorCode: string | null,
+  nonce: string,
+): string {
   const message = errorCode
     ? (ERROR_MESSAGES[errorCode] ?? GENERIC_MESSAGE)
     : GENERIC_MESSAGE;
@@ -57,7 +60,7 @@ export function renderAuthErrorPage(errorCode: string | null): string {
       <a href="/auth/sign-in" class="btn btn--primary">Back to sign in</a>
     </div>
   `;
-  return renderAuthLayout({ title: "Sign-in error", bodyHtml: body });
+  return renderAuthLayout({ title: "Sign-in error", bodyHtml: body, nonce });
 }
 
 /** Hono sub-app exposing `GET /auth/error`. Mount before the better-auth
@@ -67,7 +70,7 @@ export function authErrorRoutes(): Hono<AppEnv> {
   app.get("/error", (c) => {
     const errorCode = new URL(c.req.url).searchParams.get("error");
     setNoStore(c);
-    return c.html(renderAuthErrorPage(errorCode));
+    return c.html(renderAuthErrorPage(errorCode, c.var.cspNonce));
   });
   return app;
 }

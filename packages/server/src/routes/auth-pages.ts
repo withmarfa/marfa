@@ -429,6 +429,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     if (session && !sentByAuthorization) {
       return c.html(
         renderSignedInPage({
+          nonce: c.var.cspNonce,
           email: session.user.email,
           continueTo: returnTo,
         }),
@@ -443,6 +444,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const email = url.searchParams.get("email") ?? undefined;
     return c.html(
       renderSignInPage({
+        nonce: c.var.cspNonce,
         returnTo,
         error,
         email,
@@ -558,7 +560,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       !(await auth.getSession(c.req.raw.headers))
     ) {
       setNoStore(c);
-      return c.html(renderSignedOutPage());
+      return c.html(renderSignedOutPage(c.var.cspNonce));
     }
     const upstream = new Request(c.req.url, {
       method: "GET",
@@ -588,7 +590,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       }
       headers.set("cache-control", "no-store, no-cache, private");
       headers.set("pragma", "no-cache");
-      return new Response(renderSignedOutPage(), { status: 200, headers });
+      return new Response(renderSignedOutPage(c.var.cspNonce), {
+        status: 200,
+        headers,
+      });
     }
     return response;
   });
@@ -687,7 +692,13 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       );
     }
     setNoStore(c);
-    return c.html(renderDevicePage({ prefilled: rawCode, error }));
+    return c.html(
+      renderDevicePage({
+        prefilled: rawCode,
+        error,
+        nonce: c.var.cspNonce,
+      }),
+    );
   });
 
   router.get("/device/consent", async (c) => {
@@ -755,6 +766,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
+        nonce: c.var.cspNonce,
         clientName: client.name ?? client.clientId,
         // The same rule as the authorize screen: an app that registered
         // itself has no vetted identity behind its name.
@@ -850,7 +862,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         );
       }
       setNoStore(c);
-      return c.html(renderDeviceDecisionPage({ approved: false }));
+      return c.html(
+        renderDeviceDecisionPage({
+          approved: false,
+          nonce: c.var.cspNonce,
+        }),
+      );
     }
 
     // Approve: upsert the system.connection projection, narrow the code to
@@ -964,7 +981,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       );
     }
     setNoStore(c);
-    return c.html(renderDeviceDecisionPage({ approved: true }));
+    return c.html(
+      renderDeviceDecisionPage({
+        approved: true,
+        nonce: c.var.cspNonce,
+      }),
+    );
   });
 
   return router;

@@ -71,6 +71,11 @@ export interface AppEnv extends Record<string, unknown> {
     copyReadBoundary: MiddlewareHandler<AppEnv>;
     requestId: string;
     /**
+     * The nonce this response's content security policy names, which an
+     * inline script on a page it renders has to carry. One per request.
+     */
+    cspNonce: string;
+    /**
      * The resolved `AppConfig`, stamped onto every request by `createApp`.
      * Lets middleware and route handlers read env-derived settings from
      * the single config source instead of re-reading `process.env`.

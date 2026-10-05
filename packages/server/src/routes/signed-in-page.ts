@@ -9,6 +9,8 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { confirmIcon, escapeHtml } from "./auth-html.js";
 
 interface SignedInPageParams {
+  /** The nonce the response's content security policy names. */
+  nonce: string;
   /** The signed-in person's email, so the page says who. */
   email: string;
   /**
@@ -36,5 +38,6 @@ export function renderSignedInPage(params: SignedInPageParams): string {
     title: "You're signed in",
     bodyHtml,
     centered: true,
+    nonce: params.nonce,
   });
 }

@@ -17,8 +17,10 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen } from "./consent.js";
-import { renderDeviceConsentScreen } from "./device-pages.js";
+import {
+  renderConsentScreen,
+  renderDeviceConsentScreen,
+} from "./test-render.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { buildDefaultPermissionBundles } from "../auth/default-bundles.js";
 import { scopeOperation } from "./scope-operation.js";

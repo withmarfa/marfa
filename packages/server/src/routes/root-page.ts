@@ -11,7 +11,7 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { confirmIcon } from "./auth-html.js";
 
 /** Renders the page a browser gets at the server's root. */
-export function renderRootPage(): string {
+export function renderRootPage(nonce: string): string {
   const bodyHtml = `
     ${confirmIcon("check")}
     <h1 class="title">Marfa is running</h1>
@@ -19,5 +19,5 @@ export function renderRootPage(): string {
     <div class="actions"><a class="btn btn--primary" href="/auth/sign-in">Sign in</a></div>
   `;
 
-  return renderAuthLayout({ title: "Marfa", bodyHtml, centered: true });
+  return renderAuthLayout({ title: "Marfa", bodyHtml, centered: true, nonce });
 }

@@ -204,7 +204,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const getVerdict = await verifySignedQuery(auth, oauthQuery);
     if (getVerdict !== "valid") {
       setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage(failureCopy(getVerdict)), 400);
+      return c.html(
+        renderAuthorizeExpiredPage(c.var.cspNonce, failureCopy(getVerdict)),
+        400,
+      );
     }
 
     // OIDC `prompt` rides the signed query verbatim:
@@ -523,6 +526,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       : undefined;
 
     const html = renderConsentScreen({
+      nonce: c.var.cspNonce,
       clientName,
       // Public clients (DCR / `token_endpoint_auth_method: none`) self-assert
       // their name with no vetted identity behind it. Flag them so the user
@@ -617,7 +621,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     if (decisionVerdict !== "valid") {
       setNoStore(c);
       return c.html(
-        renderAuthorizeExpiredPage(failureCopy(decisionVerdict)),
+        renderAuthorizeExpiredPage(
+          c.var.cspNonce,
+          failureCopy(decisionVerdict),
+        ),
         400,
       );
     }

@@ -19,7 +19,7 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { confirmIcon } from "./auth-html.js";
 
 /** Renders the end-of-logout page as a full HTML document. */
-export function renderSignedOutPage(): string {
+export function renderSignedOutPage(nonce: string): string {
   const bodyHtml = `
     ${confirmIcon("check")}
     <h1 class="title">You're signed out</h1>
@@ -30,5 +30,6 @@ export function renderSignedOutPage(): string {
     title: "You're signed out",
     bodyHtml,
     centered: true,
+    nonce,
   });
 }

@@ -217,6 +217,11 @@ describe("the device authorization grant through the provider plugin", () => {
       "core.note:read",
     ]);
     expect(approved.status).toBe(200);
+    // A page answered to a post carries the policy too, not only the pages a
+    // get answers.
+    expect(approved.headers.get("content-security-policy")).toContain(
+      "script-src 'nonce-",
+    );
 
     await allowRepoll(c, init.device_code);
     const minted = await poll(c, init.device_code, clientId);
@@ -392,6 +397,9 @@ describe("the device authorization grant through the provider plugin", () => {
 
     const denied = await decide(c, init.user_code, cookie, "deny", []);
     expect(denied.status).toBe(200);
+    expect(denied.headers.get("content-security-policy")).toContain(
+      "script-src 'nonce-",
+    );
 
     const res = await poll(c, init.device_code, clientId);
     expect(res.status).toBe(400);

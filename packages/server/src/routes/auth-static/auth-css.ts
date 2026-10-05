@@ -607,6 +607,9 @@ select:focus {
 .subrow .rmeta {
   display: block;
 }
+.rmeta--list {
+  padding-top: 2px;
+}
 
 /* ================================================================ */
 /* Locked design vocabulary                                         */
@@ -649,6 +652,12 @@ select:focus {
   font-size: 13px;
   font-weight: 600;
   color: var(--fg);
+}
+.lsec--first {
+  margin-top: 8px;
+}
+.lsec--later {
+  margin-top: 24px;
 }
 
 /* The single boxed caution — the unverified-app warning. One warning,
@@ -757,6 +766,9 @@ select:focus {
   display: flex;
   flex-direction: column;
   padding: 0 15px 12px;
+}
+.gsub--above-actions {
+  margin-bottom: 10px;
 }
 .subrow {
   display: flex;

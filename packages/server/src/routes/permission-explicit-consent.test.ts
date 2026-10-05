@@ -18,8 +18,10 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen } from "./consent.js";
-import { renderDeviceConsentScreen } from "./device-pages.js";
+import {
+  renderConsentScreen,
+  renderDeviceConsentScreen,
+} from "./test-render.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 
 function parsed(literal: string): ParsedScope {

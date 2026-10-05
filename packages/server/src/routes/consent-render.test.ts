@@ -3,6 +3,9 @@ import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
 import {
   renderConsentScreen,
+  renderDeviceConsentScreen,
+} from "./test-render.js";
+import {
   SCOPE_LABELS,
   SCOPE_SHORT,
   scopeShort,
@@ -34,7 +37,6 @@ import {
   buildScopeDescriptions,
   CONSENT_SCOPE_DESCRIPTIONS,
 } from "./auth-consent.js";
-import { renderDeviceConsentScreen } from "./device-pages.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import {
   OPEN_ENDED_EXPANSION_TAIL,
@@ -111,7 +113,7 @@ describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css">',
+      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
     );
     expect(html).not.toContain("<style>");
   });
@@ -394,7 +396,7 @@ describe("renderConsentScreen — soft-tile groups", () => {
   it("ships the master-toggle cascade enhancement script", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toMatch(
-      /<script>[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
+      /<script nonce="test-nonce">[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
     );
     expect(html).toContain("indeterminate");
   });
@@ -582,7 +584,7 @@ describe("renderConsentScreen — re-consent diff", () => {
     // half went.
     expect(html).toContain(">No longer needed<");
     expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks \(read and write\)</,
+      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Tasks \(read and write\)</,
     );
   });
 
@@ -605,7 +607,7 @@ describe("renderConsentScreen — re-consent diff", () => {
     });
     expect(html).toContain(">No longer needed<");
     expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Your name and picture</,
+      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Your name and picture</,
     );
     expect(html).not.toContain(">Profile<");
   });

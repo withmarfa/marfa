@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { renderAuthErrorPage } from "./auth-error.js";
+import { renderAuthErrorPage } from "./test-render.js";
 
 /**
  * `/auth/error` page renderer + route smoke. The route exists so OAuth
@@ -22,7 +22,7 @@ describe("renderAuthErrorPage", () => {
   it("uses the shared auth layout and links back to sign-in", () => {
     const html = renderAuthErrorPage("invalid_client");
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css">',
+      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
     );
     expect(html).toContain("Back to sign in");
     expect(html).toContain('href="/auth/sign-in"');

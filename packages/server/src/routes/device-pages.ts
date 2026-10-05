@@ -30,9 +30,14 @@ interface DevicePageParams {
   prefilled: string;
   /** Error code from a previous attempt. */
   error?: string;
+  /** The nonce the response's content security policy names, which the
+   *  inline script carries. */
+  nonce: string;
 }
 
 interface DeviceConsentParams {
+  /** The nonce the response's content security policy names. */
+  nonce: string;
   clientName: string;
   /**
    * The app registered itself, so its name is whatever it said. Shown as the
@@ -57,6 +62,8 @@ interface DeviceConsentParams {
 }
 
 interface DeviceDecisionParams {
+  /** The nonce the response's content security policy names. */
+  nonce: string;
   approved: boolean;
 }
 
@@ -201,11 +208,15 @@ export function renderDevicePage(params: DevicePageParams): string {
         <button type="submit" class="btn btn--primary" data-loading-label="Checking...">Continue</button>
       </div>
     </form>
-    <script src="/auth/static/submit-state.js"></script>
-    <script>${OTP_SCRIPT}</script>
+    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script nonce="${escapeHtml(params.nonce)}">${OTP_SCRIPT}</script>
   `;
 
-  return renderAuthLayout({ title: "Sign in on your device", bodyHtml });
+  return renderAuthLayout({
+    title: "Sign in on your device",
+    bodyHtml,
+    nonce: params.nonce,
+  });
 }
 
 /**
@@ -322,7 +333,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="approve">
         ${hidden.join("")}
-        <div class="gsub" style="margin-bottom:10px">${visible.join("")}</div>
+        <div class="gsub gsub--above-actions">${visible.join("")}</div>
         <button type="submit" class="btn btn--primary" data-loading-label="Approving...">Approve</button>
       </form>
       <form method="POST" action="/auth/device/consent" novalidate>
@@ -331,12 +342,13 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
         <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
     </div>
-    <script src="/auth/static/submit-state.js"></script>
+    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({
     title: "Approve device sign-in",
     bodyHtml,
+    nonce: params.nonce,
   });
 }
 
@@ -355,5 +367,10 @@ export function renderDeviceDecisionPage(params: DeviceDecisionParams): string {
     <p class="sub" role="status">${escapeHtml(sub)}</p>
   `;
 
-  return renderAuthLayout({ title: heading, bodyHtml, centered: true });
+  return renderAuthLayout({
+    title: heading,
+    bodyHtml,
+    centered: true,
+    nonce: params.nonce,
+  });
 }

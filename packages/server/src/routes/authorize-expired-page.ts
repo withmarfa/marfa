@@ -56,6 +56,7 @@ const COPY: Record<AuthorizeFailure, { title: string; sub: string }> = {
 
 /** Renders the failed-authorize-request page as a full HTML document. */
 export function renderAuthorizeExpiredPage(
+  nonce: string,
   failure: AuthorizeFailure = "expired",
 ): string {
   const { title, sub } = COPY[failure];
@@ -65,5 +66,5 @@ export function renderAuthorizeExpiredPage(
     <p class="sub" role="alert">${sub}</p>
   `;
 
-  return renderAuthLayout({ title, bodyHtml, centered: true });
+  return renderAuthLayout({ title, bodyHtml, centered: true, nonce });
 }

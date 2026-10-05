@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestAccount, createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { renderSignedOutPage } from "./signed-out-page.js";
+import { renderSignedOutPage } from "./test-render.js";
 
 /**
  * The wrapper over the plugin's RP-initiated logout.
