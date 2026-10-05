@@ -162,6 +162,24 @@ pub struct Flagged {
     pub item: Option<String>,
 }
 
+/// A scan's flagged files and then a pull's, each once: two items a pull did
+/// not write at one path are two entries.
+pub fn merged_flagged<'a>(
+    scan: &[Flagged],
+    pull: impl IntoIterator<Item = &'a Flagged>,
+) -> Vec<Flagged> {
+    let mut flagged = scan.to_vec();
+    for file in pull {
+        if !flagged
+            .iter()
+            .any(|seen| seen.path == file.path && seen.item == file.item)
+        {
+            flagged.push(file.clone());
+        }
+    }
+    flagged
+}
+
 impl Flagged {
     fn of(path: &str, held: &str) -> Flagged {
         let (flag, reason) = if let Some(reason) = held.strip_prefix(state::UNREADABLE) {

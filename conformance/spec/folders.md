@@ -131,9 +131,9 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 ## Giving way to another machine's placement
 
-57. When the folder gives way to a placement another machine made (19), the folder MUST take the server's placement into the copy in one transaction that withdraws its own placement writes, puts the copy back as it was beneath them, and takes each edge it read only where the copy holds nothing later of it.
+57. When the folder gives way to a placement another machine made (19), the folder MUST take the server's placement into the copy in one transaction that withdraws its own placement writes, puts the copy back as it was beneath them, takes each edge it read only where the copy holds nothing later of it, and forgets an edge the server no longer holds only where the copy's stamp of it is unchanged since before the read.
     **Reason:** A follow on the same core can apply another move while the read is out (`device.md`, What the real server cannot be made to produce). Rewritten from the older read, the copy would show the older path, or the move this machine withdrew, until the edge next changed, and the pull would write the file there; read back the way the queue reads a row back, the copy keeps the newer edge.
-    **Tests:** `device/folders.test.ts › follows a move it heard of after the read it gives way from`. Core `folder::placement::tests::giving_way_keeps_a_placement_that_arrives_while_the_server_is_read`.
+    **Tests:** `device/folders.test.ts › follows a move it heard of after the read it gives way from`. Core `folder::placement::tests::giving_way_keeps_a_placement_that_arrives_while_the_server_is_read`, `folder::placement::tests::giving_way_forgets_an_edge_the_server_no_longer_holds_unless_the_copy_moved_it_since`, `folder::placement::tests::a_give_way_whose_read_failed_is_finished_by_a_later_drain`.
 
 ## Names made from titles
 
@@ -147,9 +147,9 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 ## Items a pull does not write
 
-60. When a pull does not write an item's file, the pull MUST name the item in the report's `flagged` by its id, with the path it wanted, the count it is in (`unwritten`, `outside`, `unsuited` or `absent`) as the flag, and the reason.
-    **Reason:** A count says that something was held back but not what. A note whose title makes a name the lists refuse, such as a secret's, would otherwise get no file on any machine with nothing to say which note it is.
-    **Tests:** `device/folders.test.ts › takes only what its include list names`, `› refuses to write a file outside the folder`, `› does not write over a file it never wrote`, `› skips a placement the filesystem refuses, and keeps the file where it was`.
+60. When a pull counts an item `unwritten`, `outside`, `unsuited` or `absent`, the pull MUST name the item in the report's `flagged` by its id, with its path and the reason: the flag is the count, or `retained` for a file it could not let go to another folder (44), and the path is the one it would have written the file at, or the item's own file where the pull left that file as it stands.
+    **Reason:** A count says that something was held back but not what. A note whose title makes a name the lists refuse, such as a secret's, would otherwise get no file on any machine with nothing to say which note it is. An item counted `elsewhere` (43) is not held back, since its file is on its way to another folder on the machine, and is not flagged. Two items held back at one path are two entries, in the report and in what a push or a watch says.
+    **Tests:** `device/folders.test.ts › takes only what its include list names`, `› refuses to write a file outside the folder`, `› does not write over a file it never wrote`, `› skips a placement the filesystem refuses, and keeps the file where it was`, `› writes no file where its placement would make it another kind of file`, `› writes a file item's bytes as its file, and reports them absent where it cannot fetch them`. Core `folder::watch::tests::two_items_not_written_at_one_path_are_each_told`.
 
 ## What the real server cannot be made to produce
 

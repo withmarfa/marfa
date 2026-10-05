@@ -526,13 +526,10 @@ fn pass_of(
     flagged: Option<Vec<marfa_core::folder::Flagged>>,
 ) -> Result<FolderPass, MarfaError> {
     let flagged = flagged.unwrap_or_else(|| {
-        let mut flagged = scan.flagged.clone();
-        for file in pull.iter().flat_map(|pull| &pull.flagged) {
-            if !flagged.iter().any(|seen| seen.path == file.path) {
-                flagged.push(file.clone());
-            }
-        }
-        flagged
+        marfa_core::folder::merged_flagged(
+            &scan.flagged,
+            pull.iter().flat_map(|pull| &pull.flagged),
+        )
     });
     Ok(FolderPass {
         settings: SettingsFileOutcome {

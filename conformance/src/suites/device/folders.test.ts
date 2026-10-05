@@ -10351,6 +10351,15 @@ describe("where a file sits", () => {
       ],
       "a placement wrote an item as another kind of file, which its next edit would send as that kind",
     ).toEqual([2, false, false]);
+    const unsuited =
+      "a file at the path would be another kind of file than the item";
+    expect(
+      pulled.value.flagged.filter((file) => file.flag === "unsuited"),
+      "the pull counted an item it did not write without naming it",
+    ).toEqual([
+      { path: "data.md", flag: "unsuited", reason: unsuited, item: image },
+      { path: "picture.png", flag: "unsuited", reason: unsuited, item: note },
+    ]);
     expect((await harness.folder.push()).ok).toBe(true);
     const placements = placed.edges.placements(harness.settings.id);
     expect([placements.get(image), placements.get(note)]).toEqual([
@@ -15001,6 +15010,15 @@ describe("a file that is not a document", () => {
       offline.value.absent,
       "a file item whose bytes could not be had was not reported",
     ).toBe(2);
+    expect(
+      offline.value.flagged
+        .filter((file) => file.flag === "absent")
+        .map((file) => [file.item, file.path]),
+      "the pull counted a file item whose bytes it could not have without naming it",
+    ).toEqual([
+      ["01a00000-0000-7000-8000-0000000000f1", "photo.png"],
+      ["01a00000-0000-7000-8000-0000000000f2", "broken.txt"],
+    ]);
     expect(
       existsSync(join(harness.dir, "photo.png")),
       "the pull wrote a file for bytes it does not have",

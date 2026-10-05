@@ -295,13 +295,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         pulled.as_ref().map(|pulled| &pulled.settings),
                     ));
                     lines.push(describe_scan(&scanned));
-                    let mut flagged = scanned.flagged.clone();
+                    let flagged = marfa_core::folder::merged_flagged(
+                        &scanned.flagged,
+                        pulled.iter().flat_map(|pulled| &pulled.flagged),
+                    );
                     if let Some(pulled) = &pulled {
-                        for file in &pulled.flagged {
-                            if !flagged.iter().any(|seen| seen.path == file.path) {
-                                flagged.push(file.clone());
-                            }
-                        }
                         lines.extend(uncarried_line(&pulled.uncarried));
                     }
                     lines.extend(flagged_lines(&flagged));
