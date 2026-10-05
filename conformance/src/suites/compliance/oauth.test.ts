@@ -17,10 +17,11 @@ afterAll(async () => {
 });
 
 /**
- * The authorization and device flows need a signed-in person, which a bearer
- * client cannot supply, so they are unreachable here. What a client can
- * reach without a person is discovery, registration and the token door's
- * refusals, and those are asserted.
+ * The run's server has no owner, so a flow that ends in a person's approval
+ * is not driven here. What a client can reach without one is discovery,
+ * registration and the token door's refusals, and those are asserted. The
+ * authorization flow is `signed-in-apps.test.ts` and the device flow
+ * `device-grant.test.ts`, each on a server of its own with an owner.
  */
 describe("OAuth provider", () => {
   it("serves the authorization server metadata under the issuer path", async () => {

@@ -296,16 +296,40 @@ export async function bootFreshServer(
   return server;
 }
 
+/** What the token door answers a device code's poll. */
+export interface DevicePoll {
+  status: number;
+  body: {
+    error?: string;
+    access_token?: string;
+    token_type?: string;
+    scope?: string;
+  };
+}
+
 /**
- * An access token of the kind an app holds once a person approves it, on a
- * server of the fixture's own.
- *
- * Reached the way a person reaches one, over HTTP alone: the operator key
- * creates the owner, a native client registers, the device flow starts, the
- * owner signs in on the sign-in surface's own origin and approves everything
- * the consent screen offers, and the client's poll is answered. A token like
- * this is the one credential a fixture can hold that an app holds, so a door
- * that treats an app differently from a key is asserted through it.
+ * An app's device authorization flow, started on a server of the fixture's
+ * own and held between its steps, so a fixture can ask the token door at each
+ * of them.
+ */
+export interface DeviceFlow {
+  /** The client the app registered for itself. */
+  clientId: string;
+  /** Seconds a poller must leave between polls, as the initiation answered. */
+  interval: number;
+  /** One poll of the token door, as an app makes it: no credential. */
+  poll(): Promise<DevicePoll>;
+  /**
+   * The owner signs in on the sign-in surface's own origin and approves
+   * everything the consent screen offers.
+   */
+  approve(): Promise<void>;
+}
+
+/**
+ * Starts a device flow the way an app does, over HTTP alone: the operator key
+ * creates the owner, a native client registers, and the device-authorization
+ * door is asked for a code. Nobody has approved it yet.
  *
  * The app asks for `scopes`, or for every scope the instance supports when
  * none are named.
@@ -313,10 +337,10 @@ export async function bootFreshServer(
  * The owner is created here, and an instance has one, so this runs once per
  * fresh server: a second call is refused `409 owner_exists` and throws.
  */
-export async function approvedAppToken(
+export async function startDeviceFlow(
   server: FreshServer,
   scopes?: readonly string[],
-): Promise<string> {
+): Promise<DeviceFlow> {
   const owner = { email: "a@example.com", password: "correct horse battery" };
   const created = await fetch(`${server.apiUrl}/owner`, {
     method: "POST",
@@ -370,67 +394,109 @@ export async function approvedAppToken(
     device_code: string;
     user_code: string;
     verification_uri_complete: string;
+    interval: number;
   };
-
   const origin = new URL(code.verification_uri_complete).origin;
-  const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin },
-    body: JSON.stringify(owner),
-  });
-  if (signIn.status !== 200) {
-    throw new Error(
-      `the owner could not sign in, so nothing can be approved: ${String(signIn.status)}`,
-    );
-  }
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    signIn.headers.get("set-cookie") ?? "",
-  )?.[1];
-  if (cookie === undefined) {
-    throw new Error("the owner's sign-in set no session cookie");
-  }
-  const consent = await fetch(
-    `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
-    { headers: { cookie } },
-  );
-  const html = await consent.text();
-  const form = new URLSearchParams({
-    user_code: code.user_code,
-    decision: "approve",
-  });
-  for (const scope of new Set(
-    [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map((m) => m[1]!),
-  )) {
-    form.append("scopes", scope);
-  }
-  const approved = await fetch(`${origin}/auth/device/consent`, {
-    method: "POST",
-    headers: {
-      cookie,
-      origin,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: form,
-  });
-  if (approved.status !== 200) {
-    throw new Error(
-      `the owner's approval was refused: ${String(approved.status)}`,
-    );
-  }
 
-  const token = (await (
-    await fetch(discovery.token_endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        device_code: code.device_code,
-        client_id: registered.client_id,
-      }),
-    })
-  ).json()) as { access_token?: string };
-  if (token.access_token === undefined) {
+  return {
+    clientId: registered.client_id,
+    interval: code.interval,
+    async poll() {
+      const response = await fetch(discovery.token_endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: code.device_code,
+          client_id: registered.client_id,
+        }),
+      });
+      return {
+        status: response.status,
+        body: (await response.json()) as DevicePoll["body"],
+      };
+    },
+    async approve() {
+      const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(owner),
+      });
+      if (signIn.status !== 200) {
+        throw new Error(
+          `the owner could not sign in, so nothing can be approved: ${String(signIn.status)}`,
+        );
+      }
+      const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+        signIn.headers.get("set-cookie") ?? "",
+      )?.[1];
+      if (cookie === undefined) {
+        throw new Error("the owner's sign-in set no session cookie");
+      }
+      const consent = await fetch(
+        `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`,
+        { headers: { cookie } },
+      );
+      const html = await consent.text();
+      const form = new URLSearchParams({
+        user_code: code.user_code,
+        decision: "approve",
+      });
+      for (const scope of new Set(
+        [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map(
+          (m) => m[1]!,
+        ),
+      )) {
+        form.append("scopes", scope);
+      }
+      const approved = await fetch(`${origin}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          cookie,
+          origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: form,
+      });
+      if (approved.status !== 200) {
+        throw new Error(
+          `the owner's approval was refused: ${String(approved.status)}`,
+        );
+      }
+    },
+  };
+}
+
+/**
+ * An access token of the kind an app holds once a person approves it, on a
+ * server of the fixture's own, with the client that holds it.
+ *
+ * Reached the way a person reaches one: `startDeviceFlow`, the owner's
+ * approval, and the client's poll, answered. A token like this is the one
+ * credential a fixture can hold that an app holds, so a door that treats an
+ * app differently from a key is asserted through it.
+ *
+ * It creates the owner, as `startDeviceFlow` does, so it runs once per fresh
+ * server.
+ */
+export async function approvedApp(
+  server: FreshServer,
+  scopes?: readonly string[],
+): Promise<{ token: string; clientId: string }> {
+  const flow = await startDeviceFlow(server, scopes);
+  await flow.approve();
+  // The code's first poll, so no polling interval applies to it yet.
+  const answer = await flow.poll();
+  if (answer.body.access_token === undefined) {
     throw new Error("the approved device flow answered no access token");
   }
-  return token.access_token;
+  return { token: answer.body.access_token, clientId: flow.clientId };
+}
+
+/** The access token of `approvedApp`, for a fixture that needs no client id. */
+export async function approvedAppToken(
+  server: FreshServer,
+  scopes?: readonly string[],
+): Promise<string> {
+  return (await approvedApp(server, scopes)).token;
 }
