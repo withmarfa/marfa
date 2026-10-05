@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 /**
  * Reusable Zod schemas shared across route files. Centralized so each wire
  * shape is declared once.
@@ -592,10 +593,9 @@ export const KeyResponseSchema = z
 
 /** A tag a write may carry: not empty, not blank, and short enough to name
  *  in a URL path. */
-export const TagSchema = z
-  .string()
-  .min(1)
-  .max(MAX_TAG_LENGTH)
-  .refine((tag) => tag.trim().length > 0, "A tag must not be blank");
+export const TagSchema = maxStringLength(
+  z.string().min(1),
+  MAX_TAG_LENGTH,
+).refine((tag) => tag.trim().length > 0, "A tag must not be blank");
 
 export const WrittenPropertiesSchema = z.record(z.string().min(1), z.unknown());

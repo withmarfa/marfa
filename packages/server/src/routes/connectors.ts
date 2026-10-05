@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * /connectors: the smallest door a process outside the server needs. It
@@ -71,16 +72,16 @@ const ConnectorSchema = z
   .openapi("Connector");
 
 const RegisterSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
+  name: maxStringLength(z.string().min(1), 200),
+  description: maxStringLength(z.string(), 2000).optional(),
 });
 
 const RunInputSchema = z.object({
   outcome: OutcomeSchema,
   started_at: z.string().refine(isValidTimestamp, "an ISO 8601 timestamp"),
   finished_at: z.string().refine(isValidTimestamp, "an ISO 8601 timestamp"),
-  summary: z.string().max(2000).optional(),
-  error: z.string().max(2000).optional(),
+  summary: maxStringLength(z.string(), 2000).optional(),
+  error: maxStringLength(z.string(), 2000).optional(),
 });
 
 export const IdParam = z.object({
@@ -109,7 +110,7 @@ const InboundEndpointSchema = z
   .openapi("InboundEndpoint");
 
 const EndpointInputSchema = z.object({
-  label: z.string().min(1).max(200).optional(),
+  label: maxStringLength(z.string().min(1), 200).optional(),
   duplicate_header: z
     .string()
     .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/, "an HTTP header name")

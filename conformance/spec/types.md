@@ -183,4 +183,4 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 
     Reason: field values retain the precision their source supplied, and a device must validate the same values offline as the server accepts online (`device.md` 57). This rule applies to declared properties, not the system timestamps that `items.md` 6 normalizes.
 
-    Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/shared/src/type-registry.test.ts › accepts datetime instants in any offset, and the all-day bare date`; `packages/server/src/routes/items.test.ts › stores a zoned datetime property at minute precision unchanged`.
+    Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/shared/src/type-registry.test.ts › accepts datetime instants in any offset, and the all-day bare date`; `packages/server/src/routes/items.test.ts › matches working-copy field validation at Unicode and format boundaries`.

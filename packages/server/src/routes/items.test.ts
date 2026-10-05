@@ -40,23 +40,82 @@ describe("POST /items", () => {
     expect(data).toHaveProperty("metadata");
   });
 
-  it("stores a zoned datetime property at minute precision unchanged", async () => {
-    const type = "fixture.minute_datetime";
+  it("matches working-copy field validation at Unicode and format boundaries", async () => {
+    const type = "fixture.field_boundaries";
     const registered = await request(ctx.app, "POST", "/types", {
       key: ctx.workingKey,
-      body: { id: type, version: 1, fields: { time: { type: "datetime" } } },
+      body: {
+        id: type,
+        version: 1,
+        fields: {
+          title: { type: "string", required: true, maxLength: 5 },
+          read: { type: "boolean" },
+          count: { type: "integer" },
+          choice: { type: "enum", enum_values: ["yes", "no"] },
+          list: { type: "array", maxItems: 2, items_type: "string" },
+          date: { type: "date" },
+          time: { type: "datetime" },
+          email: { type: "email" },
+          url: { type: "url" },
+          image: { type: "thumbnail" },
+        },
+      },
     });
     expect(registered.status).toBe(201);
     const time = "2026-01-01T23:59+23:59";
     const created = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
-      body: { type, properties: { time } },
+      body: {
+        type,
+        properties: {
+          title: "😀abc",
+          read: null,
+          count: 9007199254740991,
+          choice: "yes",
+          list: [false, {}],
+          date: "0000-02-29",
+          time,
+          email: "reader+tag@example.test",
+          url: "mailto:reader@example.test",
+          image: "data:image/png;base64,iVBORw0KGgo=",
+          custom: true,
+        },
+      },
     });
     expect(created.status).toBe(201);
     const body = (await created.json()) as {
       item: { properties: { time: string } };
     };
     expect(body.item.properties.time).toBe(time);
+    for (const [field, value] of [
+      ["title", null],
+      ["title", "😀abcd"],
+      ["title", "a\u0000b"],
+      ["read", "yes"],
+      ["count", 9007199254740992],
+      ["count", 1.5],
+      ["choice", "maybe"],
+      ["list", [1, 2, 3]],
+      ["date", "1900-02-29"],
+      ["time", "2026-01-01T12:00:00"],
+      ["time", "2026-01-01T12:00+24:00"],
+      ["email", "a..b@example.test"],
+      ["url", "relative"],
+      ["image", "data:image/png;base64,iVBORw0KGgp="],
+    ] as [string, unknown][]) {
+      const rejected = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type, properties: { title: "valid", [field]: value } },
+      });
+      expect(rejected.status, `${field}: ${JSON.stringify(value)}`).toBe(400);
+      const result = (await rejected.json()) as {
+        error: { code: string; details: { errors: { field: string }[] } };
+      };
+      expect(result.error.code).toBe("invalid_properties");
+      expect(
+        result.error.details.errors.some((error) => error.field === field),
+      ).toBe(true);
+    }
   });
 
   it("rejects missing required field", async () => {

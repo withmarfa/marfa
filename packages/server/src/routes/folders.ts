@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { rememberItemSubject } from "../middleware/replay-requirements.js";
 /**
@@ -112,7 +113,9 @@ const FolderDefaultsSchema = z
       "What a new file takes where its frontmatter leaves a blank. A change to a file already in the folder never takes them.",
   });
 
-const PatternListSchema = z.array(z.string().min(1).max(1024)).max(1000);
+const PatternListSchema = z
+  .array(maxStringLength(z.string().min(1), 1024))
+  .max(1000);
 
 const RemovalThresholdSchema = z
   .strictObject({
@@ -150,7 +153,7 @@ const settingsShape = {
     "Gitignore patterns, relative to the folder's root, for the paths the folder leaves alone. They win over `include`.",
   ),
   first_placement: z
-    .record(z.string(), z.string().min(1).max(1024))
+    .record(z.string(), maxStringLength(z.string().min(1), 1024))
     .describe(
       "Where an item made elsewhere first appears in the folder: a map from type identifier to a directory relative to the folder's root. The most specific matching type wins.",
     ),
@@ -164,7 +167,9 @@ type Settings = {
 };
 
 const CreateFolderSchema = z.strictObject({
-  title: z.string().min(1).max(500).describe("The folder's title."),
+  title: maxStringLength(z.string().min(1), 500).describe(
+    "The folder's title.",
+  ),
   search: settingsShape.search.optional(),
   defaults: settingsShape.defaults.optional(),
   include: settingsShape.include.optional(),
@@ -181,10 +186,7 @@ const UpdateFolderSchema = z.strictObject({
     .describe(
       "The version of the folder you read. If the folder has changed since, Marfa merges your change where nothing collides.",
     ),
-  title: z
-    .string()
-    .min(1)
-    .max(500)
+  title: maxStringLength(z.string().min(1), 500)
     .optional()
     .describe("A new title for the folder."),
   search: settingsShape.search.optional(),
