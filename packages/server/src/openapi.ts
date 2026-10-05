@@ -180,6 +180,45 @@ function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
   };
 }
 
+type ValidationIssue = z.core.$ZodIssue;
+
+/**
+ * The issues a union refusal stands for, one level of the body deeper.
+ *
+ * A field that is a shape or `null` (`nullableRef` in `routes/_schemas.ts`)
+ * is a union, and Zod reports a union that matched no branch as one
+ * `invalid_union` issue at the field, "Invalid input", without the issues of
+ * the branches. The `null` branch can only fail by being the wrong type at
+ * the field itself, so when every branch but one fails that way, the caller
+ * meant the other and its issues are the ones to report, at the paths they
+ * name. Otherwise (a value that is neither, or a union of real alternatives)
+ * the union's own issue stands.
+ */
+function unionIssuesExpanded(issues: ValidationIssue[]): ValidationIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code !== "invalid_union") {
+      return [issue];
+    }
+    const meant = issue.errors.filter(
+      (branch) =>
+        !(
+          branch.length === 1 &&
+          branch[0]?.code === "invalid_type" &&
+          branch[0].path.length === 0
+        ),
+    );
+    if (meant.length !== 1 || meant[0] === undefined) {
+      return [issue];
+    }
+    return unionIssuesExpanded(
+      meant[0].map((inner) => ({
+        ...inner,
+        path: [...issue.path, ...inner.path],
+      })),
+    );
+  });
+}
+
 /**
  * Create an OpenAPIHono router with the defaultHook configured to throw
  * MarfaError on validation failure, preserving the existing error response format.
@@ -214,7 +253,7 @@ export function createOpenAPIRouter<
         }
 
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
-          errors: result.error.issues.map((i) => ({
+          errors: unionIssuesExpanded(result.error.issues).map((i) => ({
             path: i.path.join("."),
             message: i.message,
           })),

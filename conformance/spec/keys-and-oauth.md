@@ -274,3 +274,11 @@
     Reason: a code that minted a second token would let anyone who has seen the code mint again. The refusal comes whatever the time since the previous poll.
 
     Tests: `compliance/device-grant.test.ts › answers invalid_grant to a poll of a code a token was already issued for`.
+
+## Levers a key carries
+
+73. WHEN a lever in the `enforcement_override` of `POST /keys` or `PATCH /keys/{id}` lacks `types` or `sources`, the server SHALL refuse it `400` and name the field in the refusal: `POST /keys` answers `missing_required_field` with `details.field`, and `PATCH /keys/{id}` answers `validation_error` with `details.errors[].path`, each naming the field with its full path, such as `enforcement_override.source_filter.types`, and SHALL store nothing.
+
+    Reason: `null` clears the levers on an update, so the field takes a lever or `null`, and a refusal that said only that the field was invalid would leave a caller sending three levers to guess which one lacked what.
+
+    Tests: `compliance/schema-enforcement.test.ts › names the field a lever lacks, on the mint and on the update`; `packages/server/src/routes/keys.test.ts › is named by the update, which refuses it 400 validation_error`.
