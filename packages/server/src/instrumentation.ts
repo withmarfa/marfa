@@ -30,6 +30,7 @@
  */
 import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
+import { DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { reportableError } from "./error-text.js";
 
 declare global {
@@ -94,9 +95,6 @@ async function start(): Promise<void> {
     );
     return;
   }
-  // The settings schema refuses an exporting configuration without it.
-  const deploymentEnvironment = otel.environment ?? "";
-
   // Resource attribute key for the deployment environment. The literal
   // string is used deliberately rather than a `@opentelemetry/semantic-conventions`
   // constant — the deployment-environment attribute moved namespaces across
@@ -109,7 +107,7 @@ async function start(): Promise<void> {
   const resourceAttributes = {
     [ATTR_SERVICE_NAME]: serviceName,
     [ATTR_SERVICE_VERSION]: config.versionSha ?? "dev",
-    "deployment.environment": deploymentEnvironment,
+    "deployment.environment": DEPLOYMENT_ENVIRONMENT,
   };
   const resource = resourceFromAttributes(resourceAttributes);
 

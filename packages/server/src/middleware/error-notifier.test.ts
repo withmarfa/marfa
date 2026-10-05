@@ -106,15 +106,19 @@ describe("the Telegram message format", () => {
     return JSON.parse(bodies[0]!) as Record<string, unknown>;
   }
 
-  it("names the instance it came from, never an environment it guessed", async () => {
+  it("names the instance it came from and the environment, which is production", async () => {
     const { notifyError } = await freshNotifier();
     notifyError("https://api.telegram.org/bot123/sendMessage", {
       ...notification("boom", "/a"),
       instance: "marfa.example",
     });
     const text = (JSON.parse(bodies[0]!) as { text: string }).text;
-    expect(text).toContain("*Marfa 500 Error* (marfa.example)");
-    expect(text).not.toContain("staging");
+    expect(text).toContain("*Marfa 500 Error* (marfa.example, production)");
+  });
+
+  it("names the environment alone when the instance is unknown", async () => {
+    const body = await bodyFor("https://api.telegram.org/bot123/sendMessage");
+    expect(body.text).toContain("*Marfa 500 Error* (production)");
   });
 
   it("is used for the Telegram host", async () => {
@@ -132,6 +136,52 @@ describe("the Telegram message format", () => {
     expect(body).not.toHaveProperty("parse_mode");
     expect(body).toHaveProperty("error", "boom");
   });
+});
+
+describe("the environment an error notification names", () => {
+  let bodies: string[];
+
+  beforeEach(() => {
+    bodies = [];
+    vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each(["production", "development", "staging", ""])(
+    "is production in a generic payload when NODE_ENV is %j",
+    async (nodeEnv) => {
+      vi.stubEnv("NODE_ENV", nodeEnv);
+      const { notifyError } = await freshNotifier();
+      notifyError(WEBHOOK, notification("boom", "/a"));
+      expect(JSON.parse(bodies[0]!)).toHaveProperty(
+        "environment",
+        "production",
+      );
+    },
+  );
+
+  it.each(["production", "development"])(
+    "is production in a Telegram message when NODE_ENV is %j",
+    async (nodeEnv) => {
+      vi.stubEnv("NODE_ENV", nodeEnv);
+      const { notifyError } = await freshNotifier();
+      notifyError(
+        "https://api.telegram.org/bot123/sendMessage",
+        notification("boom", "/a"),
+      );
+      const text = (JSON.parse(bodies[0]!) as { text: string }).text;
+      expect(text).toContain("(production)");
+      expect(text).not.toMatch(/staging|development/);
+    },
+  );
 });
 
 describe("what the error webhook is sent", () => {

@@ -39,7 +39,6 @@ const FREE_TEXT = [
   "MARFA_PLACEMENT_REGION",
   "MARFA_PLACEMENT_LOCATION",
   "MARFA_PLACEMENT_COUNTRY",
-  "MARFA_OTEL_ENVIRONMENT",
   "OTEL_SERVICE_NAME",
   // Its pair is checked only while telemetry is on.
   "MARFA_POSTHOG_PROJECT_TOKEN",
@@ -346,7 +345,6 @@ describe("OpenTelemetry settings", () => {
   const exporting = (extra: Record<string, string>) =>
     loadConfig({
       MARFA_OTEL_ENABLED: "true",
-      MARFA_OTEL_ENVIRONMENT: "staging",
       ...extra,
     }).otel;
 
@@ -391,25 +389,34 @@ describe("OpenTelemetry settings", () => {
     expect(
       refusal({
         MARFA_OTEL_ENABLED: "true",
-        MARFA_OTEL_ENVIRONMENT: "staging",
         MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
       }),
     ).toContain("MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too");
   });
 
-  it("refuses malformed headers, an out-of-range ratio and an unnamed environment", () => {
+  it("loads an exporting endpoint with no environment name, and has no setting for one", () => {
+    const otel = exporting({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+    });
+    expect(otel?.tracesEndpoint).toBe("http://collector:4318/v1/traces");
+    expect(otel).not.toHaveProperty("environment");
+    expect(SETTING_NAMES).not.toContain("MARFA_OTEL_ENVIRONMENT");
+    // A leftover value is not read: it names nothing the server holds.
+    const left = loadConfig({
+      MARFA_OTEL_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+      MARFA_OTEL_ENVIRONMENT: "staging",
+    }).otel;
+    expect(left).not.toHaveProperty("environment");
+  });
+
+  it("refuses malformed headers and an out-of-range ratio", () => {
     expect(refusal({ OTEL_EXPORTER_OTLP_HEADERS: "novalue" })).toContain(
       "OTEL_EXPORTER_OTLP_HEADERS must be comma-separated key=value pairs",
     );
     expect(refusal({ MARFA_OTEL_SAMPLE_RATIO: "5" })).toContain(
       "MARFA_OTEL_SAMPLE_RATIO must be a number from 0 to 1",
     );
-    expect(
-      refusal({
-        MARFA_OTEL_ENABLED: "true",
-        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
-      }),
-    ).toContain("MARFA_OTEL_ENVIRONMENT must name the deployment");
   });
 });
 

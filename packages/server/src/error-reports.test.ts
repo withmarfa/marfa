@@ -113,7 +113,6 @@ async function bootTelemetry(collectorUrl: string): Promise<void> {
   vi.stubEnv("MARFA_OTEL_SAMPLE_RATIO", "1");
   vi.stubEnv("MARFA_POSTHOG_HOST", collectorUrl);
   vi.stubEnv("MARFA_POSTHOG_PROJECT_TOKEN", "phc_test_token");
-  vi.stubEnv("MARFA_OTEL_ENVIRONMENT", "test-environment");
   vi.resetModules();
   await import("./instrumentation.js");
 }
