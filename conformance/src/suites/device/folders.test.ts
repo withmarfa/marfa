@@ -13471,6 +13471,50 @@ describe("what a folder takes", () => {
     );
   });
 
+  it("names each item it holds back at a secret's name, two at one path as two", async () => {
+    const [one, two] = [
+      "01a00000-0000-7000-8000-000000017101",
+      "01a00000-0000-7000-8000-000000017102",
+    ];
+    const key = (id: string) => ({
+      item: {
+        id,
+        type: "core.file",
+        properties: {
+          title: "id_rsa",
+          blob_ref: hashOf(Buffer.from(`key ${id}`)),
+          mime_type: "application/octet-stream",
+        },
+      },
+    });
+    harness = await folderHarness("folder-secret-items", {
+      settings: { search: { types: ["core.file"] } },
+      rows: { "core.file": [key(one), key(two)] },
+    });
+    scriptFolderWrites(harness);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.pull?.flagged
+        .filter((file) => file.path === "id_rsa")
+        .map((file) => [file.flag, file.item])
+        .sort(),
+    ).toEqual([
+      ["outside", one],
+      ["outside", two],
+    ]);
+    const said = await harness.folder.pushText();
+    expect(said.ok, JSON.stringify(said)).toBe(true);
+    if (!said.ok) return;
+    for (const id of [one, two]) {
+      expect(
+        said.value,
+        "two items held back at one path were said as one",
+      ).toContain(`id_rsa is not written (item ${id})`);
+    }
+  });
+
   it("never takes an editor's or a download's temporary file", async () => {
     harness = await folderHarness("folder-temporary", {
       settings: { search: { types: ["core.note", "core.file"] } },
@@ -15876,6 +15920,10 @@ describe("folders on one Mac", () => {
     // Written anew here before the other folder takes it, the moved file
     // would read there as a copy.
     expect(swept.value.pull?.elsewhere).toBe(1);
+    expect(
+      swept.value.pull?.flagged.filter((file) => file.item === moved),
+      "an item whose file is on its way to another folder was flagged as held back",
+    ).toEqual([]);
     expect(existsSync(join(a.dir, "Moved.md"))).toBe(false);
 
     // Where it went, it is the same item.

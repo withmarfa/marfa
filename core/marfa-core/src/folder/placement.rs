@@ -246,34 +246,6 @@ impl Folder {
     /// remembers any other refusal. Answers how many gave way.
     pub(super) fn settle_placements(&self, report: &mut DrainReport) -> Result<usize> {
         let mut gave_way = 0;
-        let mut taken = std::collections::HashSet::new();
-        // A give-way an earlier pass could not finish, its read failing say:
-        // the write keeps its verdict, so no later drain reports it again.
-        let reported: std::collections::HashSet<&str> = report
-            .verdicts
-            .iter()
-            .map(|verdict| verdict.id.as_str())
-            .collect();
-        let earlier: Vec<QueuedWrite> = store::queued_writes(&*self.core.conn()?)?
-            .into_iter()
-            .filter(|row| !reported.contains(row.id.as_str()))
-            .collect();
-        for row in earlier {
-            if self.places_by(&row)?
-                && let Some((source, edge_id)) = given_way(&row)
-                && taken.insert(edge_id.to_string())
-            {
-                // Read again at the next drain, so a server out of reach does
-                // not fail a pass that has nothing new of it.
-                match self.take_servers_placement(source, edge_id) {
-                    Ok(()) => gave_way += 1,
-                    Err(error)
-                        if error.is_environmental()
-                            || matches!(error, CoreError::StreamIncomplete { .. }) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
         let mut refused: Vec<(String, Held)> = Vec::new();
         let mut kept = Vec::new();
         for verdict in std::mem::take(&mut report.verdicts) {
@@ -289,15 +261,19 @@ impl Folder {
                 kept.push(verdict);
                 continue;
             }
-            if gives_way(&row) {
-                let Some((source, edge_id)) = given_way(&row) else {
+            let duplicate = row.verdict == Some(Verdict::Refused)
+                && row.kind == WriteKind::CreateEdge
+                && row.answer.as_deref().is_some_and(is_duplicate);
+            let stale = row.blocked_reason() == Some(BlockedReason::ConflictUnresolved);
+            if duplicate || stale {
+                let (Some(source), Some(edge_id)) =
+                    (row.item_id.as_deref(), row.edge_id.as_deref())
+                else {
                     kept.push(verdict);
                     continue;
                 };
-                if taken.insert(edge_id.to_string()) {
-                    self.take_servers_placement(source, edge_id)?;
-                    gave_way += 1;
-                }
+                self.take_servers_placement(source, edge_id)?;
+                gave_way += 1;
                 continue;
             }
             // Only the server's own answer to the placement: one refused with
@@ -436,23 +412,6 @@ impl Folder {
         record.placements.extend(placements);
         self.keep_refused(&record)
     }
-}
-
-/// Whether the server answered a placement write as another machine's
-/// placement or move landing first.
-fn gives_way(row: &QueuedWrite) -> bool {
-    let duplicate = row.verdict == Some(Verdict::Refused)
-        && row.kind == WriteKind::CreateEdge
-        && row.answer.as_deref().is_some_and(is_duplicate);
-    duplicate || row.blocked_reason() == Some(BlockedReason::ConflictUnresolved)
-}
-
-/// The item and the edge a write that gives way names.
-fn given_way(row: &QueuedWrite) -> Option<(&str, &str)> {
-    if !gives_way(row) {
-        return None;
-    }
-    row.item_id.as_deref().zip(row.edge_id.as_deref())
 }
 
 pub(super) fn rank_of(edge: &Edge) -> Rank {
@@ -775,60 +734,6 @@ mod tests {
                 "moved meanwhile: {moved_meanwhile}"
             );
         }
-    }
-
-    #[test]
-    fn a_give_way_whose_read_failed_is_finished_by_a_later_drain() {
-        let server = crate::scripted::Scripted::start();
-        let listing = "/items/note/edges";
-        server.on(
-            listing,
-            vec![
-                crate::scripted::refusal(503, "unavailable"),
-                crate::scripted::refusal(503, "unavailable"),
-                crate::scripted::certified(crate::scripted::json(
-                    200,
-                    &json!({ "data": [placed_json(2, "First/Plan.md")], "next_cursor": null })
-                        .to_string(),
-                )),
-            ],
-        );
-        let (_dir, folder) = moved_and_refused_as_stale(server.url());
-        assert!(
-            folder.take_servers_placement("note", "placed").is_err(),
-            "the witness: the read the drain gave way from failed"
-        );
-        // The next drain answers nothing new, since the move has its verdict.
-        let mut report = crate::DrainReport {
-            answered: 0,
-            held: 0,
-            undelivered: 0,
-            unsent: 0,
-            unmade: 0,
-            unavailable: None,
-            verdicts: Vec::new(),
-            stopped: None,
-            unclaimed_sources: Vec::new(),
-            retry_after_seconds: None,
-        };
-        assert_eq!(
-            folder.settle_placements(&mut report).unwrap(),
-            0,
-            "a server still out of reach failed the pass"
-        );
-        assert_eq!(folder.core.queue().unwrap().len(), 1);
-        assert_eq!(folder.settle_placements(&mut report).unwrap(), 1);
-        let conn = folder.core.conn().unwrap();
-        let held = store::edge_by_id(&conn, "placed").unwrap().unwrap();
-        assert_eq!(
-            path_of(&held),
-            Some("First/Plan.md"),
-            "the copy went on showing the move the server refused as stale"
-        );
-        assert!(store::queued_writes(&conn).unwrap().is_empty());
-        // Settled, a later drain has nothing to give way for.
-        drop(conn);
-        assert_eq!(folder.settle_placements(&mut report).unwrap(), 0);
     }
 
     #[test]
