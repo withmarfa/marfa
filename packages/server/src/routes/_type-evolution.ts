@@ -10,7 +10,7 @@ import type { FieldDefinition, TypeSchema } from "@withmarfa/shared";
  * definition later is held back by default.
  *
  * - `label`, `description` and `display_hints` are presentation.
- * - `version` is stamped on each row written afterwards as its
+ * - `version` is stamped on each row created afterwards as its
  *   `schema_version`, and the server decides nothing by it.
  * - `fields` is judged field by field in {@link evolutionOf}.
  */

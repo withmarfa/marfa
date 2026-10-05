@@ -239,18 +239,18 @@ export const ItemSchema = z
       .describe("The item's properties, by name."),
     state: ItemStateEnum.describe("The item's lifecycle state."),
     tier: TierEnum.optional().describe(
-      "The item's tier. Absent on `system.*` items, which have none.",
+      "The item's tier. It doesn't apply to `system.*` items, which carry `library`.",
     ),
     version: z
       .number()
       .describe(
-        "The item's version. It starts at 1 and goes up by one on each update.",
+        "The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is.",
       ),
     schema_version: z
       .number()
       .int()
       .describe(
-        "The `version` the item's type had when the item was created. Marfa doesn't act on it.",
+        "The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it.",
       ),
     source: z
       .string()
@@ -328,6 +328,10 @@ export const MetadataSchema = z
   .openapi("Metadata");
 
 const THE_ITEM = "The item.";
+
+/** `listed`, on every item a conditional read returns. */
+const LISTED_TEXT =
+  "`true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`.";
 const THE_ITEMS_METADATA = "The item's metadata.";
 
 export const ItemWithMetadataSchema = z
@@ -345,12 +349,7 @@ export const ItemWithMetadataSchema = z
   .openapi("ItemWithMetadata");
 
 export const ItemReadWithMetadataSchema = ItemWithMetadataSchema.extend({
-  listed: z
-    .boolean()
-    .optional()
-    .describe(
-      "Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection.",
-    ),
+  listed: z.boolean().optional().describe(LISTED_TEXT),
 })
   .describe("An item with its metadata, as a read returns it.")
   .openapi("ItemReadWithMetadata");
@@ -612,17 +611,12 @@ export const ItemDetailSchema = z
       .describe(
         "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`.",
       ),
-    listed: z
-      .boolean()
-      .optional()
-      .describe(
-        "Required on conditional copy reads; direct authority is independent of this item-set membership.",
-      ),
+    listed: z.boolean().optional().describe(LISTED_TEXT),
     neighbors: z
       .array(ItemReadWithMetadataSchema)
       .optional()
       .describe(
-        "The items you can read at the other end of this answer's edges, each with its metadata: the targets of `item.edges`, and the sources of `backrefs` if you asked for both. Present with `include=neighbors`.",
+        "The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`.",
       ),
     neighbors_truncated: z
       .boolean()

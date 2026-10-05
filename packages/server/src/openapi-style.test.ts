@@ -52,18 +52,36 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-/** Every property of every named schema, `allOf` branches included. */
+/**
+ * Every property of every named schema, and of every unnamed object inside
+ * one: a field's own object, an array's `items`, a map's values and each
+ * `allOf`, `anyOf` or `oneOf` branch. A reference is checked where it is
+ * named, so the walk stops there.
+ */
 function namedFields(doc: Json): { name: string; field: Json }[] {
   const out: { name: string; field: Json }[] = [];
   const schemas = ((doc.components as Json | undefined)?.schemas ??
     {}) as Record<string, Json>;
   const visit = (owner: string, schema: Json) => {
+    if (schema.$ref !== undefined) return;
     for (const [field, value] of Object.entries(
       (schema.properties ?? {}) as Record<string, Json>,
     )) {
       out.push({ name: `${owner}.${field}`, field: value });
+      visit(`${owner}.${field}`, value);
     }
-    for (const branch of (schema.allOf ?? []) as Json[]) visit(owner, branch);
+    if (typeof schema.items === "object" && schema.items !== null) {
+      visit(`${owner}[]`, schema.items as Json);
+    }
+    if (
+      typeof schema.additionalProperties === "object" &&
+      schema.additionalProperties !== null
+    ) {
+      visit(`${owner}{}`, schema.additionalProperties as Json);
+    }
+    for (const key of ["allOf", "anyOf", "oneOf"] as const) {
+      for (const branch of (schema[key] ?? []) as Json[]) visit(owner, branch);
+    }
   };
   for (const [name, schema] of Object.entries(schemas)) visit(name, schema);
   return out;
@@ -96,7 +114,8 @@ const RULES = {
   parameterLength: "every parameter description is at most 250 characters",
   responseLength: "every response description is at most 400 characters",
   schemaUndescribed: "every named schema has a description",
-  fieldUndescribed: "every field of a named schema has a description",
+  fieldUndescribed:
+    "every field of a named schema, nested fields included, has a description",
   fieldLength: "every field description is at most 250 characters",
 } as const;
 
@@ -185,6 +204,16 @@ describe("the API description follows API-STYLE.md", () => {
             properties: {
               id: {},
               note: { description: long },
+              place: {
+                type: "object",
+                description: "Where the thing is.",
+                properties: { lat: {}, label: { description: long } },
+              },
+              stops: {
+                type: "array",
+                description: "Where the thing stops.",
+                items: { type: "object", properties: { at: {} } },
+              },
               owner: { allOf: [{ $ref: "#/components/schemas/Owner" }] },
             },
           },
@@ -209,8 +238,13 @@ describe("the API description follows API-STYLE.md", () => {
       parameterLength: ["GET /things limit"],
       responseLength: ["GET /things 200"],
       schemaUndescribed: ["Thing"],
-      fieldUndescribed: ["Thing.id", "Thing.owner"],
-      fieldLength: ["Thing.note"],
+      fieldUndescribed: [
+        "Thing.id",
+        "Thing.place.lat",
+        "Thing.stops[].at",
+        "Thing.owner",
+      ],
+      fieldLength: ["Thing.note", "Thing.place.label"],
     });
   });
 

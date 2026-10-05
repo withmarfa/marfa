@@ -47,7 +47,7 @@ export const BulkActionFilterShape = z
     source: z
       .string()
       .optional()
-      .describe("Only items stamped with this source."),
+      .describe("Only items written under this source."),
     tier: TierEnum.optional().describe("Only items in this tier."),
     tags: z
       .array(z.string())

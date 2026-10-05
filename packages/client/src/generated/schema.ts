@@ -1678,9 +1678,9 @@ export interface components {
             };
             state: components["schemas"]["ItemState"] & unknown;
             tier?: components["schemas"]["Tier"] & unknown;
-            /** @description The item's version. It starts at 1 and goes up by one on each update. */
+            /** @description The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is. */
             version: number;
-            /** @description The `version` the item's type had when the item was created. Marfa doesn't act on it. */
+            /** @description The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it. */
             schema_version: number;
             /** @description The source the item was written under: the writer's own, or one its key claims. It never changes. */
             source: string;
@@ -2060,7 +2060,7 @@ export interface components {
         ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemReadWithMetadata"];
         /** @description An item with its metadata, as a read returns it. */
         ItemReadWithMetadata: components["schemas"]["ItemWithMetadata"] & {
-            /** @description Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
             listed?: boolean;
         };
         /** @description An error response. */
@@ -2088,9 +2088,9 @@ export interface components {
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
-            /** @description Required on conditional copy reads; direct authority is independent of this item-set membership. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
             listed?: boolean;
-            /** @description The items you can read at the other end of this answer's edges, each with its metadata: the targets of `item.edges`, and the sources of `backrefs` if you asked for both. Present with `include=neighbors`. */
+            /** @description The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`. */
             neighbors?: components["schemas"]["ItemReadWithMetadata"][];
             /** @description `true` if this answer's edges reach more than 100 items, so `neighbors` leaves some out. Page `GET /items/{id}/edges` and `GET /items/{id}/backrefs` for the rest. Present with `include=neighbors`. */
             neighbors_truncated?: boolean;
@@ -2389,7 +2389,7 @@ export interface components {
             /** @description Restrict to one type, subtypes included. A type the credential cannot read, with nothing readable under it, is refused `403 type_not_permitted`; one it can read and not write matches nothing. A type nothing registers is accepted. */
             type?: string;
             state?: components["schemas"]["ItemState"] & unknown;
-            /** @description Only items stamped with this source. */
+            /** @description Only items written under this source. */
             source?: string;
             tier?: components["schemas"]["Tier"] & unknown;
             /** @description Only items that carry all of these tags. */
@@ -3054,21 +3054,21 @@ export interface components {
             };
             /** @description What this read cost, and the limits that would stop it. */
             scan: {
-                /** @description Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for. */
+                /** @description How many event items this request read. It grows with the size of the calendar more than with the window. */
                 events_read: number;
-                /** @description Occurrences returned, the length of `data`. */
+                /** @description How many occurrences `data` holds. */
                 occurrences: number;
-                /** @description Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is. */
+                /** @description The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it. */
                 max_occurrences: number;
-                /** @description Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two (an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another), so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize. */
+                /** @description How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest. */
                 series_errors: number;
-                /** @description Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these. */
+                /** @description The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds. */
                 max_series_errors: number;
-                /** @description Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window (that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed). It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates (an unreadable rule, a timezone that does not resolve) is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one. */
+                /** @description How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here. */
                 unproductive_iterations: number;
-                /** @description Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it. */
+                /** @description The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it. */
                 max_unproductive_iterations: number;
-                /** @description Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed. */
+                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`. */
                 series_unexpanded: number;
             };
             /** @description One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none. */
