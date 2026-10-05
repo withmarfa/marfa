@@ -64,7 +64,7 @@ const EdgePropertyTypeSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be.",
+    "One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail.",
   );
 
 /** Declared so the format that stands for a thumbnail on a type's field is
@@ -76,7 +76,7 @@ const EdgePropertyFormatSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.",
+    "A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail.",
   );
 
 /** One property an edge of the type carries, as registration takes it and
@@ -84,12 +84,19 @@ const EdgePropertyFormatSchema = z
 const EdgePropertyDefinitionSchema = z
   .object({
     type: EdgePropertyTypeSchema,
-    description: z.string().optional(),
-    required: z.boolean().optional(),
-    enum_values: z.array(z.string()).optional(),
+    description: z.string().optional().describe("What the property holds."),
+    required: z
+      .boolean()
+      .optional()
+      .describe("`true` if every edge of the type must have the property."),
+    enum_values: z
+      .array(z.string())
+      .optional()
+      .describe("The values an `enum` property allows."),
     items_type: EdgePropertyTypeSchema.optional(),
     format: EdgePropertyFormatSchema.optional(),
   })
+  .describe("One property an edge of an edge type can carry.")
   .openapi("EdgePropertyDefinition");
 
 /** Exported so the archive restore validates a carried edge type through
@@ -97,59 +104,103 @@ const EdgePropertyDefinitionSchema = z
  *  the same rules that can drift from it. */
 export const EdgeTypeRequestSchema = z
   .object({
-    id: z.string().min(1),
-    label: z.string().optional(),
-    description: z.string().optional(),
-    cardinality: z.enum([
-      "one-to-one",
-      "one-to-many",
-      "many-to-one",
-      "many-to-many",
-    ]),
-    source_type_constraints: z.array(TypeConstraintSchema).optional(),
-    target_type_constraints: z.array(TypeConstraintSchema).optional(),
-    cascade_on_delete: z.enum(["cascade", "orphan", "block"]).optional(),
+    id: z
+      .string()
+      .min(1)
+      .describe("The identifier of the edge type, such as `acme.list-member`."),
+    label: z.string().optional().describe("A name for people to read."),
+    description: z.string().optional().describe("What the edge type is for."),
+    cardinality: z
+      .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
+      .describe(
+        "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.",
+      ),
+    source_type_constraints: z
+      .array(TypeConstraintSchema)
+      .optional()
+      .describe(
+        "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type.",
+      ),
+    target_type_constraints: z
+      .array(TypeConstraintSchema)
+      .optional()
+      .describe(
+        "The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type.",
+      ),
+    cascade_on_delete: z
+      .enum(["cascade", "orphan", "block"])
+      .optional()
+      .describe(
+        "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. Leave it out for `orphan`.",
+      ),
     property_schema: z
       .record(z.string(), EdgePropertyDefinitionSchema)
-      .optional(),
+      .optional()
+      .describe(
+        "The properties an edge of the type can carry, by name. Leave it out for none.",
+      ),
     reverse_name: z
       .string()
       .optional()
       .describe(
-        "The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.",
+        "The name the edge goes by when read from its target, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name.",
       ),
     written_at: z
       .enum(["source", "target"])
       .optional()
       .describe(
-        "The end whose file writes an edge of this type, `source` unless named. Where the file at that end cannot carry frontmatter, the other end writes it under the name read from there. `target` needs a `reverse_name`.",
+        "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `target` needs a `reverse_name`. Leave it out for `source`.",
       ),
   })
+  .describe("An edge type to register.")
   .openapi("EdgeTypeRequest");
 
 const EdgeTypeResponseSchema = z
   .object({
-    id: z.string(),
-    label: z.string().optional(),
-    description: z.string().optional(),
-    cardinality: z.enum([
-      "one-to-one",
-      "one-to-many",
-      "many-to-one",
-      "many-to-many",
-    ]),
-    source_type_constraints: z.array(z.string()),
-    target_type_constraints: z.array(z.string()),
-    cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
-    property_schema: z.record(z.string(), EdgePropertyDefinitionSchema),
-    reverse_name: z.string().optional(),
-    written_at: z.enum(["source", "target"]),
+    id: z.string().describe("Unique identifier for the edge type."),
+    label: z.string().optional().describe("A name for people to read."),
+    description: z.string().optional().describe("What the edge type is for."),
+    cardinality: z
+      .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
+      .describe(
+        "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.",
+      ),
+    source_type_constraints: z
+      .array(z.string())
+      .describe(
+        "The types an edge's source item can have: `*`, a type identifier or `role:<name>`.",
+      ),
+    target_type_constraints: z
+      .array(z.string())
+      .describe("The types an edge's target item can have."),
+    cascade_on_delete: z
+      .enum(["cascade", "orphan", "block"])
+      .describe(
+        "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.",
+      ),
+    property_schema: z
+      .record(z.string(), EdgePropertyDefinitionSchema)
+      .describe("The properties an edge of the type can carry, by name."),
+    reverse_name: z
+      .string()
+      .optional()
+      .describe(
+        "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.",
+      ),
+    written_at: z
+      .enum(["source", "target"])
+      .describe(
+        "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.",
+      ),
     shipped: z
       .boolean()
       .describe(
         "Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`.",
       ),
   })
+  .describe(
+    "An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join.",
+  )
   .openapi("EdgeType");
 
 function edgeTypeResponse(schema: EdgeTypeSchema) {
@@ -258,7 +309,7 @@ const registerEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. A registered edge type is flat with no inheritance.",
+    "Registers an edge type and returns it. An edge type can't extend another.",
   security: [{ bearerAuth: [] }],
   middleware: registersEdgeType,
   request: {
@@ -275,7 +326,7 @@ const registerEdgeTypeRoute = createRoute({
           schema: z.object({ edge_type: EdgeTypeResponseSchema }),
         },
       },
-      description: "Edge type registered",
+      description: "Returns the new edge type.",
     },
     400: {
       content: {
@@ -287,7 +338,8 @@ const registerEdgeTypeRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description:
+        "- `validation_error`: `id` or `reverse_name` isn't a valid edge type identifier, `written_at` is `target` with no `reverse_name`, or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
     },
     403: {
       content: {
@@ -299,7 +351,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: `metadata.edge_types:write` required. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the `reverse_name`, which `details.edge_type` names.",
+        "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.",
     },
     409: {
       content: {
@@ -308,7 +360,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: the ID is a shipped edge-type name, or the ID or `reverse_name` is already held by another edge type as either.",
+        "`conflict`: `id` is the name of an edge type Marfa ships, or `id` or `reverse_name` is already the ID or reverse name of another edge type.",
     },
   },
 });
@@ -320,7 +372,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge types"],
   summary: "List edge types",
   description:
-    "Returns every edge type this instance resolves (the shipped types plus any registered through `POST /edge-types`), each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it. Every credential reads the whole list, whatever its edge map reaches: an edge type's existence is not secret, and a client resolves an edge's names from this list.",
+    "Returns every edge type on this instance: those Marfa ships and those registered through `POST /edge-types`. Every credential reads the whole list, whatever its edge map reaches.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -329,7 +381,8 @@ const listEdgeTypesRoute = createRoute({
           schema: pageOf(EdgeTypeResponseSchema, "EdgeTypePage"),
         },
       },
-      description: "Edge types",
+      description:
+        "Returns every edge type in one page: `next_cursor` is always `null`. `shipped` tells the two kinds apart.",
     },
   },
 });
@@ -341,24 +394,26 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included. `?force=true` deletes the registration even if edges of the type are stored, and leaves those edges in place, still naming a type the instance no longer holds; it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
+    "Deletes a registered edge type. With `force=true`, edges of the type stay and keep naming it.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {
-    params: z.object({ id: z.string().describe("Edge type id.") }),
+    params: z.object({
+      id: z.string().describe("The identifier of the edge type."),
+    }),
     query: z.object({
       force: z
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Delete the registration even though edges of the type exist, leaving them naming it.",
+          "Delete the edge type even though edges of it exist. Those edges stay and keep naming it.",
         ),
     }),
   },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
-      description: "Deleted",
+      description: "Returns `ok: true`.",
     },
     400: {
       content: {
@@ -366,7 +421,8 @@ const deleteEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Can't delete a core edge type",
+      description:
+        "`validation_error`: Marfa ships this edge type, and no credential can delete it.",
     },
     403: {
       content: {
@@ -378,7 +434,7 @@ const deleteEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `schema.write`. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the type's `reverse_name`, which `details.edge_type` names.",
+        "- `forbidden`: you don't have `schema.write`.\n- `edge_permission_denied`: your edge map doesn't grant write on the edge type or its `reverse_name`. `details.edge_type` names it.",
     },
     404: {
       content: {
@@ -386,7 +442,7 @@ const deleteEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["edge_type_not_found"]),
         },
       },
-      description: "Edge type not found",
+      description: "`edge_type_not_found`: no edge type has this identifier.",
     },
     409: {
       content: {
@@ -395,7 +451,7 @@ const deleteEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "Edges of this type are stored. `details.edge_type` names it. Pass `?force=true` to delete the registration anyway and leave them.",
+        "`edge_type_in_use`: edges of this type exist. Send `force=true` to delete it anyway.",
     },
   },
 });

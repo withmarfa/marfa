@@ -120,13 +120,13 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  */
 const CEILINGS = {
   summaryForm: 0,
-  descriptionLength: 36,
-  parameterUndescribed: 3,
-  parameterLength: 6,
-  schemaUndescribed: 89,
-  fieldUndescribed: 333,
-  fieldLength: 9,
-  responseLength: 4,
+  descriptionLength: 27,
+  parameterUndescribed: 2,
+  parameterLength: 7,
+  schemaUndescribed: 80,
+  fieldUndescribed: 297,
+  fieldLength: 6,
+  responseLength: 0,
 };
 
 describe("the API description follows API-STYLE.md", () => {

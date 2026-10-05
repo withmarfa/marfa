@@ -73,25 +73,39 @@ const MAX_BULK_EDGES = 5000;
 // Schemas
 // ---------------------------------------------------------------------------
 
-const BulkEdgeInputItemSchema = z.object({
-  id: z.string().optional(),
-  source_id: z.string(),
-  target_id: z.string(),
-  edge_type: z.string(),
-  properties: z.record(z.string(), z.unknown()).optional(),
-  /** The version this entry was based on, where the triple resolves an
-   *  edge that already exists. Optional for the same reason it is optional
-   *  on the item bulk door: an entry creating an edge it has never read has
-   *  no version to name. */
-  version: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      "The version the caller read, where this entry resolves an edge that already exists. A stale value is refused as that entry's outcome, or rolls the page back under the default `atomic`.",
-    ),
-});
+const BulkEdgeInputItemSchema = z
+  .object({
+    id: z
+      .string()
+      .optional()
+      .describe(
+        "A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one.",
+      ),
+    source_id: z.string().describe("The ID of the item the edge starts from."),
+    target_id: z.string().describe("The ID of the item the edge points to."),
+    edge_type: z
+      .string()
+      .describe("The identifier of the edge type, such as `parent-of`."),
+    properties: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The edge's properties. On an existing edge they merge over its own. Leave it out for none.",
+      ),
+    /** The version this entry was based on, where the triple resolves an
+     *  edge that already exists. Optional for the same reason it is optional
+     *  on the item bulk door: an entry creating an edge it has never read has
+     *  no version to name. */
+    version: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "The version of the existing edge your entry is based on. A stale value makes the entry `errored`, or rolls everything back when `atomic` is true.",
+      ),
+  })
+  .describe("One edge to create or update.");
 
 // ---------------------------------------------------------------------------
 // Route definition
@@ -104,7 +118,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Upsert edges in bulk",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching each entry, when it is written, to the edge holding its `(source_id, target_id, edge_type)`, including one an earlier entry wrote. An entry that matches an edge merges its properties over the edge's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.",
+    "Creates or updates up to 5,000 edges in one call, matching existing edges on `(source_id, target_id, edge_type)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -112,10 +126,29 @@ const edgesBulkRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            edges: z.array(BulkEdgeInputItemSchema),
-            mode: z.enum(["upsert", "create_only"]).optional(),
-            atomic: z.boolean().optional(),
-            enable_fanout: z.boolean().optional(),
+            edges: z
+              .array(BulkEdgeInputItemSchema)
+              .describe(
+                "The entries to write, at most 5,000. The items they join must already exist.",
+              ),
+            mode: z
+              .enum(["upsert", "create_only"])
+              .optional()
+              .describe(
+                "`upsert` (the default) merges an entry's properties into the edge it matches. `create_only` skips it, reporting `skipped` with reason `duplicate_edge`.",
+              ),
+            atomic: z
+              .boolean()
+              .optional()
+              .describe(
+                "Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written.",
+              ),
+            enable_fanout: z
+              .boolean()
+              .optional()
+              .describe(
+                "Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way.",
+              ),
           }),
         },
       },
@@ -126,7 +159,8 @@ const edgesBulkRoute = createRoute({
       content: {
         "application/json": { schema: BulkResponseSchema },
       },
-      description: "Bulk edge result",
+      description:
+        "Returns `counts` and a `results` entry for each edge, in order: `created`, `updated`, `skipped` or `errored`. Under `create_only`, an entry that matches an edge is `skipped` with reason `duplicate_edge`.",
     },
     400: {
       content: {
@@ -138,7 +172,8 @@ const edgesBulkRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error or atomic rollback",
+      description:
+        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
     },
     401: {
       content: {
@@ -160,7 +195,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "Write access denied for a source type the credential may read, or for an edge type; `type_not_permitted` also, before any entry is judged, where its type permissions reach no type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
+        "- `type_not_permitted`: you don't have write on an entry's source item type, or your credential reaches no type.\n- `edge_permission_denied`: you don't have write on an entry's edge type.\n- `bulk_atomic_rollback`: one of these under `atomic`.",
     },
     404: {
       content: {
@@ -169,7 +204,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "An atomic rollback for an edge naming an end that is not there or whose type the credential may not read, with `item_not_found` in `details.code`.",
+        "`bulk_atomic_rollback`: with `atomic` true, an entry names an item that doesn't exist, or whose type you can't read. `details.code` is `item_not_found`.",
     },
     409: {
       content: {
@@ -178,7 +213,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "An atomic rollback for an edge whose row moved or whose id is taken, with `version_conflict` or `id_reused` in `details.code`.",
+        "`bulk_atomic_rollback`: with `atomic` true, an entry's edge has moved or its ID is taken. `details.code` is `version_conflict` or `id_reused`.",
     },
   },
 });

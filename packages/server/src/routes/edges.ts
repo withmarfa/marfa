@@ -78,8 +78,11 @@ import { pageLimit, pageCursor } from "../page-limits.js";
 const EdgeConflictSchema = z
   .object({
     error: VersionConflictErrorSchema,
-    current: EdgeSchema,
+    current: EdgeSchema.describe(
+      "The edge as it stands now. Merge your change over it and try again.",
+    ),
   })
+  .describe("A stale update's answer: the refusal and the current edge.")
   .openapi("EdgeVersionConflict");
 
 const MAX_EDGE_TYPE_FILTER = 10;
@@ -213,10 +216,7 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns a paginated list of edges the credential may read, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge this credential reaches.\n\n" +
-    "Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page, so paging still walks it: stop on `next_cursor: null`, never on an empty page.\n\n" +
-    "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate: a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
-    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.",
+    "Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -225,7 +225,7 @@ const listEdgesRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Comma-separated edge types. Up to 10 entries. Omit to list every edge.",
+          "Only return edges of these edge types, comma-separated, up to 10.",
         ),
       updated_after: z
         .string()
@@ -235,14 +235,14 @@ const listEdgesRoute = createRoute({
         .min(1)
         .optional()
         .describe(
-          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id, and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+          "Only return edges that changed at or after this RFC 3339 time. Orders results by `updated_at`, then `id`, ascending, and a cursor from the default order doesn't continue it. Edges can share a time, so deduplicate by `id`.",
         ),
       updated_before: z
         .string()
         .min(1)
         .optional()
         .describe(
-          "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It leaves the ordering alone.",
+          "Only return edges that changed before this RFC 3339 time. It doesn't change the order.",
         ),
       limit: pageLimit({ max: 500 }),
       cursor: pageCursor(),
@@ -251,7 +251,7 @@ const listEdgesRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: EdgePageSchema } },
-      description: "Edges, paginated",
+      description: "Returns a page of edges.",
     },
     400: {
       content: {
@@ -260,7 +260,7 @@ const listEdgesRoute = createRoute({
         },
       },
       description:
-        "Too many edge types in the filter, or an unrecognized query parameter.",
+        "`validation_error`: `edge_type` names more than 10 edge types.",
     },
     401: {
       content: {
@@ -276,8 +276,7 @@ const listEdgesRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this listing rather than being refused.",
+      description: "`type_not_permitted`: your credential reaches no type.",
     },
   },
 });
@@ -289,7 +288,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200.",
+    "Creates an edge between two existing items. Repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -301,12 +300,25 @@ const createEdgeRoute = createRoute({
               .string()
               .optional()
               .describe(
-                "Client-supplied edge id. Omit to have the server mint one.",
+                "A UUIDv7 you choose for the edge. Leave it out and Marfa creates one.",
               ),
-            source_id: z.string(),
-            target_id: z.string(),
-            edge_type: z.string(),
-            properties: z.record(z.string(), z.unknown()).optional(),
+            source_id: z
+              .string()
+              .describe("The ID of the item the edge starts from."),
+            target_id: z
+              .string()
+              .describe("The ID of the item the edge points to."),
+            edge_type: z
+              .string()
+              .describe(
+                "The identifier of the edge type, such as `parent-of`.",
+              ),
+            properties: z
+              .record(z.string(), z.unknown())
+              .optional()
+              .describe(
+                "The edge's properties, as the edge type declares them. Leave it out for none.",
+              ),
           }),
         },
       },
@@ -316,20 +328,24 @@ const createEdgeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            edge: EdgeSchema,
-            acknowledged: z.boolean(),
-          }),
+          schema: z
+            .object({
+              edge: EdgeSchema.describe("The stored edge."),
+              acknowledged: z
+                .boolean()
+                .describe("Always `true`: Marfa wrote nothing."),
+            })
+            .describe("A repeated create's answer: the stored edge."),
         },
       },
       description:
-        "The supplied `id` already names this exact edge (same source, target and type), so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+        "Returns the stored edge with `acknowledged: true`. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
     },
     201: {
       content: {
         "application/json": { schema: EdgeResponseSchema },
       },
-      description: "Edge created",
+      description: "Returns the new edge.",
     },
     400: {
       content: {
@@ -343,7 +359,8 @@ const createEdgeRoute = createRoute({
           ]),
         },
       },
-      description: "Validation / constraint / cycle error",
+      description:
+        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as properties the edge type doesn't allow.\n- `edge_constraint_violation`: the edge breaks its edge type's rules, such as its cardinality or type constraints.\n- `edge_cycle`: the edge would close a cycle.",
     },
     401: {
       content: {
@@ -363,7 +380,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. `type_not_permitted` also where its type permissions reach no type.",
+        "- `edge_permission_denied`: you don't have write on the edge type.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
     },
     404: {
       content: {
@@ -375,7 +392,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The source, the target or the edge type is not found. A source or target of a type the credential may not read answers alike, with the same code and message.",
+        "- `item_not_found`: the source or target doesn't exist, or its type is one you can't read.\n- `edge_type_not_found`: the edge type doesn't exist.",
     },
     409: {
       content: {
@@ -384,7 +401,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "`id_reused`: the supplied `id` is taken by an edge that is not the one this request describes. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id` and what disagrees as `differs`: any of `source_id`, `target_id` and `edge_type`. `POST /items` answers the same code for an id already used, so a client sorts the two doors' collisions together. An `id` held by an edge you may not read answers the same code, and the response says only that the ID is taken.",
+        "`id_reused`: `id` belongs to a different edge. `details.differs` says whether `source_id`, `target_id` or `edge_type` differs. If you can't read that edge, only `details.existing_id` is set.",
     },
   },
 });
@@ -399,13 +416,15 @@ const getEdgeRoute = createRoute({
     "Returns one edge by its ID. Use it when you hold only an edge's ID, such as from an event.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
-  request: { params: z.object({ id: z.string().describe("Edge id.") }) },
+  request: {
+    params: z.object({ id: z.string().describe("The ID of the edge.") }),
+  },
   responses: {
     200: {
       content: {
         "application/json": { schema: EdgeResponseSchema },
       },
-      description: "The edge",
+      description: "Returns the edge.",
     },
     403: {
       content: {
@@ -413,8 +432,7 @@ const getEdgeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential's type permissions reach no type. An edge of a type it may not read, or with a source it may not read, answers 404 as a missing edge does.",
+      description: "`type_not_permitted`: your credential reaches no type.",
     },
     404: {
       content: {
@@ -423,7 +441,7 @@ const getEdgeRoute = createRoute({
         },
       },
       description:
-        "- `edge_not_found`: no edge you may read has this ID. An edge whose edge type or source item you may not read answers the same.",
+        "`edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.",
     },
   },
 });
@@ -435,13 +453,11 @@ const updateEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Update an edge",
   description:
-    "Updates an edge's properties, or moves one of its ends, under the version the caller read. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key. An edge's property set can therefore only grow.\n\n" +
-    "**Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. The edge type never changes.\n\n" +
-    "`version` is required. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties, so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
+    "Merges properties into an edge, or moves one of its ends, and returns it. A property you leave out stays. Sending `null` stores a null, so you can add properties but not remove them.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
-    params: z.object({ id: z.string().describe("Edge id.") }),
+    params: z.object({ id: z.string().describe("The ID of the edge.") }),
     body: {
       content: {
         "application/json": {
@@ -450,26 +466,26 @@ const updateEdgeRoute = createRoute({
               .record(z.string(), z.unknown())
               .optional()
               .describe(
-                "Properties to merge over the ones the edge holds. Required unless an end moves.",
+                "Properties to merge over the edge's. Required unless an end moves.",
               ),
             source_id: z
               .string()
               .optional()
               .describe(
-                "The source to move the edge to, where each target holds one edge of its type.",
+                "The ID of the source item to move the edge to. It works only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`), and replaces the edge the target held. Send it or `target_id`, not both.",
               ),
             target_id: z
               .string()
               .optional()
               .describe(
-                "The target to move the edge to, where each source holds one edge of its type.",
+                "The ID of the target item to move the edge to. It works only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`), and replaces the edge the source held. Send it or `source_id`, not both.",
               ),
             version: z
               .number()
               .int()
               .min(0)
               .describe(
-                "The version the caller read. Required, and a stale value is refused with 409: an update carries the version it is based on, or it is not an update but a blind overwrite.",
+                "The version of the edge your change is based on, from a read. If the edge has moved on, the update fails with `version_conflict`.",
               ),
           }),
         },
@@ -481,14 +497,15 @@ const updateEdgeRoute = createRoute({
       content: {
         "application/json": { schema: EdgeResponseSchema },
       },
-      description: "Edge updated",
+      description:
+        "Returns the updated edge. A move keeps the edge's ID and properties, and sends one `edge.updated` event.",
     },
     409: {
       content: {
         "application/json": { schema: EdgeConflictSchema },
       },
       description:
-        "The version supplied is stale; the body carries the current edge",
+        "`version_conflict`: `version` is stale. `current` holds the edge as it stands.",
     },
     400: {
       content: {
@@ -503,7 +520,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for no `version`, or no `properties` where no end moves; `validation_error` for a body moving both ends, or an end of a type that holds more than one edge at the end that stays, and for properties the type refuses; `invalid_id` for a malformed end; `edge_constraint_violation` and `edge_cycle` for an edge the moved end cannot hold, as a create answers them.",
+        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`: the body moves both ends, the edge type can't move an end this way, or a property is invalid.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge would break its edge type's rules.",
     },
     403: {
       content: {
@@ -515,7 +532,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
+        "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or on the new source's type, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
     },
     404: {
       content: {
@@ -528,7 +545,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "`edge_not_found` for the edge, and for one whose edge type or source item the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
+        "- `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.\n- `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.\n- `edge_type_not_found`: the edge's type is no longer registered.",
     },
   },
 });
@@ -540,14 +557,16 @@ const deleteEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Delete an edge",
   description:
-    "Deletes an edge by ID and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when an item is deleted, not when an edge is.",
+    "Deletes an edge and leaves the items it joined as they are. The edge type's `cascade_on_delete` applies when you delete an item, not an edge.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
-  request: { params: z.object({ id: z.string().describe("Edge id.") }) },
+  request: {
+    params: z.object({ id: z.string().describe("The ID of the edge.") }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },
-      description: "Deleted",
+      description: "Returns `ok: true`.",
     },
     403: {
       content: {
@@ -559,7 +578,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
+        "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
     },
     404: {
       content: {
@@ -568,7 +587,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "- `edge_not_found`: no edge you may read has this ID, including one another request deleted first. Marfa publishes no event for it. An edge whose edge type or source item you may not read answers the same.",
+        "`edge_not_found`: no edge has this ID, another request already deleted it, or its edge type or source item's type is one you can't read.",
     },
   },
 });
@@ -928,16 +947,18 @@ const listFromSourceRoute = createRoute({
   tags: ["Edges"],
   summary: "List outbound edges",
   description:
-    "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page.",
+    "Returns the edges that start at an item. An item in the trash still lists its edges. `GET /items/{id}/backrefs` lists the edges that point at it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
-    params: z.object({ id: z.string().describe("Item id.") }),
+    params: z.object({ id: z.string().describe("The ID of the item.") }),
     query: z.object({
       edge_type: z
         .string()
         .optional()
-        .describe("Filter to a single edge type."),
+        .describe(
+          "Only return edges of these edge types, comma-separated, up to 10.",
+        ),
       limit: pageLimit({ max: 500 }),
       cursor: pageCursor(),
     }),
@@ -945,7 +966,7 @@ const listFromSourceRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: EdgePageSchema } },
-      description: "Outbound edges",
+      description: "Returns a page of the item's outbound edges.",
     },
     400: {
       content: {
@@ -954,10 +975,7 @@ const listFromSourceRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed item id; `validation_error` for an " +
-        "unrecognized query parameter. Declared because this door " +
-        "answers it: a refusal a caller cannot find in the reference is " +
-        "the same silence in a different place.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
     },
     401: {
       content: {
@@ -993,16 +1011,18 @@ const listBackrefsRoute = createRoute({
   tags: ["Edges"],
   summary: "List inbound edges",
   description:
-    "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own. Requires read access to the item's type. Each row is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A row failing either is left out, so a page can come back shorter than `limit` and can come back empty with a `next_cursor` still to follow. The cursor describes the whole listing rather than the page: stop on `next_cursor: null`, never on an empty page.",
+    "Returns the edges that point at an item. An item in the trash still lists its edges. `GET /items/{id}/edges` lists the edges that start at it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
-    params: z.object({ id: z.string().describe("Item id.") }),
+    params: z.object({ id: z.string().describe("The ID of the item.") }),
     query: z.object({
       edge_type: z
         .string()
         .optional()
-        .describe("Filter to a single edge type."),
+        .describe(
+          "Only return edges of these edge types, comma-separated, up to 10.",
+        ),
       limit: pageLimit({ max: 500 }),
       cursor: pageCursor(),
     }),
@@ -1010,7 +1030,7 @@ const listBackrefsRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: EdgePageSchema } },
-      description: "Inbound edges",
+      description: "Returns a page of the item's inbound edges.",
     },
     400: {
       content: {
@@ -1019,10 +1039,7 @@ const listBackrefsRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed item id; `validation_error` for an " +
-        "unrecognized query parameter. Declared because this door " +
-        "answers it: a refusal a caller cannot find in the reference is " +
-        "the same silence in a different place.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
     },
     401: {
       content: {
