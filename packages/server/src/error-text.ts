@@ -11,8 +11,9 @@
  * hands item content to whoever reads that sink.
  *
  * **What stays.** The statement, which carries only placeholders, and the
- * wrapped driver error beside it, which says what went wrong. An operator
- * can still find the failing statement and the reason.
+ * wrapped driver error beside it, which says what went wrong, unless its
+ * message repeats a bound value. An operator can still find the failing
+ * statement and, in most cases, the reason.
  *
  * Nothing in this module throws: it runs on the path that reports a failure,
  * and a report that throws hides the failure it was reporting.
