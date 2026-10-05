@@ -17358,7 +17358,10 @@ export interface operations {
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
-            /** @description - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a lever in `enforcement_override` without `types` or `sources`, or a claimed source that starts with `oauth:`. */
+            /**
+             * @description - `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.
+             *     - `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17370,7 +17373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

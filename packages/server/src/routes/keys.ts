@@ -538,11 +538,14 @@ const updateKeyRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+          ]),
         },
       },
       description:
-        "- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a lever in `enforcement_override` without `types` or `sources`, or a claimed source that starts with `oauth:`.",
+        "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
     },
     401: {
       content: {

@@ -1032,6 +1032,34 @@ describe("a key's own levers", () => {
     );
   });
 
+  it("names the field a lever lacks, on the mint and on the update", async () => {
+    const lever = { source_filter: { sources: [ctx.source] } };
+    const field = "enforcement_override.source_filter.types";
+    // One fault, one answer: the update is held to the mint's refusal.
+    const minted = await client.createKey({
+      label: "levers-lacking",
+      source: `${ctx.source}-levers-lacking`,
+      enforcement_override: lever as never,
+    });
+    expect(minted.status).toBe(400);
+    expect(minted.error?.error.code).toBe("missing_required_field");
+    expect(minted.error?.error.details?.field).toBe(field);
+    expect(minted.error?.error.message).toBe(`${field} is required`);
+
+    const holder = await keyWith("levers-lacking-held");
+    const refused = await client.updateKey(holder.id, {
+      enforcement_override: lever as never,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error).toEqual(minted.error);
+
+    const after = await client.listKeys();
+    expect(
+      after.data.data.find((k) => k.id === holder.id)?.enforcement_override,
+      "a refused update stored a lever",
+    ).toBeUndefined();
+  });
+
   it("is not taken from the creator by a mint naming none", async () => {
     const creator = await keyWith("levers-creator", {
       permissions: ["keys.mint"],
