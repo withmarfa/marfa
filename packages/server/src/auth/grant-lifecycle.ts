@@ -73,9 +73,17 @@ export async function revokeProjectedGrant(
      */
     revokeKeys?: boolean;
     audit?: AuditLogEntry;
+    /**
+     * Asked inside the consent lock and the transaction, before anything is
+     * revoked. A caller that decided to revoke from an earlier read asks
+     * again here, so a grant used or approved again since is left alone.
+     * When it answers false nothing is revoked or audited.
+     */
+    stillApplies?: () => Promise<boolean>;
   },
-): Promise<void> {
-  const cascade = async (): Promise<void> => {
+): Promise<boolean> {
+  const cascade = async (): Promise<boolean> => {
+    if (opts.stillApplies && !(await opts.stillApplies())) return false;
     if (
       opts.clientId &&
       opts.authUserId &&
@@ -103,7 +111,7 @@ export async function revokeProjectedGrant(
       });
       for (const key of keys) await storage.keys.revoke(key.id);
     }
-    if (opts.itemId === null) return;
+    if (opts.itemId === null) return true;
     await writeItem(
       storage,
       { kind: "platform" },
@@ -116,30 +124,28 @@ export async function revokeProjectedGrant(
         },
       },
     );
+    return true;
   };
   const commit = () =>
-    runAuditedTransaction(
-      storage,
-      cascade,
-      opts.audit ?? {
-        action: "auth.grant.revoked",
-        resource_type: "oauth_grant",
-        resource_id: opts.clientId ?? opts.itemId ?? undefined,
-        details: {
-          client_id: opts.clientId,
-          user_id: opts.authUserId,
-          grant_item_id: opts.itemId,
-        },
-      },
+    runAuditedTransaction(storage, cascade, (revoked) =>
+      revoked
+        ? (opts.audit ?? {
+            action: "auth.grant.revoked",
+            resource_type: "oauth_grant",
+            resource_id: opts.clientId ?? opts.itemId ?? undefined,
+            details: {
+              client_id: opts.clientId,
+              user_id: opts.authUserId,
+              grant_item_id: opts.itemId,
+            },
+          })
+        : null,
     );
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the
   // user-facing signal.
-  if (!opts.clientId || !opts.authUserId) {
-    await commit();
-    return;
-  }
-  await withConsentLock(opts.clientId, opts.authUserId, commit);
+  if (!opts.clientId || !opts.authUserId) return commit();
+  return withConsentLock(opts.clientId, opts.authUserId, commit);
 }
 
 /**

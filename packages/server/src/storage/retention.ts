@@ -6,6 +6,7 @@ import { readInstanceConfig } from "./instance-config.js";
 import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 
 /**
  * The retention sweeps. Each is a class with one `runOnce()` that does a
@@ -229,9 +230,22 @@ export class GrantInactivityRetirer {
     // aborts on a fault by design, and a persistent fault on one row would
     // otherwise stall the sweep at that row every day.
     for (const grant of inactive.slice(0, RETIRE_PER_RUN)) {
+      await yieldBulkWork();
+      let revoked: boolean;
       try {
-        await revokeProjectedGrant(this.storage, {
+        revoked = await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
+          // The list was read before the yields: a grant used or approved
+          // again since is asked about again, inside the lock and the
+          // transaction that revokes it.
+          stillApplies: async () => {
+            const now = await this.storage.items.get(grant.id);
+            if (now?.state !== "active") return false;
+            const props = now.properties;
+            if (props.status !== "active") return false;
+            const seen = props.last_used_at ?? props.granted_at;
+            return typeof seen === "string" && seen < cutoff;
+          },
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
           audit: {
@@ -260,7 +274,7 @@ export class GrantInactivityRetirer {
         });
         continue;
       }
-      retired += 1;
+      if (revoked) retired += 1;
     }
     if (retired > 0) {
       log("info", "Inactive grants retired", {

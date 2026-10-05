@@ -16122,7 +16122,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads. */
+            /** @description `format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

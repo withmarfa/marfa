@@ -246,6 +246,62 @@ describe("GrantInactivityRetirer.runOnce", () => {
     expect(await retirer.runOnce()).toBe(0);
   });
 
+  it.each(["last_used_at", "granted_at"] as const)(
+    "leaves a grant alone whose %s moved after the list was read",
+    async (field) => {
+      ctx = await createTestContext({});
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(ctx, `moved-${field}@example.com`);
+      await deviceGrant(ctx, clientId, cookie);
+      await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
+      const dormant = async () => {
+        await backdate(ctx!, clientId, 400, ["granted_at", "last_used_at"]);
+        // Never used: the approval is the clock that counts.
+        if (field === "granted_at") {
+          const grant = await grantOf(ctx!, clientId);
+          const props: Record<string, unknown> = { ...grant.properties };
+          Reflect.deleteProperty(props, "last_used_at");
+          await itemWrites(ctx!.storage).update(grant.id, {
+            properties: props,
+            properties_mode: "replace",
+          });
+        }
+      };
+      await dormant();
+      const retirer = new GrantInactivityRetirer(ctx.storage, 365);
+      const listed = ctx.storage.items.listInactiveAppGrants.bind(
+        ctx.storage.items,
+      );
+      const moveAfterList = vi
+        .spyOn(ctx.storage.items, "listInactiveAppGrants")
+        .mockImplementationOnce(async (cutoff) => {
+          const rows = await listed(cutoff);
+          expect(rows).toHaveLength(1);
+          const grant = await grantOf(ctx!, clientId);
+          await itemWrites(ctx!.storage).update(grant.id, {
+            properties: {
+              ...grant.properties,
+              [field]: new Date().toISOString(),
+            },
+          });
+          return rows;
+        });
+      expect(await retirer.runOnce()).toBe(0);
+      expect(moveAfterList).toHaveBeenCalledOnce();
+      expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
+      expect(await tokenRows(ctx, clientId)).toBe(2);
+      expect(await consentRows(ctx, clientId)).toBe(1);
+      expect(
+        (await ctx.storage.audit.list({ action: "auth.grant.retired" })).data,
+      ).toHaveLength(0);
+
+      // The witness: with nothing moved, the same grant is retired.
+      await dormant();
+      expect(await retirer.runOnce()).toBe(1);
+      expect((await grantOf(ctx, clientId)).properties.status).toBe("revoked");
+    },
+  );
+
   it("counts from the approval when the grant was never used, and a disabled window retires nothing", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
@@ -288,6 +344,15 @@ describe("GrantInactivityRetirer.runOnce", () => {
         runInTransaction: <T>(fn: () => Promise<T>) => fn(),
         items: {
           listInactiveAppGrants: () => Promise.resolve(inactive),
+          get: (id: string) =>
+            Promise.resolve({
+              id,
+              state: "active",
+              properties: {
+                status: "active",
+                last_used_at: "2000-01-01T00:00:00.000Z",
+              },
+            }),
           getIncludingTrashed: (id: string) =>
             Promise.resolve({
               id,
