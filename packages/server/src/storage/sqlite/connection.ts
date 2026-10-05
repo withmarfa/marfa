@@ -224,10 +224,9 @@ async function schemaDifferences(
 /**
  * The tables of this build's that `client`'s file holds rows in, by name.
  *
- * The DDL inserts nothing, and nothing serves a request before it has been
- * applied, so a file this build began creating and did not finish holds
- * none. A file that lacks tables and holds rows was written by something
- * else.
+ * A table this build does not declare is not read: a replication sidecar
+ * keeps its own tables in the file and writes rows to them whatever state
+ * this build's tables are in.
  */
 async function tablesHoldingRows(client: Client): Promise<string[]> {
   const ref = await referenceSchema();
