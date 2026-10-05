@@ -284,8 +284,14 @@ async function collectSelection(input: {
         callerKey,
       );
       // Which of the row's digests lend its reach, so a restore credits
-      // those and no others.
+      // those and no others. An extension namespace's are carried only for
+      // the namespaces the line carries.
       const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
+      const lendingExtensions = Object.fromEntries(
+        Object.entries(
+          await storage.blobs.lendingHashesOfExtensions(item.id),
+        ).filter(([namespace]) => namespace in metadata.extensions),
+      );
       const versions = await historyBelow(storage, item, readsHistory, hashes);
       lines.push(
         JSON.stringify({
@@ -293,6 +299,7 @@ async function collectSelection(input: {
           metadata,
           versions,
           lending_blobs: lendingBlobs,
+          lending_extensions: lendingExtensions,
         }),
       );
       ids.push(item.id);
@@ -322,13 +329,19 @@ async function collectSelection(input: {
     const exported = await itemIds.held(
       readable.flatMap((edge) => [edge.source_id, edge.target_id]),
     );
+    const written = readable.filter(
+      (edge) => exported.has(edge.source_id) && exported.has(edge.target_id),
+    );
+    const lending = await storage.blobs.lendingHashesOfEdges(
+      written.map((edge) => edge.id),
+    );
     const lines: string[] = [];
     const hashes = new Set<string>();
-    for (const edge of readable) {
-      if (exported.has(edge.source_id) && exported.has(edge.target_id)) {
-        lines.push(`${JSON.stringify({ edge })}\n`);
-        collectBlobHashes(edge.properties, hashes);
-      }
+    for (const edge of written) {
+      lines.push(
+        `${JSON.stringify({ edge, lending_blobs: lending.get(edge.id) ?? [] })}\n`,
+      );
+      collectBlobHashes(edge.properties, hashes);
     }
     await edges.append(lines.join(""));
     await blobHashes.add(hashes);

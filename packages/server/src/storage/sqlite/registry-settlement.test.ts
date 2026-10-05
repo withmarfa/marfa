@@ -185,9 +185,14 @@ it.each(["before", "after"] as const)(
       async () => {
         writes++;
         await ctx.storage.types.update(schema.id, changed);
-        await ctx.storage.metadata.setExtension(item.id, "test", {
-          value: "committed",
-        });
+        await ctx.storage.metadata.setExtension(
+          item.id,
+          "test",
+          {
+            value: "committed",
+          },
+          null,
+        );
         afterCommit(() => {
           emitted++;
         });

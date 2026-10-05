@@ -44,7 +44,7 @@ import {
   requireEdgePermission,
   readsSomeType,
 } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { BlobProof, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   bulkAtomicRollback,
@@ -61,6 +61,7 @@ import {
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
+import { requestBlobProof } from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -235,9 +236,11 @@ async function processBulkEdge(
     mayRead: (type: string) => boolean;
     /** Whether the credential may be told about this stored edge. */
     mayTell: (edge: Edge) => Promise<boolean>;
+    /** What the credential has proved of the digests an entry sends. */
+    proof: NonNullable<BlobProof>;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, checkEdgeWrite, mayRead, mayTell } = options;
+  const { mode, checkEdgeWrite, mayRead, mayTell, proof } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -387,6 +390,8 @@ async function processBulkEdge(
         existing.id,
         raw.properties ?? {},
         raw.version,
+        undefined,
+        proof,
       );
     } catch (err) {
       if (isEntryVerdict(err)) {
@@ -446,6 +451,7 @@ async function processBulkEdge(
       edge_type: raw.edge_type,
       ...(raw.properties !== undefined && { properties: raw.properties }),
       ...(raw.id !== undefined && { id: raw.id }),
+      blob_proof: proof,
     };
     const created = await storage.edges.createRaw(createInput);
     return {
@@ -483,6 +489,7 @@ export function edgesBulkRoutes(storage: Storage) {
     requireAuth(c);
     getTypeFilter(c);
     const mayRead = mayReadEdgeEnd(c);
+    const proof = requestBlobProof(c, storage);
     // A source the key may not read is gated as an unknown one is, and
     // meets the same not-found when the entry is judged.
     const checkEdgeWrite = (
@@ -575,6 +582,7 @@ export function edgesBulkRoutes(storage: Storage) {
             checkEdgeWrite,
             mayRead,
             mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),
+            proof,
           });
           const written = processed.created ?? processed.updated;
           if (written) {

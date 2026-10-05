@@ -8,6 +8,7 @@ import {
   type Metadata,
 } from "@withmarfa/shared";
 import type {
+  BlobProof,
   MetadataStore,
   SetExtensionsResult,
   SearchStore,
@@ -18,7 +19,7 @@ import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
 import { sourceFilterToRawSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
-import { liftOrphanReports } from "./blob-references.js";
+import { syncExtensionBlobReferences } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
@@ -134,7 +135,13 @@ export class SqliteMetadataStore implements MetadataStore {
   private async writeSidecar(
     tx: SqliteTxContext,
     itemId: string,
-    write: { tags: string } | { extensions: string; namespaces: string[] },
+    write:
+      | { tags: string }
+      | {
+          extensions: Record<string, Record<string, unknown>>;
+          namespaces: string[];
+          proofFor: (namespace: string) => BlobProof;
+        },
   ): Promise<string | null> {
     // **The item is written first, and the order is load-bearing.** It
     // reads backwards — this method is about the sidecar, and the item is
@@ -160,17 +167,18 @@ export class SqliteMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId))
         .run();
     } else {
-      const held = await tx
-        .select({ extensions: metadata.extensions })
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
       await tx
         .update(metadata)
-        .set({ extensions: write.extensions })
+        .set({ extensions: JSON.stringify(write.extensions) })
         .where(eq(metadata.item_id, itemId))
         .run();
-      await liftOrphanReports(tx, [held?.extensions, write.extensions]);
+      await syncExtensionBlobReferences(
+        tx,
+        itemId,
+        write.extensions,
+        write.namespaces,
+        write.proofFor,
+      );
     }
     return bumpedAt;
   }
@@ -369,6 +377,7 @@ export class SqliteMetadataStore implements MetadataStore {
     itemId: string,
     namespace: string,
     data: Record<string, unknown>,
+    proof: BlobProof,
   ): Promise<Record<string, Record<string, unknown>>> {
     return await this.db.transaction(async (tx) => {
       const row = await tx
@@ -381,8 +390,9 @@ export class SqliteMetadataStore implements MetadataStore {
         : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
       await this.writeSidecar(tx, itemId, {
-        extensions: JSON.stringify(extensions),
+        extensions,
         namespaces: [namespace],
+        proofFor: () => proof,
       });
       return extensions;
     });
@@ -399,8 +409,7 @@ export class SqliteMetadataStore implements MetadataStore {
    *
    * Replaces each named namespace and leaves the rest of the map alone,
    * which is `setExtension` applied to a set rather than a different
-   * merge rule. It carries `setExtension`'s hazard too: a value derived
-   * from an earlier read still belongs in `mutateExtension`.
+   * merge rule.
    *
    * Answers the modification time the write left on the item alongside
    * the map, so the caller announcing the item does not publish the value
@@ -409,6 +418,7 @@ export class SqliteMetadataStore implements MetadataStore {
   async setExtensions(
     itemId: string,
     entries: Record<string, Record<string, unknown>>,
+    proofFor: (namespace: string) => BlobProof,
   ): Promise<SetExtensionsResult> {
     const namespaces = Object.keys(entries);
     if (namespaces.length === 0) {
@@ -428,38 +438,11 @@ export class SqliteMetadataStore implements MetadataStore {
         : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, ...entries };
       const updated_at = await this.writeSidecar(tx, itemId, {
-        extensions: JSON.stringify(extensions),
+        extensions,
         namespaces,
+        proofFor,
       });
       return { extensions, updated_at };
-    });
-  }
-
-  /**
-   * SQLite has no row-level lock to take; the write transaction is the
-   * serialization point, since SQLite admits one writer at a time.
-   */
-  async mutateExtension(
-    itemId: string,
-    namespace: string,
-    mutate: (current: Record<string, unknown>) => Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return await this.db.transaction(async (tx) => {
-      const row = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      const current: Metadata = row
-        ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], extensions: {} };
-      const next = mutate(current.extensions[namespace] ?? {});
-      const extensions = { ...current.extensions, [namespace]: next };
-      await this.writeSidecar(tx, itemId, {
-        extensions: JSON.stringify(extensions),
-        namespaces: [namespace],
-      });
-      return next;
     });
   }
 
@@ -480,8 +463,9 @@ export class SqliteMetadataStore implements MetadataStore {
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );
       await this.writeSidecar(tx, itemId, {
-        extensions: JSON.stringify(rest),
+        extensions: rest,
         namespaces: [namespace],
+        proofFor: () => null,
       });
       return rest;
     });

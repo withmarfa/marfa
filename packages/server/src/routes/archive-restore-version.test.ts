@@ -73,9 +73,15 @@ describe("a restore does not rewind a row's version", () => {
       target_id: other.id,
       edge_type: "references",
     });
-    const bumpedEdge = await source.storage.edges.updateProperties(edge.id, {
-      weight: 2,
-    });
+    const bumpedEdge = await source.storage.edges.updateProperties(
+      edge.id,
+      {
+        weight: 2,
+      },
+      undefined,
+      undefined,
+      null,
+    );
     expect(bumpedEdge.ok).toBe(true);
 
     const archivedItem = await source.storage.items.get(note.id);

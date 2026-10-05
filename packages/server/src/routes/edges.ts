@@ -51,6 +51,7 @@ import {
 } from "../storage/edge-constraints.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { publishEdge } from "../pubsub.js";
+import { requestBlobProof } from "./_blob-reach.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
@@ -709,6 +710,7 @@ export function edgeRoutes(storage: Storage) {
           target_id: body.target_id,
           edge_type: body.edge_type,
           properties: body.properties,
+          blob_proof: requestBlobProof(c, storage),
         });
         // With the edge, so the two commit together or not at all.
         await publishEdge({
@@ -806,6 +808,7 @@ export function edgeRoutes(storage: Storage) {
           properties,
           body.version,
           ends ?? undefined,
+          requestBlobProof(c, storage),
         );
         if (!written.ok) return { ...written, moved: false };
         // An edit is as observable as a create or a delete: without it a

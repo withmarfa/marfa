@@ -73,34 +73,38 @@ describe("a database whose schema is not this build's", () => {
     expect(digest(path)).toBe(before);
   });
 
-  it("is refused when it holds this build's tables but lacks one, naming it", async () => {
-    // Created empty by the DDL, a missing index table would describe none of
-    // the rows the file already holds.
-    const path = scratch();
-    const start = SCHEMA_SQL.indexOf(
-      "CREATE TABLE IF NOT EXISTS `item_blob_references` (",
-    );
-    const end = SCHEMA_SQL.indexOf(
-      "\n",
-      SCHEMA_SQL.indexOf("idx_item_blob_references_item"),
-    );
-    expect(start).toBeGreaterThan(0);
-    // Its triggers go with it: SQLite will not create a trigger on a table
-    // that is not there.
-    await seed(
-      path,
-      (SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end))
-        .split("\n")
-        .filter((line) => !line.includes("ON `item_blob_references`"))
-        .join("\n"),
-    );
-    const before = digest(path);
+  it.each([
+    ["item_blob_references", "idx_item_blob_references_item"],
+    ["edge_blob_references", "idx_edge_blob_references_edge"],
+    ["extension_blob_references", "idx_extension_blob_references_item"],
+  ])(
+    "is refused when it holds this build's tables but lacks %s, naming it",
+    async (table, index) => {
+      // Created empty by the DDL, a missing index table would describe none of
+      // the rows the file already holds.
+      const path = scratch();
+      const start = SCHEMA_SQL.indexOf(
+        `CREATE TABLE IF NOT EXISTS \`${table}\` (`,
+      );
+      const end = SCHEMA_SQL.indexOf("\n", SCHEMA_SQL.indexOf(index));
+      expect(start).toBeGreaterThan(0);
+      // Its triggers go with it: SQLite will not create a trigger on a table
+      // that is not there.
+      await seed(
+        path,
+        (SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end))
+          .split("\n")
+          .filter((line) => !line.includes(`ON \`${table}\``))
+          .join("\n"),
+      );
+      const before = digest(path);
 
-    await expect(createConnection(path)).rejects.toThrow(
-      /the file lacks the item_blob_references table/,
-    );
-    expect(digest(path)).toBe(before);
-  });
+      await expect(createConnection(path)).rejects.toThrow(
+        new RegExp(`the file lacks the ${table} table`),
+      );
+      expect(digest(path)).toBe(before);
+    },
+  );
 
   it("opens a new file, which holds none of this build's tables", async () => {
     const path = scratch();

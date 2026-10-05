@@ -14,6 +14,7 @@ import type {
   BlobCopyRef,
   BlobLocation,
   BlobOrphanRow,
+  BlobReach,
   BlobRegistry,
   BlobSizedRef,
   BlobStoreKind,
@@ -27,10 +28,11 @@ import {
   blobStores,
   blobUploaders,
   blobs,
+  edge_blob_references,
   edges,
+  extension_blob_references,
   item_blob_references,
   items,
-  metadata,
   versions,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -80,16 +82,12 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return rows.map((r) => r.hash);
   }
 
-  async readableThrough(
-    hash: string,
-    allowedTypes: readonly string[],
-    excludedTypes: readonly string[],
-  ): Promise<boolean> {
+  async readableThrough(hash: string, reach: BlobReach): Promise<boolean> {
     const admitted = allowedTypesCondition(
-      [...allowedTypes],
-      [...excludedTypes],
+      [...reach.allowedTypes],
+      [...reach.excludedTypes],
     );
-    const row = await this.db
+    const viaItem = await this.db
       .select({ one: sql<number>`1` })
       .from(item_blob_references)
       .innerJoin(items, eq(items.id, item_blob_references.item_id))
@@ -102,7 +100,41 @@ export class SqliteBlobRegistry implements BlobRegistry {
       )
       .limit(1)
       .get();
-    return row !== undefined;
+    if (viaItem !== undefined) return true;
+
+    // An edge is read by its edge type and its source's type, and the edge
+    // map is a pattern map, so the types the lending edges hold are asked of
+    // it rather than the map being restated in SQL.
+    const edgeTypes = await this.db
+      .selectDistinct({ edge_type: edges.edge_type })
+      .from(edge_blob_references)
+      .innerJoin(edges, eq(edges.id, edge_blob_references.edge_id))
+      .innerJoin(items, eq(items.id, edges.source_id))
+      .where(
+        and(
+          eq(edge_blob_references.hash, hash),
+          eq(edge_blob_references.lends, true),
+          admitted,
+        ),
+      )
+      .all();
+    if (edgeTypes.some((row) => reach.readsEdgeType(row.edge_type))) {
+      return true;
+    }
+
+    const namespaces = await this.db
+      .selectDistinct({ namespace: extension_blob_references.namespace })
+      .from(extension_blob_references)
+      .innerJoin(items, eq(items.id, extension_blob_references.item_id))
+      .where(
+        and(
+          eq(extension_blob_references.hash, hash),
+          eq(extension_blob_references.lends, true),
+          admitted,
+        ),
+      )
+      .all();
+    return namespaces.some((row) => reach.readsNamespace(row.namespace));
   }
 
   async lendingHashesOf(itemId: string): Promise<string[]> {
@@ -118,6 +150,53 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .orderBy(item_blob_references.hash)
       .all();
     return rows.map((r) => r.hash);
+  }
+
+  async lendingHashesOfEdges(
+    edgeIds: readonly string[],
+  ): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>(edgeIds.map((id) => [id, []]));
+    // The parameter limit, not the page, bounds a statement.
+    for (let i = 0; i < edgeIds.length; i += 500) {
+      const rows = await this.db
+        .select({
+          edge_id: edge_blob_references.edge_id,
+          hash: edge_blob_references.hash,
+        })
+        .from(edge_blob_references)
+        .where(
+          and(
+            inArray(edge_blob_references.edge_id, edgeIds.slice(i, i + 500)),
+            eq(edge_blob_references.lends, true),
+          ),
+        )
+        .orderBy(edge_blob_references.hash)
+        .all();
+      for (const row of rows) out.get(row.edge_id)?.push(row.hash);
+    }
+    return out;
+  }
+
+  async lendingHashesOfExtensions(
+    itemId: string,
+  ): Promise<Record<string, string[]>> {
+    const rows = await this.db
+      .select({
+        namespace: extension_blob_references.namespace,
+        hash: extension_blob_references.hash,
+      })
+      .from(extension_blob_references)
+      .where(
+        and(
+          eq(extension_blob_references.item_id, itemId),
+          eq(extension_blob_references.lends, true),
+        ),
+      )
+      .orderBy(extension_blob_references.hash)
+      .all();
+    const out: Record<string, string[]> = {};
+    for (const row of rows) (out[row.namespace] ??= []).push(row.hash);
+    return out;
   }
 
   async uploadedBy(hash: string, uploader: string): Promise<boolean> {
@@ -599,46 +678,41 @@ export class SqliteBlobRegistry implements BlobRegistry {
 
 /**
  * Whether anything the orphan sweep counts references `hash`, asked inside
- * the transaction that would purge it. An item's properties through the
- * reference index its writes keep in step; extensions, edge properties and
- * version snapshots through their stored text; and current nonterminal
- * property-update patches through the same bounded scan the walk uses.
- * A row holding the hex
- * at all is a candidate and the walk's own rule decides it, so a run of 65
- * hex characters is no more a reference here than there.
+ * the transaction that would purge it. An item's properties, an edge's
+ * properties and an item's extensions through the reference indexes their
+ * writes keep in step; version snapshots through their stored text; and
+ * current nonterminal property-update patches through the same bounded scan
+ * the walk uses. A snapshot holding the hex at all is a candidate and the
+ * walk's own rule decides it, so a run of 65 hex characters is no more a
+ * reference here than there.
  */
 async function referencedIn(
   tx: SqliteTxContext,
   hash: string,
 ): Promise<boolean> {
-  const item = await tx
-    .select({ one: sql<number>`1` })
-    .from(item_blob_references)
-    .where(eq(item_blob_references.hash, hash))
-    .limit(1)
-    .get();
-  if (item) return true;
+  for (const [table, column] of [
+    [item_blob_references, item_blob_references.hash],
+    [edge_blob_references, edge_blob_references.hash],
+    [extension_blob_references, extension_blob_references.hash],
+  ] as const) {
+    const indexed = await tx
+      .select({ one: sql<number>`1` })
+      .from(table)
+      .where(eq(column, hash))
+      .limit(1)
+      .get();
+    if (indexed) return true;
+  }
   const hex = hash.slice("sha256:".length);
-  const texts = [
-    tx
-      .select({ text: metadata.extensions })
-      .from(metadata)
-      .where(sql`instr(${metadata.extensions}, ${hex}) > 0`),
-    tx
-      .select({ text: edges.properties })
-      .from(edges)
-      .where(sql`instr(${edges.properties}, ${hex}) > 0`),
-    tx
-      .select({ text: versions.properties })
-      .from(versions)
-      .where(sql`instr(${versions.properties}, ${hex}) > 0`),
-  ];
-  for (const query of texts) {
-    for (const row of await query.all()) {
-      const found = new Set<string>();
-      collectBlobHashes(JSON.parse(row.text) as unknown, found);
-      if (found.has(hash)) return true;
-    }
+  const snapshots = await tx
+    .select({ text: versions.properties })
+    .from(versions)
+    .where(sql`instr(${versions.properties}, ${hex}) > 0`)
+    .all();
+  for (const row of snapshots) {
+    const found = new Set<string>();
+    collectBlobHashes(JSON.parse(row.text) as unknown, found);
+    if (found.has(hash)) return true;
   }
   let cursor: string | undefined;
   for (;;) {

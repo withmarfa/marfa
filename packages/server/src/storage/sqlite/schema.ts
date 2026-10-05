@@ -169,6 +169,46 @@ export const item_blob_references = sqliteTable(
   ],
 );
 
+// The blobs an edge's properties name, as `item_blob_references` does for an
+// item: the digest rule is `collectBlobHashes`', and `lends` is fixed when the
+// digest enters the edge and leaves only with it. The edge's removal takes its
+// entries by the foreign key's cascade.
+export const edge_blob_references = sqliteTable(
+  "edge_blob_references",
+  {
+    hash: text("hash").notNull(),
+    edge_id: text("edge_id")
+      .notNull()
+      .references(() => edges.id, { onDelete: "cascade" }),
+    lends: integer("lends", { mode: "boolean" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.hash, table.edge_id] }),
+    index("idx_edge_blob_references_edge").on(table.edge_id),
+  ],
+);
+
+// The blobs each namespace of an item's metadata extensions names. Kept per
+// namespace because a credential reads a namespace by the extension map, so
+// the reference has to say which namespace holds it. `lends` is fixed as for
+// `item_blob_references`; the item's purge, or the namespace's removal, takes
+// the entries.
+export const extension_blob_references = sqliteTable(
+  "extension_blob_references",
+  {
+    hash: text("hash").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    namespace: text("namespace").notNull(),
+    lends: integer("lends", { mode: "boolean" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.hash, table.item_id, table.namespace] }),
+    index("idx_extension_blob_references_item").on(table.item_id),
+  ],
+);
+
 // What a purge leaves of a row's link, until re-claimed or the type's link
 // changes or is dropped. Never swept: a vendor may still hold the item.
 export const link_tombstones = sqliteTable(
@@ -479,21 +519,30 @@ export const blobOrphans = sqliteTable("blob_orphans", {
 });
 
 /**
- * A reference to a blob entering or leaving an item's reference index lifts
- * the blob's orphan report, so the grace before a purge counts again from a
- * report made after the last change to what names it. A trigger rather than
- * a call in each item write path, because those paths are many and a path
- * that forgot the call would let a run purge on a report older than the
- * reference it never saw. It deletes by hash, so it costs a lookup however
- * large the report. Extensions and edge properties have no index; the
- * stores that write them lift reports themselves (`liftOrphanReports`).
- * Drizzle cannot declare a trigger; `scripts/generate-schema-sql.ts`
- * appends these to `schema.sql`.
+ * The tables that index what names a blob: an item's properties, an edge's
+ * properties and an item's extension namespaces.
  */
-export const BLOB_REFERENCE_TRIGGERS: readonly string[] = [
-  "CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;",
-  "CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;",
-];
+const BLOB_REFERENCE_TABLES = [
+  "item_blob_references",
+  "edge_blob_references",
+  "extension_blob_references",
+] as const;
+
+/**
+ * A reference to a blob entering or leaving a reference index lifts the
+ * blob's orphan report, so the grace before a purge counts again from a
+ * report made after the last change to what names it. A trigger rather than
+ * a call in each write path, because those paths are many and a path that
+ * forgot the call would let a run purge on a report older than the
+ * reference it never saw. It deletes by hash, so it costs a lookup however
+ * large the report. Drizzle cannot declare a trigger;
+ * `scripts/generate-schema-sql.ts` appends these to `schema.sql`.
+ */
+export const BLOB_REFERENCE_TRIGGERS: readonly string[] =
+  BLOB_REFERENCE_TABLES.flatMap((table) => [
+    `CREATE TRIGGER IF NOT EXISTS \`${table}_insert_lifts_blob_orphans\` AFTER INSERT ON \`${table}\` BEGIN DELETE FROM \`blob_orphans\` WHERE hash = NEW.hash; END;`,
+    `CREATE TRIGGER IF NOT EXISTS \`${table}_delete_lifts_blob_orphans\` AFTER DELETE ON \`${table}\` BEGIN DELETE FROM \`blob_orphans\` WHERE hash = OLD.hash; END;`,
+  ]);
 
 // ---------------------------------------------------------------------------
 // blob_purges — blobs whose registry row a purge has removed and whose bytes

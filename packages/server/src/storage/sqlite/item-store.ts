@@ -63,6 +63,7 @@ import type {
   PaginatedResult,
 } from "@withmarfa/shared";
 import type {
+  BlobProof,
   CascadeRoot,
   ItemStore,
   ResolvedItem,
@@ -118,10 +119,9 @@ import {
 import {
   blobLending,
   digestsIn,
-  liftExtensionReportsOf,
-  liftOrphanReports,
+  edgeBlobLending,
   syncBlobReferences,
-  type BlobProof,
+  syncEdgeBlobReferences,
 } from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
@@ -364,15 +364,20 @@ async function insertConflictedSibling(
       version: 1,
     };
     await tx.insert(edges).values(copy).run();
-    await liftOrphanReports(tx, [copy.properties]);
-    copied.push({
-      ...copy,
-      properties: safeJsonParse<Record<string, unknown>>(
-        copy.properties,
-        {},
-        "conflicted copy edge properties",
-      ),
-    });
+    const copiedProperties = safeJsonParse<Record<string, unknown>>(
+      copy.properties,
+      {},
+      "conflicted copy edge properties",
+    );
+    // A digest the copy carries lends as it lent on the edge it was copied
+    // from.
+    await syncEdgeBlobReferences(
+      tx,
+      { id: copy.id, properties: copiedProperties },
+      null,
+      { inherited: await edgeBlobLending(tx, edge.id) },
+    );
+    copied.push({ ...copy, properties: copiedProperties });
   }
 
   // Everything `create()` does, because this row is a create: unindexed, the
@@ -1630,32 +1635,23 @@ export class SqliteItemStore implements ItemStore {
 
     await this.rehomeTrashRecords([id]);
     await recordTombstones(this.db, [id], new Date().toISOString());
-    // metadata and versions cascade; search index must be removed explicitly.
-    await this.db.transaction(async (tx) => {
-      await liftExtensionReportsOf(tx, [id]);
-      await tx.delete(items).where(eq(items.id, id)).run();
-    });
+    // metadata, versions and blob references cascade; the search index must
+    // be removed explicitly.
+    await this.db.delete(items).where(eq(items.id, id)).run();
 
     await this.searchStore.remove(id);
   }
 
-  /** Delete purged rows and every edge touching them, lifting the orphan
-   *  reports of the blobs their extensions and edges named. */
+  /** Delete purged rows and every edge touching them. The blob references
+   *  of their edges and extensions go by the foreign keys' cascade, which
+   *  lifts the orphan reports of the blobs they named. */
   private async dropWithReferences(
     tx: SqliteTx,
     ids: readonly string[],
   ): Promise<void> {
     const list = [...ids];
-    await liftExtensionReportsOf(tx, list);
     for (const end of [edges.source_id, edges.target_id]) {
-      const removed = await tx
-        .delete(edges)
-        .where(inArray(end, list))
-        .returning({ properties: edges.properties });
-      await liftOrphanReports(
-        tx,
-        removed.map((row) => row.properties),
-      );
+      await tx.delete(edges).where(inArray(end, list)).run();
     }
     const deleted = await tx
       .delete(items)

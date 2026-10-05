@@ -15,10 +15,9 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
  * over it with nothing refused and nothing reported.
  *
  * The store now checks inside the transaction that computes the merged set,
- * on the same read the write uses, which its own `mutateExtension` already
- * documents as load-bearing for exactly this shape: "the extensions map is one JSON column, so a plain read-then-
- * write lets a concurrent writer commit in between and lose one of the two
- * updates." Tags are the same one JSON column.
+ * on the same read the write uses: the tags are one JSON column, so a plain
+ * read-then-write lets a concurrent writer commit in between and lose one of
+ * the two updates.
  */
 
 let ctx: TestContext;

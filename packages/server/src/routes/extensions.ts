@@ -41,6 +41,7 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
+import { requestBlobProof } from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -406,6 +407,7 @@ export function extensionRoutes(storage: Storage) {
           id,
           namespace,
           body,
+          requestBlobProof(c, storage),
         );
 
         // The extensions map and the tags are one metadata row, and the four

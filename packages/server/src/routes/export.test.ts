@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 
@@ -330,7 +330,7 @@ describe("GET /export?format=archive", () => {
     expect(blobData.toString()).toBe("archive-export-blob");
   });
 
-  it("leaves out a blob named only in the properties of an edge it carries, until a property names it", async () => {
+  it("carries a blob named only in the properties of an edge it carries, to a key that reads the edge", async () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
@@ -360,9 +360,9 @@ describe("GET /export?format=archive", () => {
     });
     expect(edge.status).toBe(201);
 
-    const archived = async (): Promise<Map<string, Buffer>> => {
+    const archived = async (key: string): Promise<Map<string, Buffer>> => {
       const res = await request(ctx.app, "GET", "/export?format=archive", {
-        key: ctx.workingKey,
+        key,
       });
       expect(res.status).toBe(200);
       const archive = Buffer.from(await res.arrayBuffer());
@@ -385,17 +385,16 @@ describe("GET /export?format=archive", () => {
       return entries;
     };
 
-    // An archive carries what `GET /blobs/{hash}` would serve the key, and an
-    // edge's properties lend no reach.
-    expect((await archived()).has(`blobs/${hash}`)).toBe(false);
-
-    const named = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: { type: "core.note", properties: { body: `![it](${hash})` } },
+    // An archive carries what `GET /blobs/{hash}` would serve the key. A key
+    // that reads the notes but not the edge's type is served nothing, and its
+    // archive carries neither the edge nor the bytes.
+    const blind = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: {},
     });
-    expect(named.status).toBe(201);
-    expect((await archived()).get(`blobs/${hash}`)?.toString()).toBe(
-      "edge-property-blob",
-    );
+    expect((await archived(blind)).has(`blobs/${hash}`)).toBe(false);
+    expect(
+      (await archived(ctx.workingKey)).get(`blobs/${hash}`)?.toString(),
+    ).toBe("edge-property-blob");
   });
 });
