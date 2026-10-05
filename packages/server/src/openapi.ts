@@ -183,7 +183,9 @@ function withRequiredJsonBody<R extends RouteConfig>(route: R): R {
 type ValidationIssue = z.core.$ZodIssue;
 
 /**
- * The issues a union refusal stands for, one level of the body deeper.
+ * The issues a union refusal stands for, one level of the body deeper, so a
+ * field missing inside a nullable shape is refused as the same field missing
+ * anywhere else is.
  *
  * A field that is a shape or `null` (`nullableRef` in `routes/_schemas.ts`)
  * is a union, and Zod reports a union that matched no branch as one
@@ -232,13 +234,14 @@ export function createOpenAPIRouter<
   const router = new OpenAPIHono<T>({
     defaultHook: (result) => {
       if (!result.success) {
+        const issues = unionIssuesExpanded(result.error.issues);
         // A field the schema required and the body did not carry reads, in
         // Zod v4, as `{ code: "invalid_type", message: "...received
         // undefined" }`. That `invalid_type` is Zod's own issue code and has
         // nothing to do with a type identifier — the wire vocabulary has no
         // such code. Matched here so the caller is told which field is
         // missing rather than that its body failed validation somewhere.
-        const missingField = result.error.issues.find(
+        const missingField = issues.find(
           (i) =>
             i.code === "invalid_type" &&
             i.message.includes("received undefined"),
@@ -253,7 +256,7 @@ export function createOpenAPIRouter<
         }
 
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
-          errors: unionIssuesExpanded(result.error.issues).map((i) => ({
+          errors: issues.map((i) => ({
             path: i.path.join("."),
             message: i.message,
           })),

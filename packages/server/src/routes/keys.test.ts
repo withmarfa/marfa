@@ -295,8 +295,6 @@ describe("enforcement_override — the per-credential levers", () => {
 });
 
 describe("enforcement_override — a lever missing a required field", () => {
-  const lever = { source_filter: { sources: ["elsewhere"] } };
-
   /** The `details.errors` of a refusal, with its code. */
   async function refusal(res: Response) {
     const body = (await res.json()) as {
@@ -308,41 +306,54 @@ describe("enforcement_override — a lever missing a required field", () => {
     return body.error;
   }
 
-  // The witness: the mint names the missing field, so the update's answer is
-  // held to something the same input is known to produce.
-  it("is named by the mint", async () => {
-    const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.workingKey,
-      body: {
-        label: "lever-mint",
-        source: "lever-mint",
-        enforcement_override: lever,
-      },
-    });
-    expect(res.status).toBe(400);
-    const error = await refusal(res);
-    expect(error.details?.field).toBe(
-      "enforcement_override.source_filter.types",
-    );
-  });
+  const cases = [
+    {
+      lever: { source_filter: { sources: ["elsewhere"] } },
+      path: "enforcement_override.source_filter.types",
+    },
+    {
+      lever: { source_allowlist: { types: ["core.note"] } },
+      path: "enforcement_override.source_allowlist.sources",
+    },
+    {
+      lever: { strict_mode: {} },
+      path: "enforcement_override.strict_mode.types",
+    },
+  ];
 
-  it("is named by the update, which refuses it 400 validation_error", async () => {
-    const minted = await createKey();
-    const res = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
-      key: ctx.workingKey,
-      body: { enforcement_override: lever },
-    });
-    expect(res.status).toBe(400);
-    const error = await refusal(res);
-    expect(error.code).toBe("validation_error");
-    expect(error.details?.errors?.map((e) => e.path)).toEqual([
-      "enforcement_override.source_filter.types",
-    ]);
+  // One fault, one answer: the mint and the update refuse it the same way.
+  it.each(cases)(
+    "is refused 400 missing_required_field naming $path, by the mint and by the update",
+    async ({ lever, path }) => {
+      const minted = await createKey();
+      const doors = [
+        request(ctx.app, "POST", "/keys", {
+          key: ctx.workingKey,
+          body: {
+            label: "lever-mint",
+            source: "lever-mint",
+            enforcement_override: lever,
+          },
+        }),
+        request(ctx.app, "PATCH", `/keys/${minted.id}`, {
+          key: ctx.workingKey,
+          body: { enforcement_override: lever },
+        }),
+      ];
+      const answers = [];
+      for (const res of await Promise.all(doors)) {
+        expect(res.status).toBe(400);
+        answers.push(await refusal(res));
+      }
+      expect(answers[1]).toEqual(answers[0]);
+      expect(answers[0]?.code).toBe("missing_required_field");
+      expect(answers[0]?.details?.field).toBe(path);
 
-    // Refused, so nothing was stored.
-    const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.enforcement_override).toBeUndefined();
-  });
+      // Refused, so nothing was stored.
+      const stored = await ctx.storage.keys.get(minted.id);
+      expect(stored?.enforcement_override).toBeUndefined();
+    },
+  );
 
   it("still refuses a lever that is not an object, and still takes null", async () => {
     const minted = await createKey();

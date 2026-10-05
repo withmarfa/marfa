@@ -1035,8 +1035,7 @@ describe("a key's own levers", () => {
   it("names the field a lever lacks, on the mint and on the update", async () => {
     const lever = { source_filter: { sources: [ctx.source] } };
     const field = "enforcement_override.source_filter.types";
-    // The witness: the mint refuses the same lever, so the update is held to
-    // a refusal the input is known to produce.
+    // One fault, one answer: the update is held to the mint's refusal.
     const minted = await client.createKey({
       label: "levers-lacking",
       source: `${ctx.source}-levers-lacking`,
@@ -1045,16 +1044,14 @@ describe("a key's own levers", () => {
     expect(minted.status).toBe(400);
     expect(minted.error?.error.code).toBe("missing_required_field");
     expect(minted.error?.error.details?.field).toBe(field);
+    expect(minted.error?.error.message).toBe(`${field} is required`);
 
     const holder = await keyWith("levers-lacking-held");
     const refused = await client.updateKey(holder.id, {
       enforcement_override: lever as never,
     });
     expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("validation_error");
-    const errors = refused.error?.error.details?.errors as
-      { path: string }[] | undefined;
-    expect(errors?.map((e) => e.path)).toEqual([field]);
+    expect(refused.error).toEqual(minted.error);
 
     const after = await client.listKeys();
     expect(
