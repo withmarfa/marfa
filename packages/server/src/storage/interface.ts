@@ -2348,7 +2348,7 @@ export interface EdgeStore {
    */
   list(filters?: EdgeListFilters): Promise<PaginatedResult<Edge>>;
   /**
-   * Replace an edge's properties in place and move its version on, and
+   * Merge properties into an edge in place and move its version on, and
    * move one of its ends where `ends` names them. `edge_type` is immutable,
    * and the caller has judged the ends as a create would. An unknown id
    * raises `edge_not_found`, which the handler answers 404 — a bare error
