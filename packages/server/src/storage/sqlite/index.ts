@@ -33,7 +33,7 @@ import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
-import { SqliteBackgroundJobStore } from "./background-job-store.js";
+import { SqliteHousekeepingStore } from "./housekeeping-store.js";
 import { SqliteConnectorStore } from "./connector-store.js";
 import { SqliteConnectorStateStore } from "./connector-state-store.js";
 import { SqliteInboundStore } from "./inbound-store.js";
@@ -188,7 +188,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     // does, and `db` is the only instance there is.
     idempotency: guardStoreWithReadContext(new SqliteIdempotencyStore(db)),
     rateLimits: guardStoreWithReadContext(new SqliteRateLimitStore(db)),
-    backgroundJobs: guardStoreWithReadContext(new SqliteBackgroundJobStore(db)),
+    housekeeping: guardStoreWithReadContext(new SqliteHousekeepingStore(db)),
     connectors: guardStoreWithReadContext(new SqliteConnectorStore(db)),
     connectorState: guardStoreWithReadContext(
       new SqliteConnectorStateStore(db),

@@ -56,7 +56,7 @@ import { CONTRACT_VERSION } from "../contract.js";
  * That list is a snapshot and the query is the thing to keep: grep those
  * four across `packages/server/src` outside `storage/`, and trace each
  * hit back to whether a request drives it. The retirer is the easy one to
- * miss: it runs as a background job and its write is two calls away.
+ * miss: it runs as a housekeeping job and its write is two calls away.
  * `routes/idempotent-write-doors.test.ts` holds the doors that do carry a
  * key against the app's own route table.
  *

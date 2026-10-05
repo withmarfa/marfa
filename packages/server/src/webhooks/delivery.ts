@@ -600,7 +600,7 @@ export class WebhookScheduler {
 // ---------------------------------------------------------------------------
 // WebhookPoller — picks up pending deliveries from the database and attempts
 // HTTP delivery with durable retry. Survives server restarts: the
-// background job scheduler runs it on the cadence below.
+// housekeeping scheduler runs it on the cadence below.
 // ---------------------------------------------------------------------------
 
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;

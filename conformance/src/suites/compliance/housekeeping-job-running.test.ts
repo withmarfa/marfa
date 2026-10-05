@@ -12,8 +12,8 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * A background job never overlaps itself: a run asked for while one is in
- * the middle of its work is refused `409 background_job_running`.
+ * A housekeeping job never overlaps itself: a run asked for while one is in
+ * the middle of its work is refused `409 housekeeping_job_running`.
  *
  * **A run held open from outside.** The heartbeat job's whole work is one
  * request to a URL the operator names. The fixture names a receiver of its
@@ -49,7 +49,7 @@ beforeAll(async () => {
   if (typeof address !== "object" || address === null) {
     throw new Error("the receiver did not bind to a port");
   }
-  server = await bootFreshServer("background-job-running", {
+  server = await bootFreshServer("housekeeping-job-running", {
     MARFA_HEARTBEAT_URL: `http://127.0.0.1:${String(address.port)}/beat`,
     // Past the file, so the one run in it is the one the boot starts.
     MARFA_HEARTBEAT_INTERVAL_MS: "3600000",
@@ -68,14 +68,14 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function runHeartbeat(): Promise<Response> {
-  return fetch(`${server!.apiUrl}/background-jobs/heartbeat/run`, {
+  return fetch(`${server!.apiUrl}/housekeeping/heartbeat/run`, {
     method: "POST",
     headers: { Authorization: `Bearer ${server!.operatorKey}` },
   });
 }
 
 async function listedHeartbeat(): Promise<{ running_since: string | null }> {
-  const listed = await fetch(`${server!.apiUrl}/background-jobs`, {
+  const listed = await fetch(`${server!.apiUrl}/housekeeping`, {
     headers: { Authorization: `Bearer ${server!.operatorKey}` },
   });
   expect(listed.status).toBe(200);
@@ -87,8 +87,8 @@ async function listedHeartbeat(): Promise<{ running_since: string | null }> {
   return row!;
 }
 
-describe("POST /background-jobs/{name}/run while the job is in the middle of a run", () => {
-  it("answers 409 background_job_running, and runs once the earlier run has ended", async () => {
+describe("POST /housekeeping/{name}/run while the job is in the middle of a run", () => {
+  it("answers 409 housekeeping_job_running, and runs once the earlier run has ended", async () => {
     // The scheduler starts the heartbeat on its own at boot, and the receiver
     // holds that request, so the run is in the middle of its work.
     const deadline = Date.now() + 60_000;
@@ -100,11 +100,13 @@ describe("POST /background-jobs/{name}/run while the job is in the middle of a r
 
     const refused = await runHeartbeat();
     expect(refused.status).toBe(409);
-    expect(refused.headers.get("X-Error-Code")).toBe("background_job_running");
+    expect(refused.headers.get("X-Error-Code")).toBe(
+      "housekeeping_job_running",
+    );
     const body = (await refused.json()) as {
       error: { code: string; message: string };
     };
-    expect(body.error.code).toBe("background_job_running");
+    expect(body.error.code).toBe("housekeeping_job_running");
     // The refused request started nothing: the receiver still holds the one.
     expect(received).toBe(1);
 

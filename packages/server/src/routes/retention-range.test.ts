@@ -1,20 +1,20 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
-import { registerBackgroundJobs } from "../background-jobs/registrations.js";
+import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 
 let ctx: TestContext;
 beforeAll(async () => {
   ctx = await createTestContext();
-  registerBackgroundJobs(
-    ctx.backgroundJobs,
+  registerHousekeepingJobs(
+    ctx.housekeeping,
     ctx.storage,
     ctx.blobs,
     ctx.config,
   );
-  await ctx.backgroundJobs.start();
+  await ctx.housekeeping.start();
 });
 afterAll(async () => {
-  await ctx.backgroundJobs.stop();
+  await ctx.housekeeping.stop();
   await ctx.cleanup();
 });
 
@@ -90,7 +90,7 @@ it("runs native stores and registered cleanup jobs at accepted maximums and zero
       const response = await request(
         ctx.app,
         "POST",
-        `/background-jobs/${name}/run`,
+        `/housekeeping/${name}/run`,
         { key: ctx.operatorKey },
       );
       expect(response.status).toBe(200);
@@ -146,7 +146,7 @@ it("keeps witnessed expired rows at zero and expires them through the registered
       const response = await request(
         ctx.app,
         "POST",
-        `/background-jobs/${name}/run`,
+        `/housekeeping/${name}/run`,
         { key: ctx.operatorKey },
       );
       expect(await response.json()).toMatchObject({
@@ -170,13 +170,13 @@ it("runs each affected registered job with maximum environment defaults", async 
     bulkActionJobRetentionMs: 3153600000000,
   });
   try {
-    registerBackgroundJobs(
-      maximum.backgroundJobs,
+    registerHousekeepingJobs(
+      maximum.housekeeping,
       maximum.storage,
       maximum.blobs,
       maximum.config,
     );
-    await maximum.backgroundJobs.start();
+    await maximum.housekeeping.start();
     expect(maximum.storage.oauthProvider).toBeDefined();
     for (const name of [
       "audit-cleanup",
@@ -190,7 +190,7 @@ it("runs each affected registered job with maximum environment defaults", async 
       const response = await request(
         maximum.app,
         "POST",
-        `/background-jobs/${name}/run`,
+        `/housekeeping/${name}/run`,
         { key: maximum.operatorKey },
       );
       expect(response.status).toBe(200);
@@ -201,7 +201,7 @@ it("runs each affected registered job with maximum environment defaults", async 
       });
     }
   } finally {
-    await maximum.backgroundJobs.stop();
+    await maximum.housekeeping.stop();
     await maximum.cleanup();
   }
 });

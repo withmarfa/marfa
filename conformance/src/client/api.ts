@@ -17,8 +17,8 @@ import type {
   BlobOrphanRow,
   BlobStoreRow,
   BlobLocationRow,
-  BackgroundJobRow,
-  BackgroundJobRun,
+  HousekeepingJobRow,
+  HousekeepingRun,
   ConnectorAgreementRow,
   ConnectorAgreementsInput,
   ConnectorAgreementsWritten,
@@ -828,16 +828,16 @@ export class MarfaClient {
     );
   }
 
-  /** `GET /background-jobs`: the jobs the server runs on itself. */
-  async listBackgroundJobs(): Promise<
-    ApiResponse<PaginatedResult<BackgroundJobRow>>
+  /** `GET /housekeeping`: the jobs the server runs on itself. */
+  async listHousekeeping(): Promise<
+    ApiResponse<PaginatedResult<HousekeepingJobRow>>
   > {
-    return this.request<PaginatedResult<BackgroundJobRow>>("/background-jobs");
+    return this.request<PaginatedResult<HousekeepingJobRow>>("/housekeeping");
   }
 
-  /** `POST /background-jobs/{name}/run`: one background job, now. */
-  async runBackgroundJob(name: string): Promise<ApiResponse<BackgroundJobRun>> {
-    return this.request<BackgroundJobRun>(`/background-jobs/${name}/run`, {
+  /** `POST /housekeeping/{name}/run`: one housekeeping job, now. */
+  async runHousekeeping(name: string): Promise<ApiResponse<HousekeepingRun>> {
+    return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
       method: "POST",
     });
   }

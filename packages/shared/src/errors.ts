@@ -176,12 +176,12 @@ export enum ErrorCode {
   /** Dropping the copy would leave fewer live copies than the instance's
    *  minimum; the copy stays. */
   COPIES_BELOW_MINIMUM = "copies_below_minimum",
-  /** `POST /background-jobs/:name/run` named a background job this instance
+  /** `POST /housekeeping/:name/run` named a housekeeping job this instance
    *  does not run: unregistered, or switched off by configuration. */
-  BACKGROUND_JOB_NOT_FOUND = "background_job_not_found",
-  /** The background job is in the middle of a run, and a background job
+  HOUSEKEEPING_JOB_NOT_FOUND = "housekeeping_job_not_found",
+  /** The housekeeping job is in the middle of a run, and a housekeeping job
    *  never overlaps itself. */
-  BACKGROUND_JOB_RUNNING = "background_job_running",
+  HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /** `GET /connectors/{id}` and the doors under it: no such registration. */
   CONNECTOR_NOT_FOUND = "connector_not_found",
   /** Another process holds the connector's registration until
@@ -357,8 +357,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BLOB_LOCATION_NOT_FOUND]: 404,
   [ErrorCode.COPIES_BELOW_MINIMUM]: 409,
   [ErrorCode.ID_REUSED]: 409,
-  [ErrorCode.BACKGROUND_JOB_NOT_FOUND]: 404,
-  [ErrorCode.BACKGROUND_JOB_RUNNING]: 409,
+  [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
+  [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
   [ErrorCode.CONNECTOR_HELD]: 409,
   [ErrorCode.ENDPOINT_NOT_FOUND]: 404,

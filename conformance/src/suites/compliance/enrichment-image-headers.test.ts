@@ -20,7 +20,7 @@ let operator: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("enrichment-image-headers", {
     MARFA_ENRICHMENT_ENABLED: "true",
-    // Driven through the background job door rather than the scheduler.
+    // Driven through the housekeeping door rather than the scheduler.
     MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   client = new MarfaClient({
@@ -90,7 +90,7 @@ describe("an image whose header is malformed", () => {
       });
     }
 
-    const run = await operator.runBackgroundJob("enrichment-sweep");
+    const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
     expect(run.data.outcome).toBe("ok");
     expect(run.data.result).toEqual({ extracted: 3, skipped: 3, failed: 0 });

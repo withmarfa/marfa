@@ -679,7 +679,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     expect(await ctx.storage.items.get(live.id)).not.toBeNull();
   });
 
-  it("is a no-op at retentionDays 0, like every other background job here", async () => {
+  it("is a no-op at retentionDays 0, like every other housekeeping job here", async () => {
     const id = await seedRevokedGrant(OLD);
     const purger = new RevokedGrantPurger(ctx.storage, 0);
     expect(await purger.runOnce()).toBe(0);

@@ -241,7 +241,7 @@ async function call<T>(
 }
 
 /** A key that may write every type, minted through the operator's; the
- *  operator's own key runs the background job door and nothing else. */
+ *  operator's own key runs the housekeeping door and nothing else. */
 async function mintWorkingKey(operator: Api): Promise<string> {
   const { status, body } = await call<{ key: string }>(
     operator,
@@ -299,7 +299,7 @@ async function replicateToZero(api: Api): Promise<number> {
       outcome: string;
       result: { copied: number; remaining: number };
       error?: string;
-    }>(api, "POST", "/background-jobs/blob-replicate/run");
+    }>(api, "POST", "/housekeeping/blob-replicate/run");
     if (status === 409) {
       await sleep(100);
       continue;

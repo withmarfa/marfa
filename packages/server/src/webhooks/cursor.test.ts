@@ -9,7 +9,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import { registerBackgroundJobs } from "../background-jobs/registrations.js";
+import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 import { WebhookPoller, WebhookScheduler } from "./delivery.js";
 
 let ctx: TestContext;
@@ -473,22 +473,22 @@ describe("durable outbound event acknowledgement", () => {
         afterSubscriptionId: null,
       }),
     );
-    registerBackgroundJobs(
-      ctx.backgroundJobs,
+    registerHousekeepingJobs(
+      ctx.housekeeping,
       ctx.storage,
       ctx.blobs,
       ctx.config,
     );
-    await ctx.backgroundJobs.start();
-    const result = await ctx.backgroundJobs.runNow("webhook-schedule");
+    await ctx.housekeeping.start();
+    const result = await ctx.housekeeping.runNow("webhook-schedule");
     expect(result.kind).toBe("ran");
     if (result.kind !== "ran") throw new Error("job did not run");
     expect(result.run.outcome).toBe("error");
     expect(result.run.error).toContain("ahead");
     expect(
-      (await ctx.storage.backgroundJobs.get("webhook-schedule"))?.last_outcome,
+      (await ctx.storage.housekeeping.get("webhook-schedule"))?.last_outcome,
     ).toBe("error");
-    await ctx.backgroundJobs.stop();
+    await ctx.housekeeping.stop();
     expect((await ctx.storage.outboundWebhooks.checkpoint()).lastEventId).toBe(
       1n,
     );
@@ -783,26 +783,26 @@ describe("durable outbound event acknowledgement", () => {
         payload: JSON.stringify(frame),
         enable_fanout: "fanout" in options ? options.fanout : true,
       });
-      registerBackgroundJobs(
-        ctx.backgroundJobs,
+      registerHousekeepingJobs(
+        ctx.housekeeping,
         ctx.storage,
         ctx.blobs,
         ctx.config,
       );
-      await ctx.backgroundJobs.start();
+      await ctx.housekeeping.start();
       try {
-        const result = await ctx.backgroundJobs.runNow("webhook-schedule");
+        const result = await ctx.housekeeping.runNow("webhook-schedule");
         expect(result.kind).toBe("ran");
         if (result.kind !== "ran") throw new Error("job did not run");
         expect(result.run.outcome).toBe("error");
         expect(result.run.error).toContain("payload is inconsistent");
         expect(await ctx.storage.outboundWebhooks.checkpoint()).toEqual(before);
         expect(
-          (await ctx.storage.backgroundJobs.get("webhook-schedule"))
+          (await ctx.storage.housekeeping.get("webhook-schedule"))
             ?.last_outcome,
         ).toBe("error");
       } finally {
-        await ctx.backgroundJobs.stop();
+        await ctx.housekeeping.stop();
       }
     },
   );
@@ -818,15 +818,15 @@ describe("durable outbound event acknowledgement", () => {
     expect(subscribed.status).toBe(201);
     const { id } = (await subscribed.json()) as { id: string };
     await write();
-    registerBackgroundJobs(
-      ctx.backgroundJobs,
+    registerHousekeepingJobs(
+      ctx.housekeeping,
       ctx.storage,
       ctx.blobs,
       ctx.config,
     );
-    await ctx.backgroundJobs.start();
+    await ctx.housekeeping.start();
     try {
-      const result = await ctx.backgroundJobs.runNow("webhook-schedule");
+      const result = await ctx.housekeeping.runNow("webhook-schedule");
       expect(result.kind).toBe("ran");
       if (result.kind !== "ran") throw new Error("job did not run");
       expect(result.run.outcome).toBe("ok");
@@ -836,7 +836,7 @@ describe("durable outbound event acknowledgement", () => {
       ).toBe(1n);
       expect(await queued(id)).toHaveLength(0);
     } finally {
-      await ctx.backgroundJobs.stop();
+      await ctx.housekeeping.stop();
     }
   });
 });

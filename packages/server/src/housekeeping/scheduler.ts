@@ -1,8 +1,8 @@
 import type {
-  BackgroundJobFinish,
-  BackgroundJobOutcome,
-  BackgroundJobRow,
-  BackgroundJobStore,
+  HousekeepingFinish,
+  HousekeepingOutcome,
+  HousekeepingRow,
+  HousekeepingStore,
 } from "../storage/interface.js";
 import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
@@ -20,12 +20,12 @@ import { log } from "../middleware/logger.js";
  * declared: an interface carries no index signature, so it cannot satisfy
  * this and the job would not compile.
  */
-export type BackgroundJobReport = Record<
+export type HousekeepingReport = Record<
   string,
   number | boolean | string | null
 >;
 
-export interface BackgroundJob {
+export interface HousekeepingJob {
   /** Lowercase, hyphenated: the name in the table, the log and the door. */
   name: string;
   intervalMs: number;
@@ -34,31 +34,31 @@ export interface BackgroundJob {
    *  sweep starts. */
   firstRunDelayMs: number;
   /** One run. What it resolves with is recorded as the run's result and
-   *  published on the background job doors, so it is a count per name rather
+   *  published on the housekeeping doors, so it is a count per name rather
    *  than anything a job feels like returning: `{ deleted: 12 }`,
    *  `{ verified: 40, struck: 1, bytes: 91_203 }`. A job with nothing to
    *  report resolves with `null` and the doors answer `last_result: null`
    *  for it. The compiler holding every registered job to this is what lets
    *  the document declare the shape instead of typing it unknown. A throw
    *  is recorded as the run's error. */
-  run: () => Promise<BackgroundJobReport | null>;
+  run: () => Promise<HousekeepingReport | null>;
 }
 
-export interface BackgroundJobRun {
+export interface HousekeepingRun {
   name: string;
   started_at: string;
   finished_at: string;
-  outcome: BackgroundJobOutcome;
-  result: BackgroundJobReport | null;
+  outcome: HousekeepingOutcome;
+  result: HousekeepingReport | null;
   error: string | null;
 }
 
 export type RunNowResult =
-  | { kind: "ran"; run: BackgroundJobRun }
+  | { kind: "ran"; run: HousekeepingRun }
   | { kind: "running" }
   | { kind: "unknown" };
 
-export interface BackgroundJobsOptions {
+export interface HousekeepingOptions {
   /** How often the table is asked what is due. */
   pollIntervalMs: number;
   nowFn?: () => Date;
@@ -67,9 +67,9 @@ export interface BackgroundJobsOptions {
 const NAME = /^[a-z][a-z0-9-]*$/;
 
 /**
- * One scheduler for the server's own background jobs, on a polling table.
+ * One scheduler for the server's own housekeeping, on a polling table.
  *
- * A background job is registered from code at boot with its cadence and
+ * A housekeeping job is registered from code at boot with its cadence and
  * the function that runs it; the table holds when each is next due and
  * what its last run did. The scheduler polls the table, claims each name
  * that is due with one conditional update (exclusive per name under
@@ -84,12 +84,12 @@ const NAME = /^[a-z][a-z0-9-]*$/;
  * finished, whether it died or stopped before the run could end, and is
  * cleared with a log line; the name is due whenever its row says.
  */
-export class BackgroundJobs {
-  private readonly jobs = new Map<string, BackgroundJob>();
+export class Housekeeping {
+  private readonly jobs = new Map<string, HousekeepingJob>();
   private readonly nowFn: () => Date;
   private readonly inFlight = new Set<Promise<void>>();
   /** Records a run could not write, kept for the next pass to write. */
-  private readonly unrecorded = new Map<string, BackgroundJobFinish>();
+  private readonly unrecorded = new Map<string, HousekeepingFinish>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** The poll in progress, so `stop()` can let it finish claiming. */
   private polling: Promise<void> | null = null;
@@ -97,26 +97,26 @@ export class BackgroundJobs {
   private stopped = false;
 
   constructor(
-    private readonly store: BackgroundJobStore,
-    private readonly opts: BackgroundJobsOptions,
+    private readonly store: HousekeepingStore,
+    private readonly opts: HousekeepingOptions,
   ) {
     this.nowFn = opts.nowFn ?? (() => new Date());
   }
 
-  register(job: BackgroundJob): void {
+  register(job: HousekeepingJob): void {
     if (this.started) {
-      throw new Error(`Background job: ${job.name} registered after start`);
+      throw new Error(`Housekeeping: ${job.name} registered after start`);
     }
     if (!NAME.test(job.name)) {
       throw new Error(
-        `Background job: ${job.name} is not a background job name`,
+        `Housekeeping: ${job.name} is not a housekeeping job name`,
       );
     }
     if (this.jobs.has(job.name)) {
-      throw new Error(`Background job: ${job.name} registered twice`);
+      throw new Error(`Housekeeping: ${job.name} registered twice`);
     }
     if (!(job.intervalMs > 0)) {
-      throw new Error(`Background job: ${job.name} needs a positive interval`);
+      throw new Error(`Housekeeping: ${job.name} needs a positive interval`);
     }
     this.jobs.set(job.name, job);
   }
@@ -146,13 +146,13 @@ export class BackgroundJobs {
     }
     const removed = await this.store.removeExcept(this.names());
     if (removed.length > 0) {
-      log("info", "Background job rows without a registration removed", {
+      log("info", "Housekeeping rows without a registration removed", {
         names: removed,
       });
     }
     const cleared = await this.store.clearRunning();
     if (cleared.length > 0) {
-      log("warn", "Background job runs left unfinished by an earlier process", {
+      log("warn", "Housekeeping runs left unfinished by an earlier process", {
         names: cleared,
       });
     }
@@ -206,14 +206,14 @@ export class BackgroundJobs {
     return attempt;
   }
 
-  private async claimAndRun(job: BackgroundJob): Promise<RunNowResult> {
+  private async claimAndRun(job: HousekeepingJob): Promise<RunNowResult> {
     const claimed = await this.store.claim(
       job.name,
       this.nowFn().toISOString(),
     );
     if (!claimed) {
       // A registered name with no row has not been started; to a caller
-      // that is a background job the instance does not run.
+      // that is a housekeeping job the instance does not run.
       return (await this.store.get(job.name))
         ? { kind: "running" }
         : { kind: "unknown" };
@@ -221,7 +221,7 @@ export class BackgroundJobs {
     return { kind: "ran", run: await this.execute(job, claimed) };
   }
 
-  list(): Promise<BackgroundJobRow[]> {
+  list(): Promise<HousekeepingRow[]> {
     return this.store.list();
   }
 
@@ -273,27 +273,27 @@ export class BackgroundJobs {
         void running.finally(() => this.inFlight.delete(running));
       }
     } catch (err) {
-      logJobTickFailure("Background job poll", err, this.stopped);
+      logJobTickFailure("Housekeeping poll", err, this.stopped);
     }
   }
 
   private async execute(
-    job: BackgroundJob,
-    claimed: BackgroundJobRow,
-  ): Promise<BackgroundJobRun> {
+    job: HousekeepingJob,
+    claimed: HousekeepingRow,
+  ): Promise<HousekeepingRun> {
     const startedAt = claimed.running_since ?? this.nowFn().toISOString();
-    let outcome: BackgroundJobOutcome = "ok";
-    let result: BackgroundJobReport | null = null;
+    let outcome: HousekeepingOutcome = "ok";
+    let result: HousekeepingReport | null = null;
     let error: string | null = null;
     try {
       result = (await job.run()) ?? null;
     } catch (err) {
       outcome = "error";
       error = err instanceof Error ? err.message : String(err);
-      logJobTickFailure(`Background job ${job.name}`, err, this.stopped);
+      logJobTickFailure(`Housekeeping ${job.name}`, err, this.stopped);
     }
     const finishedAt = this.nowFn().toISOString();
-    const record: BackgroundJobFinish = {
+    const record: HousekeepingFinish = {
       finishedAt,
       outcome,
       error,
@@ -309,7 +309,7 @@ export class BackgroundJobs {
       // one. A record that meets the closed client during shutdown is the
       // ordinary end of a process, and the classifier says so.
       this.unrecorded.set(job.name, record);
-      logJobTickFailure(`Background job ${job.name} record`, err, this.stopped);
+      logJobTickFailure(`Housekeeping ${job.name} record`, err, this.stopped);
     }
     return {
       name: job.name,

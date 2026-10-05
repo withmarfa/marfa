@@ -1,5 +1,4 @@
 pub mod audit;
-pub mod background_jobs;
 pub mod blobs;
 pub mod config;
 pub mod connectors;
@@ -9,6 +8,7 @@ pub mod events;
 pub mod export;
 pub mod extensions;
 pub mod folders;
+pub mod housekeeping;
 pub mod items;
 pub mod keys;
 pub mod login;

@@ -12,14 +12,14 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
 import type { BulkActionJob } from "../bulk-actions/types.js";
-import { BlobOrphanReporter } from "../background-jobs/blob-orphans.js";
-import { BlobReplicator } from "../background-jobs/blob-replicate.js";
+import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import { BlobReplicator } from "../housekeeping/blob-replicate.js";
 import type { Item } from "@withmarfa/shared";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
-import { BackgroundJobs } from "../background-jobs/scheduler.js";
-import { purgeBlob } from "../background-jobs/blob-delete.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
+import { purgeBlob } from "../housekeeping/blob-delete.js";
 
 let ctx: TestContext | undefined;
 let writer: string;
@@ -71,15 +71,15 @@ async function setup(): Promise<TestContext> {
     ["blob-orphans", () => reporter.runOnce()],
     ["blob-replicate", () => replicator.runOnce()],
   ] as const) {
-    ctx.backgroundJobs.register({
+    ctx.housekeeping.register({
       name,
       run,
       intervalMs: 3_600_000,
       firstRunDelayMs: 3_600_000,
     });
   }
-  await ctx.backgroundJobs.start();
-  await ctx.backgroundJobs.stop();
+  await ctx.housekeeping.start();
+  await ctx.housekeeping.stop();
   return ctx;
 }
 
@@ -169,7 +169,7 @@ async function queue(
 async function sweep(c: TestContext, name = "blob-orphans") {
   time += 1;
   const run = await json<{ outcome: string; result: Record<string, number> }>(
-    await request(c.app, "POST", `/background-jobs/${name}/run`, {
+    await request(c.app, "POST", `/housekeeping/${name}/run`, {
       key: c.operatorKey,
     }),
     200,
@@ -336,13 +336,13 @@ describe("bulk property updates retain their blobs", () => {
     expect(await sweep(c)).toEqual({ reported: 0, purged: 0 });
     await c.storage.close();
     c.storage = await createSqliteStorage(join(c.tmpDir, "test.db"));
-    c.backgroundJobs = new BackgroundJobs(c.storage.backgroundJobs, {
+    c.housekeeping = new Housekeeping(c.storage.housekeeping, {
       pollIntervalMs: 1_000,
     });
     c.app = createApp(
       c.storage,
       c.blobs,
-      c.backgroundJobs,
+      c.housekeeping,
       c.config,
       await ensureInstanceId(c.storage.settings),
     );

@@ -4,7 +4,7 @@ import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import type { BackgroundJobs } from "./scheduler.js";
+import type { Housekeeping } from "./scheduler.js";
 import { log } from "../middleware/logger.js";
 import {
   WebhookPoller,
@@ -34,15 +34,15 @@ import { TesseractOcr } from "../enrichment/ocr.js";
 import { BulkActionJobGcSweeper } from "../bulk-actions/index.js";
 
 /**
- * Every background job the server runs on itself, registered from one
+ * Every housekeeping job the server runs on itself, registered from one
  * place so the set is a function of the configuration and can be asserted
  * as one. One its configuration switches off is not registered, so it is
  * not listed either; one whose retention `/config` can set while the
  * process runs is registered whatever the instance default, and sweeps
  * nothing until the retention is positive.
  */
-export function registerBackgroundJobs(
-  backgroundJobs: BackgroundJobs,
+export function registerHousekeepingJobs(
+  housekeeping: Housekeeping,
   storage: Storage,
   blobs: BlobLayer,
   config: AppConfig,
@@ -62,7 +62,7 @@ export function registerBackgroundJobs(
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
-  backgroundJobs.register({
+  housekeeping.register({
     name: "event-log-cleanup",
     intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
     firstRunDelayMs: 10_000,
@@ -93,7 +93,7 @@ export function registerBackgroundJobs(
     },
   });
 
-  backgroundJobs.register({
+  housekeeping.register({
     name: "audit-cleanup",
     intervalMs: config.auditCleanupIntervalMs,
     firstRunDelayMs: 5_000,
@@ -122,9 +122,9 @@ export function registerBackgroundJobs(
 
   const webhookScheduler = new WebhookScheduler({
     storage,
-    wakePoller: () => backgroundJobs.wake("webhook-poll"),
+    wakePoller: () => housekeeping.wake("webhook-poll"),
   });
-  backgroundJobs.register({
+  housekeeping.register({
     name: "webhook-schedule",
     intervalMs: 1_000,
     firstRunDelayMs: 0,
@@ -139,7 +139,7 @@ export function registerBackgroundJobs(
       allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
     }),
   });
-  backgroundJobs.register({
+  housekeeping.register({
     name: "webhook-poll",
     intervalMs: WEBHOOK_POLL_INTERVAL_MS,
     firstRunDelayMs: 0,
@@ -148,7 +148,7 @@ export function registerBackgroundJobs(
       // A full batch may leave due work behind. Reuse this tracked job so
       // backlog drains without waiting for the ordinary retry poll cadence.
       if (report.attempted === WEBHOOK_POLL_BATCH_SIZE)
-        await backgroundJobs.wake("webhook-poll");
+        await housekeeping.wake("webhook-poll");
       return report;
     },
   });
@@ -158,7 +158,7 @@ export function registerBackgroundJobs(
   // a restarted one pings at its previous schedule.
   if (config.heartbeatUrl) {
     const heartbeat = new HeartbeatPinger(config.heartbeatUrl);
-    backgroundJobs.register({
+    housekeeping.register({
       name: "heartbeat",
       intervalMs: config.heartbeatIntervalMs ?? 60_000,
       firstRunDelayMs: 0,
@@ -172,7 +172,7 @@ export function registerBackgroundJobs(
     weeklySnapshotDays: config.versionWeeklySnapshotDays,
     maxVersions: config.versionMaxVersions,
   });
-  backgroundJobs.register({
+  housekeeping.register({
     name: "version-thinning",
     intervalMs: config.versionThinningIntervalMs,
     firstRunDelayMs: 5_000,
@@ -187,7 +187,7 @@ export function registerBackgroundJobs(
     undefined,
     trashOverride,
   );
-  backgroundJobs.register({
+  housekeeping.register({
     name: "trash-purge",
     intervalMs: config.trashPurgeIntervalMs,
     firstRunDelayMs: 5_000,
@@ -205,7 +205,7 @@ export function registerBackgroundJobs(
       storage,
       revokedGrantRetentionDays,
     );
-    backgroundJobs.register({
+    housekeeping.register({
       name: "revoked-grant-purge",
       intervalMs: 3_600_000,
       firstRunDelayMs: 20_000,
@@ -226,7 +226,7 @@ export function registerBackgroundJobs(
       storage,
       grantInactivityDays,
     );
-    backgroundJobs.register({
+    housekeeping.register({
       name: "grant-inactivity-retirement",
       intervalMs: 86_400_000,
       firstRunDelayMs: 40_000,
@@ -235,7 +235,7 @@ export function registerBackgroundJobs(
   }
 
   const revokedKeyReaper = new RevokedKeyReaper(storage);
-  backgroundJobs.register({
+  housekeeping.register({
     name: "revoked-key-reap",
     intervalMs: 3_600_000,
     firstRunDelayMs: 45_000,
@@ -245,7 +245,7 @@ export function registerBackgroundJobs(
   // Gated on authSessions being wired; test contexts that skip better-auth omit it.
   if (storage.authSessions) {
     const authSessionCleaner = new AuthSessionCleaner(storage.authSessions);
-    backgroundJobs.register({
+    housekeeping.register({
       name: "auth-session-cleanup",
       intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
       firstRunDelayMs: 10_000,
@@ -256,7 +256,7 @@ export function registerBackgroundJobs(
   // GC keeps the table bounded; expired rows are correctness-safe (upsert path
   // overwrites them transparently).
   const rateLimitCleaner = new RateLimitWindowCleaner(storage);
-  backgroundJobs.register({
+  housekeeping.register({
     name: "rate-limit-cleanup",
     intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
     firstRunDelayMs: 20_000,
@@ -264,7 +264,7 @@ export function registerBackgroundJobs(
   });
 
   const inbound = config.inbound ?? DEFAULT_INBOUND_LIMITS;
-  backgroundJobs.register({
+  housekeeping.register({
     name: "inbound-delivery-cleanup",
     intervalMs: inbound.cleanupIntervalMs,
     firstRunDelayMs: 30_000,
@@ -288,7 +288,7 @@ export function registerBackgroundJobs(
   const dcrRetentionDays = config.dcrClientRetentionDays ?? 30;
   if (dcrRetentionDays > 0 && storage.oauthProvider) {
     const dcrClientCleaner = new DcrClientCleaner(storage, dcrRetentionDays);
-    backgroundJobs.register({
+    housekeeping.register({
       name: "dcr-client-cleanup",
       intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
       firstRunDelayMs: 25_000,
@@ -309,14 +309,14 @@ export function registerBackgroundJobs(
     maxBlobs: config.blobReplicateBatch ?? 100,
     maxBytes: config.blobReplicateBatchBytes ?? 1024 * 1024 * 1024,
   });
-  backgroundJobs.register({
+  housekeeping.register({
     name: "blob-replicate",
     intervalMs: config.blobReplicateIntervalMs ?? 60_000,
     firstRunDelayMs: 15_000,
     run: async () => {
       const result = await replicator.runOnce();
       if (result.copied > 0 && result.remaining > 0) {
-        await backgroundJobs.wake("blob-replicate");
+        await housekeeping.wake("blob-replicate");
       }
       return result;
     },
@@ -325,13 +325,13 @@ export function registerBackgroundJobs(
     maxRows: config.blobIntegrityBatch ?? 500,
     maxBytes: config.blobIntegrityBatchBytes ?? 1024 * 1024 * 1024,
   });
-  backgroundJobs.register({
+  housekeeping.register({
     name: "blob-integrity",
     intervalMs: config.blobIntegrityIntervalMs ?? 3_600_000,
     firstRunDelayMs: 60_000,
     run: async () => {
       const result = await integrity.runOnce();
-      if (result.struck > 0) await backgroundJobs.wake("blob-replicate");
+      if (result.struck > 0) await housekeeping.wake("blob-replicate");
       return result;
     },
   });
@@ -349,7 +349,7 @@ export function registerBackgroundJobs(
       blobs,
       config.blobCleanupGraceMs ?? 86_400_000,
     );
-    backgroundJobs.register({
+    housekeeping.register({
       name: "blob-orphans",
       intervalMs: blobCleanupIntervalMs,
       firstRunDelayMs: 30_000,
@@ -380,7 +380,7 @@ export function registerBackgroundJobs(
       maxTextChars: config.enrichmentMaxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
       maxAttempts: config.enrichmentMaxAttempts ?? 3,
     });
-    backgroundJobs.register({
+    housekeeping.register({
       name: "enrichment-sweep",
       intervalMs: config.enrichmentIntervalMs ?? 30_000,
       firstRunDelayMs: 20_000,
@@ -397,7 +397,7 @@ export function registerBackgroundJobs(
       storage,
       bulkActionJobRetentionMs,
     );
-    backgroundJobs.register({
+    housekeeping.register({
       name: "bulk-action-gc",
       intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
       firstRunDelayMs: 60_000,

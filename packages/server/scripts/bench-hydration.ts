@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "../src/storage/sqlite/index.js";
 import { createBlobLayer } from "../src/storage/blob-layer.js";
-import { BackgroundJobs } from "../src/background-jobs/scheduler.js";
+import { Housekeeping } from "../src/housekeeping/scheduler.js";
 import { createApp } from "../src/app.js";
 import { ensureInstanceId } from "../src/storage/instance-id.js";
 import { hashApiKey } from "../src/middleware/auth.js";
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const app = createApp(
     storage,
     blob,
-    new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     {
       port: 0,
       sqlitePath: "",

@@ -36,7 +36,7 @@ interface Step {
  * Prunes item version history to each type's effective policy: the one
  * `GET /types/{id}` returns, with the instance defaults filling the fields no
  * type in the chain sets. One `runOnce()` sweeps every item holding more than
- * two snapshots, a page at a time; the background job scheduler owns the cadence.
+ * two snapshots, a page at a time; the housekeeping scheduler owns the cadence.
  */
 export class VersionThinner {
   constructor(

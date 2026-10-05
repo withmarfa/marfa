@@ -60,7 +60,7 @@ function derivableDimensionFields(
 }
 
 /**
- * Derives what a file's own bytes can say, one batch per background job run,
+ * Derives what a file's own bytes can say, one batch per housekeeping run,
  * and writes it back onto the item.
  *
  * Two kinds, both best-effort and neither able to fail a write: text, onto

@@ -5,8 +5,8 @@
  * Anything that grows on every write needs an owner in code. This one has
  * no sweeper of its own: it rides the event-log retention sweep, which
  * already resolves the effective window. The behavioral half is below; the
- * structural half reads `background-jobs/registrations.ts`, where every
- * background job registers, because "there is no second sweeper" is a
+ * structural half reads `housekeeping/registrations.ts`, where every
+ * housekeeping job registers, because "there is no second sweeper" is a
  * claim about what is absent and a running server cannot be asked it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -602,14 +602,14 @@ describe("retention has one owner", () => {
   const registrations = readFileSync(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
-      "../background-jobs/registrations.ts",
+      "../housekeeping/registrations.ts",
     ),
     "utf-8",
   );
 
   it("sweeps from inside the event-log cleanup", () => {
     // Read from the source because the property is about which
-    // background job the call sits in, and both delete rows on the same
+    // housekeeping job the call sits in, and both delete rows on the same
     // cadence: a behavioral test cannot tell one from the other.
     const start = registrations.indexOf('name: "event-log-cleanup"');
     const end = registrations.indexOf('name: "audit-cleanup"');
@@ -626,7 +626,7 @@ describe("retention has one owner", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("registers no background job of its own", () => {
+  it("registers no housekeeping job of its own", () => {
     // The witness that this is where a registration would be: the sweep
     // it rides is registered here.
     expect(registrations).toContain('name: "event-log-cleanup"');

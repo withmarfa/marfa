@@ -30,13 +30,13 @@ import {
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { wholeListOf } from "./_schemas.js";
 import { READ_REFUSED } from "./_item-refusals.js";
-import type { BackgroundJobs } from "../background-jobs/scheduler.js";
+import type { Housekeeping } from "../housekeeping/scheduler.js";
 import {
   CopiesBelowMinimum,
   LocationNotFound,
   dropBlobCopy,
   finishCopyDeletion,
-} from "../background-jobs/blob-delete.js";
+} from "../housekeeping/blob-delete.js";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -142,7 +142,7 @@ const BlobOrphanSchema = z
     reported_at: z
       .string()
       .describe(
-        "When a run of the `blob-orphans` background job first found nothing referencing the blob, in UTC.",
+        "When a run of the `blob-orphans` housekeeping job first found nothing referencing the blob, in UTC.",
       ),
   })
   .openapi("BlobOrphan", {
@@ -582,7 +582,7 @@ const listBlobOrphansRoute = createRoute({
   tags: ["Blobs"],
   summary: "List orphaned blobs",
   description:
-    "Returns the blobs that nothing references, as the last run of the `blob-orphans` background job found them, oldest first. Requires the operator key.",
+    "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
@@ -616,7 +616,7 @@ function normalizeHash(raw: string): string {
 export function blobRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  backgroundJobs: Pick<BackgroundJobs, "wake">,
+  housekeeping: Pick<Housekeeping, "wake">,
   config: Pick<AppConfig, "authBaseUrl" | "authSecret" | "blobMinCopies">,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
@@ -808,7 +808,7 @@ export function blobRoutes(
     // The other stores get their copies at replication's next run, which
     // this brings forward; a wake is a hint, so a scheduler that is not
     // running loses nothing but the hurry.
-    await backgroundJobs.wake("blob-replicate");
+    await housekeeping.wake("blob-replicate");
 
     return c.json({ hash, mime_type: recorded, size_bytes: sizeBytes }, 201);
   });

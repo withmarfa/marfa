@@ -545,7 +545,7 @@ describe("key management", () => {
     const doors: [string, string][] = [
       ["POST", "/owner"],
       ["GET", "/metrics"],
-      ["GET", "/background-jobs"],
+      ["GET", "/housekeeping"],
       ["POST", "/restore"],
       ["DELETE", "/platform-types/not%20a%20type"],
       ["DELETE", "/blobs/not-a-hash/locations/not-a-store"],

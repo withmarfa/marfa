@@ -3413,7 +3413,7 @@
           },
           "reported_at": {
             "type": "string",
-            "description": "When a run of the `blob-orphans` background job first found nothing referencing the blob, in UTC."
+            "description": "When a run of the `blob-orphans` housekeeping job first found nothing referencing the blob, in UTC."
           }
         },
         "required": [
@@ -3708,13 +3708,13 @@
         ],
         "description": "An error response."
       },
-      "BackgroundJobPage": {
+      "HousekeepingJobPage": {
         "type": "object",
         "properties": {
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/BackgroundJob"
+              "$ref": "#/components/schemas/HousekeepingJob"
             }
           },
           "next_cursor": {
@@ -3730,7 +3730,7 @@
           "next_cursor"
         ]
       },
-      "BackgroundJob": {
+      "HousekeepingJob": {
         "type": "object",
         "properties": {
           "name": {
@@ -3763,7 +3763,7 @@
           "last_outcome": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BackgroundJobOutcome"
+                "$ref": "#/components/schemas/HousekeepingOutcome"
               },
               {
                 "type": "null"
@@ -3779,7 +3779,7 @@
           "last_result": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BackgroundJobReport"
+                "$ref": "#/components/schemas/HousekeepingReport"
               },
               {
                 "type": "null"
@@ -3799,14 +3799,14 @@
           "last_result"
         ]
       },
-      "BackgroundJobOutcome": {
+      "HousekeepingOutcome": {
         "type": "string",
         "enum": [
           "ok",
           "error"
         ]
       },
-      "BackgroundJobReport": {
+      "HousekeepingReport": {
         "type": "object",
         "additionalProperties": {
           "anyOf": [
@@ -3825,7 +3825,7 @@
           ]
         }
       },
-      "BackgroundJobRun": {
+      "HousekeepingRun": {
         "type": "object",
         "properties": {
           "name": {
@@ -3838,12 +3838,12 @@
             "type": "string"
           },
           "outcome": {
-            "$ref": "#/components/schemas/BackgroundJobOutcome"
+            "$ref": "#/components/schemas/HousekeepingOutcome"
           },
           "result": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BackgroundJobReport"
+                "$ref": "#/components/schemas/HousekeepingReport"
               },
               {
                 "type": "null"
@@ -3866,7 +3866,7 @@
           "error"
         ]
       },
-      "BackgroundJobNotFoundRefusal": {
+      "HousekeepingJobNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -3875,7 +3875,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "background_job_not_found"
+                  "housekeeping_job_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -3901,7 +3901,7 @@
         ],
         "description": "An error response."
       },
-      "BackgroundJobRunningRefusal": {
+      "HousekeepingJobRunningRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -3910,7 +3910,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "background_job_running"
+                  "housekeeping_job_running"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -21629,7 +21629,7 @@
           "Blobs"
         ],
         "summary": "List orphaned blobs",
-        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` background job found them, oldest first. Requires the operator key.",
+        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -23337,14 +23337,14 @@
         }
       }
     },
-    "/background-jobs": {
+    "/housekeeping": {
       "get": {
-        "operationId": "listBackgroundJobs",
+        "operationId": "listHousekeeping",
         "tags": [
           "Instance"
         ],
-        "summary": "List background jobs",
-        "description": "Returns every background job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
+        "summary": "List housekeeping jobs",
+        "description": "Returns every housekeeping job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
         "security": [
           {
             "bearerAuth": []
@@ -23352,11 +23352,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns every background job, in one page.",
+            "description": "Returns every housekeeping job, in one page.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackgroundJobPage"
+                  "$ref": "#/components/schemas/HousekeepingJobPage"
                 }
               }
             },
@@ -23564,14 +23564,14 @@
         }
       }
     },
-    "/background-jobs/{name}/run": {
+    "/housekeeping/{name}/run": {
       "post": {
-        "operationId": "runBackgroundJob",
+        "operationId": "runHousekeeping",
         "tags": [
           "Instance"
         ],
-        "summary": "Run a background job",
-        "description": "Runs a background job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
+        "summary": "Run a housekeeping job",
+        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
         "security": [
           {
             "bearerAuth": []
@@ -23582,10 +23582,10 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-z][a-z0-9-]*$",
-              "description": "The background job's name, as `GET /background-jobs` lists it."
+              "description": "The housekeeping job's name, as `GET /housekeeping` lists it."
             },
             "required": true,
-            "description": "The background job's name, as `GET /background-jobs` lists it.",
+            "description": "The housekeeping job's name, as `GET /housekeeping` lists it.",
             "name": "name",
             "in": "path"
           }
@@ -23596,7 +23596,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackgroundJobRun"
+                  "$ref": "#/components/schemas/HousekeepingRun"
                 }
               }
             },
@@ -23709,11 +23709,11 @@
             }
           },
           "404": {
-            "description": "- `background_job_not_found`: this instance runs no background job with this name.",
+            "description": "- `housekeeping_job_not_found`: this instance runs no housekeeping job with this name.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackgroundJobNotFoundRefusal"
+                  "$ref": "#/components/schemas/HousekeepingJobNotFoundRefusal"
                 }
               }
             },
@@ -23739,11 +23739,11 @@
             }
           },
           "409": {
-            "description": "- `background_job_running`: the background job is already running. Try again when the run finishes.",
+            "description": "- `housekeeping_job_running`: the housekeeping job is already running. Try again when the run finishes.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackgroundJobRunningRefusal"
+                  "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"
                 }
               }
             },
@@ -38419,7 +38419,7 @@
     },
     {
       "name": "Instance",
-      "description": "The instance itself: what it is, its configuration, its background jobs and its audit log."
+      "description": "The instance itself: what it is, its configuration, its housekeeping jobs and its audit log."
     },
     {
       "name": "Export and restore",

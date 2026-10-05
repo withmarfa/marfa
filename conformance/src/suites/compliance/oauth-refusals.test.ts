@@ -162,7 +162,7 @@ describe("GET /auth/device/consent", () => {
     );
     expect(Number(aged.changes)).toBe(1);
     const swept = await fetch(
-      `${server.apiUrl}/background-jobs/dcr-client-cleanup/run`,
+      `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
       { method: "POST", headers: operator },
     );
     expect(swept.status).toBe(200);

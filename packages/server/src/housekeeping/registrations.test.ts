@@ -1,6 +1,6 @@
 /**
- * The set of background jobs is a function of the configuration, and
- * each gate is asserted from both sides: the background job is there under
+ * The set of housekeeping jobs is a function of the configuration, and
+ * each gate is asserted from both sides: the housekeeping job is there under
  * the setting that admits it, and gone under the one that switches it off.
  */
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,8 +12,8 @@ import {
 } from "../test-utils.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BackgroundJobs } from "./scheduler.js";
-import { registerBackgroundJobs } from "./registrations.js";
+import { Housekeeping } from "./scheduler.js";
+import { registerHousekeepingJobs } from "./registrations.js";
 import { DiskBlobStore, type BlobStore } from "../storage/blob-store.js";
 
 const contexts: UnbootstrappedTestApp[] = [];
@@ -30,20 +30,20 @@ async function namesUnder(
 ): Promise<{ names: string[]; intervalOf: (name: string) => number }> {
   const ctx = await createUnbootstrappedTestApp(overrides);
   contexts.push(ctx);
-  const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
+  const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
     pollIntervalMs: 3_600_000,
   });
-  registerBackgroundJobs(
-    backgroundJobs,
+  registerHousekeepingJobs(
+    housekeeping,
     storageOf(ctx.storage),
     ctx.blobs,
     ctx.config,
   );
-  await backgroundJobs.start();
-  const rows = await backgroundJobs.list();
-  await backgroundJobs.stop();
+  await housekeeping.start();
+  const rows = await housekeeping.list();
+  await housekeeping.stop();
   return {
-    names: backgroundJobs.names(),
+    names: housekeeping.names(),
     intervalOf: (name) => {
       const row = rows.find((candidate) => candidate.name === name);
       if (!row) throw new Error(`${name} has no row`);
@@ -66,8 +66,8 @@ const ALWAYS = [
   "blob-integrity",
 ];
 
-describe("the backgroundJobs registrations", () => {
-  it("registers every background job the defaults admit, the heartbeat only with a receiver", async () => {
+describe("the housekeeping registrations", () => {
+  it("registers every housekeeping job the defaults admit, the heartbeat only with a receiver", async () => {
     const { names } = await namesUnder({});
     expect(names).toEqual([
       "event-log-cleanup",
@@ -216,14 +216,14 @@ describe("the copy rules' wakes", () => {
     await upload(ctx, "backlog one");
     await upload(ctx, "backlog two");
     let now = T0;
-    const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
       pollIntervalMs: 3_600_000,
       nowFn: () => new Date(now),
     });
-    registerBackgroundJobs(backgroundJobs, ctx.storage, ctx.blobs, ctx.config);
-    await backgroundJobs.start();
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
     const dueAt = async () =>
-      (await ctx.storage.backgroundJobs.get("blob-replicate"))?.next_run_at;
+      (await ctx.storage.housekeeping.get("blob-replicate"))?.next_run_at;
     // Not due for its first-run delay.
     expect(await dueAt()).toBe(new Date(T0 + 15_000).toISOString());
 
@@ -231,7 +231,7 @@ describe("the copy rules' wakes", () => {
     // run is recorded a millisecond after the run's start, so the finish
     // can tell it from the schedule.
     now = T0 + 20_000;
-    const first = await backgroundJobs.runNow("blob-replicate");
+    const first = await housekeeping.runNow("blob-replicate");
     expect(first).toMatchObject({
       kind: "ran",
       run: { result: { copied: 1, remaining: 1 } },
@@ -240,7 +240,7 @@ describe("the copy rules' wakes", () => {
 
     // The rest copied: the next run is a cadence away.
     now = T0 + 21_000;
-    expect(await backgroundJobs.runNow("blob-replicate")).toMatchObject({
+    expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
       run: { result: { copied: 1, remaining: 0 } },
     });
     expect(await dueAt()).toBe(new Date(now + 60_000).toISOString());
@@ -253,7 +253,7 @@ describe("the copy rules' wakes", () => {
     process.stdout.write = () => true;
     try {
       now = T0 + 22_000;
-      expect(await backgroundJobs.runNow("blob-replicate")).toMatchObject({
+      expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
         run: { result: { copied: 0, remaining: 1 } },
       });
     } finally {
@@ -264,7 +264,7 @@ describe("the copy rules' wakes", () => {
     // cadence set by the run before, not a wake.
     expect(await dueAt()).toBe(new Date(T0 + 21_000 + 60_000).toISOString());
     expect(await second.has(refused)).toBeNull();
-    await backgroundJobs.stop();
+    await housekeeping.stop();
   });
 
   it("wakes replication after the integrity check strikes a copy", async () => {
@@ -273,23 +273,23 @@ describe("the copy rules' wakes", () => {
     await twoStores(ctx);
     const hash = await upload(ctx, "struck, then put back");
     let now = T0;
-    const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
       pollIntervalMs: 3_600_000,
       nowFn: () => new Date(now),
     });
-    registerBackgroundJobs(backgroundJobs, ctx.storage, ctx.blobs, ctx.config);
-    await backgroundJobs.start();
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
     now = T0 + 20_000;
-    expect(await backgroundJobs.runNow("blob-replicate")).toMatchObject({
+    expect(await housekeeping.runNow("blob-replicate")).toMatchObject({
       run: { result: { copied: 1, remaining: 0 } },
     });
     const dueAt = async () =>
-      (await ctx.storage.backgroundJobs.get("blob-replicate"))?.next_run_at;
+      (await ctx.storage.housekeeping.get("blob-replicate"))?.next_run_at;
     expect(await dueAt()).toBe(new Date(now + 60_000).toISOString());
 
     // A sound check wakes nothing.
     now = T0 + 30_000;
-    expect(await backgroundJobs.runNow("blob-integrity")).toMatchObject({
+    expect(await housekeeping.runNow("blob-integrity")).toMatchObject({
       run: { result: { verified: 2, struck: 0 } },
     });
     expect(await dueAt()).toBe(new Date(T0 + 20_000 + 60_000).toISOString());
@@ -304,7 +304,7 @@ describe("the copy rules' wakes", () => {
     process.stdout.write = () => true;
     try {
       now = T0 + 40_000;
-      expect(await backgroundJobs.runNow("blob-integrity")).toMatchObject({
+      expect(await housekeeping.runNow("blob-integrity")).toMatchObject({
         run: { result: { verified: 1, struck: 1 } },
       });
     } finally {
@@ -312,6 +312,6 @@ describe("the copy rules' wakes", () => {
     }
     // Woken from another run, so due at the wake's own instant.
     expect(await dueAt()).toBe(new Date(now).toISOString());
-    await backgroundJobs.stop();
+    await housekeeping.stop();
   });
 });

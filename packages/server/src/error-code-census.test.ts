@@ -143,7 +143,7 @@ describe("the codes the server sends and the error chapter", () => {
     // them all.
     expect(sent.size).toBeGreaterThan(60);
     expect(sent.get("internal_error")).toBe("middleware/error-handler.ts");
-    expect(sent.get("background_job_running")).toBe("the ErrorCode enum");
+    expect(sent.get("housekeeping_job_running")).toBe("the ErrorCode enum");
     expect(rowsOf(ERRORS_CHAPTER).length).toBeGreaterThan(50);
   });
 

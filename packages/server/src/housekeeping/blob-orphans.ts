@@ -5,7 +5,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
 
 // A type alias rather than an interface: an interface carries no index
-// signature, so it cannot satisfy the `BackgroundJobReport` the scheduler
+// signature, so it cannot satisfy the `HousekeepingReport` the scheduler
 // takes from a job's run.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type OrphanResult = {
