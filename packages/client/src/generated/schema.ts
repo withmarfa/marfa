@@ -3171,9 +3171,9 @@ export interface components {
              * @enum {string}
              */
             outcome: "succeeded" | "failed";
-            /** @description When the run started, as the connector reported it. */
+            /** @description When the run started, in UTC. */
             started_at: string;
-            /** @description When the run finished, as the connector reported it. */
+            /** @description When the run finished, in UTC. */
             finished_at: string;
             /** @description A short summary of the run; `null` if none was reported. */
             summary: string | null;
@@ -13536,9 +13536,9 @@ export interface operations {
                      * @enum {string}
                      */
                     outcome: "succeeded" | "failed";
-                    /** @description When the run started, as an ISO 8601 time. Marfa stores it as you send it. */
+                    /** @description When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC. */
                     started_at: string;
-                    /** @description When the run finished, as an ISO 8601 time. It can't be before `started_at`. */
+                    /** @description When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`. */
                     finished_at: string;
                     /** @description A short summary of the run. Leave it out for none. */
                     summary?: string;

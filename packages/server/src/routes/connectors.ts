@@ -11,6 +11,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, standingRule } from "../middleware/auth.js";
+import { normalizeTimeBound } from "../storage/interface.js";
 import type { InboundEndpoint, Storage } from "../storage/interface.js";
 import {
   INBOUND_PREFIX,
@@ -46,12 +47,8 @@ const ConnectorRunSchema = z
       .string()
       .describe("The ID of the connector that reported the run."),
     outcome: OutcomeSchema,
-    started_at: z
-      .string()
-      .describe("When the run started, as the connector reported it."),
-    finished_at: z
-      .string()
-      .describe("When the run finished, as the connector reported it."),
+    started_at: z.string().describe("When the run started, in UTC."),
+    finished_at: z.string().describe("When the run finished, in UTC."),
     summary: z
       .string()
       .nullable()
@@ -121,13 +118,13 @@ const RunInputSchema = z.object({
     .string()
     .refine(isValidTimestamp, "an ISO 8601 timestamp")
     .describe(
-      "When the run started, as an ISO 8601 time. Marfa stores it as you send it.",
+      "When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC.",
     ),
   finished_at: z
     .string()
     .refine(isValidTimestamp, "an ISO 8601 timestamp")
     .describe(
-      "When the run finished, as an ISO 8601 time. It can't be before `started_at`.",
+      "When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`.",
     ),
   summary: maxStringLength(z.string(), 2000)
     .optional()
@@ -884,13 +881,20 @@ export function connectorRoutes(storage: Storage) {
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const body = c.req.valid("json");
-    if (Date.parse(body.finished_at) < Date.parse(body.started_at)) {
+    const started_at = normalizeTimeBound(body.started_at, "started_at");
+    const finished_at = normalizeTimeBound(body.finished_at, "finished_at");
+    // Both are one fixed-width UTC spelling now, so text order is time order.
+    if (finished_at < started_at) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "A run cannot finish before it started",
       );
     }
-    const run = await storage.connectors.recordRun(connector.id, body);
+    const run = await storage.connectors.recordRun(connector.id, {
+      ...body,
+      started_at,
+      finished_at,
+    });
     return c.json(run, 201);
   });
 
