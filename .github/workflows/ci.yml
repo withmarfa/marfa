@@ -54,6 +54,7 @@ jobs:
       ci-sqlite: ${{ steps.classify.outputs.ci-sqlite }}
       workspace: ${{ steps.classify.outputs.workspace }}
       core-checks: ${{ steps.classify.outputs.core-checks }}
+      swift-package: ${{ steps.classify.outputs.swift-package }}
       core-checks-linux: ${{ steps.classify.outputs.core-checks-linux }}
       conformance: ${{ steps.classify.outputs.conformance }}
       cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
@@ -134,6 +135,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
       # nextest kills a test past the budget in `core/.config/nextest.toml`.
       - uses: taiki-e/install-action@v2
         with:
@@ -156,6 +158,15 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo nextest run --locked
+      # The script marfa-swift runs at the commit it pins. cargo-swift embeds
+      # one UniFFI bindgen and reads the metadata the crate's `uniffi` wrote,
+      # so a bump of either alone fails here and not in marfa-swift.
+      - name: Build the Swift package
+        if: ${{ needs.changes.outputs.swift-package != 'false' }}
+        working-directory: core/bindings/swift
+        env:
+          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+        run: ./build.sh
 
   # The core workspace on Linux, where the credential store that is not the
   # macOS keychain, and the in-memory test keychain it uses, are built, linted

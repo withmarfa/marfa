@@ -39,6 +39,11 @@ export const JOBS = [
   // `Core checks`, on macOS: the core's format, lint and tests, the login
   // keychain check and the Swift crate.
   "core-checks",
+  // `Core checks`' last step: `core/bindings/swift/build.sh`, the script
+  // marfa-swift runs at the commit it pins. It reads the Swift crate whole,
+  // since a dependency bump or an edit to the crate can stop it generating
+  // the glue, and nothing else in the core can.
+  "swift-package",
   // `Core checks (Linux)`: the same for the core workspace on Ubuntu, where
   // the non-macOS credential store and the test keychain it uses are built.
   // It reads what `core-checks` reads but the Swift crate.
@@ -203,11 +208,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/scripts\//, ["core-checks", "core-checks-linux", "core"]],
   [
     /^core\/bindings\/swift\/(Cargo\.toml|\.config\/)/,
-    ["core-checks", "core", "workspace"],
+    ["core-checks", "core", "workspace", "swift-package"],
   ],
   // The Linux job checks the core workspace and not the Swift crate, which
   // is a workspace of its own.
-  [/^core\/bindings\/swift\//, ["core-checks", "core"]],
+  [/^core\/bindings\/swift\//, ["core-checks", "core", "swift-package"]],
   // The Node module's JavaScript side is built and tested only by the live job.
   [/^core\/bindings\/node\/(test|scripts)\//, ["core"]],
   [
