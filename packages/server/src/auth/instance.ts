@@ -13,7 +13,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
 import { isAPIError } from "better-auth/api";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import { createLocalAccountIssuer } from "better-auth/db";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
@@ -540,10 +539,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // The order below is sign-up's own, and the reasons are its reasons.
   // Hash before anything is written, so a hasher that throws throws
   // before a user row exists. Create the user through the internal
-  // adapter. Then link the credential account with the issuer Better
-  // Auth's own credential lookup keys on — imported rather than spelled
-  // here, because a literal would keep working until the day the format
-  // moved and then fail as "wrong password" with nothing naming the cause.
+  // adapter, then link the credential account using the provider and user
+  // IDs that Better Auth matches at sign-in.
   const createEmailAccount = async (
     params: {
       email: string;
@@ -610,7 +607,6 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       await authContext.internalAdapter.linkAccount({
         userId: user.id,
         providerId: "credential",
-        issuer: createLocalAccountIssuer("credential"),
         accountId: user.id,
         password,
       });

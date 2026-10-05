@@ -124,7 +124,10 @@ async function archive(
   const pack = tar.pack();
   const chunks: Buffer[] = [];
   const collecting = (async () => {
-    for await (const chunk of pack) chunks.push(chunk);
+    for await (const chunk of pack) {
+      if (!Buffer.isBuffer(chunk)) throw new Error("Expected archive bytes");
+      chunks.push(chunk);
+    }
   })();
   function entry(name: string, bytes: Buffer) {
     pack.entry({ name, size: bytes.length }, bytes);

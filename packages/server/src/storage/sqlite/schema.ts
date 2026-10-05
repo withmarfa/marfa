@@ -839,8 +839,6 @@ export const auth_account = sqliteTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
-    // Better Auth keys account lookups on (issuer, account_id).
-    issuer: text("issuer").notNull(),
     userId: text("user_id")
       .notNull()
       .references(() => auth_user.id, { onDelete: "cascade" }),
@@ -862,10 +860,6 @@ export const auth_account = sqliteTable(
     index("idx_auth_account_user_id").on(table.userId),
     uniqueIndex("idx_auth_account_provider").on(
       table.providerId,
-      table.accountId,
-    ),
-    uniqueIndex("idx_auth_account_issuer_account_id").on(
-      table.issuer,
       table.accountId,
     ),
   ],

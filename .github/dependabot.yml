@@ -58,6 +58,12 @@ updates:
     labels:
       - "dependencies"
     ignore:
+      # The 0.18 client pools local connections and rolls back raw BEGIN
+      # after execute, breaking the storage layer's explicit transactions.
+      # Reconsider later versions against the transaction outcome tests.
+      - dependency-name: "@libsql/client"
+        versions:
+          - "0.18.x"
       # Two esbuild advisories that no published version can satisfy, both
       # reached only through a parent that pins the vulnerable line.
       #

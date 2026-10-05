@@ -34,7 +34,10 @@ async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
   await new Promise<void>((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {
       const chunks: Buffer[] = [];
-      stream.on("data", (c: Buffer) => chunks.push(c));
+      stream.on("data", (c) => {
+        if (!Buffer.isBuffer(c)) throw new Error("Expected archive bytes");
+        chunks.push(c);
+      });
       stream.on("end", () => {
         entries.set(header.name, Buffer.concat(chunks));
         next();

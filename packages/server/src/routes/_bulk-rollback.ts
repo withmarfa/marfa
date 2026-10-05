@@ -8,8 +8,13 @@ import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
  */
 function innerStatus(code: string | undefined): number {
   if (code === undefined) return 400;
-  const status = httpStatus(code as ErrorCode) as number | undefined;
-  return status !== undefined && status >= 400 && status < 500 ? status : 400;
+  const knownCode = Object.values(ErrorCode).find(
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison -- Validate the external string against the error code registry.
+    (value) => value === code,
+  );
+  if (knownCode === undefined) return 400;
+  const status = httpStatus(knownCode);
+  return status >= 400 && status < 500 ? status : 400;
 }
 
 /**

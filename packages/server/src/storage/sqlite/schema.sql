@@ -56,7 +56,6 @@ CREATE TABLE IF NOT EXISTS `auth_account` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
 	`provider_id` text NOT NULL,
-	`issuer` text NOT NULL,
 	`user_id` text NOT NULL,
 	`access_token` text,
 	`refresh_token` text,
@@ -72,7 +71,6 @@ CREATE TABLE IF NOT EXISTS `auth_account` (
 
 CREATE INDEX IF NOT EXISTS `idx_auth_account_user_id` ON `auth_account` (`user_id`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_account_provider` ON `auth_account` (`provider_id`,`account_id`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_auth_account_issuer_account_id` ON `auth_account` (`issuer`,`account_id`);
 CREATE TABLE IF NOT EXISTS `auth_jwks` (
 	`id` text PRIMARY KEY NOT NULL,
 	`public_key` text NOT NULL,
@@ -270,6 +268,18 @@ CREATE TABLE IF NOT EXISTS `auth_verification` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_auth_verification_identifier` ON `auth_verification` (`identifier`);
+CREATE TABLE IF NOT EXISTS `background_jobs` (
+	`name` text PRIMARY KEY NOT NULL,
+	`interval_ms` integer NOT NULL,
+	`next_run_at` text NOT NULL,
+	`running_since` text,
+	`last_started_at` text,
+	`last_finished_at` text,
+	`last_outcome` text,
+	`last_error` text,
+	`last_result` text
+);
+
 CREATE TABLE IF NOT EXISTS `blob_copy_deletions` (
 	`hash` text NOT NULL,
 	`store_id` text NOT NULL,
@@ -485,18 +495,6 @@ CREATE TABLE IF NOT EXISTS `extension_blob_references` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_extension_blob_references_item` ON `extension_blob_references` (`item_id`);
-CREATE TABLE IF NOT EXISTS `background_jobs` (
-	`name` text PRIMARY KEY NOT NULL,
-	`interval_ms` integer NOT NULL,
-	`next_run_at` text NOT NULL,
-	`running_since` text,
-	`last_started_at` text,
-	`last_finished_at` text,
-	`last_outcome` text,
-	`last_error` text,
-	`last_result` text
-);
-
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`id` text PRIMARY KEY NOT NULL,
 	`credential` text NOT NULL,
