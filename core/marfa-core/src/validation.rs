@@ -3,7 +3,60 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::error::CoreError;
+use crate::js;
 use crate::model::{THUMBNAIL_MAX_BYTES, Thumbnail};
+
+/// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
+/// removed through its own URL path, so one longer could be written and never
+/// removed.
+pub(crate) const MAX_TAG_LENGTH: usize = 128;
+
+/// The tags a write may carry, as the server holds them: not empty, not blank
+/// as JavaScript's `trim` reads blank, and at most `MAX_TAG_LENGTH` UTF-16
+/// code units. A write the server would refuse is refused here, so it is
+/// never saved or queued only to come back refused.
+pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
+    let errors: Vec<String> = tags
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tag)| {
+            let problem = if tag.is_empty() {
+                "A tag must not be empty".to_string()
+            } else if tag.chars().all(js::is_space) {
+                "A tag must not be blank".to_string()
+            } else if tag.encode_utf16().count() > MAX_TAG_LENGTH {
+                format!("A tag must contain at most {MAX_TAG_LENGTH} UTF-16 code units")
+            } else {
+                return None;
+            };
+            Some(format!("tags[{index}]: {problem}"))
+        })
+        .collect();
+    refuse(errors)
+}
+
+/// The property names a write may carry, as the server holds them: not empty.
+pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), CoreError> {
+    refuse(
+        properties
+            .keys()
+            .any(String::is_empty)
+            .then(|| "properties: A property name must not be empty".to_string())
+            .into_iter()
+            .collect(),
+    )
+}
+
+fn refuse(errors: Vec<String>) -> Result<(), CoreError> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CoreError::Validation {
+            code: "validation_error".into(),
+            message: errors.join("; "),
+        })
+    }
+}
 
 pub(crate) fn properties(
     fields: &BTreeMap<&str, &Value>,
