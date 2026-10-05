@@ -4,7 +4,7 @@ How Marfa's API description is written: every summary, description and example i
 
 The wording follows the [Google developer documentation style guide](https://developers.google.com/style), including its guidance on [API reference text](https://developers.google.com/style/api-reference-comments). Names and shapes follow `GLOSSARY.md`, which follows Stripe's API conventions. Where this guide is silent, follow Google.
 
-**(checked)** marks a rule that `packages/server/src/openapi-style.test.ts` checks. Rules the document is still being brought up to are held at a ceiling there, which only goes down.
+**(checked)** marks a rule that `packages/server/src/openapi-style.test.ts` checks. A change that breaks one fails the test, naming what broke it.
 
 ## Who reads it
 

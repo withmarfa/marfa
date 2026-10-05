@@ -1,11 +1,9 @@
 /**
  * The API description follows `API-STYLE.md`.
  *
- * Two kinds of rule. The ones every operation already meets are asserted
- * outright. The ones the document is still being brought up to are held by a
- * ceiling per rule: a change may lower a count, never raise it, and a count
- * that falls below its ceiling must take the ceiling down with it, so the
- * ratchet only turns one way. A ceiling of zero is an outright rule.
+ * Every rule the guide marks **(checked)** is asserted here outright, against
+ * the committed `openapi.json`. A failure lists each operation, parameter,
+ * response, schema or field that breaks the rule, by name.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -27,11 +25,11 @@ interface Operation {
  * Every operation, and every request Marfa sends to a webhook, which
  * `API-STYLE.md` holds to the same rules.
  */
-function operations(): Operation[] {
+function operations(doc: Json = document): Operation[] {
   const out: Operation[] = [];
   const sources: [string, unknown][] = [
-    ["", document.paths],
-    ["webhook ", document.webhooks],
+    ["", doc.paths],
+    ["webhook ", doc.webhooks],
   ];
   for (const [prefix, entries] of sources) {
     for (const [name, methods] of Object.entries(
@@ -55,9 +53,9 @@ function text(value: unknown): string | undefined {
 }
 
 /** Every property of every named schema, `allOf` branches included. */
-function namedFields(): { name: string; field: Json }[] {
+function namedFields(doc: Json): { name: string; field: Json }[] {
   const out: { name: string; field: Json }[] = [];
-  const schemas = ((document.components as Json | undefined)?.schemas ??
+  const schemas = ((doc.components as Json | undefined)?.schemas ??
     {}) as Record<string, Json>;
   const visit = (owner: string, schema: Json) => {
     for (const [field, value] of Object.entries(
@@ -85,19 +83,36 @@ function fieldDescription(field: Json): string | undefined {
   return undefined;
 }
 
-/** The violations of each rule the document is still being brought up to. */
-function violations(): Record<keyof typeof CEILINGS, string[]> {
-  const found: Record<keyof typeof CEILINGS, string[]> = {
+/**
+ * The rules checked against every operation, parameter, response, schema and
+ * field, each with the sentence a failure reports. The limits are the ones
+ * `API-STYLE.md` sets.
+ */
+const RULES = {
+  summaryForm:
+    "every summary starts with a capital letter, is at most 32 characters and has no final period",
+  descriptionLength: "every operation description is at most 250 characters",
+  parameterUndescribed: "every parameter has a description",
+  parameterLength: "every parameter description is at most 250 characters",
+  responseLength: "every response description is at most 400 characters",
+  schemaUndescribed: "every named schema has a description",
+  fieldUndescribed: "every field of a named schema has a description",
+  fieldLength: "every field description is at most 250 characters",
+} as const;
+
+/** What breaks each rule, named so a failure says where to look. */
+function violations(doc: Json): Record<keyof typeof RULES, string[]> {
+  const found: Record<keyof typeof RULES, string[]> = {
     summaryForm: [],
     descriptionLength: [],
     parameterUndescribed: [],
     parameterLength: [],
+    responseLength: [],
     schemaUndescribed: [],
     fieldUndescribed: [],
     fieldLength: [],
-    responseLength: [],
   };
-  for (const { key, operation } of operations()) {
+  for (const { key, operation } of operations(doc)) {
     const summary = text(operation.summary) ?? "";
     if (
       summary.length > 32 ||
@@ -125,13 +140,13 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
       }
     }
   }
-  const schemas = ((document.components as Json | undefined)?.schemas ??
+  const schemas = ((doc.components as Json | undefined)?.schemas ??
     {}) as Record<string, Json>;
   for (const [name, schema] of Object.entries(schemas)) {
     if (text(schema.description) === undefined)
       found.schemaUndescribed.push(name);
   }
-  for (const { name, field } of namedFields()) {
+  for (const { name, field } of namedFields(doc)) {
     const description = fieldDescription(field);
     if (description === undefined) found.fieldUndescribed.push(name);
     else if (description.length > 250) found.fieldLength.push(name);
@@ -139,40 +154,65 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
   return found;
 }
 
-/**
- * Lower a ceiling whenever its count falls. Each reaches zero as the areas
- * of the document are rewritten, and a rule at zero stays there.
- */
-const CEILINGS = {
-  summaryForm: 0,
-  descriptionLength: 0,
-  parameterUndescribed: 0,
-  parameterLength: 0,
-  schemaUndescribed: 0,
-  fieldUndescribed: 0,
-  fieldLength: 0,
-  responseLength: 0,
-};
-
 describe("the API description follows API-STYLE.md", () => {
-  const found = violations();
+  const found = violations(document);
 
-  for (const [rule, ceiling] of Object.entries(CEILINGS) as [
-    keyof typeof CEILINGS,
-    number,
+  for (const [rule, says] of Object.entries(RULES) as [
+    keyof typeof RULES,
+    string,
   ][]) {
-    it(`${rule}: at most ${String(ceiling)}`, () => {
-      const count = found[rule].length;
-      expect(
-        count,
-        `${rule} has ${String(count)}, over its ceiling. First: ${found[rule].slice(0, 5).join("; ")}`,
-      ).toBeLessThanOrEqual(ceiling);
-      expect(
-        count,
-        `${rule} fell to ${String(count)}. Lower its ceiling in this file to match.`,
-      ).toBe(ceiling);
+    it(says, () => {
+      expect(found[rule], `These break the rule that ${says}`).toEqual([]);
     });
   }
+
+  it("names what breaks each rule in a document that breaks them all", () => {
+    const long = "x".repeat(251);
+    const broken = {
+      paths: {
+        "/things": {
+          get: {
+            summary: "list things.",
+            description: long,
+            parameters: [{ name: "q" }, { name: "limit", description: long }],
+            responses: { "200": { description: "x".repeat(401) } },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          Thing: {
+            properties: {
+              id: {},
+              note: { description: long },
+              owner: { allOf: [{ $ref: "#/components/schemas/Owner" }] },
+            },
+          },
+          Owner: {
+            description: "Who owns a thing.",
+            properties: {
+              id: {
+                allOf: [
+                  { $ref: "#/components/schemas/Id" },
+                  { description: "The ID of the owner." },
+                ],
+              },
+            },
+          },
+        },
+      },
+    };
+    expect(violations(broken)).toEqual({
+      summaryForm: ["GET /things"],
+      descriptionLength: ["GET /things"],
+      parameterUndescribed: ["GET /things q"],
+      parameterLength: ["GET /things limit"],
+      responseLength: ["GET /things 200"],
+      schemaUndescribed: ["Thing"],
+      fieldUndescribed: ["Thing.id", "Thing.owner"],
+      fieldLength: ["Thing.note"],
+    });
+  });
 
   it("holds the requests Marfa sends to a webhook to the same rules", () => {
     expect(
