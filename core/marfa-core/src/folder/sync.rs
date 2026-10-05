@@ -57,13 +57,9 @@ impl Folder {
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
             Err(error) => return Err(error),
         };
-        // Not where the server did not answer, which the report says: the
-        // placements wait for the next sync.
-        let reachable = catch_up.is_ok()
-            && drain.report.unavailable.is_none()
-            && drain.report.stopped.is_none()
-            && drain.report.undelivered == 0;
-        if reachable && pull.as_ref().is_some_and(|pulled| pulled.placed > 0) {
+        if sends_again(catch_up.is_ok(), &drain.report)
+            && pull.as_ref().is_some_and(|pulled| pulled.placed > 0)
+        {
             drain.absorb(self.drain()?);
         }
         Ok(SyncReport {
@@ -86,5 +82,53 @@ impl Folder {
             Folder::open(dir, None)?.remove()?;
         }
         Ok(())
+    }
+}
+
+/// Not where the first drain or the catch-up shows the server cannot take
+/// writes (unreachable, credential refused, a write left undelivered): the
+/// report says why, and the placements wait for the next sync.
+fn sends_again(caught_up: bool, first: &crate::DrainReport) -> bool {
+    caught_up && first.unavailable.is_none() && first.stopped.is_none() && first.undelivered == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drained() -> crate::DrainReport {
+        crate::DrainReport {
+            answered: 1,
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    #[test]
+    fn a_second_drain_goes_only_where_nothing_showed_the_server_unable_to_take_writes() {
+        assert!(sends_again(true, &drained()), "the witness: it goes");
+        assert!(!sends_again(false, &drained()), "the catch-up failed");
+        let unreachable = crate::DrainReport {
+            unavailable: Some("the server did not answer".into()),
+            ..drained()
+        };
+        assert!(!sends_again(true, &unreachable));
+        let refused = crate::DrainReport {
+            stopped: Some("the server refused the credential".into()),
+            ..drained()
+        };
+        assert!(!sends_again(true, &refused));
+        let undelivered = crate::DrainReport {
+            undelivered: 1,
+            ..drained()
+        };
+        assert!(!sends_again(true, &undelivered));
     }
 }

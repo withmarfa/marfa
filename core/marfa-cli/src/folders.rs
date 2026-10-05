@@ -849,13 +849,16 @@ impl Conflicts {
             if verdict.verdict != Some(marfa_core::Verdict::Conflicted) {
                 continue;
             }
-            let file = verdict.item_id.as_deref().and_then(&file_of);
+            // The drain answers every write in the store, so a conflict on an
+            // item that is no file of this folder is not this folder's to say.
+            let Some(file) = verdict.item_id.as_deref().and_then(&file_of) else {
+                continue;
+            };
             let copy = verdict.conflicted_copy_id.as_deref().and_then(&file_of);
-            let mut line = output::verdict_line(verdict, file.as_deref(), copy.as_deref());
+            let mut line = output::verdict_line(verdict, Some(&file), copy.as_deref());
             if let (None, Some(id)) = (&copy, &verdict.conflicted_copy_id) {
                 line.push_str("; it is not a file in this folder yet");
-                let said = file.or_else(|| verdict.item_id.clone()).unwrap_or_default();
-                self.awaiting.push((said, id.clone()));
+                self.awaiting.push((file, id.clone()));
             }
             lines.push(line);
         }
@@ -949,6 +952,24 @@ mod tests {
                 .is_empty(),
             "said a third time"
         );
+    }
+
+    #[test]
+    fn a_conflict_on_an_item_that_is_no_file_here_is_not_said() {
+        let mut files: HashMap<&str, &str> = [("mine", "note.md")].into();
+        let mut conflicts = Conflicts::default();
+        let said = conflicts.say_with(
+            |id| files.get(id).map(|path| path.to_string()),
+            &drain(vec![answered(Verdict::Conflicted, "other", Some("copy"))]),
+        );
+        assert!(said.is_empty(), "{said:?}");
+        // Nor is it kept to be said when its copy becomes a file here.
+        files.insert("copy", "other (2).md");
+        let later = conflicts.say_with(
+            |id| files.get(id).map(|path| path.to_string()),
+            &drain(Vec::new()),
+        );
+        assert!(later.is_empty(), "{later:?}");
     }
 
     #[test]
