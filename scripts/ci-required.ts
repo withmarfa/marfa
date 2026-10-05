@@ -36,7 +36,13 @@ export const JOBS = [
   // and its build, typecheck, lint and tests only for `workspace`.
   "ci-sqlite",
   "workspace",
+  // `Core checks`, on macOS: the core's format, lint and tests, the login
+  // keychain check and the Swift crate.
   "core-checks",
+  // `Core checks (Linux)`: the same for the core workspace on Ubuntu, where
+  // the non-macOS credential store and the test keychain it uses are built.
+  // It reads what `core-checks` reads but the Swift crate.
+  "core-checks-linux",
   "conformance",
   "cli-scenarios",
   "restore-drill",
@@ -69,6 +75,7 @@ const SERVER: readonly Job[] = [
 /** Every job that builds the `marfa` binary, and the core's own checks. */
 const RUST: readonly Job[] = [
   "core-checks",
+  "core-checks-linux",
   "conformance",
   "cli-scenarios",
   "core",
@@ -178,18 +185,26 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/Cargo\.toml$/, [...RUST, "workspace"]],
   [/^core\/Cargo\.lock$/, RUST],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
-  [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
+  [
+    /^core\/\.config\//,
+    ["core-checks", "core-checks-linux", "core", "workspace"],
+  ],
   // It can hide a file the client generator writes from the freshness
   // check's `git status`.
   [/^core\/\.gitignore$/, ["clients-freshness"]],
-  [/^core\/scripts\/test-limits\.sh$/, ["core-checks", "core", "workspace"]],
+  [
+    /^core\/scripts\/test-limits\.sh$/,
+    ["core-checks", "core-checks-linux", "core", "workspace"],
+  ],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
-  [/^core\/scripts\//, ["core-checks", "core"]],
+  [/^core\/scripts\//, ["core-checks", "core-checks-linux", "core"]],
   [
     /^core\/bindings\/swift\/(Cargo\.toml|\.config\/)/,
     ["core-checks", "core", "workspace"],
   ],
+  // The Linux job checks the core workspace and not the Swift crate, which
+  // is a workspace of its own.
   [/^core\/bindings\/swift\//, ["core-checks", "core"]],
   // The Node module's JavaScript side is built and tested only by the live job.
   [/^core\/bindings\/node\/(test|scripts)\//, ["core"]],
@@ -197,10 +212,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/bindings\/node\/(index\.js|index\.d\.ts|package\.json|pnpm-lock\.yaml|tsconfig\.json)$/,
     ["core"],
   ],
-  [/^core\/bindings\//, ["core-checks", "core"]],
+  [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // A crate's tests are not in the binary, and spec citations are read only
   // from `src/`.
-  [/^core\/[^/]+\/tests\//, ["core-checks", "core"]],
+  [/^core\/[^/]+\/tests\//, ["core-checks", "core-checks-linux", "core"]],
   // Any other crate can be one the binary is built from.
   [/^core\//, RUST],
 
@@ -211,6 +226,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [
       "workspace",
       "core-checks",
+      "core-checks-linux",
       "conformance",
       "cli-scenarios",
       "openapi-freshness",

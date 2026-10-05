@@ -113,10 +113,21 @@ jobs:
           cargo nextest run --locked --workspace --run-ignored only
           (cd bindings/swift && cargo nextest run --locked --run-ignored only)
 
-      # marfa-swift builds the framework itself, at the commit it pins.
+      # marfa-swift builds the framework itself, at the commit it pins. The
+      # systems come from `build.sh`, as `check-targets.sh` reads them, so the
+      # C this build compiles targets the same oldest systems the shipped
+      # framework does.
       - name: Build the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
+          macos="$(sed -n 's/^macos=//p' build.sh)"
+          ios="$(sed -n 's/^ios=//p' build.sh)"
+          if [[ -z "${macos}" || -z "${ios}" ]]; then
+            echo "build.sh names no macos= or ios= target" >&2
+            exit 1
+          fi
+          export MACOSX_DEPLOYMENT_TARGET="${macos}.0"
+          export IPHONEOS_DEPLOYMENT_TARGET="${ios}.0"
           cargo build --locked --release \
             --target aarch64-apple-darwin \
             --target aarch64-apple-ios \

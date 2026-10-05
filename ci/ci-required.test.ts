@@ -45,7 +45,13 @@ const SERVER: Job[] = [
   "image",
   "openapi-freshness",
 ];
-const RUST: Job[] = ["core-checks", "conformance", "cli-scenarios", "core"];
+const RUST: Job[] = [
+  "core-checks",
+  "core-checks-linux",
+  "conformance",
+  "cli-scenarios",
+  "core",
+];
 const CI_YML: Job[] = JOBS.filter((job) => job !== "core");
 
 describe("what a change runs", () => {
@@ -150,12 +156,17 @@ describe("what a change runs", () => {
     [
       "a Rust test, which is not in the binary",
       ["core/marfa-cli/tests/folder.rs"],
+      ["core-checks", "core-checks-linux", "core"],
+    ],
+    [
+      "a Swift-only change, which the Linux job does not check",
+      ["core/bindings/swift/src/lib.rs"],
       ["core-checks", "core"],
     ],
     [
-      "a Swift-only change",
-      ["core/bindings/swift/src/lib.rs"],
-      ["core-checks", "core"],
+      "the Node module's Rust, a member of the core workspace",
+      ["core/bindings/node/src/lib.rs"],
+      ["core-checks", "core-checks-linux", "core"],
     ],
     [
       "the Node module's JavaScript",
@@ -169,6 +180,7 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         "core-checks",
+        "core-checks-linux",
         "conformance",
         "cli-scenarios",
         "openapi-freshness",
@@ -288,6 +300,7 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         "core-checks",
+        "core-checks-linux",
         "conformance",
         "cli-scenarios",
         "clients-freshness",
@@ -474,6 +487,7 @@ describe("what a draft runs", () => {
     // still fails the one required check that runs, so it cannot merge.
     expect(runs(["core/marfa-core/tests/sync.rs"])).toEqual([
       "core-checks",
+      "core-checks-linux",
       "core",
     ]);
     expect(
