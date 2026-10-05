@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { randomBytes } from "node:crypto";
 import type { ApiKey, Permission } from "@withmarfa/shared";
@@ -107,7 +108,12 @@ const MAX_CLAIMED_SOURCES = 1000;
  * key's own source could be and a write names both the same way.
  */
 const SourcesSchema = z
-  .array(z.string().trim().min(1, "a claimed source is not empty").max(200))
+  .array(
+    maxStringLength(
+      z.string().trim().min(1, "a claimed source is not empty"),
+      200,
+    ),
+  )
   .max(
     MAX_CLAIMED_SOURCES,
     `a key claims at most ${String(MAX_CLAIMED_SOURCES)} sources`,
@@ -208,7 +214,10 @@ const createKeyRoute = createRoute({
             // Trimmed before it is measured, so a source of spaces is refused
             // here rather than stored empty, where the natural-key lookup
             // reads it as no source at all and a repeated create collides.
-            source: z.string().trim().min(1, "source is required").max(200),
+            source: maxStringLength(
+              z.string().trim().min(1, "source is required"),
+              200,
+            ),
             sources: SourcesSchema.optional(),
             permissions: z.array(PermissionEnum).optional(),
             default_tier: TierEnum.optional(),

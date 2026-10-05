@@ -104,6 +104,7 @@ export function isOpenEnded(scope: ParsedScope): boolean {
       // stops this compiling until somebody answers for it, rather than
       // inheriting an answer from whichever arm happens to catch it.
       const _exhaustive: never = scope.kind;
+      // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- Consume the compile-time exhaustiveness witness.
       void _exhaustive;
       return false;
     }

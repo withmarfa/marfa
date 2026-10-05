@@ -56,8 +56,7 @@ function breakWrite<O extends object>(
 ): { fired: () => number; restore: () => void } {
   const original = owner[method];
   let fired = 0;
-  owner[method] = ((...args: unknown[]): never => {
-    void args;
+  owner[method] = ((): never => {
     fired += 1;
     throw new ForcedFailure(String(method));
   }) as O[typeof method];

@@ -195,7 +195,7 @@ export async function readArchive(
       seen.add(name);
 
       if (name === "manifest.json" || name === "types.ndjson") {
-        if ((header.size ?? 0) > MAX_ARCHIVE_TEXT_BYTES) {
+        if (header.size > MAX_ARCHIVE_TEXT_BYTES) {
           fail(tooLarge(name));
           return;
         }
@@ -203,7 +203,13 @@ export async function readArchive(
 
       if (name === "manifest.json") {
         const chunks: Buffer[] = [];
-        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        stream.on("data", (chunk) => {
+          if (!Buffer.isBuffer(chunk)) {
+            fail(invalid("Invalid archive: expected bytes"));
+            return;
+          }
+          chunks.push(chunk);
+        });
         stream.on("end", () => {
           try {
             manifest = parseManifest(Buffer.concat(chunks).toString("utf-8"));

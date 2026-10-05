@@ -472,6 +472,7 @@ export function isTypeScope(parsed: ParsedScope): boolean {
       // value built by hand or arriving from a stale build is not admitted
       // either.
       const _exhaustive: never = parsed.kind;
+      // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- Consume the compile-time exhaustiveness witness.
       void _exhaustive;
       return false;
     }
@@ -1278,6 +1279,7 @@ export function grantCoversScope(
       // decides how breadth works on it, rather than inheriting whichever
       // arm happens to sit last.
       const _exhaustive: never = need.kind;
+      // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- Consume the compile-time exhaustiveness witness.
       void _exhaustive;
       return false;
     }

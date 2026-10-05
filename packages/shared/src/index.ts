@@ -10,3 +10,5 @@ export * from "./query-parser.js";
 export * from "./time-zones.js";
 export * from "./recurrence.js";
 export * from "./registry-view.js";
+
+export * from "./string-length.js";

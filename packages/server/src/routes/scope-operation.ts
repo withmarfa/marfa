@@ -89,6 +89,7 @@ export function scopeOperation(scope: ParsedScope): Operation | undefined {
       return undefined;
     default: {
       const _exhaustive: never = scope.kind;
+      // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- Consume the compile-time exhaustiveness witness.
       void _exhaustive;
       return undefined;
     }

@@ -237,7 +237,11 @@ async function manifestOf(bytes: Buffer): Promise<unknown> {
   return new Promise((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {
       const chunks: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => {
+      stream.on("data", (chunk) => {
+        if (!Buffer.isBuffer(chunk)) {
+          reject(new Error("Expected archive bytes"));
+          return;
+        }
         if (header.name === "manifest.json") chunks.push(chunk);
       });
       stream.on("end", () => {

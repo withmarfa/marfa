@@ -280,7 +280,10 @@ describe("GET /export?format=archive", () => {
     await new Promise<void>((resolve, reject) => {
       extract.on("entry", (header, stream, next) => {
         const chunks: Buffer[] = [];
-        stream.on("data", (c: Buffer) => chunks.push(c));
+        stream.on("data", (c) => {
+          if (!Buffer.isBuffer(c)) throw new Error("Expected archive bytes");
+          chunks.push(c);
+        });
         stream.on("end", () => {
           entries.set(header.name, Buffer.concat(chunks));
           next();
@@ -371,7 +374,10 @@ describe("GET /export?format=archive", () => {
       await new Promise<void>((resolve, reject) => {
         extract.on("entry", (header, stream, next) => {
           const chunks: Buffer[] = [];
-          stream.on("data", (c: Buffer) => chunks.push(c));
+          stream.on("data", (c) => {
+            if (!Buffer.isBuffer(c)) throw new Error("Expected archive bytes");
+            chunks.push(c);
+          });
           stream.on("end", () => {
             entries.set(header.name, Buffer.concat(chunks));
             next();

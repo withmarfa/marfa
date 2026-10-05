@@ -531,10 +531,12 @@ describe("pages", () => {
       { data: ["a"], next_cursor: "c1" },
       { data: ["a"], next_cursor: "c1" },
     ]);
+    const rows: string[] = [];
     const walk = async () => {
-      for await (const _ of pages(source.fetch)) void _;
+      for await (const row of pages(source.fetch)) rows.push(row);
     };
     await expect(walk()).rejects.toThrow(/would not end/);
+    expect(rows).toEqual(["a", "a"]);
   });
 });
 

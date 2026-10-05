@@ -585,7 +585,10 @@ async function unpack(bytes: Buffer): Promise<Map<string, Buffer>> {
   await new Promise<void>((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {
       const chunks: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      stream.on("data", (chunk) => {
+        if (!Buffer.isBuffer(chunk)) throw new Error("Expected archive bytes");
+        chunks.push(chunk);
+      });
       stream.on("end", () => {
         entries.set(header.name, Buffer.concat(chunks));
         next();

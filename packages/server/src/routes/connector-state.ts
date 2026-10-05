@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * What a connector keeps on the instance rather than beside itself, so a
@@ -40,13 +41,9 @@ const CONNECTOR_KEY_ONLY = "The connector's own key only.";
 
 const FENCED = "Taken only from the `process` holding a live hold.";
 
-const ProcessSchema = z
-  .string()
-  .min(1)
-  .max(100)
-  .describe(
-    "The process's own name for itself, opaque to the server, such as a UUID it chose at start.",
-  );
+const ProcessSchema = maxStringLength(z.string().min(1), 100).describe(
+  "The process's own name for itself, opaque to the server, such as a UUID it chose at start.",
+);
 
 /**
  * Zod rebuilds a record without its `__proto__` key, which a vendor's payload
@@ -55,7 +52,7 @@ const ProcessSchema = z
  */
 const JsonObject = z.record(z.string(), z.unknown());
 
-const ItemId = z.string().min(1).max(200);
+const ItemId = maxStringLength(z.string().min(1), 200);
 
 const ConnectorStateSchema = z
   .object({

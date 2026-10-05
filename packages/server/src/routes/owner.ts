@@ -1,3 +1,4 @@
+import { maxStringLength } from "@withmarfa/shared";
 /**
  * The owner: the one account behind an instance's sign-in surface.
  *
@@ -40,10 +41,7 @@ const CreateOwnerBodySchema = z.object({
   // The length bound is the sign-in surface's own and is not restated
   // here; a refusal names it.
   password: z.string(),
-  name: z
-    .string()
-    .trim()
-    .max(200)
+  name: maxStringLength(z.string().trim(), 200)
     .optional()
     .describe("Falls back to the address's local part when absent or blank."),
 });

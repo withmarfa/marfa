@@ -1640,6 +1640,7 @@ function describeScope(scope: ParsedScope): string | undefined {
       // The runtime arm refuses too, so a value built by hand or arriving
       // from a stale build is not admitted either.
       const _exhaustive: never = scope.kind;
+      // eslint-disable-next-line @typescript-eslint/no-meaningless-void-operator -- Consume the compile-time exhaustiveness witness.
       void _exhaustive;
       return undefined;
     }

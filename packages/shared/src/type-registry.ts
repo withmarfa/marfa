@@ -40,6 +40,7 @@ import type {
 import { ErrorCode, MarfaError } from "./errors.js";
 import type { EnforcementSettings, InstanceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
+import { maxStringLength } from "./string-length.js";
 import { eventScheduleIssues } from "./recurrence.js";
 
 /** The type whose schedule fields every write is held to, with its subtypes. */
@@ -757,11 +758,12 @@ const noNullByte = (schema: z.ZodString): z.ZodType =>
 export const DEFAULT_MAX_STRING_LENGTH = 100_000;
 const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
 
-// Build a length-bounded, NUL-rejecting string schema. The `.max()` cap
-// applies before the NUL refine so an over-long string fails fast with a
-// clear bound error.
-const boundedString = (field: FieldDefinition): z.ZodType =>
-  noNullByte(z.string().max(field.maxLength ?? DEFAULT_MAX_STRING_LENGTH));
+// Match the working copy's UTF-16 bound rather than the reader library's
+// Unicode code-point count, so one value has the same verdict offline.
+const boundedString = (field: FieldDefinition): z.ZodType => {
+  const max = field.maxLength ?? DEFAULT_MAX_STRING_LENGTH;
+  return noNullByte(maxStringLength(z.string(), max));
+};
 
 /**
  * The most a thumbnail may decode to. It travels inside its item on every
@@ -852,7 +854,11 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       // `all_day` on the event is what says which reading applies. A
       // naive local time satisfies neither and is refused, so it cannot
       // surface later as a parse error in whatever reads it.
-      schema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
+      schema = z.union([
+        z.iso.datetime({ offset: true }),
+        z.iso.datetime({ offset: true, precision: -1 }),
+        z.iso.date(),
+      ]);
       break;
     case "date":
       // A calendar date, YYYY-MM-DD. Same reasoning as datetime: a
