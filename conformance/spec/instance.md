@@ -89,7 +89,7 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
 Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
 
-15. When the server starts on a database whose schema differs from its own, other than a database that statement 25 completes, or that still holds a retired registry table or the retired setting `space_config`, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
+15. When the server starts on a database that still holds a retired registry table or the retired setting `space_config`, or whose schema differs from its own and that statement 25 does not complete, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
 
     Reason: an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. The message does not promise a restore the contract does not.
 
