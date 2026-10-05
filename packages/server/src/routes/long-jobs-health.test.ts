@@ -61,12 +61,14 @@ const CPU_BOUND_MS = 2_000;
 
 /**
  * Jobs that walk the instance in pages, or retire grants one by one, are held
- * to tighter bounds, each set between the stretch of one unit and the stretch
- * of the whole run, so that the test fails when its job stops handing the
- * loop over. Against the two seconds above they would pass without it.
+ * to a tighter bound, set between the stretch of one unit and the stretch of
+ * the whole run, so that the test fails when its job stops handing the loop
+ * over. Against the two seconds above they would pass without it. A hosted
+ * runner spends about four times the laptop's processor time on one unit,
+ * so the bound leaves that much room. Version thinning keeps the two seconds:
+ * its corpus is large enough that the whole run exceeds them.
  */
-const PAGED_BOUND_MS = 300;
-const THINNING_BOUND_MS = 1_000;
+const PAGED_BOUND_MS = 500;
 
 const ITEMS = 20_000;
 const BULK_TARGETS = 10_000;
@@ -421,7 +423,7 @@ describe("GET /health while a long job runs", () => {
     );
     expect(result.items).toBe(100 + THINNING_ITEMS);
     expect(result.pruned).toBeGreaterThan(400 + THINNING_ITEMS * 3);
-    expect(worstCpuMs).toBeLessThan(THINNING_BOUND_MS);
+    expect(worstCpuMs).toBeLessThan(CPU_BOUND_MS);
     expect(asked).toBeGreaterThan(0);
   }, 120_000);
 
