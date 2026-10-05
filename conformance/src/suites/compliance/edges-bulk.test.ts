@@ -89,7 +89,7 @@ describe("edges.bulk", () => {
           source_id: sourceId,
           target_id: targetId,
           edge_type: "about",
-          properties: { weight: 1 },
+          properties: { a: 1, b: "kept", nested: { x: 1, y: 2 } },
         },
       ],
     });
@@ -97,13 +97,16 @@ describe("edges.bulk", () => {
     expect(first.data.counts.created).toBe(1);
     const originalId = first.data.results[0]!.id!;
 
+    // The second write omits `b`, changes `a` and names `nested` with one
+    // key fewer. A replace would drop `b`; a merge keeps it. A deep merge
+    // would keep `nested.y`; a shallow one takes `nested` whole.
     const second = await client.bulkEdges({
       edges: [
         {
           source_id: sourceId,
           target_id: targetId,
           edge_type: "about",
-          properties: { weight: 99 },
+          properties: { a: 99, nested: { x: 5 } },
         },
       ],
       mode: "upsert",
@@ -113,14 +116,13 @@ describe("edges.bulk", () => {
     expect(second.data.counts.created).toBe(0);
     expect(second.data.results[0]!.id).toBe(originalId);
 
-    // Verify the merged property persisted. No GET /edges/:id route — hydrate
-    // via the source item's outbound edge listing.
-    const listRes = await client.listItemEdges(sourceId, {
-      edge_type: "about",
+    const read = await client.getEdge(originalId);
+    expect(read.ok).toBe(true);
+    expect(read.data.edge.properties).toEqual({
+      a: 99,
+      b: "kept",
+      nested: { x: 5 },
     });
-    expect(listRes.ok).toBe(true);
-    const hit = listRes.data.data.find((e) => e.id === originalId);
-    expect((hit?.properties as { weight?: number })?.weight).toBe(99);
   });
 
   it("create_only surfaces duplicates as skipped with reason duplicate_edge", async () => {
