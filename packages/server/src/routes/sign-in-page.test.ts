@@ -31,6 +31,23 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
+/** The cookie a sign-in sets, in the form a request sends it back. */
+async function signInCookie(
+  c: TestContext,
+  email: string,
+  password: string,
+): Promise<string> {
+  const res = await request(c.app, "POST", "/auth/sign-in/email", {
+    body: { email, password },
+    headers: { origin: ORIGIN },
+  });
+  const match = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    res.headers.get("set-cookie") ?? "",
+  );
+  if (!match?.[1]) throw new Error("sign-in: no session cookie");
+  return match[1];
+}
+
 describe("renderSignInPage", () => {
   it("renders the password view with the right action + hidden return_to", () => {
     const html = renderSignInPage({
@@ -629,5 +646,219 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/");
+  });
+});
+
+describe("the sign-in page keeps what was typed", () => {
+  it("returns the email after a wrong password, and only the email", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "dana@example.com", "correct horse", "Dana");
+    const failed = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: new URLSearchParams({
+          email: "dana@example.com",
+          password: "wrong horse",
+          return_to: "/",
+        }).toString(),
+      }),
+    );
+    const location = failed.headers.get("location") ?? "";
+    expect(location).toContain("error=invalid_credentials");
+    expect(location).not.toContain("wrong");
+
+    const page = await ctx.app.fetch(new Request(`${ORIGIN}${location}`));
+    const html = await page.text();
+    expect(html).toMatch(/name="email"\s+value="dana@example.com"/);
+    expect(html).not.toMatch(/name="password"[^>]*value=/);
+  });
+
+  it("escapes what it puts back in the field", () => {
+    const html = renderSignInPage({
+      returnTo: "/",
+      email: '"><script>x</script>',
+    });
+    expect(html).not.toContain("<script>x</script>");
+    expect(html).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
+  it("leaves the field empty when nothing was typed", () => {
+    expect(renderSignInPage({ returnTo: "/" })).toMatch(
+      /name="email"\s+value=""/,
+    );
+  });
+
+  it("does not fold the typed email into the authorization it wraps", () => {
+    const wrapped = synthesizeOauthReturnTo(
+      new URLSearchParams(
+        "response_type=code&client_id=abc&email=a%40b.example",
+      ),
+    );
+    expect(wrapped).toBe("/auth/authorize?response_type=code&client_id=abc");
+  });
+});
+
+describe("the sign-in page names the app that sent the person", () => {
+  async function registeredApp(c: TestContext, name: string): Promise<string> {
+    const res = await request(c.app, "POST", "/auth/oauth2/register", {
+      body: {
+        client_name: name,
+        application_type: "native",
+        redirect_uris: [`${ORIGIN}/callback`],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+      headers: { origin: ORIGIN },
+    });
+    return ((await res.json()) as { client_id: string }).client_id;
+  }
+
+  /** What the plugin sends an unsigned-in person to: the sign-in page with
+   *  its own signed query on it. */
+  async function signInUrlFor(
+    c: TestContext,
+    clientId: string,
+  ): Promise<string> {
+    const res = await request(
+      c.app,
+      "GET",
+      `/auth/oauth2/authorize?${new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: `${ORIGIN}/callback`,
+        scope: "core.note:read",
+        state: "s",
+        code_challenge: "0123456789012345678901234567890123456789012",
+        code_challenge_method: "S256",
+      }).toString()}`,
+    );
+    expect(res.status).toBe(302);
+    return res.headers.get("location") ?? "";
+  }
+
+  it("says which app an authorization is signing in for", async () => {
+    ctx = await createTestContext();
+    const clientId = await registeredApp(ctx, "Named Notes");
+    const signInUrl = await signInUrlFor(ctx, clientId);
+    expect(signInUrl).toContain("/auth/sign-in");
+    const page = await ctx.app.fetch(new Request(`${ORIGIN}${signInUrl}`));
+    const html = await page.text();
+    expect(html).toContain("Sign in to continue to <b>Named Notes</b>");
+    // A self-registered app is flagged as the consent page flags it.
+    expect(html).toContain(
+      "Marfa hasn&#39;t verified this app".replace("&#39;", "'"),
+    );
+  });
+
+  it("names nothing when the request was never signed", async () => {
+    ctx = await createTestContext();
+    const clientId = await registeredApp(ctx, "Forged Notes");
+    // The same app, so that the absence below is the signature's doing: the
+    // signed request in the case above names it.
+    const forged = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: `${ORIGIN}/callback`,
+      scope: "core.note:read",
+      exp: String(Math.floor(Date.now() / 1000) + 600),
+      sig: "forged",
+    });
+    const page = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/sign-in?return_to=${encodeURIComponent(`/auth/authorize?${forged.toString()}`)}`,
+      ),
+    );
+    const html = await page.text();
+    expect(html).not.toContain("Forged Notes");
+    expect(html).toContain("Welcome back.");
+  });
+
+  it("names nothing when the request was signed and has since been edited", async () => {
+    ctx = await createTestContext();
+    const clientId = await registeredApp(ctx, "Edited Notes");
+    const signInUrl = await signInUrlFor(ctx, clientId);
+    const edited = new URL(signInUrl, ORIGIN);
+    edited.searchParams.set("scope", "core.note:write");
+    const page = await ctx.app.fetch(new Request(edited));
+    expect(await page.text()).not.toContain("Edited Notes");
+  });
+});
+
+describe("signing in with no app waiting", () => {
+  it("ends at the server's address, which tells a browser it is signed in", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "erin@example.com", "correct horse", "Erin");
+    const signedIn = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: new URLSearchParams({
+          email: "erin@example.com",
+          password: "correct horse",
+        }).toString(),
+      }),
+    );
+    expect(signedIn.status).toBe(302);
+    expect(signedIn.headers.get("location")).toBe("/");
+
+    const cookie = await signInCookie(ctx, "erin@example.com", "correct horse");
+    const page = await request(ctx.app, "GET", "/", {
+      headers: { cookie, accept: "text/html" },
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(page.headers.get("cache-control")).toContain("no-store");
+    const html = await page.text();
+    expect(html).toContain("You&#39;re signed in");
+    expect(html).toContain("erin@example.com");
+
+    // Witness: the same address with no session is the page that says
+    // nobody is, and a program is still given the JSON whoever it is.
+    const anonymous = await request(ctx.app, "GET", "/", {
+      headers: { accept: "text/html" },
+    });
+    expect(await anonymous.text()).not.toContain("erin@example.com");
+    const program = await request(ctx.app, "GET", "/", { headers: { cookie } });
+    expect(program.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("tells somebody already signed in so, on the sign-in page", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "finn@example.com", "correct horse", "Finn");
+    const cookie = await signInCookie(ctx, "finn@example.com", "correct horse");
+    const page = await request(ctx.app, "GET", "/auth/sign-in", {
+      headers: { cookie },
+    });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("You&#39;re signed in");
+    expect(html).toContain("finn@example.com");
+    expect(html).not.toContain('name="password"');
+    // Witness: without a session the same address is the form.
+    const anonymous = await (
+      await request(ctx.app, "GET", "/auth/sign-in")
+    ).text();
+    expect(anonymous).toContain('name="password"');
+  });
+
+  it("offers to continue to where an already signed-in person was headed", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "gail@example.com", "correct horse", "Gail");
+    const cookie = await signInCookie(ctx, "gail@example.com", "correct horse");
+    const page = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?return_to=${encodeURIComponent("/auth/device")}`,
+      { headers: { cookie } },
+    );
+    expect(await page.text()).toContain('href="/auth/device"');
   });
 });

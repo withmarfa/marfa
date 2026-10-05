@@ -312,6 +312,53 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(plain.body.refresh_token).toBeUndefined();
   });
 
+  it("warns on the approval screen that Marfa has not verified an app that registered itself", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const init = await initiate(c, clientId, "core.note:read");
+    const cookie = await signInUser(c, "device-unverified@example.com");
+
+    const screen = await openConsent(c, init.user_code, cookie);
+    expect(screen.status).toBe(200);
+    const html = await screen.text();
+    expect(html).toContain('class="callout"');
+    expect(html).toContain("Marfa hasn't verified this app");
+  });
+
+  it("does not warn about an app that authenticates with a secret", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    // Registration cannot produce a confidential client without a secret to
+    // initiate with, so the row is made one after the code exists: the screen
+    // reads the row, and the row is what says the app is vetted.
+    const init = await initiate(c, clientId, "core.note:read");
+    const schema = await import("./../storage/sqlite/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = c.storage.betterAuthDb as {
+      update: (t: unknown) => {
+        set: (v: Record<string, unknown>) => {
+          where: (w: unknown) => Promise<unknown>;
+        };
+      };
+    };
+    await db
+      .update(schema.auth_oauth_client)
+      .set({ public: false, tokenEndpointAuthMethod: "client_secret_basic" })
+      .where(eq(schema.auth_oauth_client.clientId, clientId));
+    // The witness that the absence below is a decision and not a screen that
+    // never rendered: the same screen, for the same flow, rendered the
+    // warning in the case above.
+    const cookie = await signInUser(c, "device-vetted@example.com");
+    const screen = await openConsent(c, init.user_code, cookie);
+    expect(screen.status).toBe(200);
+    const html = await screen.text();
+    expect(html).toContain("Device Test App");
+    expect(html).not.toContain('class="callout"');
+    expect(html).not.toContain("Marfa hasn't verified");
+  });
+
   it("a denial answers the poll with access_denied and leaves no grant", async () => {
     ctx = await createTestContext({});
     const c = ctx;

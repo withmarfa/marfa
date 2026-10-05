@@ -5,7 +5,7 @@ import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requirePermission, requireAuth } from "../middleware/auth.js";
-import { buildScopeDescriptions } from "./auth-consent.js";
+import { appBehindReturnTo, buildScopeDescriptions } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
@@ -21,6 +21,8 @@ import {
   validateReturnTo,
 } from "./sign-in-page.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
+import { renderSignedInPage } from "./signed-in-page.js";
+import { prefersHtml } from "./http-error-page.js";
 import { KeyedThrottle } from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
@@ -380,7 +382,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // path works — Set-Cookie headers from a successful sign-in are
   // forwarded intact onto the redirect response.
 
-  router.get("/sign-in", (c) => {
+  router.get("/sign-in", async (c) => {
     const url = new URL(c.req.url);
     const error = url.searchParams.get("error") ?? undefined;
 
@@ -407,9 +409,35 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       returnTo = synthesizeOauthReturnTo(url.searchParams);
     }
 
-    const html = renderSignInPage({ returnTo, error });
     setNoStore(c);
-    return c.html(html);
+
+    // Somebody already signed in is told so, rather than shown a form that
+    // reads as though nobody were. Without an identity layer there is no
+    // session to look for and the form is all there is.
+    const session = auth ? await auth.getSession(c.req.raw.headers) : null;
+    if (session) {
+      return c.html(
+        renderSignedInPage({
+          email: session.user.email,
+          continueTo: returnTo,
+        }),
+      );
+    }
+
+    // The app is named only once its request is verified, and only an
+    // authorization can have sent the person here.
+    const app = auth
+      ? await appBehindReturnTo({ auth, storage }, returnTo)
+      : null;
+    const email = url.searchParams.get("email") ?? undefined;
+    return c.html(
+      renderSignInPage({
+        returnTo,
+        error,
+        email,
+        app: app ?? undefined,
+      }),
+    );
   });
 
   router.post("/sign-in", async (c) => {
@@ -428,8 +456,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const email = formData.get("email");
     const emailStr = typeof email === "string" ? email.trim() : "";
 
+    // Carried back so the form is not emptied by a wrong password.
     const errorRedirect = (errCode: string): Response =>
-      c.redirect(buildSignInRedirect({ returnTo, error: errCode }), 302);
+      c.redirect(
+        buildSignInRedirect({ returnTo, error: errCode, email: emailStr }),
+        302,
+      );
 
     if (!emailStr) {
       return errorRedirect("missing_field");
@@ -503,9 +535,22 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         "Sign-out requires the better-auth identity layer to be configured",
       );
     }
+    // Somebody following a logout link with nothing to end has already got
+    // what they came for. A browser navigation with no session and no hint
+    // naming one is told so on a page; the provider has nothing to confirm,
+    // and without the headers below it answers a browser in JSON.
+    const navigating = prefersHtml(c.req.header("accept"));
+    if (
+      navigating &&
+      !c.req.query("id_token_hint") &&
+      !(await auth.getSession(c.req.raw.headers))
+    ) {
+      setNoStore(c);
+      return c.html(renderSignedOutPage());
+    }
     const upstream = new Request(c.req.url, {
       method: "GET",
-      headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
+      headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL, true),
     });
     const response = await auth.handler(upstream, c.var.clientIp ?? null);
 
@@ -699,6 +744,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     return c.html(
       renderDeviceConsentScreen({
         clientName: client.name ?? client.clientId,
+        // The same rule as the authorize screen: an app that registered
+        // itself has no vetted identity behind its name.
+        unverified: client.isPublic,
         scopes: parsedScopes,
         userCode,
         descriptions,
@@ -931,13 +979,15 @@ function scopeList(scope: string | undefined): string[] {
 }
 
 /** Build a redirect URL back to the sign-in page with the right query
- *  shape (error, return_to). All values are encoded. */
+ *  shape (error, email, return_to). All values are encoded. */
 function buildSignInRedirect(params: {
   returnTo: string;
   error?: string;
+  email?: string;
 }): string {
   const search = new URLSearchParams();
   if (params.error) search.set("error", params.error);
+  if (params.email) search.set("email", params.email);
   if (params.returnTo && params.returnTo !== "/") {
     search.set("return_to", params.returnTo);
   }

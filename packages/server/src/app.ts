@@ -24,6 +24,9 @@ import type { BlobLayer } from "./storage/blob-layer.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import { itemRoutes } from "./routes/items.js";
+import { renderRootPage } from "./routes/root-page.js";
+import { renderSignedInPage } from "./routes/signed-in-page.js";
+import { setNoStore } from "./routes/no-store.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
@@ -323,15 +326,30 @@ export function createApp(
   // holds no credential can read it: the id is what distinguishes two
   // instances answering the same shape, which is exactly the question
   // somebody pointing a client at an address is asking.
-  app.get("/", (c) =>
-    c.json({
+  app.get("/", async (c) => {
+    // One address, two readers: a program takes the description and a person
+    // opening it in a browser takes a page. A cache must not hand one the
+    // other's.
+    c.header("Vary", "Accept");
+    if (prefersHtml(c.req.header("accept"))) {
+      // The page says who is signed in, so it is the person's own and is not
+      // kept. It is where a sign-in with no app waiting ends.
+      setNoStore(c);
+      const session = await auth?.getSession(c.req.raw.headers);
+      return c.html(
+        session
+          ? renderSignedInPage({ email: session.user.email })
+          : renderRootPage(),
+      );
+    }
+    return c.json({
       name: "marfa",
       version: deployedVersion,
       instance_id: instanceId,
       contract: CONTRACT_VERSION,
       features,
-    }),
-  );
+    });
+  });
   // Ahead of the credential and the limiter, as the probe of a container
   // must be. It looks the operator key up for itself, because that key is
   // the one caller told what a failing component said.

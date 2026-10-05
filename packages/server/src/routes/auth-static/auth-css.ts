@@ -609,8 +609,8 @@ select:focus {
 /* Soft Tiles for permission groups only; airy everywhere else.     */
 /* ================================================================ */
 
-/* Canonical card heading + subtitle. The reassurance line ("you can
-   change this anytime in settings") lives in .sub, never a footnote. */
+/* Canonical card heading + subtitle. The line saying what the card is
+   about lives in .sub, never a footnote. */
 .title {
   margin: 0 0 var(--gap-pair);
   font-size: 20px;

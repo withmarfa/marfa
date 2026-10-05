@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestAccount, createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
 
@@ -36,6 +36,64 @@ describe("GET /auth/oauth2/end-session", () => {
 
     expect(res.status).not.toBe(200);
     expect(await res.text()).not.toContain("You&#39;re signed out");
+  });
+
+  it("shows a browser with no session a page, and never JSON", async () => {
+    ctx = await createTestContext({});
+    const navigate = {
+      origin: ORIGIN,
+      accept: "text/html,application/xhtml+xml",
+      "sec-fetch-mode": "navigate",
+    };
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/oauth2/end-session`, { headers: navigate }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("You&#39;re signed out");
+
+    // Witness: a program asking the same door still gets the provider's JSON
+    // refusal, so the page above is the doing of what the browser sent.
+    const program = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/oauth2/end-session`, {
+        headers: { origin: ORIGIN, accept: "application/json" },
+      }),
+    );
+    expect(program.status).toBe(400);
+    expect(program.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("shows a signed-in browser the provider's confirmation page, not its JSON", async () => {
+    ctx = await createTestContext({});
+    await createTestAccount(ctx, "hana@example.com", "correct horse", "Hana");
+    const signIn = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify({
+          email: "hana@example.com",
+          password: "correct horse",
+        }),
+      }),
+    );
+    const cookie =
+      /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+        signIn.headers.get("set-cookie") ?? "",
+      )?.[1] ?? "";
+    expect(cookie).not.toBe("");
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/oauth2/end-session`, {
+        headers: {
+          origin: ORIGIN,
+          cookie,
+          accept: "text/html",
+          "sec-fetch-mode": "navigate",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Confirm logout");
   });
 
   it("says the session ended rather than showing a blank document", () => {

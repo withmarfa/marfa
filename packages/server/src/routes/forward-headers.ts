@@ -29,9 +29,27 @@ const PASSTHROUGH_HEADERS = [
 ] as const;
 
 /**
+ * What tells the provider a request is a person navigating rather than a
+ * program calling: `Accept` and the browser's fetch metadata. Forwarded only
+ * by a wrapper that fronts a page a person lands on, and never by the
+ * rest, so that the answer to a program is not changed by a header it sends
+ * for another reason.
+ */
+const NAVIGATION_HEADERS = [
+  "accept",
+  "sec-fetch-mode",
+  "sec-fetch-dest",
+  "sec-fetch-site",
+  "sec-fetch-user",
+] as const;
+
+/**
  * Build the header set for an internal Better Auth dispatch: `base`
  * (typically `content-type`) plus the passthrough headers above, and
  * `fallbackOrigin` as the `Origin` when the inbound request sent none.
+ * `navigation` adds the headers by which the provider tells a browser
+ * navigation from a program, for the wrapper whose answer is a page a person
+ * reads: without them the provider answers a browser in JSON.
  *
  * Callers that deliberately want the inbound request's own origin to be
  * the one Better Auth judges, because a missing origin should be
@@ -41,9 +59,13 @@ export function forwardHeaders(
   src: Headers,
   base: Record<string, string>,
   fallbackOrigin?: string,
+  navigation = false,
 ): Headers {
   const out = new Headers(base);
-  for (const name of PASSTHROUGH_HEADERS) {
+  const names = navigation
+    ? [...PASSTHROUGH_HEADERS, ...NAVIGATION_HEADERS]
+    : PASSTHROUGH_HEADERS;
+  for (const name of names) {
     const value = src.get(name);
     if (value) out.set(name, value);
   }
