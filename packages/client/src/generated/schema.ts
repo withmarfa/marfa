@@ -4052,7 +4052,7 @@ export interface components {
             /** @description The ID of the last event the stream sent, or `null` if it sent none. */
             cursor: string | null;
         };
-        /** @description The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. On an ordinary stream its `id:` is `min_retained_id`: don't resume from it. */
+        /** @description The last frame, with no `id:`, when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. */
         CatchupTooOldFrame: {
             /**
              * @description The frame's name, which is also its `event:`.

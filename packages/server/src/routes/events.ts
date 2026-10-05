@@ -119,6 +119,18 @@ const READER_STALL_MS = EVENT_LIMITS.readerStallMs;
 const ROOM_POLL_MS = EVENT_LIMITS.roomPollMs;
 
 /**
+ * The wire name of the frame refusing a cursor the log no longer holds.
+ *
+ * The event after the client's cursor has been retired, so the log cannot
+ * catch the client up and it re-reads state from the API. Terminal, and
+ * carrying no `id:`, so a client that reconnects without reading it,
+ * such as a browser `EventSource`, resumes from the cursor it already
+ * holds and is refused again rather than resumed past the gap. The
+ * frame's data names where retention starts.
+ */
+const CATCHUP_TOO_OLD_EVENT = "catchup_too_old";
+
+/**
  * The wire name of the frame refusing a cursor beyond the log's head.
  *
  * A position the log never issued, which is what a device holds after the
@@ -1140,14 +1152,11 @@ export function eventRoutes(
                     return false;
                   }
                   const payload = JSON.stringify({
-                    event_type: "catchup_too_old",
+                    event_type: CATCHUP_TOO_OLD_EVENT,
                     min_retained_id: String(minRetained),
                     requested: String(afterIdResolved),
                   });
-                  // id is the min retained id so clients don't store a cursor older than the log can serve.
-                  send(
-                    `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
-                  );
+                  send(`event: ${CATCHUP_TOO_OLD_EVENT}\ndata: ${payload}\n\n`);
                   endStream();
                   return true;
                 };

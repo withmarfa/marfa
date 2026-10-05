@@ -536,11 +536,9 @@ export function catchupTooOld(
   minRetainedId: string,
   requested: string,
 ): SseFrame {
-  // The frame carries the oldest retained id as its own `id:`, so a client
-  // that stores the last id it saw cannot come back with a cursor the log
-  // still cannot serve.
+  // No `id:`, as on the real stream (`events.md` 3): a client that ignores
+  // the frame reconnects with the cursor it held and is refused again.
   return {
-    id: minRetainedId,
     event: "catchup_too_old",
     data: {
       event_type: "catchup_too_old",
