@@ -16,6 +16,9 @@ coverage/
 .env.*
 !.env.example
 
+# Maps a checkout to its secrets project; each machine keeps its own.
+.infisical.json
+
 # Every dependency comes from the public registry, so no install needs a
 # registry credential, and a local one is never tracked.
 .npmrc

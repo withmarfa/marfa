@@ -124,7 +124,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   // The settings census test holds it to the settings schema.
   [/^\.env\.example$/, ["workspace"]],
-  [/^(LICENSE|\.infisical\.json)$/, []],
+  [/^LICENSE$/, []],
   // Agent instructions, settings and Git hooks. No job runs or reads them.
   [/^\.(agents|claude|codex|githooks)\//, []],
 
