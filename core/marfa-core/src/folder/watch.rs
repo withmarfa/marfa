@@ -709,6 +709,7 @@ mod tests {
             path: path.into(),
             flag: "embed",
             reason: "embeds a file the folder does not hold".into(),
+            item: None,
         }
     }
 

@@ -12,7 +12,10 @@ pub const FOLDER_TYPE: &str = "system.folder";
 
 const DOCUMENT_TYPE: &str = "core.note";
 
+/// An unknown setting is refused rather than ignored: a misspelt list or
+/// threshold would leave the folder taking what the person meant it not to.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -302,6 +305,8 @@ mod tests {
         assert!(read(json!({ "removal_threshold": { "fraction": 1.5 } })).is_err());
         assert!(read(json!({ "removal_threshold": { "files": -1 } })).is_err());
         assert!(read(json!({ "removal_threshold": { "share": 1 } })).is_err());
+        let misspelt = read(json!({ "ignores": ["drafts/"] })).unwrap_err();
+        assert!(misspelt.to_string().contains("ignores"), "{misspelt}");
         let empty = Map::new();
         assert!(Settings::read("f", FOLDER_TYPE, "revoked", &empty).is_err());
         assert!(Settings::read("f", "core.note", "active", &empty).is_err());

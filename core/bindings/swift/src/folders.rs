@@ -101,6 +101,8 @@ pub struct FlaggedFile {
     pub path: String,
     pub flag: String,
     pub reason: String,
+    /// The item whose file a pull did not write.
+    pub item: Option<String>,
 }
 
 /// What became of the folder's settings file in a pass.
@@ -584,6 +586,7 @@ fn flagged_file(file: marfa_core::folder::Flagged) -> FlaggedFile {
         path: file.path,
         flag: file.flag.to_string(),
         reason: file.reason,
+        item: file.item,
     }
 }
 

@@ -872,7 +872,10 @@ export interface StatusReport {
  *  UTF-8 (`folders.md` 10), and `name` for a name another file holds in
  *  another case or form (`folders.md` 27). A directory the walk did not
  *  enter is `package` or `unreadable` (`folders.md` 26), or `gone`
- *  (`folders.md` 22). */
+ *  (`folders.md` 22). A pull names an item whose file it did not write as
+ *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in, and
+ *  one it could not let go to another folder as `retained` (`folders.md` 19,
+ *  44). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -885,8 +888,15 @@ export interface FlaggedFile {
     | "waiting"
     | "name"
     | "package"
-    | "gone";
+    | "gone"
+    | "unwritten"
+    | "outside"
+    | "unsuited"
+    | "absent"
+    | "retained";
   reason: string;
+  /** The item whose file a pull did not write (`folders.md` 19). */
+  item?: string;
 }
 
 export interface PullReport {

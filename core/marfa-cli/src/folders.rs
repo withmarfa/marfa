@@ -406,6 +406,14 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
             "behind" => format!("{}: {}", file.path, file.reason),
             "edges" => format!("{} is left as written: {}", file.path, file.reason),
             "waiting" => format!("{} waits: {}", file.path, file.reason),
+            "unwritten" | "outside" | "unsuited" | "absent" => {
+                let item = file
+                    .item
+                    .as_ref()
+                    .map(|item| format!(" (item {item})"))
+                    .unwrap_or_default();
+                format!("{} is not written{item}: {}", file.path, file.reason)
+            }
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason
