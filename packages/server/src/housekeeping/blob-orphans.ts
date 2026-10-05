@@ -1,6 +1,7 @@
 import type { Storage } from "../storage/interface.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { log } from "../middleware/logger.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
 
 // A type alias rather than an interface: an interface carries no index
@@ -104,12 +105,17 @@ export class BlobOrphanReporter {
    * pointed at, and deleting its bytes would strip them out from under the
    * restore the bin exists for. A hash referenced only by a version
    * snapshot is still referenced too, for the same reason.
+   *
+   * The walk gives the event loop a turn before each page and never inside
+   * one, because the driver runs each statement synchronously and a corpus
+   * read in one go stops every request until it ends.
    */
   private async unreferencedHashes(): Promise<string[]> {
     const candidates = await this.storage.blobs.listAll();
     const referenced = new Set<string>();
     let cursor: string | undefined;
     do {
+      await yieldBulkWork();
       const page = await this.storage.items.list({
         all_states: true,
         limit: SCAN_PAGE,
@@ -128,6 +134,7 @@ export class BlobOrphanReporter {
     } while (cursor !== undefined);
     let edgeCursor: string | undefined;
     do {
+      await yieldBulkWork();
       const page = await this.storage.edges.list({
         limit: SCAN_PAGE,
         cursor: edgeCursor,
@@ -139,6 +146,7 @@ export class BlobOrphanReporter {
     } while (edgeCursor !== undefined);
     let versionCursor: string | undefined;
     for (;;) {
+      await yieldBulkWork();
       const page = await this.storage.versions.scanProperties(
         SCAN_PAGE,
         versionCursor,
@@ -151,6 +159,7 @@ export class BlobOrphanReporter {
     }
     let jobCursor: string | undefined;
     for (;;) {
+      await yieldBulkWork();
       const page = await this.storage.bulkActionJobs.scanPendingPropertyPatches(
         SCAN_PAGE,
         jobCursor,

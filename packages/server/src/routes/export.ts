@@ -1,10 +1,5 @@
-import { createGzip } from "node:zlib";
-import { Readable, PassThrough } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
-import type { Context } from "hono";
 import { resolveEnforcement } from "@withmarfa/shared";
-import * as tar from "tar-stream";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import { edgeKindReadable } from "./_edge-visibility.js";
@@ -14,18 +9,15 @@ import {
   requireAuth,
   getTypeFilter,
   readsSomeType,
-  typeReader,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import type { BlobRead } from "../storage/blob-store.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
+import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
-import { mayReadBlob } from "./_blob-reach.js";
 import { readableMetadata } from "./_extension-reach.js";
 
 /**
@@ -106,7 +98,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads.",
+        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack.",
     },
     400: {
       content: {
@@ -138,12 +130,6 @@ const exportRoute = createRoute({
 
 /** How many export lines are read between turns of the event loop. */
 const LINES_PER_TURN = 16;
-
-/** Hand the event loop one turn: `setImmediate` runs after pending I/O,
- *  where a resolved promise, being a microtask, would run ahead of it. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
 
 // ---------------------------------------------------------------------------
 // Router
@@ -223,6 +209,7 @@ export function exportRoutes(
         state,
         all_states: allStates,
         source,
+        exclude_states: EXPORT_EXCLUDED_STATES,
         occurred_after: occurredAfter,
         occurred_before: occurredBefore,
         allowed_types: allowedTypes,
@@ -277,7 +264,7 @@ export function exportRoutes(
         // Edges are read across the whole instance and most pages may
         // carry nothing for this export, so a page that yields no line
         // must still give the event loop its turn.
-        await yieldToEventLoop();
+        await yieldBulkWork();
         const page = await storage.edges.list({
           limit: 200,
           cursor: edgeCursor,
@@ -316,7 +303,7 @@ export function exportRoutes(
     let linesThisTurn = 1;
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await yieldToEventLoop();
+        await yieldBulkWork();
         const limit = linesThisTurn;
         linesThisTurn = LINES_PER_TURN;
         for (let taken = 0; taken < limit; taken++) {
@@ -344,278 +331,4 @@ export function exportRoutes(
   });
 
   return router;
-}
-
-// ---------------------------------------------------------------------------
-// Archive export helper
-// ---------------------------------------------------------------------------
-
-interface ArchiveManifest {
-  version: number;
-  format: string;
-  created_at: string;
-  /**
-   * The instance that produced the archive.
-   *
-   * Provenance, and nothing acts on it: `POST /admin/restore-archive` does
-   * not read it, because restoring an instance's own archive into itself and
-   * restoring another's are both supported and neither is an error to
-   * detect. What it answers is the question a directory of `.tar.gz` files
-   * cannot — which deployment this one came off — and `created_at` alone
-   * cannot answer it for an operator running two.
-   */
-  instance_id: string;
-  item_count: number;
-  edge_count: number;
-  blob_count: number;
-  /** The type and edge-type registrations carried in `types.ndjson`. The
-   *  type count is the instance's own registrations only — the export reads
-   *  them through `listRegisteredWithProvenance`, which excludes the
-   *  platform-seeded rows sharing the table. */
-  type_count: number;
-  edge_type_count: number;
-  blobs: Record<string, { mime_type: string; size_bytes: number }>;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type HonoContext = Context<any, any, any>;
-
-/** The bytes from the first attached store that holds them. */
-async function readFromAnyStore(
-  blobs: BlobLayer,
-  hash: string,
-): Promise<BlobRead | null> {
-  for (const store of blobs.stores) {
-    const read = await store.get(hash);
-    if (read) return read;
-  }
-  return null;
-}
-
-/** The export's filter, resolved once by the route handler. */
-interface ExportFilter {
-  type: string | undefined;
-  state: ReturnType<typeof resolveStateFilter>["state"];
-  all_states: ReturnType<typeof resolveStateFilter>["all_states"];
-  source: string | undefined;
-  occurred_after: ReturnType<typeof normalizeTimeBound>;
-  occurred_before: ReturnType<typeof normalizeTimeBound>;
-  allowed_types: ReturnType<typeof getTypeFilter>["allowed"];
-  excluded_types: ReturnType<typeof getTypeFilter>["excluded"];
-  /** The instance's `source_filter` lever. */
-  source_filter: SourceFilterSettings | undefined;
-}
-
-async function handleArchiveExport(
-  c: HonoContext,
-  storage: Storage,
-  blobs: BlobLayer,
-  /** The instance writing the archive, for the manifest. */
-  instanceId: string,
-  filter: ExportFilter,
-): Promise<Response> {
-  const callerKey = requireAuth(c);
-  const readsHistory = typeReader(c);
-
-  const lines: string[] = [];
-  const edgeLines: string[] = [];
-  const typeLines: string[] = [];
-  let typeCount = 0;
-  let edgeTypeCount = 0;
-  const blobHashes = new Set<string>();
-  const blobMeta: Record<string, { mime_type: string; size_bytes: number }> =
-    {};
-
-  const collect = async () => {
-    // Same both-endpoints rule as the NDJSON path: the archive carries
-    // the relationships among the items it contains, nothing beyond.
-    const exportedIds = new Set<string>();
-    let cursor: string | undefined;
-    do {
-      const result = await storage.items.list({
-        ...filter,
-        exclude_states: EXPORT_EXCLUDED_STATES,
-        limit: 200,
-        cursor,
-      });
-      for (const item of await withCascadeMarks(
-        storage,
-        callerKey,
-        result.data,
-      )) {
-        const metadata = readableMetadata(
-          await storage.metadata.get(item.id),
-          callerKey,
-        );
-        exportedIds.add(item.id);
-        // Which of the row's digests lend its reach, so a restore credits
-        // those and no others.
-        const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
-        const versions = [];
-        let historyCursor: string | undefined;
-        do {
-          const history = await storage.versions.list(item.id, {
-            reads: readsHistory,
-            limit: 200,
-            cursor: historyCursor,
-          });
-          for (const snapshot of history.data) {
-            // A concurrent write may have snapshotted the row selected above.
-            // That snapshot belongs to the next current version, not this one.
-            if (snapshot.version >= item.version) continue;
-            versions.push(snapshot);
-            collectBlobHashes(snapshot.properties, blobHashes);
-          }
-          historyCursor = history.next_cursor ?? undefined;
-        } while (historyCursor);
-        lines.push(
-          JSON.stringify({
-            item,
-            metadata,
-            versions,
-            lending_blobs: lendingBlobs,
-          }),
-        );
-        collectBlobHashes(item.properties, blobHashes);
-        collectBlobHashes(metadata.extensions, blobHashes);
-      }
-      cursor = result.next_cursor ?? undefined;
-    } while (cursor);
-
-    let edgeCursor: string | undefined;
-    do {
-      const page = await storage.edges.list({
-        limit: 200,
-        cursor: edgeCursor,
-      });
-      for (const edge of page.data) {
-        // The NDJSON path's twin, and the same two halves: the endpoint
-        // rule settles the source, and the edge map has to be asked for
-        // the kind of relationship.
-        if (
-          exportedIds.has(edge.source_id) &&
-          exportedIds.has(edge.target_id) &&
-          edgeKindReadable(callerKey, edge)
-        ) {
-          edgeLines.push(JSON.stringify({ edge }));
-          collectBlobHashes(edge.properties, blobHashes);
-        }
-      }
-      edgeCursor = page.next_cursor ?? undefined;
-    } while (edgeCursor);
-
-    // The instance's own registrations, not the filtered item set's: a
-    // restore has to be able to write every item the archive carries,
-    // and an unfiltered archive is the case that matters. Carrying a
-    // type the archive happens not to use costs one line.
-    // Provenance rides beside the schema rather than inside it. The
-    // restore validates and normalizes `type` and compares the
-    // result against the stored row to decide skip-or-conflict, so a
-    // field added into the schema would read as a different registration
-    // and turn every re-restore into a conflict.
-    //
-    // It is carried at all because `origin` is not descriptive: it decides
-    // whether the consent screen offers a root read-only or
-    // read-and-write. An archive without it restores as `unknown`,
-    // read-only, so a `user` registration would come back without the
-    // wildcard it earned.
-    for (const row of await storage.types.listRegisteredWithProvenance()) {
-      typeLines.push(
-        JSON.stringify({
-          type: row.schema,
-          provenance: { origin: row.origin },
-        }),
-      );
-      typeCount += 1;
-    }
-    for (const schema of await storage.edgeTypes.list()) {
-      typeLines.push(JSON.stringify({ edge_type: schema }));
-      edgeTypeCount += 1;
-    }
-
-    // An archive carries only bytes the blob doors would serve this
-    // credential: naming a digest in a row it may read lends nothing the
-    // door would not, wherever in the row the digest sits.
-    for (const hash of blobHashes) {
-      if (!(await mayReadBlob(callerKey, storage, hash))) continue;
-      const record = await storage.blobs.get(hash);
-      if (record) {
-        blobMeta[hash] = {
-          mime_type: record.mime_type,
-          size_bytes: record.size_bytes,
-        };
-      }
-    }
-  };
-  await collect();
-
-  const manifest: ArchiveManifest = {
-    version: 0,
-    format: "marfa-archive-v0",
-    created_at: new Date().toISOString(),
-    instance_id: instanceId,
-    item_count: lines.length,
-    edge_count: edgeLines.length,
-    blob_count: Object.keys(blobMeta).length,
-    type_count: typeCount,
-    edge_type_count: edgeTypeCount,
-    blobs: blobMeta,
-  };
-
-  const pack = tar.pack();
-  const gzip = createGzip();
-  const passthrough = new PassThrough();
-  pack.pipe(gzip).pipe(passthrough);
-
-  const writeEntries = async (): Promise<void> => {
-    const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2));
-    pack.entry(
-      { name: "manifest.json", size: manifestBuf.length },
-      manifestBuf,
-    );
-
-    const ndjsonBuf = Buffer.from(lines.join("\n") + "\n");
-    pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
-
-    // Emitted even when empty, so that a member missing from the tar is a
-    // damaged archive rather than an empty one. The restore has no other
-    // way to tell those apart.
-    const edgesBuf = Buffer.from(
-      edgeLines.length > 0 ? edgeLines.join("\n") + "\n" : "",
-    );
-    pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
-
-    // Always emitted, empty or not, for the same reason as edges.ndjson.
-    const typesBuf = Buffer.from(
-      typeLines.length > 0 ? typeLines.join("\n") + "\n" : "",
-    );
-    pack.entry({ name: "types.ndjson", size: typesBuf.length }, typesBuf);
-
-    for (const hash of Object.keys(blobMeta)) {
-      const read = await readFromAnyStore(blobs, hash);
-      if (!read) continue;
-      const entry = pack.entry({ name: `blobs/${hash}`, size: read.length });
-      await pipeline(read.stream, entry);
-    }
-
-    pack.finalize();
-  };
-
-  writeEntries().catch(() => {
-    passthrough.destroy();
-  });
-
-  const webStream = Readable.toWeb(passthrough) as ReadableStream;
-
-  const date = new Date().toISOString().split("T")[0] ?? "today";
-  return withPreparedHeaders(
-    c,
-    new Response(webStream, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/gzip",
-        "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
-      },
-    }),
-  );
 }
