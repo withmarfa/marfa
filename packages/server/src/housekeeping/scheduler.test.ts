@@ -336,7 +336,7 @@ describe("Housekeeping", () => {
       await hk.settle();
       captured.restore();
 
-      const row = await ctx.storage.backgroundJobs.get("writer");
+      const row = await ctx.storage.housekeeping.get("writer");
       expect(row?.last_outcome).toBe("error");
       expect(row?.last_error).toContain("Failed query: insert into");
       expect(row?.last_error).not.toContain(value);

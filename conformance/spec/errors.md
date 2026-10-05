@@ -108,11 +108,11 @@
 
     Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text.test.ts`.
 
-27. When the server reports a failed database statement anywhere else, in a background job's record, the health answer, a bulk action's messages or a warning about an event stream, the server SHALL carry the statement or the driver's reason, and SHALL NOT carry a value the statement was bound to.
+27. When the server reports a failed database statement anywhere else, in a housekeeping job's record, the health answer, a bulk action's messages or a warning about an event stream, the server SHALL carry the statement or the driver's reason, and SHALL NOT carry a value the statement was bound to.
 
     Reason: those reports have room for one line, so each keeps the part its reader needs, and the rule of 25 holds for all of them.
 
-    Tests: `packages/server/src/error-text.test.ts`, `packages/server/src/background-jobs/scheduler.test.ts`, `packages/server/src/routes/health.test.ts`.
+    Tests: `packages/server/src/error-text.test.ts`, `packages/server/src/housekeeping/scheduler.test.ts`, `packages/server/src/routes/health.test.ts`.
 
 ## Codes the fixtures produce
 
