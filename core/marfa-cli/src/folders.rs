@@ -295,13 +295,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         pulled.as_ref().map(|pulled| &pulled.settings),
                     ));
                     lines.push(describe_scan(&scanned));
-                    let mut flagged = scanned.flagged.clone();
+                    let flagged = marfa_core::folder::merged_flagged(
+                        &scanned.flagged,
+                        pulled.iter().flat_map(|pulled| &pulled.flagged),
+                    );
                     if let Some(pulled) = &pulled {
-                        for file in &pulled.flagged {
-                            if !flagged.iter().any(|seen| seen.path == file.path) {
-                                flagged.push(file.clone());
-                            }
-                        }
                         lines.extend(uncarried_line(&pulled.uncarried));
                     }
                     lines.extend(flagged_lines(&flagged));
@@ -406,6 +404,14 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
             "behind" => format!("{}: {}", file.path, file.reason),
             "edges" => format!("{} is left as written: {}", file.path, file.reason),
             "waiting" => format!("{} waits: {}", file.path, file.reason),
+            "unwritten" | "outside" | "unsuited" | "absent" => {
+                let item = file
+                    .item
+                    .as_ref()
+                    .map(|item| format!(" (item {item})"))
+                    .unwrap_or_default();
+                format!("{} is not written{item}: {}", file.path, file.reason)
+            }
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason

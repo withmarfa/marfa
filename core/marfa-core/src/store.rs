@@ -2543,18 +2543,26 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(true)
 }
 
+/// Every write to the edge not accepted, refused ones included, leaves the
+/// queue, and the copy is put back as it was beneath them.
 pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
-    Ok(conn.execute(
-        "DELETE FROM queue
-          WHERE edge_id = :edge
-            AND (verdict IS NULL OR verdict IN (:blocked, :refused, :dead))",
-        named_params! {
-            ":edge": edge_id,
-            ":blocked": Verdict::Blocked.as_str(),
-            ":refused": Verdict::Refused.as_str(),
-            ":dead": Verdict::Dead.as_str(),
-        },
-    )?)
+    let rows = read_writes(
+        conn,
+        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3, ?4))",
+        [
+            edge_id,
+            Verdict::Blocked.as_str(),
+            Verdict::Refused.as_str(),
+            Verdict::Dead.as_str(),
+        ],
+    )?;
+    for row in &rows {
+        conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+    }
+    for row in &rows {
+        put_back(conn, row)?;
+    }
+    Ok(rows.len())
 }
 
 pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {

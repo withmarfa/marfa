@@ -483,12 +483,7 @@ impl Telling {
             + pull.revived
             + usize::from(settings.sent)
             > 0;
-        let mut flagged = scan.flagged.clone();
-        for file in &pull.flagged {
-            if !flagged.iter().any(|seen| seen.path == file.path) {
-                flagged.push(file.clone());
-            }
-        }
+        let flagged = super::merged_flagged(&scan.flagged, &pull.flagged);
         let mut embeds: Vec<Flagged> = Vec::new();
         for embed in scan.embeds.iter().chain(&pull.embeds) {
             if !embeds.iter().any(|said| same_line(said, embed)) {
@@ -709,6 +704,7 @@ mod tests {
             path: path.into(),
             flag: "embed",
             reason: "embeds a file the folder does not hold".into(),
+            item: None,
         }
     }
 
@@ -772,6 +768,36 @@ mod tests {
             PullReport::default()
         ));
         assert!(!told(&mut telling, false, paused, PullReport::default()));
+    }
+
+    #[test]
+    fn two_items_not_written_at_one_path_are_each_told() {
+        let not_written = |item: &str| Flagged {
+            path: "id_rsa".into(),
+            flag: "outside",
+            reason: "the folder's lists do not take the path".into(),
+            item: Some(item.into()),
+        };
+        let mut telling = Telling::default();
+        let Some(WatchEvent::Passed(pass)) = telling.passed(
+            true,
+            SettingsFileReport::default(),
+            ScanReport::default(),
+            drained(),
+            PullReport {
+                outside: 2,
+                flagged: vec![not_written("one"), not_written("two")],
+                ..PullReport::default()
+            },
+        ) else {
+            panic!("a first pass holding two items back was not told");
+        };
+        let items: Vec<Option<&str>> = pass
+            .flagged
+            .iter()
+            .map(|file| file.item.as_deref())
+            .collect();
+        assert_eq!(items, [Some("one"), Some("two")]);
     }
 
     #[test]

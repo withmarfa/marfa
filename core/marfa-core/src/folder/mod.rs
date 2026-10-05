@@ -101,6 +101,7 @@ fn near_limit(key: &str, text: &str) -> Option<Flagged> {
             "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that the server refuses it request_too_large and the file is held",
             size * 100 / REQUEST_LIMIT
         ),
+        item: None,
     })
 }
 
@@ -155,6 +156,28 @@ pub struct Flagged {
     pub path: String,
     pub flag: &'static str,
     pub reason: String,
+    /// The item whose file this is, where a pull did not write it or could
+    /// not let it go to another folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+}
+
+/// A scan's flagged files and then a pull's, each once: two items a pull did
+/// not write at one path are two entries.
+pub fn merged_flagged<'a>(
+    scan: &[Flagged],
+    pull: impl IntoIterator<Item = &'a Flagged>,
+) -> Vec<Flagged> {
+    let mut flagged = scan.to_vec();
+    for file in pull {
+        if !flagged
+            .iter()
+            .any(|seen| seen.path == file.path && seen.item == file.item)
+        {
+            flagged.push(file.clone());
+        }
+    }
+    flagged
 }
 
 impl Flagged {
@@ -180,6 +203,7 @@ impl Flagged {
             path: path.to_string(),
             flag,
             reason: reason.to_string(),
+            item: None,
         }
     }
 }
@@ -535,10 +559,22 @@ impl Folder {
     }
 
     fn writes_at(&self, lists: &Lists, path: &str) -> bool {
-        plainly_inside(&self.root, path)
-            && lists.takes(path)
-            && !in_package(&self.root, path)
-            && !in_nested_folder(&self.root, path)
+        self.not_writing_at(lists, path).is_none()
+    }
+
+    /// Why the folder does not write at `path`, where it does not.
+    fn not_writing_at(&self, lists: &Lists, path: &str) -> Option<&'static str> {
+        if !plainly_inside(&self.root, path) {
+            Some("the path leads out of the folder")
+        } else if !lists.takes(path) {
+            Some("the folder's lists do not take the path")
+        } else if in_package(&self.root, path) {
+            Some("the path is inside a package")
+        } else if in_nested_folder(&self.root, path) {
+            Some("the path is inside another folder")
+        } else {
+            None
+        }
     }
 }
 
@@ -709,7 +745,12 @@ impl Walked {
         };
         let path = identity::relative(root, dir).unwrap_or_default();
         if !self.directories.iter().any(|dir| dir.path == path) {
-            self.directories.push(Flagged { path, flag, reason });
+            self.directories.push(Flagged {
+                path,
+                flag,
+                reason,
+                item: None,
+            });
         }
     }
 
@@ -770,6 +811,7 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
                     path: relative,
                     flag: "package",
                     reason: "is a package, which macOS opens as one thing, so the folder does not walk into it".into(),
+                    item: None,
                 });
             } else {
                 walk(root, &path, lists, walked);
@@ -808,6 +850,7 @@ fn one_per_name(
                     "differs from {} only in case or Unicode form, which a folder reads as one name, so it is held until one of them is renamed",
                     keys[held]
                 ),
+                item: None,
             });
         }
     }
@@ -1190,6 +1233,7 @@ impl Folder {
                     path: file.key.clone(),
                     flag: "waiting",
                     reason,
+                    item: None,
                 });
                 continue;
             }
@@ -2167,6 +2211,7 @@ impl Folder {
                 path: file.key.clone(),
                 flag: "behind",
                 reason: reason.clone(),
+                item: None,
             });
         }
         let changes = own.changes;
@@ -2983,13 +3028,27 @@ impl Folder {
                     Some(bound) if names::same(&bound.path, &want) => bound.path.clone(),
                     _ => want,
                 })
-                .filter(|want| self.writes_at(&lists, want))
             else {
-                report.outside += 1;
+                let named = placed.as_ref().and_then(path_of).unwrap_or_default();
+                report.not_written(
+                    NotWritten::Outside,
+                    &item.id,
+                    named,
+                    "the placement's path has a `..` in it, or names no file",
+                );
                 continue;
             };
+            if let Some(reason) = self.not_writing_at(&lists, &want) {
+                report.not_written(NotWritten::Outside, &item.id, &want, reason);
+                continue;
+            }
             if !suited(item, &want, &catalog) {
-                report.unsuited += 1;
+                report.not_written(
+                    NotWritten::Unsuited,
+                    &item.id,
+                    &want,
+                    "a file at the path would be another kind of file than the item",
+                );
                 continue;
             }
             let rank = match &placed {
@@ -3100,6 +3159,7 @@ impl Folder {
                         path: bound.path.clone(),
                         flag: "refused",
                         reason: refused.reason.clone(),
+                        item: None,
                     });
                     held.into_iter().chain(refused)
                 })
@@ -3172,8 +3232,13 @@ impl Folder {
         if taken.is_some() {
             match self.take_in(entry, rendering, withheld, report)? {
                 TakeIn::Taken => return Ok(PlacementWrite::Done),
-                TakeIn::Refused => {
-                    report.unwritten += 1;
+                TakeIn::Refused(reason) => {
+                    report.not_written(
+                        NotWritten::Unwritten,
+                        &item.id,
+                        &want,
+                        format!("it could not be taken in from another folder: {reason}"),
+                    );
                     return Ok(PlacementWrite::Refused);
                 }
                 TakeIn::Inapplicable => {}
@@ -3204,8 +3269,22 @@ impl Folder {
                             | CoreError::Redirected { .. }),
                         ) => return Err(error),
                         // A held copy that cannot be read is one file's failure too.
-                        Ok(Err(_)) | Err(_) => {
-                            report.absent += 1;
+                        Ok(Err(error)) => {
+                            report.not_written(
+                                NotWritten::Absent,
+                                &item.id,
+                                &want,
+                                format!("its bytes could not be read: {error}"),
+                            );
+                            return Ok(PlacementWrite::Done);
+                        }
+                        Err(error) => {
+                            report.not_written(
+                                NotWritten::Absent,
+                                &item.id,
+                                &want,
+                                format!("its bytes could not be fetched: {error}"),
+                            );
                             return Ok(PlacementWrite::Done);
                         }
                     },
@@ -3235,12 +3314,12 @@ impl Folder {
                 let text = match rendered.text {
                     Ok(text) => text,
                     Err(error) => {
-                        report.unwritten += 1;
-                        report.flagged.push(Flagged {
-                            path: want,
-                            flag: "unwritten",
-                            reason: error.to_string(),
-                        });
+                        report.not_written(
+                            NotWritten::Unwritten,
+                            &item.id,
+                            &want,
+                            error.to_string(),
+                        );
                         return Ok(PlacementWrite::Refused);
                     }
                 };
@@ -3289,7 +3368,12 @@ impl Folder {
         let in_place = match &bound {
             Some(bound) if ours && bound.content_hash == hash => true,
             Some(bound) if changed(bound) => {
-                report.unwritten += 1;
+                report.not_written(
+                    NotWritten::Unwritten,
+                    &item.id,
+                    &bound.path,
+                    "the file changed since the scan read it, and the next scan sends it",
+                );
                 return Ok(PlacementWrite::Done);
             }
             Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
@@ -3304,7 +3388,12 @@ impl Folder {
             if leaving.is_some_and(|leaving| leaving.contains(&names::folded(&want))) {
                 return Ok(PlacementWrite::Waiting);
             }
-            report.unwritten += 1;
+            report.not_written(
+                NotWritten::Unwritten,
+                &item.id,
+                &want,
+                "a file the folder did not write is at the path",
+            );
             return Ok(PlacementWrite::Done);
         }
         if rebound {
@@ -3440,14 +3529,19 @@ impl Folder {
             },
             |found| found.map(state::hash) == over,
         );
-        if written.is_err() {
+        if let Err(error) = written {
             // The path keeps the binding it had, or a scan that can reach the
             // file again would make it a new item.
             match &before {
                 Some(before) => rendering.bind(&conn, before)?,
                 None => rendering.unbind(&conn, &want)?,
             }
-            report.unwritten += 1;
+            report.not_written(
+                NotWritten::Unwritten,
+                &item.id,
+                &want,
+                format!("the file system refused it: {error}"),
+            );
             return Ok(PlacementWrite::Refused);
         }
         // Landed: the old bytes are no longer the folder's own.
@@ -3579,12 +3673,12 @@ impl Folder {
                 })
             })
         });
-        if moved.is_err() {
+        if let Err(error) = moved {
             match &before {
                 Some(before) => rendering.bind(&conn, before)?,
                 None => rendering.unbind(&conn, want)?,
             }
-            return Ok(TakeIn::Refused);
+            return Ok(TakeIn::Refused(error.to_string()));
         }
         rendering.bind(&conn, &binding(None))?;
         state::journal_clear_for(&conn, want, &item.id)?;
@@ -3633,6 +3727,7 @@ impl Folder {
                     path: bound.path.clone(),
                     flag: "retained",
                     reason: format!("cannot let it go to another folder: {error}"),
+                    item: Some(item_id.to_string()),
                 });
                 return Ok(LetGo::Retained);
             }
@@ -3706,7 +3801,12 @@ impl Folder {
             match self.departing(&row, members, settings, lists)? {
                 Departing::No => {}
                 Departing::Kept => report.kept += 1,
-                Departing::Unread => report.unwritten += 1,
+                Departing::Unread(reason) => report.not_written(
+                    NotWritten::Unwritten,
+                    &row.item_id,
+                    &row.path,
+                    format!("the file could not be read to tell whether it changed: {reason}"),
+                ),
                 Departing::Yes => going.push(row),
             }
         }
@@ -3761,7 +3861,7 @@ impl Folder {
             // it, and sends it unless the item is in the bin.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Departing::No,
             // Bytes it cannot read are not shown to be the folder's own.
-            Err(_) => Departing::Unread,
+            Err(error) => Departing::Unread(error.to_string()),
         })
     }
 
@@ -3903,9 +4003,9 @@ impl Folder {
             .unwrap_or(&item.id);
         // A file item's title is a file's name already, extension and all.
         let name = if bytes_of(item, catalog).is_some() {
-            safe_name(title)
+            name_from_title(title, None)
         } else {
-            format!("{}.md", safe_name(title))
+            name_from_title(title, Some(".md"))
         };
         match settings.first_placement_for(&item.r#type, catalog) {
             Some(dir) => cleaned(&format!("{dir}/{name}")),
@@ -4282,7 +4382,8 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
 enum Departing {
     No,
     Kept,
-    Unread,
+    /// Why the file could not be read.
+    Unread(String),
     Yes,
 }
 
@@ -4301,7 +4402,8 @@ enum LetGo {
 enum TakeIn {
     Inapplicable,
     Taken,
-    Refused,
+    /// Why the file could not be moved here.
+    Refused(String),
 }
 
 struct Placing<'a> {
@@ -4451,6 +4553,33 @@ pub struct PullReport {
     pub root_gone: Option<String>,
 }
 
+/// Why a pull did not write an item's file, each a count of its report.
+#[derive(Debug, Clone, Copy)]
+enum NotWritten {
+    Unwritten,
+    Outside,
+    Unsuited,
+    Absent,
+}
+
+impl PullReport {
+    fn not_written(&mut self, why: NotWritten, item: &str, path: &str, reason: impl Into<String>) {
+        let (count, flag) = match why {
+            NotWritten::Unwritten => (&mut self.unwritten, "unwritten"),
+            NotWritten::Outside => (&mut self.outside, "outside"),
+            NotWritten::Unsuited => (&mut self.unsuited, "unsuited"),
+            NotWritten::Absent => (&mut self.absent, "absent"),
+        };
+        *count += 1;
+        self.flagged.push(Flagged {
+            path: path.to_string(),
+            flag,
+            reason: reason.into(),
+            item: Some(item.to_string()),
+        });
+    }
+}
+
 /// A guard, not a boundary: the write resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
@@ -4466,19 +4595,28 @@ fn plainly_inside(root: &Path, relative: &str) -> bool {
     true
 }
 
-fn safe_name(title: &str) -> String {
+/// A file's name for a title, with `extension` where the title carries none.
+fn name_from_title(title: &str, extension: Option<&str>) -> String {
     let cleaned: String = title
         .chars()
         .map(|glyph| match glyph {
-            '/' | '\\' | ':' | '\0' => '-',
+            '/' | '\\' | ':' => '-',
+            glyph if glyph.is_control() => ' ',
             other => other,
         })
         .collect();
     let trimmed = cleaned.trim().trim_start_matches('.').trim();
-    if trimmed.is_empty() {
-        "untitled".into()
+    let stem = if trimmed.is_empty() {
+        "untitled"
     } else {
-        trimmed.to_string()
+        trimmed
+    };
+    match extension {
+        Some(extension) => names::fitted(stem, extension),
+        None => {
+            let (stem, extension) = names::split_extension(stem);
+            names::fitted(stem, extension)
+        }
     }
 }
 
@@ -4607,6 +4745,37 @@ mod tests {
             assert!(!dir.path().join("fixture.bin").exists());
             assert_eq!(server.seen(&format!("/blobs/{hash}/url")).len(), 1);
         }
+    }
+
+    #[test]
+    fn a_name_from_a_title_fits_a_file_system_and_holds_no_control_character() {
+        assert_eq!(name_from_title("a/b\\c:d", Some(".md")), "a-b-c-d.md");
+        assert_eq!(
+            name_from_title("Line one\nLine two\tend\u{7f}", Some(".md")),
+            "Line one Line two end.md"
+        );
+        assert_eq!(name_from_title(" \n.hidden\r", Some(".md")), "hidden.md");
+        assert_eq!(name_from_title("\t\n", Some(".md")), "untitled.md");
+
+        let long = "\u{65e5}".repeat(100);
+        let named = name_from_title(&long, Some(".md"));
+        assert!(named.len() <= 255, "{} bytes", named.len());
+        assert_eq!(named, format!("{}.md", "\u{65e5}".repeat(84)));
+        let emoji = format!("x{}", "\u{1f600}".repeat(80));
+        let named = name_from_title(&emoji, Some(".md"));
+        assert_eq!(named, format!("x{}.md", "\u{1f600}".repeat(62)));
+
+        // A file item's title carries its extension, which the cut keeps.
+        let photo = name_from_title(&format!("{}.jpeg", "p".repeat(300)), None);
+        assert_eq!(photo, format!("{}.jpeg", "p".repeat(250)));
+        // Text after a dot too long to be an extension is cut as the name.
+        let dotted = format!("Plan.{}", "q".repeat(300));
+        let named = name_from_title(&dotted, None);
+        assert_eq!(named.len(), 255);
+        assert!(named.starts_with("Plan.q"));
+        // A name at the limit already is left whole.
+        let exact = format!("{}.md", "e".repeat(252));
+        assert_eq!(name_from_title(&"e".repeat(252), Some(".md")), exact);
     }
 
     #[test]

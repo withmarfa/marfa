@@ -147,7 +147,12 @@ describe("a folder round trip", () => {
           rewritten: number;
           written: number;
           unwritten: number;
-          flagged: Array<{ path: string; flag: string; reason: string }>;
+          flagged: Array<{
+            path: string;
+            flag: string;
+            reason: string;
+            item?: string;
+          }>;
         }>(["folders", "pull", folder]);
       if (mode === "refused rendering")
         process.env.MARFA_TEST_FAULT = "render-frontmatter=authored.md";
@@ -192,6 +197,7 @@ describe("a folder round trip", () => {
           path: "authored.md",
           flag: "unwritten",
           reason: expect.stringContaining("injected rendering failure"),
+          item: id,
         });
         expect(binding()).toEqual(before);
         expect(readFileSync(path, "utf8")).toBe(authored);

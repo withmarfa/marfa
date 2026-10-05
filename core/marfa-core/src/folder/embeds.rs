@@ -203,6 +203,7 @@ pub(super) fn reported(path: &str, reason: String) -> Flagged {
         path: path.to_string(),
         flag: "embed",
         reason,
+        item: None,
     }
 }
 

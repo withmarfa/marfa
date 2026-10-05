@@ -23,6 +23,35 @@ pub(crate) fn forms(name: &str) -> Vec<String> {
     forms
 }
 
+/// The longest name, in bytes of UTF-8, that APFS and ext4 take.
+const NAME_LIMIT: usize = 255;
+
+/// Text after a name's last dot longer than this is part of the name, so a
+/// cut keeps some of the name.
+const EXTENSION_LIMIT: usize = 32;
+
+/// A name as its stem and its extension, dot included, or no extension.
+pub(crate) fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(at) if at > 0 && name.len() - at <= EXTENSION_LIMIT => name.split_at(at),
+        _ => (name, ""),
+    }
+}
+
+/// `stem` cut at a character boundary where it and `tail` would make a name
+/// longer than a file system takes, then `tail`.
+pub(crate) fn fitted(stem: &str, tail: &str) -> String {
+    let room = NAME_LIMIT.saturating_sub(tail.len());
+    if stem.len() <= room {
+        return format!("{stem}{tail}");
+    }
+    let mut end = room;
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{tail}", stem[..end].trim_end())
+}
+
 /// For each of `keys`, the one of them that holds its name: the one `bound`
 /// names, else the first.
 pub(crate) fn holders(keys: &[String], bound: impl Fn(&str) -> bool) -> Vec<usize> {
