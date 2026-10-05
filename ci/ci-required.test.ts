@@ -161,7 +161,29 @@ describe("what a change runs", () => {
     [
       "a Swift-only change, which the Linux job does not check",
       ["core/bindings/swift/src/lib.rs"],
-      ["core-checks", "core"],
+      ["core-checks", "core", "swift-package"],
+    ],
+    [
+      "the Swift crate's lockfile, which pins the uniffi the glue is made with",
+      ["core/bindings/swift/Cargo.lock"],
+      ["core-checks", "core", "swift-package", "version-fields"],
+    ],
+    [
+      "the Swift crate's manifest, which declares it",
+      ["core/bindings/swift/Cargo.toml"],
+      [
+        "ci-sqlite",
+        "workspace",
+        "core-checks",
+        "core",
+        "swift-package",
+        "version-fields",
+      ],
+    ],
+    [
+      "the script that builds the Swift package",
+      ["core/bindings/swift/build.sh"],
+      ["core-checks", "core", "swift-package"],
     ],
     [
       "the Node module's Rust, a member of the core workspace",
@@ -453,6 +475,7 @@ interface Step {
   uses?: string;
   with?: Record<string, string>;
   env?: Record<string, string>;
+  "working-directory"?: string;
 }
 
 interface Workflow {
@@ -464,6 +487,7 @@ interface Workflow {
       if?: string;
       permissions?: Record<string, string>;
       outputs?: Record<string, string>;
+      env?: Record<string, string>;
       steps: Step[];
     }
   >;
@@ -503,6 +527,8 @@ describe("what a draft runs", () => {
       "ci-sqlite",
       "workspace",
     ]);
+    const swift = forDraft(classify(["core/bindings/swift/build.sh"]));
+    expect(JOBS.filter((job) => swift[job])).toEqual(["ci-sqlite"]);
     const all = forDraft(classify([]));
     expect(JOBS.filter((job) => all[job])).toEqual([...DRAFT_JOBS]);
   });
@@ -513,7 +539,10 @@ describe("each job reads its own answer", () => {
     const { jobs } = workflow("ci.yml");
     const gated = Object.keys(jobs).filter((name) => name !== "changes");
     expect(gated.sort()).toEqual(
-      JOBS.filter((job) => job !== "workspace" && job !== "core").sort(),
+      JOBS.filter(
+        (job) =>
+          job !== "workspace" && job !== "swift-package" && job !== "core",
+      ).sort(),
     );
     expect(jobs.changes?.outputs).toEqual(
       Object.fromEntries(
@@ -570,6 +599,31 @@ describe("each job reads its own answer", () => {
     // Nothing before the gated steps needs Rust, and nothing after does now
     // that the version check, the one test that runs cargo, is left out.
     expect(steps.some((step) => step.uses?.includes("rust"))).toBe(false);
+  });
+
+  it("Core checks builds the Swift package with build.sh, as marfa-swift does, only when the classifier says so", () => {
+    const { jobs } = workflow("ci.yml");
+    const steps = jobs["core-checks"]?.steps ?? [];
+    const build = steps.find((step) => step.run === "./build.sh");
+    expect(build?.name).toBe("Build the Swift package");
+    expect(build?.["working-directory"]).toBe("core/bindings/swift");
+    expect(build?.if).toBe(
+      "${{ needs.changes.outputs.swift-package != 'false' }}",
+    );
+    // The Apple targets and the Xcode are the ones `core.yml` builds with.
+    const toolchain = steps.find((step) =>
+      step.uses?.startsWith("dtolnay/rust-toolchain"),
+    );
+    for (const target of [
+      "aarch64-apple-darwin",
+      "aarch64-apple-ios",
+      "aarch64-apple-ios-sim",
+    ]) {
+      expect(String(toolchain?.with?.targets)).toContain(target);
+    }
+    expect(build?.env?.DEVELOPER_DIR).toBe(
+      workflow("core.yml").jobs.core?.env?.DEVELOPER_DIR,
+    );
   });
 
   it("core.yml runs its job on a pull request only when the classifier says so", () => {
