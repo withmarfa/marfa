@@ -3980,7 +3980,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4239,7 +4239,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4390,7 +4390,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4551,7 +4551,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4749,7 +4749,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5000,7 +5000,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5194,7 +5194,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5400,7 +5400,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5544,7 +5544,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5681,7 +5681,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5840,7 +5840,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5996,7 +5996,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6153,7 +6153,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6354,7 +6354,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6507,7 +6507,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6720,7 +6720,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6978,7 +6978,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7114,7 +7114,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7260,7 +7260,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7406,7 +7406,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7561,7 +7561,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7714,7 +7714,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7851,7 +7851,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7998,7 +7998,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8158,7 +8158,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8312,7 +8312,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8477,7 +8477,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8621,7 +8621,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8768,7 +8768,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9001,7 +9001,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9158,7 +9158,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9349,7 +9349,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9566,7 +9566,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9764,7 +9764,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9884,7 +9884,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10040,7 +10040,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10207,7 +10207,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10327,7 +10327,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10501,7 +10501,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10635,7 +10635,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10825,7 +10825,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10996,7 +10996,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11142,7 +11142,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11269,7 +11269,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11385,7 +11385,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11513,7 +11513,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11629,7 +11629,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11745,7 +11745,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11928,7 +11928,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12070,7 +12070,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12204,7 +12204,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12358,7 +12358,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12474,7 +12474,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12635,7 +12635,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12736,7 +12736,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12885,7 +12885,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13004,7 +13004,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13150,7 +13150,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13298,7 +13298,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13422,7 +13422,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13579,7 +13579,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13713,7 +13713,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13882,7 +13882,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14030,7 +14030,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14173,7 +14173,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14309,7 +14309,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14468,7 +14468,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14643,7 +14643,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14792,7 +14792,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14926,7 +14926,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15104,7 +15104,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15250,7 +15250,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15391,7 +15391,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15574,7 +15574,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15728,7 +15728,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15919,7 +15919,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16138,7 +16138,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16332,7 +16332,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16450,7 +16450,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16621,7 +16621,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16757,7 +16757,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16903,7 +16903,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17078,7 +17078,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17194,7 +17194,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17338,7 +17338,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17508,7 +17508,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17624,7 +17624,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17792,7 +17792,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17923,7 +17923,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18076,7 +18076,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18206,7 +18206,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18322,7 +18322,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18460,7 +18460,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18594,7 +18594,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18740,7 +18740,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18896,7 +18896,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19035,7 +19035,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19196,7 +19196,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19327,7 +19327,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19400,7 +19400,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19528,7 +19528,7 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`. */
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
             500: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

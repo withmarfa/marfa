@@ -111,8 +111,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Checkout applies it to every file every job reads.
   [/^\.gitattributes$/, ALL],
 
-  // The contract's statements are cited by number and checked by the suite.
-  [/^conformance\/spec\//, ["conformance"]],
+  // The contract's statements are cited by number and checked by the suite,
+  // and the error code census test holds `errors.md` to the codes the server
+  // sends.
+  [/^conformance\/spec\//, ["workspace", "conformance"]],
   // Markdown anywhere else is read only by Prettier, and a package's README
   // by the version check. A fixture is test input and a generated tree is
   // checked file by file, so those fall through to their folder's rule.

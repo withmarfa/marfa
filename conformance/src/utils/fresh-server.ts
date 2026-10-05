@@ -120,8 +120,12 @@ async function stopProcess(state: string): Promise<void> {
   }
   if (processAlive(pid)) {
     signal("SIGKILL");
-    while (processAlive(pid)) {
+    const killDeadline = Date.now() + STOP_GRACE_MS;
+    while (processAlive(pid) && Date.now() < killDeadline) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+    if (processAlive(pid)) {
+      throw new Error(`process ${String(pid)} survived SIGKILL`);
     }
   }
 }

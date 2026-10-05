@@ -409,7 +409,7 @@ export const CHAIN_REFUSALS = {
   ),
   internalError: chainRefusal(
     ["internal_error"],
-    "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write that has no `Idempotency-Key`.",
+    "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
   ),
 } as const;
 
