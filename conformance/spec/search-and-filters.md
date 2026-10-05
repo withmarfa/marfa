@@ -91,7 +91,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 
 ### A null literal
 
-87. WHEN a `filter` expression compares a field with a `null` literal, after any operator that takes a value, the server MUST refuse it `400 validation_error`, and where the field is a property or an edge the message MUST name `not_exists` as the way to ask for an absent value. A `null` inside double quotes is the text.
+88. WHEN a `filter` expression compares a field with a `null` literal, after any operator that takes a value, the server MUST refuse it `400 validation_error`, and where the field is a property or an edge the message MUST name `not_exists` as the way to ask for an absent value. A `null` inside double quotes is the text.
 
     Reason: a comparison with null is never true, so `eq null` would answer an empty page with no error, and a bulk action selecting by it would silently select nothing. `not_exists` asks the question the caller means and answers the rows whose property is absent or null (the same `IS NULL` test it applies to a missing key), and `exists` the rows that hold a value. A system field always exists, so its refusal names no presence test.
 

@@ -123,7 +123,7 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
     Tests: `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `› queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
 
-56. WHEN a folder's saved settings hold a default tag or default property name the server refuses, or a search filter that compares with `null` (`search-and-filters.md` 87), the folder MUST refuse to read the settings, name the setting, say what is refused and say that `marfa folders change` changes it.
+56. WHEN a folder's saved settings hold a default tag or default property name the server refuses, or a search filter that compares with `null` (`search-and-filters.md` 88), the folder MUST refuse to read the settings, name the setting, say what is refused and say that `marfa folders change` changes it.
 
     Reason: a default is applied to every new file, so a refused one would flag each of them, and a filter the copy cannot answer would stop every pass. The settings change is a door on the server that reads nothing from the copy, so it stays reachable, and the next pass that catches up hydrates the new settings.
 
