@@ -51,6 +51,27 @@ pub struct DrainReport {
     pub retry_after_seconds: Option<u64>,
 }
 
+impl DrainReport {
+    /// Takes in a later pass of the same drain, so the two read as one: what
+    /// was sent adds up, and what still waits is what the later pass left.
+    pub(crate) fn absorb(&mut self, later: DrainReport) {
+        self.answered += later.answered;
+        self.unsent += later.unsent;
+        self.unmade += later.unmade;
+        self.held = later.held;
+        self.undelivered = later.undelivered;
+        self.unavailable = later.unavailable;
+        self.verdicts.extend(later.verdicts);
+        self.stopped = later.stopped;
+        for source in later.unclaimed_sources {
+            if !self.unclaimed_sources.contains(&source) {
+                self.unclaimed_sources.push(source);
+            }
+        }
+        self.retry_after_seconds = self.retry_after_seconds.max(later.retry_after_seconds);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainVerdict {
     pub id: String,
@@ -3212,5 +3233,41 @@ mod tests {
             "already-stopped call waited for other drain: {immediate:?}"
         );
         assert_eq!(immediate.unwrap().unwrap_err(), CoreError::Canceled);
+    }
+
+    fn report(answered: usize, held: usize) -> DrainReport {
+        DrainReport {
+            answered,
+            held,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    #[test]
+    fn a_later_pass_adds_what_it_sent_and_leaves_what_it_left() {
+        let mut first = report(3, 1);
+        first.unclaimed_sources = vec!["a".into()];
+        first.retry_after_seconds = Some(5);
+        let mut later = report(2, 0);
+        later.unclaimed_sources = vec!["a".into(), "b".into()];
+        later.unavailable = Some("the server did not answer".into());
+        later.undelivered = 4;
+        first.absorb(later);
+        assert_eq!(first.answered, 5);
+        assert_eq!(first.held, 0, "what waits is what the later pass left");
+        assert_eq!(first.undelivered, 4);
+        assert_eq!(
+            first.unavailable.as_deref(),
+            Some("the server did not answer")
+        );
+        assert_eq!(first.unclaimed_sources, ["a", "b"]);
+        assert_eq!(first.retry_after_seconds, Some(5));
     }
 }

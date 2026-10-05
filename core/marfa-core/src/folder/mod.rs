@@ -417,6 +417,12 @@ impl Folder {
         &self.root
     }
 
+    /// The path, from the folder's root, of the file bound to the item, if
+    /// one is.
+    pub fn file_of(&self, item_id: &str) -> Result<Option<String>> {
+        Ok(state::bound_to_item(&*self.core.conn()?, item_id)?.map(|bound| bound.path))
+    }
+
     /// Read from the copy, not the server.
     pub fn settings(&self) -> Result<Settings> {
         match self.core.get(&self.folder)? {
@@ -2609,6 +2615,15 @@ pub struct Drained {
     pub gave_way: usize,
 }
 
+impl Drained {
+    /// Takes in a later drain of the same sync, so the two read as one.
+    pub(crate) fn absorb(&mut self, later: Drained) {
+        self.report.absorb(later.report);
+        self.rebased += later.rebased;
+        self.gave_way += later.gave_way;
+    }
+}
+
 impl Folder {
     /// Its passes are one drain: another on the store waits for all of them.
     pub fn drain(&self) -> Result<Drained> {
@@ -2621,21 +2636,7 @@ impl Folder {
                 break;
             }
             rebased += now;
-            let again = self.core.drain_held(&one)?;
-            report.answered += again.answered;
-            report.unsent += again.unsent;
-            report.unmade += again.unmade;
-            report.held = again.held;
-            report.undelivered = again.undelivered;
-            report.unavailable = again.unavailable;
-            report.verdicts.extend(again.verdicts);
-            report.stopped = again.stopped;
-            for source in again.unclaimed_sources {
-                if !report.unclaimed_sources.contains(&source) {
-                    report.unclaimed_sources.push(source);
-                }
-            }
-            report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
+            report.absorb(self.core.drain_held(&one)?);
         }
         // Queued even where the drain stopped, so the copy holds the edge the line asks for.
         self.make_edges_gone_before_their_move()?;

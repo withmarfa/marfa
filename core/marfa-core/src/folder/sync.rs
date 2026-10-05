@@ -14,6 +14,8 @@ pub struct SyncReport {
     pub hydrated: Option<HydrateReport>,
     pub settings: SettingsFileReport,
     pub scan: ScanReport,
+    /// Every write the sync sent, those the pull queued after the first
+    /// drain included.
     pub drain: Drained,
     /// Why the catch-up could not reach the server, where it could not; the
     /// sync goes on to write out the copy it holds.
@@ -25,8 +27,9 @@ pub struct SyncReport {
 
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
-    /// an edit of the settings file, scans, drains, catches up and pulls. A
-    /// folder whose first sync waits to be confirmed is only read, and says
+    /// an edit of the settings file, scans, drains, catches up, pulls, and
+    /// drains again where the pull queued the placement of a file it wrote.
+    /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
         if self.awaiting_confirmation()?
@@ -43,7 +46,7 @@ impl Folder {
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
         let scan = self.scan()?;
-        let drain = self.drain()?;
+        let mut drain = self.drain()?;
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
@@ -54,6 +57,11 @@ impl Folder {
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
             Err(error) => return Err(error),
         };
+        if sends_again(catch_up.is_ok(), &drain.report)
+            && pull.as_ref().is_some_and(|pulled| pulled.placed > 0)
+        {
+            drain.absorb(self.drain()?);
+        }
         Ok(SyncReport {
             hydrated,
             settings,
@@ -74,5 +82,53 @@ impl Folder {
             Folder::open(dir, None)?.remove()?;
         }
         Ok(())
+    }
+}
+
+/// Not where the first drain or the catch-up shows the server cannot take
+/// writes (unreachable, credential refused, a write left undelivered): the
+/// report says why, and the placements wait for the next sync.
+fn sends_again(caught_up: bool, first: &crate::DrainReport) -> bool {
+    caught_up && first.unavailable.is_none() && first.stopped.is_none() && first.undelivered == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drained() -> crate::DrainReport {
+        crate::DrainReport {
+            answered: 1,
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    #[test]
+    fn a_second_drain_goes_only_where_nothing_showed_the_server_unable_to_take_writes() {
+        assert!(sends_again(true, &drained()), "the witness: it goes");
+        assert!(!sends_again(false, &drained()), "the catch-up failed");
+        let unreachable = crate::DrainReport {
+            unavailable: Some("the server did not answer".into()),
+            ..drained()
+        };
+        assert!(!sends_again(true, &unreachable));
+        let refused = crate::DrainReport {
+            stopped: Some("the server refused the credential".into()),
+            ..drained()
+        };
+        assert!(!sends_again(true, &refused));
+        let undelivered = crate::DrainReport {
+            undelivered: 1,
+            ..drained()
+        };
+        assert!(!sends_again(true, &undelivered));
     }
 }

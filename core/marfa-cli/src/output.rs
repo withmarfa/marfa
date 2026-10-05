@@ -235,36 +235,10 @@ pub fn drain_exit(drain: &DrainReport) -> crate::error::Exit {
 pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
     report(drain, json, || {
         let mut lines = Vec::new();
+        // Printed rather than left out, or a short list would hide that
+        // anything was attempted.
         for verdict in &drain.verdicts {
-            // Printed rather than left out, or a short list would hide that
-            // anything was attempted.
-            let mut line = format!(
-                "{} {} {}",
-                verdict
-                    .verdict
-                    .map_or("unanswered", marfa_core::Verdict::as_str),
-                verdict.kind,
-                verdict.item_id.as_deref().unwrap_or(verdict.id.as_str())
-            );
-            if let Some(reason) = &verdict.reason {
-                line.push_str(&format!(" ({reason})"));
-            }
-            if let Some(refusal) = &verdict.refusal {
-                line.push_str(&refused(refusal));
-            }
-            if let Some(sibling) = &verdict.conflicted_copy_id {
-                line.push_str(&format!(" conflicted copy {sibling}"));
-            }
-            if !verdict.merged_fields.is_empty() {
-                line.push_str(&format!(" merged {}", verdict.merged_fields.join(",")));
-            }
-            if verdict.replayed {
-                line.push_str(" (answered from the record)");
-            }
-            if verdict.refusals > 0 {
-                line.push_str(&format!(" [{} refusal(s)]", verdict.refusals));
-            }
-            lines.push(line);
+            lines.push(verdict_line(verdict, None, None));
         }
         lines.push(counts(drain));
         let refused = drain
@@ -287,6 +261,45 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
         lines.extend(unclaimed(drain));
         lines.join("\n")
     })
+}
+
+/// One write's answer, as `device drain` prints it. A folder names the file
+/// the write was for as `subject`, and the file a conflicted copy was made
+/// into as `copy`, in place of their ids.
+pub fn verdict_line(
+    verdict: &marfa_core::DrainVerdict,
+    subject: Option<&str>,
+    copy: Option<&str>,
+) -> String {
+    let mut line = format!(
+        "{} {} {}",
+        verdict
+            .verdict
+            .map_or("unanswered", marfa_core::Verdict::as_str),
+        verdict.kind,
+        subject
+            .or(verdict.item_id.as_deref())
+            .unwrap_or(verdict.id.as_str())
+    );
+    if let Some(reason) = &verdict.reason {
+        line.push_str(&format!(" ({reason})"));
+    }
+    if let Some(refusal) = &verdict.refusal {
+        line.push_str(&refused(refusal));
+    }
+    if let Some(sibling) = &verdict.conflicted_copy_id {
+        line.push_str(&format!(" conflicted copy {}", copy.unwrap_or(sibling)));
+    }
+    if !verdict.merged_fields.is_empty() {
+        line.push_str(&format!(" merged {}", verdict.merged_fields.join(",")));
+    }
+    if verdict.replayed {
+        line.push_str(" (answered from the record)");
+    }
+    if verdict.refusals > 0 {
+        line.push_str(&format!(" [{} refusal(s)]", verdict.refusals));
+    }
+    line
 }
 
 /// What a refusal says beyond its code: the row in the bin, the grant the key

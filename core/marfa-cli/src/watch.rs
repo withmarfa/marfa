@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use marfa_core::folder::RETRY_MOST;
-use marfa_core::{CoreError, WatchError, WatchEvent, WatchPass};
+use marfa_core::{CoreError, Folder, WatchError, WatchEvent, WatchPass};
 
 use crate::error::CliError;
 use crate::folders;
@@ -20,6 +20,7 @@ pub fn watch(
     let server = session.server.url.clone();
     let folder = folders::opened(dir, Some(session))?;
     let stop = Arc::new(AtomicBool::new(false));
+    let mut conflicts = folders::Conflicts::default();
     folder
         .watch(&stop, |event| {
             if let (WatchEvent::Watching { .. }, Some(limit)) = (&event, stop_after) {
@@ -30,7 +31,7 @@ pub fn watch(
                     stop.store(true, Ordering::SeqCst);
                 });
             }
-            tell(&server, json, event)
+            tell(&server, json, &folder, &mut conflicts, event)
         })
         .map_err(|error| match error {
             WatchError::CredentialRefused(error) => refused_credential(&server, &error),
@@ -43,7 +44,13 @@ pub fn watch(
         })
 }
 
-fn tell(server: &str, json: bool, event: WatchEvent) -> Result<(), CliError> {
+fn tell(
+    server: &str,
+    json: bool,
+    folder: &Folder,
+    conflicts: &mut folders::Conflicts,
+    event: WatchEvent,
+) -> Result<(), CliError> {
     match event {
         WatchEvent::Watching { dir } => {
             eprintln!("watching {} (interrupt to stop)", dir.display());
@@ -79,7 +86,7 @@ fn tell(server: &str, json: bool, event: WatchEvent) -> Result<(), CliError> {
             json,
             || format!("waiting: {}", scan.root_gone.as_deref().unwrap_or_default()),
         ),
-        WatchEvent::Passed(pass) => passed(json, &pass),
+        WatchEvent::Passed(pass) => passed(json, folder, conflicts, &pass),
     }
 }
 
@@ -95,7 +102,12 @@ fn refused_credential(server: &str, said: &CoreError) -> CliError {
     })
 }
 
-fn passed(json: bool, pass: &WatchPass) -> Result<(), CliError> {
+fn passed(
+    json: bool,
+    folder: &Folder,
+    conflicts: &mut folders::Conflicts,
+    pass: &WatchPass,
+) -> Result<(), CliError> {
     let WatchPass {
         settings,
         scan: scanned,
@@ -105,6 +117,7 @@ fn passed(json: bool, pass: &WatchPass) -> Result<(), CliError> {
         embeds,
         unplaced_changed,
         stopped_changed,
+        notices_changed,
     } = pass;
     let unplaced = unplaced_changed
         .then(|| folders::unplaced_line(pulled.unplaced))
@@ -115,26 +128,40 @@ fn passed(json: bool, pass: &WatchPass) -> Result<(), CliError> {
         .clone()
         .filter(|_| *stopped_changed)
         .map(|reason| format!("the drain stopped: {reason}"));
-    let said: Vec<String> = folders::trashed_lines(scanned)
-        .into_iter()
-        .chain(stopped)
-        .chain(folders::uncarried_line(&pulled.uncarried))
-        .chain((scanned.paused > 0).then(|| folders::paused_line(scanned.paused, false)))
-        .chain((pulled.paused > 0).then(|| folders::paused_line(pulled.paused, true)))
-        .chain(
-            scanned
-                .warnings
-                .iter()
-                .map(|file| format!("{}: {}", file.path, file.reason)),
-        )
-        .chain(folders::directory_lines(&scanned.directories))
-        .chain(folders::secret_lines(&scanned.secrets))
-        .chain(scanned.settling.iter().map(|path| {
-            format!("{path}: still changing, so not sent yet; it is sent once it stops")
-        }))
-        .chain(folders::flagged_lines(flagged))
-        .chain(folders::embed_lines(embeds))
-        .collect();
+    // What stands is said when it changes; what happened, every time.
+    let standing: Vec<String> = if *notices_changed {
+        folders::unsure_lines(scanned)
+            .into_iter()
+            .chain(folders::uncarried_line(&pulled.uncarried))
+            .chain((scanned.paused > 0).then(|| folders::paused_line(scanned.paused, false)))
+            .chain((pulled.paused > 0).then(|| folders::paused_line(pulled.paused, true)))
+            .chain(
+                scanned
+                    .warnings
+                    .iter()
+                    .map(|file| format!("{}: {}", file.path, file.reason)),
+            )
+            .chain(folders::directory_lines(&scanned.directories))
+            .chain(folders::secret_lines(&scanned.secrets))
+            .chain(scanned.settling.iter().map(|path| {
+                format!("{path}: still changing, so not sent yet; it is sent once it stops")
+            }))
+            .chain(folders::flagged_lines(flagged))
+            .chain(folders::embed_lines(embeds))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let said: Vec<String> = if json {
+        Vec::new()
+    } else {
+        folders::trashed_lines(scanned)
+            .into_iter()
+            .chain(stopped)
+            .chain(conflicts.say(folder, &drained.report))
+            .chain(standing)
+            .collect()
+    };
     output::report(
         &serde_json::json!({
             "settings": settings,
@@ -145,10 +172,21 @@ fn passed(json: bool, pass: &WatchPass) -> Result<(), CliError> {
         json,
         || {
             let held = pulled.unwritten + pulled.outside + pulled.unsuited + pulled.absent;
-            let settings: String = folders::settings_lines(settings, Some(&pulled.settings))
-                .into_iter()
-                .map(|line| format!("{line}\n"))
-                .collect();
+            // A standing refusal of the settings file is said when it changes,
+            // and an edit sent, whenever it is.
+            let sent = marfa_core::SettingsFileReport {
+                flagged: None,
+                unwritten: None,
+                ..settings.clone()
+            };
+            let settings: String = if *notices_changed {
+                folders::settings_lines(settings, Some(&pulled.settings))
+            } else {
+                folders::settings_lines(&sent, None)
+            }
+            .into_iter()
+            .map(|line| format!("{line}\n"))
+            .collect();
             format!(
                 "{settings}{} created, {} updated, {} renamed, {} deleted; answered {}{}; {} file(s) written{}{}{}{}",
                 scanned.created,

@@ -133,6 +133,11 @@ fn registry() -> Registry {
 /// A folder of the notes tagged with a tag of its own, so it holds only
 /// what the test writes, its first sync already confirmed.
 fn added(dir: &Path, through: Server) -> Folder {
+    added_tagged(dir, through).0
+}
+
+/// The same, with the tag its notes carry.
+fn added_tagged(dir: &Path, through: Server) -> (Folder, String) {
     registry();
     let tag = nonce();
     let settings = serde_json::json!({
@@ -142,7 +147,7 @@ fn added(dir: &Path, through: Server) -> Folder {
     let id = seed(&["folder", &nonce(), &settings.to_string()]);
     let folder = Folder::add(dir, &id, Some(through)).unwrap();
     folder.confirm_first_sync().unwrap();
-    folder
+    (folder, tag)
 }
 
 /// A sync that ran, not one waiting to be confirmed.
@@ -185,6 +190,33 @@ fn a_sync_sends_what_changed_and_writes_back_what_the_server_holds() {
         status.files.iter().all(|file| file.status == "in_step"),
         "{status:?}"
     );
+}
+
+#[test]
+#[ignore = "needs a running server"]
+fn one_sync_leaves_the_files_it_wrote_in_step_and_counts_their_placements() {
+    let dir = tempfile::tempdir().unwrap();
+    let (folder, tag) = added_tagged(dir.path(), server());
+    // Made on the server, so each is written here and placed by this sync.
+    for title in ["Alpha", "Beta", "Gamma"] {
+        seed(&["note", title, "Made elsewhere.", &tag]);
+    }
+    let synced = ran(&folder);
+    let pulled = synced.pull.as_ref().expect("the sync pulled");
+    assert_eq!(pulled.written, 3, "{pulled:?}");
+    assert_eq!(
+        synced.drain.report.answered, 3,
+        "the placements the pull queued were left for the next sync: {:?}",
+        synced.drain
+    );
+    let status = Folder::status_of(dir.path()).unwrap();
+    assert_eq!(status.files.len(), 3, "{status:?}");
+    assert!(
+        status.files.iter().all(|file| file.status == "in_step"),
+        "{status:?}"
+    );
+    let again = ran(&folder);
+    assert_eq!(again.drain.report.answered, 0, "{:?}", again.drain);
 }
 
 #[test]
