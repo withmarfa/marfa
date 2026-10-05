@@ -1417,19 +1417,17 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // **None of these sentences says that the grant reaches types nobody has
   // registered yet, and none of them may.** Both screens compose that from
-  // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
-  // line, `describeScope` appends `OPEN_ENDED_SENTENCE` to whichever
-  // of these it is about to print, and `isOpenEnded` is the single answer
-  // both read. So an entry here says what the grant reaches and stops.
+  // the grammar: both screens put `OPEN_ENDED_LINE` on the toggle row's
+  // second line, and `isOpenEnded` is the single answer both read. So an
+  // entry here says what the grant reaches and stops.
   //
   // **The prohibition is not tidiness, it is the only way the two screens
   // can be made to agree.** A futurity clause inside one of these sentences
-  // is tempting, because the device screen has no second line and the
-  // description is the whole of what it says about a grant. It cannot work:
-  // `scopeName` on the authorize screen falls through to this map wherever
-  // nothing curated names the pattern, so a clause written for one screen
-  // arrives as the other screen's toggle label, directly above a line about
-  // to state the same thing. Reconciling that needs a check on the copy, and
+  // is tempting, because a description reads as the whole of what a row says
+  // about a grant. It cannot work: `scopeName` falls through to this map
+  // wherever nothing curated names the pattern, so a clause written into it
+  // arrives as a toggle label, directly above a line about to state the same
+  // thing. Reconciling that needs a check on the copy, and
   // a check on the copy cannot tell a clause that means futurity from a word
   // that merely spells it — futurity phrased in other words is stated twice,
   // and a "later" carrying no futurity at all silences the line on a
@@ -1543,18 +1541,16 @@ export async function resolveWildcardExpansions(
 function describeScope(scope: ParsedScope): string | undefined {
   switch (scope.kind) {
     case "oidc":
-      // Deliberately absent. `scopeName` in `consent.ts` and
-      // `describeScope` in `device-pages.ts` both resolve an OIDC
-      // literal through `oidc-labels.ts` and return before they look at this
-      // map, so anything written here for one would be computed and
-      // discarded.
+      // Deliberately absent. `scopeName` in `consent.ts`, which both screens
+      // label a row through, resolves an OIDC literal through
+      // `oidc-labels.ts` and returns before it looks at this map, so
+      // anything written here for one would be computed and discarded.
       return undefined;
     case "permission":
       // Deliberately absent, for the reason above. `scopeName` in
-      // `consent.ts` and `describeScope` in `device-pages.ts` both
-      // resolve a permission literal through `permission-labels.ts` and
-      // return before they look at this map, so anything written here for
-      // one would be computed and discarded.
+      // `consent.ts` resolves a permission literal through
+      // `permission-labels.ts` and returns before it looks at this map, so
+      // anything written here for one would be computed and discarded.
       //
       // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on
@@ -1566,10 +1562,9 @@ function describeScope(scope: ParsedScope): string | undefined {
       return undefined;
     case "content":
       // Resolved from the curated map, unlike the two arms above, because
-      // both renderers do read the map for this kind. `describeScope`
-      // on the device screen falls to `descriptions?.[s.typePattern]` for
-      // everything that is not OIDC or a permission, and `labelFor` on
-      // the authorize screen falls through `SCOPE_LABELS` to the same map. So
+      // both screens do read the map for this kind: `labelFor` falls
+      // through `SCOPE_LABELS` to it for everything that is not OIDC or a
+      // permission, and both screens label a row through `labelFor`. So
       // a `content` entry written there reaches a person on both surfaces,
       // and a hard return here would discard it — silently, on the one screen
       // whose job is saying how large a grant is.

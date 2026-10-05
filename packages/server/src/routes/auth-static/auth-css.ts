@@ -603,6 +603,10 @@ select:focus {
   line-height: 1.45;
   color: var(--fg-muted);
 }
+/* A second line under a toggle row's label, on the consent and device pages. */
+.subrow .rmeta {
+  display: block;
+}
 
 /* ================================================================ */
 /* Locked design vocabulary                                         */

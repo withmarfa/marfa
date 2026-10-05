@@ -86,7 +86,7 @@ const summaries = (html: string): string[] =>
 /** Every line on the device screen. The rows are toggles now and share the
  *  authorize screen's row markup, so the class moved with them. */
 const deviceLines = (html: string): string[] =>
-  [...html.matchAll(/<div class="subrow"><span>([^<]*)<\/span>/g)].map((m) =>
+  [...html.matchAll(/<div class="subrow"><span>([^<]*)/g)].map((m) =>
     (m[1] ?? "").replace(/&#39;/g, "'").replace(/&amp;/g, "&"),
   );
 
@@ -179,14 +179,92 @@ describe("a consent row states the operation, not only the type", () => {
   });
 
   it("says the same thing about one grant on the device screen", () => {
-    // That screen has no sections and no second line: one
-    // sentence per grant is the whole of what it says, and it de-duplicated
-    // on that sentence, so a read and a change over one type arrived as a
-    // single row saying neither.
+    // That screen has no sections, and it de-duplicated on the rendered
+    // line, so a read and a change over one type arrived as a single row
+    // saying neither.
     const lines = deviceLines(
       device([parse("core.note:read"), parse("core.note:write")]),
     );
-    expect(lines).toEqual(["Notes. Read only.", "Notes. Read and write."]);
+    expect(lines).toEqual(["Notes (read only)", "Notes (read and write)"]);
+  });
+
+  it("gives every grant the same words on both screens", () => {
+    // The two screens render nothing alike, so what has to agree is the
+    // description of a grant, character for character. Curated names, a
+    // description standing in for one, the humanized floor, a wildcard, an
+    // edge, metadata, content, profile, an OIDC literal and a permission each
+    // resolve a different way, so each is here. The device screen's two
+    // mechanism rows (`openid`, `offline_access`) are left out because the
+    // authorize screen hides them.
+    const scopes = [
+      "core.note:read",
+      "core.task:write",
+      "acme.widget:read",
+      "core.*:read",
+      "*:read",
+      "metadata.types:write",
+      "edge.about:read",
+      "content:read",
+      "profile:read",
+      "email",
+      "profile",
+      "webhooks.manage",
+      "keys.mint",
+    ].map(parse);
+    const rows = rowLabels(authorize(scopes)).sort();
+    const lines = deviceLines(device(scopes)).sort();
+    expect(rows).toHaveLength(scopes.length);
+    expect(lines).toEqual(rows);
+  });
+
+  it("states how far a grant reaches in the same line on both screens", () => {
+    const secondLines = (html: string): string[] =>
+      [...html.matchAll(/<span class="rmeta">([^<]*)<\/span>/g)].map(
+        (m) => m[1] ?? "",
+      );
+    const open = [parse("core.*:read"), parse("*:read")];
+    const closed = [parse("core.note:read")];
+    // Wildcards: each screen prints the line under every open-ended row. With
+    // no enumeration given, as here, the line is the plain open-ended one; the
+    // enumerated form is held by the next test.
+    expect(secondLines(device(open))).toEqual([
+      "Covers what exists today plus anything added later",
+      "Covers what exists today plus anything added later",
+    ]);
+    expect(secondLines(authorize(open))).toContain(
+      "Covers what exists today plus anything added later",
+    );
+    // Witness: a concrete grant is told nothing of the kind on either.
+    expect(secondLines(device(closed))).toEqual([]);
+    expect(secondLines(authorize(closed))).toEqual([]);
+  });
+
+  it("names the types an enumerable wildcard covers in the same line on both screens", () => {
+    const secondLines = (html: string): string[] =>
+      [...html.matchAll(/<span class="rmeta">([^<]*)<\/span>/g)].map(
+        (m) => m[1] ?? "",
+      );
+    const scopes = [parse("user.*:read")];
+    const wildcardExpansions = { "user.*": ["Recipes", "Trails"] };
+    const onDevice = renderDeviceConsentScreen({
+      clientName: "Fieldwork",
+      userCode: "ABCD-EFGH",
+      scopes,
+      descriptions: buildScopeDescriptions(scopes),
+      wildcardExpansions,
+    });
+    const onAuthorize = renderConsentScreen({
+      clientName: "Fieldwork",
+      clientId: "fieldwork-client",
+      oauthQuery: "client_id=fieldwork-client&scope=...&sig=signed",
+      scopes,
+      descriptions: buildScopeDescriptions(scopes),
+      wildcardExpansions,
+    });
+    expect(secondLines(onDevice)).toEqual([
+      "Today this covers Recipes, Trails, plus any you add later",
+    ]);
+    expect(secondLines(onAuthorize)).toEqual(secondLines(onDevice));
   });
 
   it("uses one vocabulary across both surfaces", () => {
@@ -250,10 +328,8 @@ describe("a consent row states the operation, not only the type", () => {
   });
 
   it("says a description-derived grant in the same words as the device screen", () => {
-    // The description is the whole of what the device screen prints, and it
-    // is also this row's label wherever nothing curated names the pattern.
-    // Where both surfaces fall that far they now render one identical
-    // string, which is the agreement the operation module exists for.
+    // The description is this row's label wherever nothing curated names the
+    // pattern, on both screens, so both render one identical string.
     // `metadata.edge_types` was this case's example until it gained a curated
     // label, which moved it off the description path this asserts about. An
     // edge type is the same population and the docstring above already names
@@ -517,8 +593,8 @@ describe("one literal named twice is one row", () => {
     // fix that made the authorize screen consistent with itself but not with
     // its sibling still fails.
     expect(deviceLines(device(DUPLICATED.map(parse)))).toEqual([
-      "Notes. Read only.",
-      "Tasks and to-dos. Read only.",
+      "Notes (read only)",
+      "Tasks (read only)",
     ]);
   });
 });

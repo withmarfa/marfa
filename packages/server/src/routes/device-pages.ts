@@ -21,11 +21,9 @@ import {
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
-import { permissionLabel } from "./permission-labels.js";
-import { oidcLabel } from "./oidc-labels.js";
+import { labelFor } from "./consent.js";
 import { escapeHtml, confirmIcon, unverifiedAppCallout } from "./auth-html.js";
-import { isOpenEnded, OPEN_ENDED_SENTENCE } from "./scope-openness.js";
-import { operationSentence } from "./scope-operation.js";
+import { reachLine } from "./scope-openness.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -45,6 +43,11 @@ interface DeviceConsentParams {
   scopes: ParsedScope[];
   userCode: string;
   descriptions?: Record<string, string>;
+  /**
+   * For an open-ended pattern, the display names of the types it matches
+   * today, keyed by type pattern, as the authorize screen takes them.
+   */
+  wildcardExpansions?: Record<string, string[]>;
   /**
    * The bundle set this instance offers, so a scope only an off-by-default
    * bundle names renders unticked here as it does on the authorize screen.
@@ -70,100 +73,18 @@ const ERROR_MESSAGES: Record<string, string> = {
     "That code was started under a different account. Sign in as that account, or restart the sign-in on your other device.",
 };
 
-/** One data-scope line, with the futurity clause where the grammar calls for
- *  it. Split out of {@link describeScope} only so that the chain of per-kind
- *  ternaries there stays readable. */
-function openEndedSuffixed(scope: ParsedScope, base: string): string {
-  return isOpenEnded(scope) ? `${base} ${OPEN_ENDED_SENTENCE}` : base;
-}
-
 /**
- * Resolve the human-readable description for one parsed scope. OIDC literals
- * and permissions map to friendly labels; everything else uses the
- * caller-supplied description, falling back to the scope literal.
+ * The literal a scope row submits, which is what the person grants by ticking
+ * it.
  *
- * **Per scope rather than per set, because the rows carry checkboxes now.**
- * This resolved and deduplicated the whole list at once, which was right
- * while a row was a sentence and wrong once a row submits a literal: the
- * caller has to keep each line beside the scope it came from. De-duplication
- * moved to the caller with it, and moved axis — on the literal, since two
- * rows carrying one literal would let a person untick a permission the other
- * row grants back.
- *
- * **An open-ended grant gets {@link OPEN_ENDED_SENTENCE} appended, composed
- * here rather than written into the description.** This screen has no
- * toggles and no second line, so one sentence per grant is the whole of what
- * it says, and a grant reaching types nobody has registered yet has to say
- * so somewhere. It used to say so in the copy, which put the clause on a
- * string the authorize screen also uses as a toggle label, above a row about
- * to state the same fact. {@link isOpenEnded} is the one answer both screens
- * now ask, so neither has to inspect the other's copy to find out whether
- * the point has already been made.
- *
- * The clause is appended even where no description resolved and the literal
- * is standing in. That row is already degraded and says so by looking like a
- * scope literal; how wide the grant is does not stop being true because the
- * words for it went missing.
- *
- * **{@link operationSentence} is appended on the same terms, and it is what
- * keeps this screen able to tell a read from a change.** The description map
- * is keyed on the type pattern, which carries no verb, so `core.note:read`
- * and `core.note:write` both resolved to "Your notes." — and this function
- * de-duplicates on the rendered line, so the second was dropped and a
- * request to read and write somebody's notes rendered as one row saying
- * neither. The authorize screen had the same gap and separated the two by
- * which section they landed in, which this screen has no equivalent of at
- * all. Composed from the grammar rather than curated, so a sentence written
- * here cannot go quiet while the other surface speaks.
- *
- * **The read half of a pattern held at both operations is printed, not
- * folded into the write line.** `summarize` on the authorize screen does
- * fold it, and the difference is that screen's truncation rather than a
- * disagreement about what a write grant confers. That sentence names four
- * and then counts, so a name it does not have to spend is a name the
- * futurity clause can have; this one prints every line it resolves and
- * truncates nothing. Folding here would also now be wrong twice over: each
- * line owns a toggle, so a folded pair would offer one tick over two
- * literals.
- *
- * The verb-less families are named rather than defaulted, because the
- * fallback is a literal this function rebuilds and the naive rebuild is
- * wrong for them. Appending `:${operation}` to a permission produces
- * `webhooks.manage:none`, which no parser accepts and nobody signed, and
- * this string is what a person reads on the device-approval screen when no
- * description resolves. Nothing is granted from it, so the failure is
- * cosmetic, but it is cosmetic on a screen whose only job is telling someone
- * what they are about to approve.
+ * The verb-less families are named rather than defaulted, because appending
+ * `:${operation}` to a permission produces `webhooks.manage:none`, which no
+ * parser accepts.
  */
 function scopeLiteral(s: ParsedScope): string {
   return s.kind === "oidc" || s.kind === "permission"
     ? s.typePattern
     : `${s.typePattern}:${s.operation}`;
-}
-
-function describeScope(
-  s: ParsedScope,
-  descriptions?: Record<string, string>,
-): string {
-  const literal = scopeLiteral(s);
-  const human =
-    s.kind === "oidc"
-      ? // The consent screen's own label, so one literal reads the same
-        // on both surfaces a person meets it on. That is the whole reason
-        // — and it is a trade, not a free win: the rows beside these come
-        // from the type registry's descriptions, which are sentences
-        // ("Text content you created."), so a noun phrase sits slightly
-        // apart from its neighbors here. Two screens disagreeing about
-        // what one grant means is the worse of the two.
-        (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
-      : s.kind === "permission"
-        ? (permissionLabel(s.typePattern) ?? literal)
-        : openEndedSuffixed(s, descriptions?.[s.typePattern] ?? literal);
-  // What the grant reaches, then how far it reaches, then what it permits.
-  // The permission goes last so the futurity clause stays beside the noun
-  // phrase it qualifies rather than being split off from it.
-  const permits = operationSentence(s);
-  return permits === undefined ? human : `${human} ${permits}`;
 }
 
 /**
@@ -339,7 +260,6 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const visible: string[] = [];
   const hidden: string[] = [];
   const seenLiterals = new Set<string>();
-  const seenLines = new Set<string>();
   for (const scope of params.scopes) {
     const literal = scopeLiteral(scope);
     // Deduped on the literal rather than on the rendered line, because the
@@ -349,13 +269,9 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     if (seenLiterals.has(literal)) continue;
     seenLiterals.add(literal);
     const safeLiteral = escapeHtml(literal);
-    const human = describeScope(scope, params.descriptions);
-    // Suppressing a repeated line is a display decision, so it hides the row
-    // and never the input. Dropping the checkbox with it would leave a scope
-    // the device asked for unsubmittable, which reads to the person as
-    // approved and reaches the grant as absent, with nothing saying so.
-    const duplicateLine = seenLines.has(human);
-    seenLines.add(human);
+    // The authorize screen's own row label, so one grant reads the same on
+    // both screens a person meets it on.
+    const human = labelFor(scope, params.descriptions);
     if (hiddenLiterals.has(literal)) {
       // Submitted hidden, because no per-scope decision applies to a
       // mechanism — but still *stated*, which is where this screen differs
@@ -368,22 +284,29 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       hidden.push(
         `<input type="checkbox" name="scopes" value="${safeLiteral}" checked hidden>`,
       );
-      if (!duplicateLine) {
-        visible.push(
-          `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
-        );
-      }
+      visible.push(
+        `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
+      );
       continue;
     }
     const checked =
       requiresExplicitConsent(literal) || reachesWithheld(literal)
         ? ""
         : " checked";
-    // A repeated line renders its toggle with no label rather than being
-    // dropped: the input has to reach the form whatever the copy does.
-    const label = duplicateLine ? "" : escapeHtml(human);
+    // Every row is labelled. Two literals can read alike once the label is
+    // the authorize screen's, and a toggle with no label is a grant nobody
+    // can read, so the rows stand as they are and the literal is what tells
+    // them apart in the form.
+    const matched =
+      scope.kind !== "oidc"
+        ? params.wildcardExpansions?.[scope.typePattern]
+        : undefined;
+    const reach = reachLine(scope, matched);
+    const detail = reach
+      ? `<span class="rmeta">${escapeHtml(reach)}</span>`
+      : "";
     visible.push(
-      `<div class="subrow"><span>${label}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
+      `<div class="subrow"><span>${escapeHtml(human)}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
     );
   }
 

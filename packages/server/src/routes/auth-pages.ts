@@ -5,7 +5,11 @@ import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requirePermission, requireAuth } from "../middleware/auth.js";
-import { appBehindReturnTo, buildScopeDescriptions } from "./auth-consent.js";
+import {
+  appBehindReturnTo,
+  buildScopeDescriptions,
+  resolveWildcardExpansions,
+} from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
@@ -758,6 +762,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         scopes: parsedScopes,
         userCode,
         descriptions,
+        // The same enumeration of an open-ended pattern the authorize screen
+        // shows, so the reach reads the same on both.
+        wildcardExpansions: await resolveWildcardExpansions(
+          storage,
+          parsedScopes,
+        ),
         // The screen decides its own ticks from these, the same way the
         // authorize screen does. Passed rather than read inside the
         // renderer so both surfaces resolve the bundle set at their own

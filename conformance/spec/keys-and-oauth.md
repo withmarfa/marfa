@@ -222,3 +222,29 @@
     Reason: a program calling the logout door needs its refusal in a form it can read, and must never be handed a page.
 
     Tests: `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`; `packages/server/src/routes/end-session.test.ts › shows a browser with no session a page, and never JSON`.
+
+## How access is described
+
+66. The server SHALL name what a grant reaches in the same words on the browser consent page and on the device approval page.
+
+    Reason: a person approving access reads it once and should recognize it wherever else they meet it. Two pages that name one grant two ways leave them guessing whether the second is the same grant.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › gives every grant the same words on both screens`, `› says the same thing about one grant on the device screen`.
+
+67. The server SHALL state what a grant permits, reading only or reading and writing, in the same words on the browser consent page and on the device approval page.
+
+    Reason: the same as statement 66, and a grant that reads as read only on one page and as something else on the other is the disagreement a person is least able to notice.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › gives every grant the same words on both screens`, `› says the same thing about one grant on the device screen`.
+
+68. WHEN the browser consent page and the device approval page offer a grant that reaches types not yet registered, each SHALL state how far it reaches in the same line, naming the types it covers today where the pattern can be enumerated.
+
+    Reason: a grant that grows as types are added is a larger grant than it reads, and the fact must not depend on which page a person approved it on.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`, `› names the types an enumerable wildcard covers in the same line on both screens`; `packages/server/src/routes/device-grant.test.ts › names the types a wildcard covers today on the approval screen, as the authorize screen does`; `packages/server/src/routes/auth-consent.test.ts › enumerates the registered custom types under a requested user.* wildcard`.
+
+69. WHEN the browser consent page and the device approval page offer a grant that reaches one type, neither SHALL state a reach beyond it.
+
+    Reason: a reach stated on a grant that has none tells somebody granting one type that the grant grows.
+
+    Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`.

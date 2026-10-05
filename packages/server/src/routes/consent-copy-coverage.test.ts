@@ -17,15 +17,12 @@
  * nobody thought to list fails here rather than shipping.
  *
  * **The two floors, which are the two ways a person is shown machine text.**
- * The device approval screen has no labels: its row is
- * `descriptions[pattern] ?? literal`, so a pattern with no copy renders as
- * `acme.widget:read` and a pattern with only registry copy renders as
- * several hundred characters written for somebody reading API docs. The
- * authorize screen's row is `SCOPE_LABELS[pattern] ?? descriptions[pattern]
- * ?? humanizeType(pattern)`, so the same absence arrives there as a
- * title-cased fragment of the literal. Both are the same defect: a person
- * asked to approve a grant described in the vocabulary of the thing that
- * implements it.
+ * Both screens label a row `SCOPE_LABELS[pattern] ?? descriptions[pattern]
+ * ?? humanizeType(pattern)`, so a pattern with no copy renders as a
+ * title-cased fragment of the literal and a pattern with only registry copy
+ * renders as several hundred characters written for somebody reading API
+ * docs. Both are the same defect: a person asked to approve a grant described
+ * in the vocabulary of the thing that implements it.
  *
  * **This is the same fix as the description-map tests in
  * `consent-render.test.ts`, one level up.** Those derive their sets from the
@@ -171,15 +168,14 @@ function uncoveredBecause(
   const registry = registryDescriptionFor(scope);
   if (shown === undefined) {
     return (
-      `nothing describes it. The device approval screen renders ` +
-      `"${literalOf(scope)}" as the row, and the authorize screen's toggle ` +
-      `reads "${humanizeType(scope.typePattern)}"`
+      `nothing describes it. Both screens' toggle reads ` +
+      `"${humanizeType(scope.typePattern)}", not "${literalOf(scope)}"`
     );
   }
   if (registry !== undefined && shown === registry) {
     return (
-      `only the type registry describes it. The device approval screen ` +
-      `renders ${String(registry.length)} characters written for a developer`
+      `only the type registry describes it. Both screens ` +
+      `render ${String(registry.length)} characters written for a developer`
     );
   }
   return undefined;
@@ -445,15 +441,15 @@ describe("the consent copy guard derives the scopes it checks", () => {
       // Positive first, and it is the half that keeps the negatives from
       // being satisfied by a row that never rendered at all.
       expect(copy ?? "", scope.typePattern).toMatch(/\S/);
-      expect(device, scope.typePattern).toContain(escapeHtml(copy ?? ""));
 
-      // The authorize screen resolves a row's label from the curated label
-      // where there is one and from the description otherwise. Held to
-      // whichever of those applies rather than to "not `humanizeType`":
+      // Both screens resolve a row's label from the curated label where
+      // there is one and from the description otherwise. Held to whichever
+      // of those applies rather than to "not `humanizeType`":
       // `core.media.series` is curated as "Series" and humanizes to
       // "Series", so a check on the two differing would report a
       // coincidence as a defect.
       const label = SCOPE_LABELS[scope.typePattern] ?? copy ?? "";
+      expect(device, scope.typePattern).toContain(escapeHtml(label));
       expect(authorize, scope.typePattern).toContain(escapeHtml(label));
     }
     // **No negative floor is asserted here, and the omission is deliberate
@@ -466,13 +462,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // `humanizeType`, and `humanizeType` returns a title-cased segment of
     // the pattern, so the literal is not a string that chain can produce.
     //
-    // On the device screen the equivalent cannot fire because the positive
-    // above already requires copy to have resolved, and the literal floor is
-    // reached only when it did not. A floor that could fire would also have
-    // to be written differently: `openEndedSuffixed` renders an uncovered
-    // open-ended scope as `edge.*:read Also covers anything added later.`,
-    // so matching on `<span>literal</span>` would miss the shape the gallery
-    // snapshot actually shows.
+    // On the device screen the same chain answers, so the same holds there.
     //
     // The floors are held where they can be, which is the coverage check
     // above: it asks the resolution rather than the markup, and it is what

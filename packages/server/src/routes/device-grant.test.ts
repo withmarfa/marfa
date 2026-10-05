@@ -312,6 +312,29 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(plain.body.refresh_token).toBeUndefined();
   });
 
+  it("names the types a wildcard covers today on the approval screen, as the authorize screen does", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    await c.storage.types.create({
+      id: "user.recipe",
+      version: 1,
+      label: "Recipes",
+      fields: { title: { type: "string", required: true } },
+    });
+    const init = await initiate(c, clientId, "user.*:read");
+    const cookie = await signInUser(c, "device-wildcard@example.com");
+
+    const screen = await openConsent(c, init.user_code, cookie);
+    expect(screen.status).toBe(200);
+    const html = await screen.text();
+    // The line the authorize screen prints for the same grant, from the same
+    // function: the enumeration reaches this page through the route.
+    expect(html).toContain('value="user.*:read"');
+    expect(html).toContain("Today this covers Recipes");
+    expect(html).toContain("plus any you add later");
+  });
+
   it("warns on the approval screen that Marfa has not verified an app that registered itself", async () => {
     ctx = await createTestContext({});
     const c = ctx;
