@@ -33,6 +33,7 @@ import type { ApiKey, Edge, Metadata, TypeFilter } from "@withmarfa/shared";
 import { readableMetadata } from "./_extension-reach.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
 import { errorMessage } from "../error-text.js";
+import type { StreamIncompleteReason } from "./_stream-incomplete.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
 const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
@@ -242,36 +243,6 @@ const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
  * clients on a full re-import after a transient failure.
  */
 const STREAM_INCOMPLETE_EVENT = "stream_incomplete";
-
-/**
- * Why the stream stopped. One frame with a reason rather than a frame per
- * cause: the client's recovery is the same in every case — reconnect from
- * the cursor it already holds — so a client learns one frame, and an
- * operator still reads which of five things happened.
- */
-type StreamIncompleteReason =
-  /** The `Last-Event-ID` catch-up threw partway through. */
-  | "replay_failed"
-  /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES},
-   *  or a replay reached a row it cannot read whose live copy it had taken
-   *  over from the hold. */
-  | "backlog_overflow"
-  /** The subscription failed for a reason that was not the client leaving,
-   *  or the credential could not be read again. */
-  | "live_delivery_failed"
-  /** The credential no longer stands: revoked, deleted, past its expiry, or
-   *  a sign-in's token revoked, expired or gone with its app's grant. A
-   *  reconnect with it is refused `401`; a reconnect with the token an app
-   *  refreshed to resumes. */
-  | "credential_ended"
-  /** A live frame found {@link MAX_UNSENT_BYTES} of frames untaken, or the
-   *  reader took no frame for {@link READER_STALL_MS} while the replay or
-   *  the opening's release waited for room. */
-  | "reader_behind"
-  /** The instance is stopping. Everything after the cursor is still in
-   *  the log, so the recovery is the same as for every other reason: connect
-   *  again with it, to the instance once it is back. */
-  | "server_stopping";
 
 /**
  * Most live frames one connection holds while its prologue runs.

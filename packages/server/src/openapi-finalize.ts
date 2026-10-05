@@ -32,6 +32,7 @@ import { toOpenApiPath } from "./openapi-path.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
 import { WEBHOOK_EVENTS } from "./routes/webhooks.js";
+import { STREAM_INCOMPLETE_REASONS } from "./routes/_stream-incomplete.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
@@ -67,7 +68,7 @@ const GENERAL_SECTIONS = [
   "## Time",
   "Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.",
   "## Event stream",
-  "`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. A frame without an `id:` doesn't move your position. Marfa reads your credential again before each batch of frames and every 30 seconds: a narrowed key narrows the stream, and one that no longer stands ends it, so an app reconnects with the token it refreshed to. Lines that start with `:` only keep the connection open.",
+  "`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.",
   "## Every response",
   "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.",
 ].join("\n\n");
@@ -386,6 +387,9 @@ function chainRefusal(
   return refusal;
 }
 
+const WRITE_CONTENTION_TEXT =
+  "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.";
+
 /**
  * Applied as floors: a route that declares the status itself keeps its own.
  *
@@ -409,10 +413,7 @@ export const CHAIN_REFUSALS = {
     ["rate_limited"],
     "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
   ),
-  writeContention: chainRefusal(
-    ["write_contention"],
-    "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
-  ),
+  writeContention: chainRefusal(["write_contention"], WRITE_CONTENTION_TEXT),
   internalError: chainRefusal(
     ["internal_error"],
     "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
@@ -711,7 +712,7 @@ function eventSchemas(): Record<string, unknown> {
         },
         item: described(
           "Item",
-          "The item after the change. On `item.deleted` and `item.purged` of an item a cascade trashed, it carries `trashed_by_cascade` and `trashed_with`.",
+          "The item after the change. On `item.deleted` and `item.purged` of an item a cascade trashed, it carries `trashed_by_cascade`, and `trashed_with` if you can read that item's type.",
         ),
         metadata: {
           oneOf: [schemaRef("Metadata"), { type: "null" }],
@@ -798,16 +799,9 @@ function eventSchemas(): Record<string, unknown> {
         event_type: marker("stream_incomplete"),
         reason: {
           type: "string",
-          enum: [
-            "replay_failed",
-            "backlog_overflow",
-            "live_delivery_failed",
-            "credential_ended",
-            "reader_behind",
-            "server_stopping",
-          ],
+          enum: [...STREAM_INCOMPLETE_REASONS],
           description:
-            "`replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: delivery failed. `credential_ended`: your credential stopped working. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.",
+            "`replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: live events failed. `credential_ended`: your credential ended. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.",
         },
         cursor: {
           type: ["string", "null"],
@@ -820,7 +814,7 @@ function eventSchemas(): Record<string, unknown> {
     CatchupTooOldFrame: {
       type: "object",
       description:
-        "The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream.",
+        "The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. On an ordinary stream its `id:` is `min_retained_id`: don't resume from it.",
       properties: {
         event_type: marker("catchup_too_old"),
         min_retained_id: {
@@ -937,7 +931,7 @@ function webhookRequests(): Record<string, unknown> {
           },
           default: {
             description:
-              "Any other answer is a failure. On a redirect, or a `4xx` other than `408` and `429`, Marfa gives up and the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again, up to 8 attempts in all, after waiting at least 1, 5, 25, 125, 625, 3125 and 15625 seconds. A `Retry-After` of up to 5 minutes can lengthen a wait.",
+              "Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `dead_letter`.",
           },
         },
       },
@@ -1103,8 +1097,8 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           "- `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can.",
         ).response,
         "503": chainRefusal(
-          ["stream_capacity_exhausted"],
-          "- `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later.",
+          ["stream_capacity_exhausted", "write_contention"],
+          `- \`stream_capacity_exhausted\`: the instance is serving as many streams as its operator allows. Try again later.\n- ${WRITE_CONTENTION_TEXT}`,
         ).response,
       },
     },

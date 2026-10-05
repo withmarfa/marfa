@@ -132,7 +132,7 @@ const WebhookSchema = z
       .nullable()
       .optional()
       .describe(
-        "The type whose item events Marfa sends, with its subtypes, or `null` for every type. Edge events aren't filtered.",
+        "The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered.",
       ),
     secret: z
       .string()
@@ -141,9 +141,7 @@ const WebhookSchema = z
       ),
     active: z
       .boolean()
-      .describe(
-        "`true` if Marfa sends events. Marfa never sends an event that happens while it's `false`.",
-      ),
+      .describe("`true` if Marfa sends events to the webhook."),
     created_at: z.string().describe("When the webhook was created, in UTC."),
     updated_at: z.string().describe("When the webhook last changed, in UTC."),
   })
@@ -407,7 +405,7 @@ const updateWebhookRoute = createRoute({
               .boolean()
               .optional()
               .describe(
-                "`false` stops sending events, and Marfa never sends one that happens while it's `false`. `true` starts again.",
+                "`false` stops sending events and cancels pending deliveries. `true` starts again.",
               ),
           }),
         },
@@ -426,10 +424,7 @@ const updateWebhookRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            "missing_required_field",
-          ]),
+          schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
       description: `- \`validation_error\`: ${INVALID_FIELD}; or \`type_filter\` is \`*\`, malformed or a list.`,

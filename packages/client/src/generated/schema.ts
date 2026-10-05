@@ -3694,11 +3694,11 @@ export interface components {
             url: string;
             /** @description The events Marfa sends, such as `item.created`. */
             events: string[];
-            /** @description The type whose item events Marfa sends, with its subtypes, or `null` for every type. Edge events aren't filtered. */
+            /** @description The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered. */
             type_filter?: string | null;
             /** @description The key Marfa signs each delivery with. Only `POST /webhooks` returns it whole; other responses show `****` and its last four characters. */
             secret: string;
-            /** @description `true` if Marfa sends events. Marfa never sends an event that happens while it's `false`. */
+            /** @description `true` if Marfa sends events to the webhook. */
             active: boolean;
             /** @description When the webhook was created, in UTC. */
             created_at: string;
@@ -3880,14 +3880,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        StreamCapacityExhaustedRefusal: {
+        StreamCapacityExhaustedOrWriteContentionRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "stream_capacity_exhausted";
+                code: "stream_capacity_exhausted" | "write_contention";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3960,14 +3960,14 @@ export interface components {
              */
             event_type: "stream_incomplete";
             /**
-             * @description `replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: delivery failed. `credential_ended`: your credential stopped working. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.
+             * @description `replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: live events failed. `credential_ended`: your credential ended. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.
              * @enum {string}
              */
             reason: "replay_failed" | "backlog_overflow" | "live_delivery_failed" | "credential_ended" | "reader_behind" | "server_stopping";
             /** @description The ID of the last event the stream sent, or `null` if it sent none. */
             cursor: string | null;
         };
-        /** @description The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. */
+        /** @description The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. On an ordinary stream its `id:` is `min_retained_id`: don't resume from it. */
         CatchupTooOldFrame: {
             /**
              * @description The frame's name, which is also its `event:`.
@@ -19061,7 +19061,7 @@ export interface operations {
                     events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
                     /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Blank or `null` removes it. */
                     type_filter?: string | null;
-                    /** @description `false` stops sending events, and Marfa never sends one that happens while it's `false`. `true` starts again. */
+                    /** @description `false` stops sending events and cancels pending deliveries. `true` starts again. */
                     active?: boolean;
                 };
             };
@@ -19093,7 +19093,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -19837,7 +19837,10 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description - `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later. */
+            /**
+             * @description - `stream_capacity_exhausted`: the instance is serving as many streams as its operator allows. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19849,7 +19852,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StreamCapacityExhaustedRefusal"];
+                    "application/json": components["schemas"]["StreamCapacityExhaustedOrWriteContentionRefusal"];
                 };
             };
         };
@@ -20018,7 +20021,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Any other answer is a failure. On a redirect, or a `4xx` other than `408` and `429`, Marfa gives up and the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again, up to 8 attempts in all, after waiting at least 1, 5, 25, 125, 625, 3125 and 15625 seconds. A `Retry-After` of up to 5 minutes can lengthen a wait. */
+            /** @description Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `dead_letter`. */
             default: {
                 headers: {
                     [name: string]: unknown;
