@@ -146,15 +146,15 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 60. WHEN a write carries a tag that is empty, is blank as JavaScript's `trim` reads blank, or exceeds 128 UTF-16 code units, a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything, on every door that adds a tag: a create, a tag add, a metadata merge or replace, a file added with tags, and a folder's sync of a document's tags in (`folders.md` 55).
 
-    Reason: a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items.md` 62) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
+**Reason:** a write the server refuses stays in the queue until a drain, which is long after the person saved it and cannot ask them anything, so the bound the server holds (`items.md` 62) is held where the write is made. The server counts UTF-16 code units, so a tag of 64 characters of two code units is taken and one of 65 is refused. A removal is not held to the bound: an archive restore writes tags as recorded, so a row can hold a tag the bound refuses and must still be able to shed it.
 
-    Tests: `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
+**Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `› takes a tag the server takes, queues it, and has it accepted when the queue drains`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes`, `a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes`.
 
 61. WHEN a create or an edit names a property with no characters, including one a folder's sync of a document carries (`folders.md` 55), a device MUST refuse it `validation`, carrying the server's `validation_error`, before saving or queueing anything.
 
-    Reason: the server refuses such a name on every door that writes properties (`items.md` 63), and a device that took it would hold a row the server never will.
+**Reason:** the server refuses such a name on every door that writes properties (`items.md` 63), and a device that took it would hold a row the server never will.
 
-    Tests: `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
+**Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
 
 ## What the real server cannot be made to produce
 

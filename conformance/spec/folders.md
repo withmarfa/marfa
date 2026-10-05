@@ -119,15 +119,15 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
 
 55. WHEN a document's tag or property name is one the server refuses (`items.md` 62 and 63), the folder MUST flag the file with the refusal, naming the file and the reason, retain its bytes, queue none of that file's writes, and continue scanning other files.
 
-    Reason: one file must not stop the files sorting after it, nor the pull and the drain, on every scan. An edit that changed the body and added a refused tag would otherwise queue the body edit and fail on the tag, leaving the file half sent and unbound. A later scan retries the file, so correcting the tag or the property name sends it. This is the rule of 53 for the names the copy holds to the server's bounds (`device.md` 60 and 61).
+**Reason:** one file must not stop the files sorting after it, nor the pull and the drain, on every scan. An edit that changed the body and added a refused tag would otherwise queue the body edit and fail on the tag, leaving the file half sent and unbound. A later scan retries the file, so correcting the tag or the property name sends it. This is the rule of 53 for the names the copy holds to the server's bounds (`device.md` 60 and 61).
 
-    Tests: `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `› queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
+**Tests:** `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`, `› queues nothing of an edit whose added tag is refused, and the edit once the tag is dropped`.
 
 56. WHEN a folder's saved settings hold a default tag or default property name the server refuses, or a search filter that compares with `null` (`search-and-filters.md` 88), the folder MUST refuse to read the settings, name the setting, say what is refused and say that `marfa folders change` changes it.
 
-    Reason: a default is applied to every new file, so a refused one would flag each of them, and a filter the copy cannot answer would stop every pass. The settings change is a door on the server that reads nothing from the copy, so it stays reachable, and the next pass that catches up hydrates the new settings.
+**Reason:** a default is applied to every new file, so a refused one would flag each of them, and a filter the copy cannot answer would stop every pass. The settings change is a door on the server that reads nothing from the copy, so it stays reachable, and the next pass that catches up hydrates the new settings.
 
-    Tests: `device/folder-names.test.ts › stops where it is told, naming the setting, and runs with a default it takes`, `› says which setting, what is wrong with it and how to change it`. Core `folder::settings::tests::a_setting_the_server_would_refuse_is_named_with_the_way_to_change_it`.
+**Tests:** `device/folder-names.test.ts › stops where it is told, naming the setting, and runs with a default it takes`, `› says which setting, what is wrong with it and how to change it`. Core `folder::settings::tests::a_setting_the_server_would_refuse_is_named_with_the_way_to_change_it`.
 
 ## What the real server cannot be made to produce
 
