@@ -49,7 +49,11 @@
 25. A registration is a `web` client unless `application_type` says `native`. A web client's redirect URI must be https and on a host that is not the loopback, so `http://127.0.0.1` and `https://127.0.0.1` alike are refused `400 invalid_redirect_uri`; a native client may use `http` on the loopback. `compliance/oauth.test.ts › registers a web client, whose redirect URI must be https and off the loopback`, `› registers a native client dynamically and issues a client_id`.
 26. An unparseable redirect URI answers `400` with an RFC 7591 error object rather than the envelope, which the document declares as the shape this one door answers. `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
 27. The token endpoint refuses a request with no proof of the client with `400 invalid_request`, and an unsupported grant type with `400 unsupported_grant_type`. `compliance/oauth.test.ts › refuses a token request with no proof of the client`, `› refuses a grant type it does not support`.
-28. The authorization and device flows need a signed-in person and are not reachable by a bearer client, so nothing asserts them against the run's shared server, which has no owner. A fixture that drives a flow boots a server of its own and creates the owner there (43, 44). `compliance/oauth.test.ts` (the file's own note).
+28. The server SHALL answer a poll of `POST /auth/oauth2/token` that names a device code by the code's state: `400 authorization_pending` before a person approves it, `200` with an access token for the scopes the person approved on the first poll after the approval, and `400 invalid_grant` on every poll after that exchange.
+
+    Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on. An answer that stayed pending after approval would leave the device waiting for ever, and one that gave a second token for the same code would let a code anyone has seen mint again. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (43, 44).
+
+    Tests: `compliance/device-grant.test.ts › answers a poll by the code's state: pending, then a token, then invalid_grant once it is spent`.
 
 ## The owner
 
@@ -248,3 +252,11 @@
     Reason: a reach stated on a grant that has none tells somebody granting one type that the grant grows.
 
     Tests: `packages/server/src/routes/consent-operation.test.ts › states how far a grant reaches in the same line on both screens`.
+
+## Keys an app made
+
+70. The server SHALL carry `oauth_client_id` on a key answer when, and only when, the key was minted with a signed-in app's access token, and SHALL name there the `client_id` the app registered.
+
+    Reason: a client that must not run on an app's key tells one by this field, and a server that stopped sending it would make every app's key pass as an ordinary one. The field is left out, not `null`, on every other key: one a person or the operator key minted, and one that a key an app made went on to mint, which no app's token minted. It is on the mint, the listing, `GET /keys/current` and the update.
+
+    Tests: `compliance/key-oauth-client.test.ts › names the client an app minted the key through, on every door that answers a key`, `› is absent from a key no app minted, on every door that answers a key`.
