@@ -188,7 +188,7 @@ impl Cache {
                 size += read as u64;
             }
             to.sync_all().map_err(Copy::Cache)?;
-            Ok((format!("{PREFIX}{:x}", hasher.finalize()), size))
+            Ok((format!("{PREFIX}{}", hex::encode(hasher.finalize())), size))
         })();
         match copied {
             Ok((hash, size)) => Ok((hash, size, incoming)),
@@ -223,7 +223,7 @@ pub(crate) fn named(hash: &str) -> Result<String> {
 }
 
 pub(crate) fn name_of(bytes: &[u8]) -> String {
-    format!("{PREFIX}{:x}", Sha256::digest(bytes))
+    format!("{PREFIX}{}", hex::encode(Sha256::digest(bytes)))
 }
 
 /// The hex becomes a file name, so nothing but 64 lowercase hex digits may reach one.

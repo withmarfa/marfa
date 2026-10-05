@@ -547,7 +547,7 @@ pub fn signed_out(origin: &str) -> CliError {
 
 #[cfg(unix)]
 fn fingerprint(origin: &str) -> String {
-    format!("{:x}", Sha256::digest(origin.as_bytes()))
+    hex::encode(Sha256::digest(origin.as_bytes()))
 }
 
 #[cfg(test)]
