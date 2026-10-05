@@ -192,7 +192,10 @@ describe("a consent row states the operation, not only the type", () => {
     // The two screens render nothing alike, so what has to agree is the
     // description of a grant, character for character. Curated names, a
     // description standing in for one, the humanized floor, a wildcard, an
-    // edge and a permission each resolve a different way, so each is here.
+    // edge, metadata, content, profile, an OIDC literal and a permission each
+    // resolve a different way, so each is here. The device screen's two
+    // mechanism rows (`openid`, `offline_access`) are left out because the
+    // authorize screen hides them.
     const scopes = [
       "core.note:read",
       "core.task:write",
@@ -200,6 +203,11 @@ describe("a consent row states the operation, not only the type", () => {
       "core.*:read",
       "*:read",
       "metadata.types:write",
+      "edge.about:read",
+      "content:read",
+      "profile:read",
+      "email",
+      "profile",
       "webhooks.manage",
       "keys.mint",
     ].map(parse);
@@ -230,6 +238,34 @@ describe("a consent row states the operation, not only the type", () => {
     // Witness: a concrete grant is told nothing of the kind on either.
     expect(secondLines(device(closed))).toEqual([]);
     expect(secondLines(authorize(closed))).toEqual([]);
+  });
+
+  it("names the types an enumerable wildcard covers in the same line on both screens", () => {
+    const secondLines = (html: string): string[] =>
+      [...html.matchAll(/<span class="rmeta">([^<]*)<\/span>/g)].map(
+        (m) => m[1] ?? "",
+      );
+    const scopes = [parse("user.*:read")];
+    const wildcardExpansions = { "user.*": ["Recipes", "Trails"] };
+    const onDevice = renderDeviceConsentScreen({
+      clientName: "Fieldwork",
+      userCode: "ABCD-EFGH",
+      scopes,
+      descriptions: buildScopeDescriptions(scopes),
+      wildcardExpansions,
+    });
+    const onAuthorize = renderConsentScreen({
+      clientName: "Fieldwork",
+      clientId: "fieldwork-client",
+      oauthQuery: "client_id=fieldwork-client&scope=...&sig=signed",
+      scopes,
+      descriptions: buildScopeDescriptions(scopes),
+      wildcardExpansions,
+    });
+    expect(secondLines(onDevice)).toEqual([
+      "Today this covers Recipes, Trails, plus any you add later",
+    ]);
+    expect(secondLines(onAuthorize)).toEqual(secondLines(onDevice));
   });
 
   it("uses one vocabulary across both surfaces", () => {
@@ -293,10 +329,8 @@ describe("a consent row states the operation, not only the type", () => {
   });
 
   it("says a description-derived grant in the same words as the device screen", () => {
-    // The description is the whole of what the device screen prints, and it
-    // is also this row's label wherever nothing curated names the pattern.
-    // Where both surfaces fall that far they now render one identical
-    // string, which is the agreement the operation module exists for.
+    // The description is this row's label wherever nothing curated names the
+    // pattern, on both screens, so both render one identical string.
     // `metadata.edge_types` was this case's example until it gained a curated
     // label, which moved it off the description path this asserts about. An
     // edge type is the same population and the docstring above already names

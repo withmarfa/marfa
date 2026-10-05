@@ -124,3 +124,27 @@ export const OPEN_ENDED_LINE =
  * clause joins that sentence instead of arriving as a third line beneath it.
  */
 export const OPEN_ENDED_EXPANSION_TAIL = ", plus any you add later";
+
+/**
+ * The line set under a toggle row to say how far its grant reaches, or the
+ * empty string where there is nothing to say. One function for both screens,
+ * so the same grant is told its reach in the same words wherever it is
+ * offered.
+ *
+ * `matched` is the display names of the types an open-ended pattern covers
+ * today, where the caller could enumerate them. That line absorbs the
+ * futurity clause, since it names today's members as well and a wildcard's
+ * reach reads as one fact rather than two. Open-endedness is stated for every
+ * open-ended pattern, with or without members to name, and is the grammar's
+ * answer alone: no string can talk it out of saying so.
+ */
+export function reachLine(
+  scope: ParsedScope,
+  matched: readonly string[] | undefined,
+): string {
+  const open = isOpenEnded(scope);
+  if (matched && matched.length > 0) {
+    return `Today this covers ${matched.join(", ")}${open ? OPEN_ENDED_EXPANSION_TAIL : ""}`;
+  }
+  return open ? OPEN_ENDED_LINE : "";
+}

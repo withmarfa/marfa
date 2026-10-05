@@ -17,15 +17,12 @@
  * nobody thought to list fails here rather than shipping.
  *
  * **The two floors, which are the two ways a person is shown machine text.**
- * The device approval screen has no labels: its row is
- * `descriptions[pattern] ?? literal`, so a pattern with no copy renders as
- * `acme.widget:read` and a pattern with only registry copy renders as
- * several hundred characters written for somebody reading API docs. The
- * authorize screen's row is `SCOPE_LABELS[pattern] ?? descriptions[pattern]
- * ?? humanizeType(pattern)`, so the same absence arrives there as a
- * title-cased fragment of the literal. Both are the same defect: a person
- * asked to approve a grant described in the vocabulary of the thing that
- * implements it.
+ * Both screens label a row `SCOPE_LABELS[pattern] ?? descriptions[pattern]
+ * ?? humanizeType(pattern)`, so a pattern with no copy renders as a
+ * title-cased fragment of the literal and a pattern with only registry copy
+ * renders as several hundred characters written for somebody reading API
+ * docs. Both are the same defect: a person asked to approve a grant described
+ * in the vocabulary of the thing that implements it.
  *
  * **This is the same fix as the description-map tests in
  * `consent-render.test.ts`, one level up.** Those derive their sets from the
@@ -171,15 +168,14 @@ function uncoveredBecause(
   const registry = registryDescriptionFor(scope);
   if (shown === undefined) {
     return (
-      `nothing describes it. The device approval screen renders ` +
-      `"${literalOf(scope)}" as the row, and the authorize screen's toggle ` +
-      `reads "${humanizeType(scope.typePattern)}"`
+      `nothing describes it. Both screens' toggle reads ` +
+      `"${humanizeType(scope.typePattern)}", not "${literalOf(scope)}"`
     );
   }
   if (registry !== undefined && shown === registry) {
     return (
-      `only the type registry describes it. The device approval screen ` +
-      `renders ${String(registry.length)} characters written for a developer`
+      `only the type registry describes it. Both screens ` +
+      `render ${String(registry.length)} characters written for a developer`
     );
   }
   return undefined;

@@ -787,10 +787,9 @@ describe("group summaries describe the request", () => {
 //
 // Pinned as a rule rather than as the strings that broke, because the strings
 // were a symptom. `labelFor` resolves a curated label ahead of the
-// description, so a curated label is the only thing this screen says about
-// its grant, while the device screen has no toggle labels and reads the
-// description out whole. Two labels named less than their scope that way, and
-// asserting those two would pass again the moment a third arrived.
+// description, so a curated label is the only thing either screen says about
+// its grant. Two labels named less than their scope that way, and asserting
+// those two would pass again the moment a third arrived.
 // ---------------------------------------------------------------------------
 
 describe("a grant that reaches things not yet created says so", () => {
@@ -1034,12 +1033,12 @@ describe("a grant that reaches things not yet created says so", () => {
     // held a map rather than a screen, and it held a word rather than a
     // statement: "Ones you remove later stay recoverable." satisfied it
     // while saying nothing whatever about how far the grant reaches. The
-    // clause is composed now, by `describeScope` from the same
-    // `isOpenEnded` the toggle row asks, so what is worth holding is that it
-    // arrives, exactly once, on the surface a person actually reads.
+    // clause is composed now, from the same `isOpenEnded` both screens ask,
+    // so what is worth holding is that it arrives, exactly once, on the
+    // surface a person actually reads.
     //
     // The global wildcard runs in this loop like everything else: the device
-    // screen composes its own sentence, so "Everything on your server."
+    // screen composes its own line, so "Everything on your server."
     // needs no exemption for being unfalsifiable.
     const literals = openEndedLiterals();
     // Every assertion is inside the loop, and the pattern that carried the
@@ -1317,12 +1316,10 @@ describe("a grant that reaches things not yet created says so", () => {
    * The two maps a scope's copy reaches a person through, and the reason the
    * rule below runs over both rather than over the toggles alone.
    *
-   * A label wins on the authorize screen, so it is the whole of what that
-   * screen says about a grant. The device screen has no second line: it
-   * prints the description beside its toggle and stops. Neither surface is the
-   * lenient one, and the description is if anything the surface where a
-   * wrong sentence does more damage, because nothing beside it qualifies
-   * what it says.
+   * A label wins on both screens, so it is the whole of what a screen says
+   * about a grant, and a description is what a row says wherever no label
+   * names its pattern. A wrong sentence does more damage in the description,
+   * because nothing beside it qualifies what it says.
    *
    * `verb` is the word the failure message needs to read correctly about
    * whichever map it caught.
@@ -1430,9 +1427,8 @@ describe("a grant that reaches things not yet created says so", () => {
   }
 
   it("says one thing about an entity grant, on both screens", () => {
-    // A label wins over a description on this screen and the device screen
-    // has no labels, so the two strings are what the two screens say about
-    // one grant and they have to agree. `core.entity` was labeled
+    // A label wins over a description on both screens, so the two strings
+    // are what the two screens say about one grant and they have to agree. `core.entity` was labeled
     // "Organizations" and described as "Organizations and other entities.",
     // which is the branch's own defect surviving at reduced size: the
     // description reached past the label without saying how far, and the
@@ -2045,9 +2041,9 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   });
 
   it("leaves a permission out, because both screens name one without it", () => {
-    // `labelFor` here and `describeScope` on the device screen both resolve a
-    // permission through `permission-labels.ts` and return before
-    // they reach this map, so an entry would be computed and discarded on
+    // `labelFor`, which both screens label a row through, resolves a
+    // permission through `permission-labels.ts` and returns before
+    // it reaches this map, so an entry would be computed and discarded on
     // every render. That is the whole reason the map has nothing for one.
     //
     // Held by rendering with no map at all rather than by asserting what the
@@ -2074,16 +2070,12 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     for (const literal of PERMISSIONS) {
       expect(authorize, literal).toContain(PERMISSION_LABELS[literal]);
       expect(device, literal).toContain(PERMISSION_LABELS[literal]);
-      // The device screen's floor when nothing names a scope. Reached by the
-      // same arm, so a permission arriving here as its own literal is the
-      // shape a lost label takes rather than a second failure.
-      expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
   });
 
   it("answers nothing for an OIDC literal", () => {
-    // `labelFor` here and `describeScope` on the device screen both
-    // resolve one through `oidc-labels.ts` and return before they reach this
+    // `labelFor`, which both screens label a row through, resolves one
+    // through `oidc-labels.ts` and returns before it reaches this
     // map, so an entry would be computed and discarded on every render.
     expect(describeAll("openid", "profile", "email", "offline_access")).toEqual(
       {},
@@ -2210,12 +2202,9 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
  * consistent and they disagreed with each other, so which answer somebody got
  * depended on which screen the flow had put them on.
  *
- * Only the description field is held to this. The label field is deliberately
- * free to differ: `SCOPE_LABELS` gives the authorize screen a short toggle
- * name where the device screen, which has no label field, shows the
- * sentence. So
- * the literals below are ones with no label entry, where the authorize screen
- * renders the description itself and a disagreement would be visible.
+ * Only the description field is held to this, so the literals below are ones
+ * with no label entry, where both screens render the description itself and
+ * a disagreement would be visible.
  *
  * This holds the renderers to one source. That the device *route* still reads
  * that source rather than rebuilding a map of its own is held by
@@ -2246,22 +2235,6 @@ describe("the authorize screen and the device screen describe a scope alike", ()
     for (const [pattern, copy] of Object.entries(descriptions)) {
       expect(authorize, pattern).toContain(copy);
       expect(device, pattern).toContain(copy);
-    }
-  });
-
-  it("shows no scope on either screen as its bare literal", () => {
-    // The floor both screens fall to when nothing describes a scope. It is
-    // what a metadata row and a wildcard row rendered on one of them.
-    const scopes = UNLABELED.map(parse);
-    const descriptions = buildScopeDescriptions(scopes);
-    const device = renderDeviceConsentScreen({
-      clientName: "Test CLI",
-      scopes,
-      userCode: "ABCD-EFGH",
-      descriptions,
-    });
-    for (const literal of UNLABELED) {
-      expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
   });
 });

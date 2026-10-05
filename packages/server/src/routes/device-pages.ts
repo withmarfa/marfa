@@ -23,7 +23,7 @@ import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { labelFor } from "./consent.js";
 import { escapeHtml, confirmIcon, unverifiedAppCallout } from "./auth-html.js";
-import { isOpenEnded, OPEN_ENDED_LINE } from "./scope-openness.js";
+import { reachLine } from "./scope-openness.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -43,6 +43,11 @@ interface DeviceConsentParams {
   scopes: ParsedScope[];
   userCode: string;
   descriptions?: Record<string, string>;
+  /**
+   * For an open-ended pattern, the display names of the types it matches
+   * today, keyed by type pattern, as the authorize screen takes them.
+   */
+  wildcardExpansions?: Record<string, string[]>;
   /**
    * The bundle set this instance offers, so a scope only an off-by-default
    * bundle names renders unticked here as it does on the authorize screen.
@@ -255,7 +260,6 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const visible: string[] = [];
   const hidden: string[] = [];
   const seenLiterals = new Set<string>();
-  const seenLines = new Set<string>();
   for (const scope of params.scopes) {
     const literal = scopeLiteral(scope);
     // Deduped on the literal rather than on the rendered line, because the
@@ -268,12 +272,6 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     // The authorize screen's own row label, so one grant reads the same on
     // both screens a person meets it on.
     const human = labelFor(scope, params.descriptions);
-    // Suppressing a repeated line is a display decision, so it hides the row
-    // and never the input. Dropping the checkbox with it would leave a scope
-    // the device asked for unsubmittable, which reads to the person as
-    // approved and reaches the grant as absent, with nothing saying so.
-    const duplicateLine = seenLines.has(human);
-    seenLines.add(human);
     if (hiddenLiterals.has(literal)) {
       // Submitted hidden, because no per-scope decision applies to a
       // mechanism — but still *stated*, which is where this screen differs
@@ -286,28 +284,29 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       hidden.push(
         `<input type="checkbox" name="scopes" value="${safeLiteral}" checked hidden>`,
       );
-      if (!duplicateLine) {
-        visible.push(
-          `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
-        );
-      }
+      visible.push(
+        `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
+      );
       continue;
     }
     const checked =
       requiresExplicitConsent(literal) || reachesWithheld(literal)
         ? ""
         : " checked";
-    // A repeated line renders its toggle with no label rather than being
-    // dropped: the input has to reach the form whatever the copy does.
-    const label = duplicateLine ? "" : escapeHtml(human);
-    // How far the grant reaches, in the line the authorize screen sets under
-    // the same row. Printed with the label so a repeated line drops both.
-    const reach =
-      !duplicateLine && isOpenEnded(scope)
-        ? `<span class="rmeta">${escapeHtml(OPEN_ENDED_LINE)}</span>`
-        : "";
+    // Every row is labelled. Two literals can read alike once the label is
+    // the authorize screen's, and a toggle with no label is a grant nobody
+    // can read, so the rows stand as they are and the literal is what tells
+    // them apart in the form.
+    const matched =
+      scope.kind !== "oidc"
+        ? params.wildcardExpansions?.[scope.typePattern]
+        : undefined;
+    const reach = reachLine(scope, matched);
+    const detail = reach
+      ? `<span class="rmeta">${escapeHtml(reach)}</span>`
+      : "";
     visible.push(
-      `<div class="subrow"><span>${label}${reach}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
+      `<div class="subrow"><span>${escapeHtml(human)}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
     );
   }
 

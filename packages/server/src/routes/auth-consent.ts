@@ -1541,18 +1541,16 @@ export async function resolveWildcardExpansions(
 function describeScope(scope: ParsedScope): string | undefined {
   switch (scope.kind) {
     case "oidc":
-      // Deliberately absent. `scopeName` in `consent.ts` and
-      // `describeScope` in `device-pages.ts` both resolve an OIDC
-      // literal through `oidc-labels.ts` and return before they look at this
-      // map, so anything written here for one would be computed and
-      // discarded.
+      // Deliberately absent. `scopeName` in `consent.ts`, which both screens
+      // label a row through, resolves an OIDC literal through
+      // `oidc-labels.ts` and returns before it looks at this map, so
+      // anything written here for one would be computed and discarded.
       return undefined;
     case "permission":
       // Deliberately absent, for the reason above. `scopeName` in
-      // `consent.ts` and `describeScope` in `device-pages.ts` both
-      // resolve a permission literal through `permission-labels.ts` and
-      // return before they look at this map, so anything written here for
-      // one would be computed and discarded.
+      // `consent.ts` resolves a permission literal through
+      // `permission-labels.ts` and returns before it looks at this map, so
+      // anything written here for one would be computed and discarded.
       //
       // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on
@@ -1564,10 +1562,9 @@ function describeScope(scope: ParsedScope): string | undefined {
       return undefined;
     case "content":
       // Resolved from the curated map, unlike the two arms above, because
-      // both renderers do read the map for this kind. `describeScope`
-      // on the device screen falls to `descriptions?.[s.typePattern]` for
-      // everything that is not OIDC or a permission, and `labelFor` on
-      // the authorize screen falls through `SCOPE_LABELS` to the same map. So
+      // both screens do read the map for this kind: `labelFor` falls
+      // through `SCOPE_LABELS` to it for everything that is not OIDC or a
+      // permission, and both screens label a row through `labelFor`. So
       // a `content` entry written there reaches a person on both surfaces,
       // and a hard return here would discard it — silently, on the one screen
       // whose job is saying how large a grant is.

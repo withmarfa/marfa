@@ -597,14 +597,15 @@ select:focus {
 /* Muted small line under a section label — used by the consent re-consent
    diff's "No longer needed" group to list dropped capabilities as a quiet
    line rather than toggle rows. */
-.subrow .rmeta {
-  display: block;
-}
 .rmeta {
   margin: 0;
   font-size: 13px;
   line-height: 1.45;
   color: var(--fg-muted);
+}
+/* A second line under a toggle row's label, on the consent and device pages. */
+.subrow .rmeta {
+  display: block;
 }
 
 /* ================================================================ */

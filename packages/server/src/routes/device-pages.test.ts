@@ -199,6 +199,26 @@ describe("renderDeviceConsentScreen", () => {
   });
 });
 
+describe("renderDeviceConsentScreen rows that read alike", () => {
+  it("labels both of two grants whose names collide, so no toggle is left unread", () => {
+    // Neither pattern has a curated name or a description, so each resolves to
+    // the last dotted segment and both read "Widget (read only)". Each is a
+    // separate literal and a separate tick, so each keeps its label.
+    const html = renderDeviceConsentScreen({
+      clientName: "App",
+      userCode: "ABCD1234",
+      scopes: [
+        { kind: "type", typePattern: "acme.widget", operation: "read" },
+        { kind: "type", typePattern: "beta.widget", operation: "read" },
+      ],
+    });
+    expect(html.split("Widget (read only)").length - 1).toBe(2);
+    expect(html).toContain('value="acme.widget:read"');
+    expect(html).toContain('value="beta.widget:read"');
+    expect(html).not.toContain("<span></span>");
+  });
+});
+
 describe("renderDeviceDecisionPage", () => {
   it("confirms the sign-in when approved", () => {
     const html = renderDeviceDecisionPage({ approved: true });
