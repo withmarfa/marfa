@@ -4031,11 +4031,11 @@
           },
           "started_at": {
             "type": "string",
-            "description": "When the run started."
+            "description": "When the run started, as the connector reported it."
           },
           "finished_at": {
             "type": "string",
-            "description": "When the run finished."
+            "description": "When the run finished, as the connector reported it."
           },
           "summary": {
             "type": [
@@ -4247,21 +4247,21 @@
             "items": {
               "$ref": "#/components/schemas/InboundEndpoint"
             },
-            "description": "Every webhook endpoint."
+            "description": "Every webhook endpoint of the connector."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Always `null`: Marfa returns every webhook endpoint in one page."
+            "description": "Always `null`: Marfa returns every webhook endpoint of the connector in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
         ],
-        "description": "A page holding every webhook endpoint."
+        "description": "A page holding every webhook endpoint of the connector."
       },
       "ConnectorNotFoundOrEndpointNotFoundRefusal": {
         "type": "object",
@@ -4397,7 +4397,7 @@
               "id",
               "outcome"
             ],
-            "description": "The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, or the endpoint sets no header."
+            "description": "The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none."
           },
           "handled_at": {
             "type": [
@@ -24032,7 +24032,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000.",
+            "description": "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25301,11 +25301,11 @@
                   },
                   "started_at": {
                     "type": "string",
-                    "description": "When the run started."
+                    "description": "When the run started, as an ISO 8601 time. Marfa stores it as you send it."
                   },
                   "finished_at": {
                     "type": "string",
-                    "description": "When the run finished. It can't be before `started_at`."
+                    "description": "When the run finished, as an ISO 8601 time. It can't be before `started_at`."
                   },
                   "summary": {
                     "type": "string",
@@ -25667,7 +25667,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25859,7 +25859,7 @@
           "Connectors"
         ],
         "summary": "Create a webhook endpoint",
-        "description": "Creates an address a sender can post to without a credential, and returns it. This response is the only one that shows the full `path`.",
+        "description": "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
         "security": [
           {
             "bearerAuth": []
@@ -25902,7 +25902,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the endpoint, with its full `path`. Later reads show only its last four characters.",
+            "description": "Returns the endpoint, with its full `path`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26795,10 +26795,10 @@
                 "any"
               ],
               "default": "pending",
-              "description": "Which deliveries: not yet handled, handled, or both."
+              "description": "Which deliveries to return: `pending` (not yet handled), `handled` or `any`."
             },
             "required": false,
-            "description": "Which deliveries: not yet handled, handled, or both.",
+            "description": "Which deliveries to return: `pending` (not yet handled), `handled` or `any`.",
             "name": "state",
             "in": "query"
           },
@@ -26865,7 +26865,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `state` isn't `pending`, `handled` or `any`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27432,7 +27432,7 @@
                       "items": {
                         "$ref": "#/components/schemas/InboundDelivery"
                       },
-                      "description": "The deliveries, in the order you named them."
+                      "description": "The deliveries, each once, in the order you first named it."
                     }
                   },
                   "required": [
@@ -27744,7 +27744,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the hold. It lapses at `expires_at` unless you renew it: nothing watches it, and a process that stops renewing loses it.",
+            "description": "Returns the hold. It lapses at `expires_at` unless the process renews it first.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27790,7 +27790,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `process` is missing.\n- `validation_error`: `process` isn't 1 to 100 characters, or the body has a top-level field the endpoint doesn't take.",
+            "description": "- `missing_required_field`: `process` is missing.\n- `validation_error`: `process` isn't 1 to 100 characters, or the body has a top-level field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28083,10 +28083,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100,
-              "description": "A name the process chose for itself, such as a UUID made at start. Marfa treats it as opaque."
+              "description": "The name the process took the connector's hold under."
             },
             "required": true,
-            "description": "A name the process chose for itself, such as a UUID made at start. Marfa treats it as opaque.",
+            "description": "The name the process took the connector's hold under.",
             "name": "process",
             "in": "query"
           }
@@ -28120,7 +28120,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `process` is missing.\n- `validation_error`: `process` isn't 1 to 100 characters, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `missing_required_field`: `process` is missing.\n- `validation_error`: a query parameter is unknown, or `process` isn't 1 to 100 characters.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28719,7 +28719,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `process` or `state` is missing.\n- `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field the endpoint doesn't take.",
+            "description": "- `missing_required_field`: `process` or `state` is missing.\n- `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29410,7 +29410,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `process` is missing, or an entry in `set` lacks a field.\n- `validation_error`: a list has more than 500 entries, a record is over 16 KiB serialized, an item is named twice across `set` and `clear`, a field has the wrong type, or the body has a top-level field the endpoint doesn't take.",
+            "description": "- `missing_required_field`: `process` is missing, or an entry in `set` lacks a field.\n- `validation_error`: a list has more than 500 entries, a record is over 16 KiB serialized, an item is named twice across `set` and `clear`, a field has the wrong type, or the body has a top-level field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29765,7 +29765,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `waiting` isn't `true` or `false`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30072,7 +30072,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `item_ids` is missing.\n- `validation_error`: `item_ids` is empty or has more than 500 IDs, or the body has a top-level field the endpoint doesn't take.",
+            "description": "- `missing_required_field`: `item_ids` is missing.\n- `validation_error`: `item_ids` is empty or has more than 500 IDs, or the body has a top-level field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {

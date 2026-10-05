@@ -46,8 +46,12 @@ const ConnectorRunSchema = z
       .string()
       .describe("The ID of the connector that reported the run."),
     outcome: OutcomeSchema,
-    started_at: z.string().describe("When the run started."),
-    finished_at: z.string().describe("When the run finished."),
+    started_at: z
+      .string()
+      .describe("When the run started, as the connector reported it."),
+    finished_at: z
+      .string()
+      .describe("When the run finished, as the connector reported it."),
     summary: z
       .string()
       .nullable()
@@ -116,11 +120,15 @@ const RunInputSchema = z.object({
   started_at: z
     .string()
     .refine(isValidTimestamp, "an ISO 8601 timestamp")
-    .describe("When the run started."),
+    .describe(
+      "When the run started, as an ISO 8601 time. Marfa stores it as you send it.",
+    ),
   finished_at: z
     .string()
     .refine(isValidTimestamp, "an ISO 8601 timestamp")
-    .describe("When the run finished. It can't be before `started_at`."),
+    .describe(
+      "When the run finished, as an ISO 8601 time. It can't be before `started_at`.",
+    ),
   summary: maxStringLength(z.string(), 2000)
     .optional()
     .describe("A short summary of the run. Leave it out for none."),
@@ -207,7 +215,7 @@ const InboundDeliverySchema = z
       })
       .nullable()
       .describe(
-        "The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, or the endpoint sets no header.",
+        "The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none.",
       ),
     handled_at: z
       .string()
@@ -254,6 +262,19 @@ const anyKeyResponses = {
 };
 
 const NOT_FOUND = "- `connector_not_found`: no connector has this ID.";
+
+/** The 400 of a paged listing whose query takes filters. */
+export const listQueryResponse = {
+  400: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["validation_error"]),
+      },
+    },
+    description:
+      "- `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing.",
+  },
+};
 
 const notFoundResponse = {
   404: {
@@ -360,7 +381,7 @@ const registerConnectorRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000.",
+        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.",
     },
     ...anyKeyResponses,
     ...forbiddenResponse(
@@ -524,15 +545,7 @@ const listRunsRoute = createRoute({
       },
       description: "Returns a page of runs.",
     },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description:
-        "- `validation_error`: `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
-    },
+    ...listQueryResponse,
     ...anyKeyResponses,
     ...hiddenConnectorResponse,
   },
@@ -545,7 +558,7 @@ const createEndpointRoute = createRoute({
   tags: ["Connectors"],
   summary: "Create a webhook endpoint",
   description:
-    "Creates an address a sender can post to without a credential, and returns it. This response is the only one that shows the full `path`.",
+    "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -556,8 +569,7 @@ const createEndpointRoute = createRoute({
   responses: {
     201: {
       content: { "application/json": { schema: InboundEndpointSchema } },
-      description:
-        "Returns the endpoint, with its full `path`. Later reads show only its last four characters.",
+      description: "Returns the endpoint, with its full `path`.",
     },
     400: {
       content: {
@@ -595,7 +607,7 @@ const listEndpointsRoute = createRoute({
           schema: wholeListOf(
             InboundEndpointSchema,
             "InboundEndpointPage",
-            "webhook endpoint",
+            "webhook endpoint of the connector",
           ),
         },
       },
@@ -653,7 +665,9 @@ const listDeliveriesRoute = createRoute({
       state: z
         .enum(["pending", "handled", "any"])
         .default("pending")
-        .describe("Which deliveries: not yet handled, handled, or both."),
+        .describe(
+          "Which deliveries to return: `pending` (not yet handled), `handled` or `any`.",
+        ),
       endpoint_id: z
         .string()
         .optional()
@@ -674,15 +688,7 @@ const listDeliveriesRoute = createRoute({
       },
       description: "Returns a page of deliveries.",
     },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description:
-        "- `validation_error`: `state` isn't `pending`, `handled` or `any`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
-    },
+    ...listQueryResponse,
     ...ownKeyResponses,
   },
 });
@@ -742,7 +748,9 @@ const markHandledRoute = createRoute({
           schema: z.object({
             data: z
               .array(InboundDeliverySchema)
-              .describe("The deliveries, in the order you named them."),
+              .describe(
+                "The deliveries, each once, in the order you first named it.",
+              ),
           }),
         },
       },

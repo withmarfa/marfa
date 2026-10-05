@@ -967,7 +967,7 @@ export interface paths {
         put?: never;
         /**
          * Create a webhook endpoint
-         * @description Creates an address a sender can post to without a credential, and returns it. This response is the only one that shows the full `path`.
+         * @description Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.
          */
         post: operations["createInboundEndpoint"];
         delete?: never;
@@ -3171,9 +3171,9 @@ export interface components {
              * @enum {string}
              */
             outcome: "succeeded" | "failed";
-            /** @description When the run started. */
+            /** @description When the run started, as the connector reported it. */
             started_at: string;
-            /** @description When the run finished. */
+            /** @description When the run finished, as the connector reported it. */
             finished_at: string;
             /** @description A short summary of the run; `null` if none was reported. */
             summary: string | null;
@@ -3247,11 +3247,11 @@ export interface components {
             /** @description When the endpoint was retired; `null` while it is live. */
             retired_at: string | null;
         };
-        /** @description A page holding every webhook endpoint. */
+        /** @description A page holding every webhook endpoint of the connector. */
         InboundEndpointPage: {
-            /** @description Every webhook endpoint. */
+            /** @description Every webhook endpoint of the connector. */
             data: components["schemas"]["InboundEndpoint"][];
-            /** @description Always `null`: Marfa returns every webhook endpoint in one page. */
+            /** @description Always `null`: Marfa returns every webhook endpoint of the connector in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -3299,7 +3299,7 @@ export interface components {
             size: number;
             /** @description The SHA-256 hash of the body, in hex. */
             sha256: string;
-            /** @description The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, or the endpoint sets no header. */
+            /** @description The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none. */
             duplicate_of: {
                 /** @description The ID of the earlier delivery. */
                 id: string;
@@ -12874,7 +12874,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `name` is missing.
-             *     - `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000.
+             *     - `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.
              */
             400: {
                 headers: {
@@ -13425,7 +13425,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorRunPage"];
                 };
             };
-            /** @description - `validation_error`: `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take. */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13536,9 +13536,9 @@ export interface operations {
                      * @enum {string}
                      */
                     outcome: "succeeded" | "failed";
-                    /** @description When the run started. */
+                    /** @description When the run started, as an ISO 8601 time. Marfa stores it as you send it. */
                     started_at: string;
-                    /** @description When the run finished. It can't be before `started_at`. */
+                    /** @description When the run finished, as an ISO 8601 time. It can't be before `started_at`. */
                     finished_at: string;
                     /** @description A short summary of the run. Leave it out for none. */
                     summary?: string;
@@ -13840,7 +13840,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the endpoint, with its full `path`. Later reads show only its last four characters. */
+            /** @description Returns the endpoint, with its full `path`. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14143,7 +14143,7 @@ export interface operations {
     listInboundDeliveries: {
         parameters: {
             query?: {
-                /** @description Which deliveries: not yet handled, handled, or both. */
+                /** @description Which deliveries to return: `pending` (not yet handled), `handled` or `any`. */
                 state?: "pending" | "handled" | "any";
                 /** @description Only the deliveries this endpoint received. */
                 endpoint_id?: string;
@@ -14175,7 +14175,7 @@ export interface operations {
                     "application/json": components["schemas"]["InboundDeliveryPage"];
                 };
             };
-            /** @description - `validation_error`: `state` isn't `pending`, `handled` or `any`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take. */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14458,7 +14458,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description The deliveries, in the order you named them. */
+                        /** @description The deliveries, each once, in the order you first named it. */
                         data: components["schemas"]["InboundDelivery"][];
                     };
                 };
@@ -14608,7 +14608,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the hold. It lapses at `expires_at` unless you renew it: nothing watches it, and a process that stops renewing loses it. */
+            /** @description Returns the hold. It lapses at `expires_at` unless the process renews it first. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14631,7 +14631,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `process` is missing.
-             *     - `validation_error`: `process` isn't 1 to 100 characters, or the body has a top-level field the endpoint doesn't take.
+             *     - `validation_error`: `process` isn't 1 to 100 characters, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -14770,7 +14770,7 @@ export interface operations {
     releaseConnectorHold: {
         parameters: {
             query: {
-                /** @description A name the process chose for itself, such as a UUID made at start. Marfa treats it as opaque. */
+                /** @description The name the process took the connector's hold under. */
                 process: string;
             };
             header?: never;
@@ -14798,7 +14798,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `process` is missing.
-             *     - `validation_error`: `process` isn't 1 to 100 characters, or the query has a parameter this endpoint doesn't take.
+             *     - `validation_error`: a query parameter is unknown, or `process` isn't 1 to 100 characters.
              */
             400: {
                 headers: {
@@ -15099,7 +15099,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `process` or `state` is missing.
-             *     - `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field the endpoint doesn't take.
+             *     - `validation_error`: `process` isn't 1 to 100 characters, `state` isn't a JSON object or is over 512 KiB serialized, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -15414,7 +15414,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorAgreementPage"];
                 };
             };
-            /** @description - `validation_error`: `waiting` isn't `true` or `false`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take. */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, or `cursor` is malformed or came from another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15577,7 +15577,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `process` is missing, or an entry in `set` lacks a field.
-             *     - `validation_error`: a list has more than 500 entries, a record is over 16 KiB serialized, an item is named twice across `set` and `clear`, a field has the wrong type, or the body has a top-level field the endpoint doesn't take.
+             *     - `validation_error`: a list has more than 500 entries, a record is over 16 KiB serialized, an item is named twice across `set` and `clear`, a field has the wrong type, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {
@@ -15751,7 +15751,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `item_ids` is missing.
-             *     - `validation_error`: `item_ids` is empty or has more than 500 IDs, or the body has a top-level field the endpoint doesn't take.
+             *     - `validation_error`: `item_ids` is empty or has more than 500 IDs, or the body has a top-level field this endpoint doesn't take.
              */
             400: {
                 headers: {

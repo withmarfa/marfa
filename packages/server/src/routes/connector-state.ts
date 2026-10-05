@@ -27,6 +27,7 @@ import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
 import {
   IdParam,
   connectorOrRefuse,
+  listQueryResponse,
   ownKeyOrOperatorResponses,
   ownKeyResponses,
   requireOwnKey,
@@ -136,15 +137,17 @@ const AgreementsInputSchema = z.object({
 });
 
 const UNKNOWN_FIELD =
-  "the body has a top-level field the endpoint doesn't take";
+  "the body has a top-level field this endpoint doesn't take";
 
-const badRequest = (
-  codes: readonly ["missing_required_field" | "validation_error", ...string[]],
-  description: string,
-) => ({
+const badRequest = (description: string) => ({
   400: {
     content: {
-      "application/json": { schema: makeErrorResponseSchema(codes) },
+      "application/json": {
+        schema: makeErrorResponseSchema([
+          "missing_required_field",
+          "validation_error",
+        ]),
+      },
     },
     description,
   },
@@ -218,10 +221,9 @@ const holdRoute = createRoute({
         },
       },
       description:
-        "Returns the hold. It lapses at `expires_at` unless you renew it: nothing watches it, and a process that stops renewing loses it.",
+        "Returns the hold. It lapses at `expires_at` unless the process renews it first.",
     },
     ...badRequest(
-      ["missing_required_field", "validation_error"],
       `${PROCESS_MISSING}\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, or ${UNKNOWN_FIELD}.`,
     ),
     ...ownKeyResponses,
@@ -240,7 +242,7 @@ const releaseHoldRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
-    query: z.object({ process: ProcessSchema }),
+    query: z.object({ process: HolderSchema }),
   },
   responses: {
     200: {
@@ -249,8 +251,7 @@ const releaseHoldRoute = createRoute({
         "Returns `ok: true`, whether or not `process` held the hold.",
     },
     ...badRequest(
-      ["missing_required_field", "validation_error"],
-      `${PROCESS_MISSING}\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, or the query has a parameter this endpoint doesn't take.`,
+      `${PROCESS_MISSING}\n- \`validation_error\`: a query parameter is unknown, or \`process\` isn't 1 to 100 characters.`,
     ),
     ...ownKeyResponses,
   },
@@ -298,7 +299,6 @@ const putStateRoute = createRoute({
       description: "Returns the document as written.",
     },
     ...badRequest(
-      ["missing_required_field", "validation_error"],
       `- \`missing_required_field\`: \`process\` or \`state\` is missing.\n- \`validation_error\`: \`process\` isn't 1 to 100 characters, \`state\` isn't a JSON object or is over ${String(MAX_STATE_BYTES / 1024)} KiB serialized, or ${UNKNOWN_FIELD}.`,
     ),
     ...ownKeyResponses,
@@ -365,7 +365,6 @@ const writeAgreementsRoute = createRoute({
         "Returns how many agreements Marfa wrote and removed, and the IDs it skipped. Writing an agreement doesn't change the item, its `updated_at` or its `version`, and sends no event.",
     },
     ...badRequest(
-      ["missing_required_field", "validation_error"],
       `- \`missing_required_field\`: \`process\` is missing, or an entry in \`set\` lacks a field.\n- \`validation_error\`: a list has more than ${String(MAX_AGREEMENTS_PER_REQUEST)} entries, a record is over ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, an item is named twice across \`set\` and \`clear\`, a field has the wrong type, or ${UNKNOWN_FIELD}.`,
     ),
     ...ownKeyResponses,
@@ -404,7 +403,6 @@ const lookupAgreementsRoute = createRoute({
       description: "Returns the agreements.",
     },
     ...badRequest(
-      ["missing_required_field", "validation_error"],
       `- \`missing_required_field\`: \`item_ids\` is missing.\n- \`validation_error\`: \`item_ids\` is empty or has more than ${String(MAX_AGREEMENTS_PER_REQUEST)} IDs, or ${UNKNOWN_FIELD}.`,
     ),
     ...ownKeyResponses,
@@ -445,10 +443,7 @@ const listAgreementsRoute = createRoute({
       },
       description: "Returns a page of agreements.",
     },
-    ...badRequest(
-      ["validation_error"],
-      "- `validation_error`: `waiting` isn't `true` or `false`, `limit` is out of range, `cursor` isn't one this endpoint returned, or the query has a parameter this endpoint doesn't take.",
-    ),
+    ...listQueryResponse,
     ...ownKeyResponses,
   },
 });
