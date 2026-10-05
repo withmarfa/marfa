@@ -80,7 +80,7 @@ describe("edges.bulk", () => {
     }
   });
 
-  it("upsert mode replaces properties in place on duplicate triples", async () => {
+  it("upsert mode merges properties in place on duplicate triples", async () => {
     const { sourceId, targetId } = await makePair();
 
     const first = await client.bulkEdges({
@@ -113,7 +113,7 @@ describe("edges.bulk", () => {
     expect(second.data.counts.created).toBe(0);
     expect(second.data.results[0]!.id).toBe(originalId);
 
-    // Verify property replace persisted. No GET /edges/:id route — hydrate
+    // Verify the merged property persisted. No GET /edges/:id route — hydrate
     // via the source item's outbound edge listing.
     const listRes = await client.listItemEdges(sourceId, {
       edge_type: "about",

@@ -72,6 +72,8 @@ import {
   isEntryVerdict,
 } from "./_bulk-rollback.js";
 import {
+  BulkAtomicSchema,
+  BulkEnableFanoutSchema,
   BulkResponseSchema,
   ItemStateEnum,
   TierEnum,
@@ -214,18 +216,8 @@ const bulkRoute = createRoute({
               .describe(
                 "`upsert` (the default) updates the item an entry matches. `create_only` skips it, reporting `skipped` with reason `duplicate_source`, or `duplicate_id` if it matched by `id`.",
               ),
-            atomic: z
-              .boolean()
-              .optional()
-              .describe(
-                "Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written.",
-              ),
-            enable_fanout: z
-              .boolean()
-              .optional()
-              .describe(
-                "Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way.",
-              ),
+            atomic: BulkAtomicSchema,
+            enable_fanout: BulkEnableFanoutSchema,
             retype: z
               .boolean()
               .optional()

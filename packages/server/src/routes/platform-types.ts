@@ -28,7 +28,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * silent no-op.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { pageOf } from "./_schemas.js";
+import { wholeListOf } from "./_schemas.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly } from "../middleware/auth.js";
@@ -38,16 +38,20 @@ import { platformDrift } from "../storage/platform-drift.js";
 
 const DriftedTypeSchema = z
   .object({
-    id: z.string(),
-    /** Items carrying this identifier. */
-    item_count: z.number(),
-    /** Types inheriting from this one. A parent supplies their fields, so a
-     *  removal is declined while any exist. */
-    child_types: z.array(z.string()),
-    /** Whether a delete would be accepted: no items carry it and nothing
-     *  inherits from it. */
-    removable: z.boolean(),
+    id: z.string().describe("The identifier of the stale type."),
+    item_count: z
+      .number()
+      .describe("How many items carry this type, counted when you ask."),
+    child_types: z
+      .array(z.string())
+      .describe("The types that name this one as their `parent`."),
+    removable: z
+      .boolean()
+      .describe(
+        "`true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it.",
+      ),
   })
+  .describe("A platform type that this build no longer ships.")
   .openapi("DriftedPlatformType");
 
 const listDriftRoute = createRoute({
@@ -62,15 +66,20 @@ const listDriftRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it: the drifted set is derived once at boot, so a row removed since then is still listed here. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
+    "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.",
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(DriftedTypeSchema, "DriftedPlatformTypePage"),
+          schema: wholeListOf(
+            DriftedTypeSchema,
+            "DriftedPlatformTypePage",
+            "stale type",
+          ),
         },
       },
-      description: "The drifted rows, with their live item counts",
+      description:
+        "Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts.",
     },
     401: {
       content: {
@@ -86,7 +95,7 @@ const listDriftRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not the operator key",
+      description: "`forbidden`: you aren't using the operator key.",
     },
   },
 });
@@ -100,9 +109,11 @@ const deletePlatformTypeRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Removes exactly one platform type row this build does not ship. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
+    "Deletes one platform type that this build no longer ships. The type stops resolving at once. Operator key only.",
   request: {
-    params: z.object({ id: z.string() }),
+    params: z.object({
+      id: z.string().describe("The identifier of the stale type to delete."),
+    }),
   },
   responses: {
     200: {
@@ -111,7 +122,7 @@ const deletePlatformTypeRoute = createRoute({
           schema: z.object({ removed: z.literal(true), id: z.string() }),
         },
       },
-      description: "The row is gone",
+      description: "Returns `removed: true` and the type's `id`.",
     },
     401: {
       content: {
@@ -127,7 +138,7 @@ const deletePlatformTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not the operator key",
+      description: "`forbidden`: you aren't using the operator key.",
     },
     404: {
       content: {
@@ -136,7 +147,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "`type_not_found` when no platform row carries the identifier; `not_found` for a path this server does not serve.",
+        "- `type_not_found`: no platform type has this identifier.\n- `not_found`: the type was deleted after the server started.",
     },
     409: {
       content: {
@@ -145,7 +156,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "A row carries the identifier and it cannot be removed here: the build still ships this type, items still carry it, or another registered type inherits from it (`details.child_types` names them). An identifier no row carries is absent rather than in the way, and answers `404 type_not_found`.",
+        "`conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them).",
     },
   },
 });

@@ -37,7 +37,7 @@ import {
   requireTypeReplacement,
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
-import { MergePolicySchema, pageOf } from "./_schemas.js";
+import { MergePolicySchema, wholeListOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -91,44 +91,100 @@ const FieldDefinitionSchema = z
     type: z
       .enum(FIELD_TYPES as unknown as [string, ...string[]])
       .describe(
-        "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.",
+        "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`.",
       ),
-    description: z.string().optional(),
-    required: z.boolean().optional(),
-    enum_values: z.array(z.string()).optional(),
-    items_type: z.string().optional(),
+    description: z.string().optional().describe("What the field holds."),
+    required: z
+      .boolean()
+      .optional()
+      .describe("`true` if an item of the type must have a value for it."),
+    enum_values: z
+      .array(z.string())
+      .optional()
+      .describe("The values an `enum` field allows."),
+    items_type: z
+      .string()
+      .optional()
+      .describe("The type of each element of an `array` field."),
     format: z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "Semantic refinement of a `string` field, or of an array of strings. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`, or into `items_type` on an array of strings.",
+        "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.",
       ),
-    searchable: z.boolean().optional(),
-    maxLength: z.number().int().optional(),
-    maxItems: z.number().int().optional(),
+    searchable: z
+      .boolean()
+      .optional()
+      .describe(
+        "`false` if full-text search should skip the field. Items still return it.",
+      ),
+    maxLength: z
+      .number()
+      .int()
+      .optional()
+      .describe("The longest value a `string` or `enum` field allows."),
+    maxItems: z
+      .number()
+      .int()
+      .optional()
+      .describe("The most elements an `array` field allows."),
   })
+  .describe("One field of a type: its type, and how items may fill it.")
   .openapi("FieldDefinition");
 
 const DisplayHintsSchema = z
   .object({
-    title_field: z.string().optional(),
-    body_field: z.string().optional(),
+    title_field: z
+      .string()
+      .optional()
+      .describe("The field that holds an item's title for display."),
+    body_field: z
+      .string()
+      .optional()
+      .describe("The field that holds an item's body for display."),
   })
+  .describe("Which fields of a type clients show as an item's title and body.")
   .openapi("DisplayHints");
+
+const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
+const COMPATIBLE_WITH = "The types this one is a structural superset of.";
 
 const LinkFieldSchema = z
   .string()
   .describe(
-    "The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash.",
+    "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`.",
   );
 
 const VersionPolicySchema = z
   .looseObject({
-    recent_days: z.number().optional(),
-    daily_snapshot_days: z.number().optional(),
-    weekly_snapshot_days: z.number().optional(),
-    max_versions: z.number().optional(),
+    recent_days: z
+      .number()
+      .optional()
+      .describe(
+        "How many days back Marfa keeps every version of an item. Counts from now.",
+      ),
+    daily_snapshot_days: z
+      .number()
+      .optional()
+      .describe(
+        "How many days back Marfa keeps one version per day, after the recent window.",
+      ),
+    weekly_snapshot_days: z
+      .number()
+      .optional()
+      .describe(
+        "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest.",
+      ),
+    max_versions: z
+      .number()
+      .optional()
+      .describe(
+        "The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first.",
+      ),
   })
+  .describe(
+    "How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults.",
+  )
   .openapi("VersionPolicy");
 
 /**
@@ -146,18 +202,30 @@ const VersionPolicySchema = z
  * believes it set.
  */
 const typeDefinitionBody = {
-  fields: z.record(z.string(), FieldDefinitionSchema),
+  fields: z
+    .record(z.string(), FieldDefinitionSchema)
+    .describe("The type's own fields, by name."),
   version: z
     .number()
     .int()
     .min(0)
     .optional()
     .describe(
-      "Omit it to default to 0. A replacement keeps the version it is given.",
+      "A number for you to track changes to the type. Marfa never changes it. Leave it out for 0.",
     ),
-  parent: z.string().optional(),
-  label: z.string().optional(),
-  description: z.string().optional(),
+  parent: z
+    .string()
+    .optional()
+    .describe(
+      "The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent.",
+    ),
+  label: z
+    .string()
+    .optional()
+    .describe(
+      "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier.",
+    ),
+  description: z.string().optional().describe("What the type is for."),
   // Strings rather than the role enum the response carries, because the
   // validator is the one that refuses an unknown role and it names `roles`
   // where a declared enum would name the entry. The vocabulary is closed
@@ -166,13 +234,13 @@ const typeDefinitionBody = {
     .array(z.string())
     .optional()
     .describe(
-      `Structural roles this type plays, drawn from the closed vocabulary ${TYPE_ROLES.join(", ")}. An entry outside it is refused \`400 invalid_schema\` naming \`roles\`.`,
+      `The structural roles the type plays: ${TYPE_ROLES.map((role) => `\`${role}\``).join(", ")}. An edge type's \`role:<name>\` constraint matches types by role.`,
     ),
   required: z
     .array(z.string())
     .optional()
     .describe(
-      "Field names this type requires, the alternative to `required: true` on each field. Both forms are taken and mean the same thing.",
+      "The names of the fields an item of the type must have. It means the same as `required: true` on each of them.",
     ),
   // A bare string as well as a list: the validator takes both, so a
   // declaration that took only the list would refuse a body the server
@@ -181,19 +249,25 @@ const typeDefinitionBody = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe(
-      "Sibling types this one asserts a structural superset of. A bare string names one.",
+      `${COMPATIBLE_WITH} Marfa checks the claim when you save the type. A bare string names one type.`,
     ),
   display_hints: DisplayHintsSchema.optional(),
   link_field: LinkFieldSchema.optional(),
   version_policy: VersionPolicySchema.optional(),
-  merge_policy: MergePolicySchema.optional(),
+  merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
 };
 
 // `fields` leads the shape, and `id` follows it, because a refusal names
 // the first field the body does not carry and this door's canonical
 // refusal in `errors.md` is a body with no `fields`.
 const TypeDefinitionInputSchema = z
-  .looseObject({ ...typeDefinitionBody, id: z.string() })
+  .looseObject({
+    ...typeDefinitionBody,
+    id: z
+      .string()
+      .describe("The type's identifier, such as `acme.deal` or `user.recipe`."),
+  })
+  .describe("A type to register.")
   .openapi("TypeDefinitionInput");
 
 /**
@@ -206,6 +280,7 @@ const TypeDefinitionInputSchema = z
  */
 const TypeDefinitionUpdateSchema = z
   .looseObject(typeDefinitionBody)
+  .describe("The schema that replaces a type's stored one.")
   .openapi("TypeDefinitionUpdate");
 
 /**
@@ -287,29 +362,57 @@ function schemaRefusal(errors: SchemaValidationIssue[]): MarfaError {
 
 const TypeSchemaResponse = z
   .object({
-    id: z.string(),
-    label: z.string().optional(),
-    description: z.string().optional(),
-    parent: z.string().optional(),
+    id: z.string().describe("Unique identifier for the type."),
+    label: z
+      .string()
+      .optional()
+      .describe("The type's name for people to read."),
+    description: z.string().optional().describe("What the type is for."),
+    parent: z
+      .string()
+      .optional()
+      .describe("The identifier of the type this one inherits from."),
     // Clients resolve a sibling type's read-as relationship from this field,
     // so it must reach the generated spec — an omission here strips it from
     // every generated client even though the runtime body carries it.
-    compatible_with: z.array(z.string()).optional(),
+    compatible_with: z.array(z.string()).optional().describe(COMPATIBLE_WITH),
     // Edges constrain on roles, so a client deciding whether an item may be
     // pointed at a container reads this. Omitting it from the spec would strip
     // it from every generated client while the runtime kept returning it.
-    roles: z.array(z.enum(TYPE_ROLES).openapi("TypeRole")).optional(),
-    fields: z.record(z.string(), FieldDefinitionSchema),
-    version: z.number(),
+    roles: z
+      .array(
+        z
+          .enum(TYPE_ROLES)
+          .describe(
+            "A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.",
+          )
+          .openapi("TypeRole"),
+      )
+      .optional()
+      .describe(
+        "The structural roles the type plays, including those it inherits.",
+      ),
+    fields: z
+      .record(z.string(), FieldDefinitionSchema)
+      .describe(
+        "The type's own fields, by name. `GET /types/{id}` adds the fields it inherits.",
+      ),
+    version: z
+      .number()
+      .describe("The version number the type was last saved with."),
     display_hints: DisplayHintsSchema.optional(),
     link_field: LinkFieldSchema.optional(),
     version_policy: VersionPolicySchema.optional(),
-    merge_policy: MergePolicySchema.optional(),
+    merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
   })
+  .describe(
+    "A type says which fields the items of that type hold, and what else Marfa does for them.",
+  )
   .openapi("TypeDefinition");
 
 const TypeResponseSchema = z
-  .object({ type: TypeSchemaResponse })
+  .object({ type: TypeSchemaResponse.describe("The type.") })
+  .describe("One type.")
   .openapi("TypeResponse");
 
 // ---------------------------------------------------------------------------
@@ -323,16 +426,17 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type this instance resolves: the catalog this build ships, everything registered through `POST /types`, and any platform row an earlier build seeded that this one no longer ships. That third group is drift rather than vocabulary: a type retired by a rename survives on an instance upgraded across it, and keeps resolving and listing here until an operator retires the row. `GET /platform-types/drift` names them and `DELETE /platform-types/{id}` removes one. Use as the schema manifest a type-aware client reads at startup. Every credential reads the whole catalog, whatever its type map reaches: a type's existence is not secret, a schema holds no item data, and a client resolves an inherited field by walking `parent` through this list, so omitting an ancestor would silently drop its fields.",
+    "Returns every type on this instance: those Marfa ships and those registered through `POST /types`. Every credential reads the whole list, whatever its type map reaches.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(TypeSchemaResponse, "TypeDefinitionPage"),
+          schema: wholeListOf(TypeSchemaResponse, "TypeDefinitionPage", "type"),
         },
       },
-      description: "List of all type schemas",
+      description:
+        "Returns every type. A type lists only its own fields, so resolve the rest through `parent`.",
     },
     401: {
       content: {
@@ -352,11 +456,13 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for a platform-shipped type and one registered on this instance alike, for every credential and whatever its type map reaches.",
+    "Returns a type's schema, with the fields and policies it inherits from its ancestors. Every credential reads any type, whatever its type map reaches.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().describe("Type identifier."),
+      id: z
+        .string()
+        .describe("The identifier of the type, such as `core.note`."),
     }),
   },
   responses: {
@@ -366,7 +472,7 @@ const getTypeRoute = createRoute({
           schema: TypeSchemaResponse,
         },
       },
-      description: "Type schema",
+      description: "Returns the type.",
     },
     401: {
       content: {
@@ -382,7 +488,7 @@ const getTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_found"]),
         },
       },
-      description: "Type not found",
+      description: "`type_not_found`: no type has this identifier.",
     },
     409: {
       content: {
@@ -391,7 +497,7 @@ const getTypeRoute = createRoute({
         },
       },
       description:
-        "`type_chain_unresolvable`: the stored inheritance chain cannot be resolved, because it is circular or deeper than any resolution walk follows. `PUT /types/{id}` can still correct it.",
+        "`type_chain_unresolvable`: the type's parent chain is circular or too deep to resolve. `PUT /types/{id}` can correct it.",
     },
   },
 });
@@ -404,7 +510,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces. A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. A `parent` needs write on it in the same map, unless it is a platform-shipped type. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type under the `app.*`, `user.*` or `<publisher>.*` namespace and returns it. Name a `parent` to inherit its fields.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -422,7 +528,7 @@ const registerTypeRoute = createRoute({
           schema: TypeResponseSchema,
         },
       },
-      description: "Type registered",
+      description: "Returns the new type.",
     },
     400: {
       content: {
@@ -437,7 +543,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` when the body carries no `fields`; `invalid_schema` for any other shape the validator refuses, such as a `link_field` that is not a string field the type declares or inherits, or whose name holds a double quote or a backslash; `validation_error` for a malformed identifier; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a child changing a field it inherits.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has, such as `title`.\n- `inheritance_violation`: the type changes an inherited field's shape.",
     },
     401: {
       content: {
@@ -454,7 +560,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier, or on the `parent` the type names (`details.grant` names it).",
+        "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map doesn't grant write on the identifier, or on `parent` (`details.grant` names it).",
     },
     409: {
       content: {
@@ -466,7 +572,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`type_already_exists`: the identifier is registered. `link_taken`: the type names a `link_field`, and two rows a forced delete left under the identifier hold the same value there; neither row is named.",
+        "- `type_already_exists`: a type has this identifier.\n- `link_taken`: two items that a forced delete left under this identifier hold the same value in the `link_field`.",
     },
     422: {
       content: {
@@ -475,7 +581,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "`compatible_with` names a type this instance does not hold, or one whose shape the declaring type does not satisfy.",
+        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
     },
   },
 });
@@ -512,11 +618,13 @@ const replaceTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Replace a type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires a type map granting write on the identifier, so a key replaces only the types it may write. It also requires `schema.write`, except that `metadata.types:write` suffices to add optional fields that no stored row of the type or a subtype holds a value under, or to change `label`, `description`, `display_hints`, `version` or a kept field's description. A new `parent` needs write on it in the same map, unless it is platform-shipped. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once. The old link's tombstones go with it, since they hold another field's values.",
+    "Replaces a registered type's whole schema and returns it. A field you leave out is removed, but items keep their values for it. `metadata.types:write` alone can add optional fields and change `label`, `description`, `display_hints` or `version`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string().describe("Type identifier."),
+      id: z
+        .string()
+        .describe("The identifier of the type, such as `acme.deal`."),
     }),
     body: {
       content: {
@@ -533,7 +641,7 @@ const replaceTypeRoute = createRoute({
           schema: TypeResponseSchema,
         },
       },
-      description: "Type updated",
+      description: "Returns the replaced type.",
     },
     400: {
       content: {
@@ -541,13 +649,14 @@ const replaceTypeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "inheritance_violation",
             "invalid_schema",
+            "missing_required_field",
             "property_shadows_field",
             "validation_error",
           ]),
         },
       },
       description:
-        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses, such as one that leaves a subtype linking by a field it no longer declares or inherits, or by a field that is no longer a string.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
     },
     401: {
       content: {
@@ -568,7 +677,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential holds neither `schema.write` nor `metadata.types:write`, or holds only the second and the replacement needs `schema.write` (`details.changes` names what). `core_type_immutable`: the identifier names a platform-shipped type. `type_not_permitted`: the type map does not grant write on the identifier or on a new `parent` (`details.grant` names it).",
+        "- `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
     },
     404: {
       content: {
@@ -576,7 +685,7 @@ const replaceTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_found"]),
         },
       },
-      description: "Type not found",
+      description: "`type_not_found`: no type has this identifier.",
     },
     409: {
       content: {
@@ -585,7 +694,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "The replacement names a `link_field` two of the type's rows, in any state, hold the same value in. Neither row is named: the door does not ask whether the caller may read them.",
+        "`link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.",
     },
     422: {
       content: {
@@ -594,7 +703,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "A `compatible_with` naming an unknown type or missing a required field of its target, as registration refuses it.",
+        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
     },
   },
 });
@@ -606,19 +715,21 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a type",
   description:
-    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included.\n\n`?force=true` orphans the items of the type that still exist in any lifecycle state, the bin included: they persist, but new writes against the type, and any write setting a field of one of those rows, answer `unknown_type` until the type is registered again.\n\nThe tombstones purges left under the type go with it.",
+    "Deletes a type. With `force=true`, items of the type stay, but writes that create them or set their properties fail with `unknown_type` until the type is registered again.",
   security: [{ bearerAuth: [] }],
   middleware: changesSchema,
   request: {
     params: z.object({
-      id: z.string().describe("Type identifier."),
+      id: z
+        .string()
+        .describe("The identifier of the type, such as `acme.deal`."),
     }),
     query: z.object({
       force: z
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Delete and orphan existing items when `true`. Has no effect on the subtype check.",
+          "Delete the type even if items of it exist, in any state. It doesn't cover a type that has subtypes.",
         ),
     }),
   },
@@ -629,7 +740,7 @@ const deleteTypeRoute = createRoute({
           schema: OkResponseSchema,
         },
       },
-      description: "Type deleted",
+      description: "Returns `ok: true`.",
     },
     401: {
       content: {
@@ -650,7 +761,7 @@ const deleteTypeRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
+        "- `forbidden`: you don't have `schema.write`.\n- `core_type_immutable`: Marfa ships this type, and no credential can delete it.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
     },
     404: {
       content: {
@@ -658,7 +769,7 @@ const deleteTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_found"]),
         },
       },
-      description: "Type not found",
+      description: "`type_not_found`: no type has this identifier.",
     },
     409: {
       content: {
@@ -667,7 +778,7 @@ const deleteTypeRoute = createRoute({
         },
       },
       description:
-        "- `type_has_subtypes`: another type names this one as its parent (`details.subtype_ids` names them). `?force=true` does not cover this: delete each subtype first, or give it another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists in any lifecycle state, the bin included, and `?force` is not `true`.",
+        "- `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.\n- `type_in_use`: an item of the type exists, in any state, and `force` isn't `true`.",
     },
   },
 });

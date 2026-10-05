@@ -192,7 +192,7 @@ describe("POST /edges/bulk reaches the event log", () => {
       createdRows.filter((r) => r.event_type === "edge_created"),
     ).toHaveLength(1);
 
-    // An upsert that replaces properties is an edit, and a subscriber
+    // An upsert that merges properties is an edit, and a subscriber
     // cannot tell it from one made through PATCH /edges/{id}.
     const updateCursor = await logCursor();
     const updated = await request(ctx.app, "POST", "/edges/bulk", {
