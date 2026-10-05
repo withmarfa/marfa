@@ -24,8 +24,10 @@
  *      form's submit button, adds an `is-loading` class, and swaps the button's
  *      text to its `data-loading-label`. A re-entrancy guard
  *      (`data-submitting`) drops a second submit so a double-click can't fire
- *      two requests. The button is only re-enabled if the navigation is
- *      canceled; a real submit navigates away, replacing the page.
+ *      two requests. A real submit navigates away, replacing the page, but the
+ *      browser may keep the page it left in its back-forward cache and show it
+ *      again, as it was, when the person presses Back: the `pageshow` handler
+ *      clears the state on a page restored that way, so the form works again.
  *
  * Pages opt in by linking the script — no per-form markup beyond the optional
  * `data-loading-label` on the submit button and an optional `data-validate-msg`
@@ -175,6 +177,31 @@ export const SUBMIT_STATE_JS = `(function () {
       btn.disabled = true;
     }, 0);
   }
+
+  // A page restored from the back-forward cache is the page as it was left,
+  // submitting state included, and no script runs again to clear it. Without
+  // this the form keeps its re-entrancy mark, drops every submit, and the
+  // person is stuck until they reload.
+  function resetSubmitState(form) {
+    form.removeAttribute('data-submitting');
+    var buttons = form.querySelectorAll('button, input[type="submit"]');
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
+      var idle = btn.getAttribute('data-idle-label');
+      if (idle !== null) {
+        btn.textContent = idle;
+        btn.removeAttribute('data-idle-label');
+      }
+    }
+  }
+
+  window.addEventListener('pageshow', function (event) {
+    if (!event.persisted) return;
+    var forms = document.querySelectorAll('form[data-submitting]');
+    for (var i = 0; i < forms.length; i++) resetSubmitState(forms[i]);
+  });
 
   function init() {
     var forms = document.querySelectorAll('form');

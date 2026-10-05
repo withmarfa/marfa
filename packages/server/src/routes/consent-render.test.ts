@@ -169,12 +169,16 @@ describe("renderConsentScreen — layout + form contract", () => {
     expect(html).not.toContain("card--wide");
   });
 
-  it("renders a .title heading and a .sub subtitle carrying the change-anytime line", () => {
+  it("renders a .title heading and a .sub subtitle that promise no settings page", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain('<h1 class="title">Allow access</h1>');
     expect(html).toContain('<p class="sub">');
     expect(html).toContain("<b>Test CLI</b>");
-    expect(html).toContain("change this anytime in settings");
+    // The server serves no settings page, and nothing else on this page names
+    // where access is changed, so the page says nothing about it. The line it
+    // would have said is the witness that the check below can fail.
+    expect(html).toContain("wants to access your server.");
+    expect(html).not.toMatch(/settings|anytime/i);
   });
 });
 

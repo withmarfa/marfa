@@ -320,6 +320,49 @@ describe("GET /auth/authorize (consent page)", () => {
     );
   });
 
+  it("tells a link whose exp was edited into the past that it is invalid, not that it expired", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "edited-exp@example.com");
+    // Signed while its window was open, then edited so the window reads as
+    // closed. Its signature no longer matches what it carries.
+    const genuine = new URLSearchParams(
+      await buildSignedOauthQuery(clientId, "openid"),
+    );
+    genuine.set("exp", String(Math.floor(Date.now() / 1000) - 60));
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${genuine.toString()}`,
+      { headers: { cookie } },
+    );
+
+    await expectRefusedAuthorizePage(res, ["Test Client", "test-state"]);
+  });
+
+  it("tells a signed link edited after signing that it is invalid, whether or not its window has closed", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "edited-scope@example.com");
+    for (const exp of [
+      String(Math.floor(Date.now() / 1000) + 600),
+      String(Math.floor(Date.now() / 1000) - 60),
+    ]) {
+      const genuine = new URLSearchParams(
+        await buildSignedOauthQuery(clientId, "openid", { exp }),
+      );
+      genuine.set("scope", "openid core.note:write");
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/auth/authorize?${genuine.toString()}`,
+        { headers: { cookie } },
+      );
+      await expectRefusedAuthorizePage(res, ["core.note:write"]);
+    }
+  });
+
   it("REGRESSION: refuses a forged query before bouncing an anonymous visitor to sign-in", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx, { name: "Marfa Drive" });

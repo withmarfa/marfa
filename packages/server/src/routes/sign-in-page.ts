@@ -12,7 +12,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, unverifiedAppCallout } from "./auth-html.js";
 
 interface SignInPageParams {
   /**
@@ -27,6 +27,18 @@ interface SignInPageParams {
    * "Something went wrong" message rather than 500-ing.
    */
   error?: string;
+  /**
+   * What the person typed in the email field on the attempt that failed, so
+   * the form comes back with it and they retype only the password.
+   */
+  email?: string;
+  /**
+   * The app whose authorization sent the person here, named so they know
+   * what they are signing in for. Only ever one whose request the caller has
+   * verified: the name is whatever the app registered, and a request nobody
+   * signed would put a stranger's words on this page.
+   */
+  app?: { name: string; unverified: boolean };
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -41,6 +53,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 /** Renders the sign-in page as a complete HTML document string. */
 export function renderSignInPage(params: SignInPageParams): string {
   const safeReturnTo = escapeHtml(params.returnTo);
+  const safeEmail = escapeHtml(params.email ?? "");
 
   const errorMessage = params.error
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
@@ -73,9 +86,10 @@ export function renderSignInPage(params: SignInPageParams): string {
           <span class="field__label">Email</span>
           <input type="email"
                  name="email"
+                 value="${safeEmail}"
                  required
                  autocomplete="email"
-                 autofocus
+                 ${params.email ? "" : "autofocus"}
                  aria-required="true">
         </label>
         <label class="field">
@@ -84,6 +98,7 @@ export function renderSignInPage(params: SignInPageParams): string {
                  name="password"
                  required
                  autocomplete="current-password"
+                 ${params.email ? "autofocus" : ""}
                  aria-required="true">
         </label>
         ${credentialError}
@@ -94,9 +109,15 @@ export function renderSignInPage(params: SignInPageParams): string {
     </form>
   `;
 
+  const lede = params.app
+    ? `Sign in to continue to <b>${escapeHtml(params.app.name)}</b>.`
+    : "Welcome back.";
+  const appCallout = params.app?.unverified ? unverifiedAppCallout() : "";
+
   const body = `
     <h1 class="title">Sign in to Marfa</h1>
-    <p class="sub">Welcome back.</p>
+    <p class="sub">${lede}</p>
+    ${appCallout}
     ${errorBanner}
     ${passwordForm}
     <script src="/auth/static/password-toggle.js"></script>
@@ -148,14 +169,14 @@ export function validateReturnTo(raw: unknown, issuer: string): string {
  * params back into a `/auth/authorize?…` URL so the existing
  * form-round-trip carries them through credential check.
  *
- * The page-local params (`error`, `return_to`) are stripped before
+ * The page-local params (`error`, `return_to`, `email`) are stripped before
  * re-encoding — they belong to the sign-in page's UX state, not to the
  * OAuth request.
  *
  * The return value always starts with `/auth/authorize`, so it
  * satisfies `validateReturnTo`.
  */
-const SIGN_IN_LOCAL_PARAMS = new Set(["error", "return_to"]);
+const SIGN_IN_LOCAL_PARAMS = new Set(["error", "return_to", "email"]);
 
 export function synthesizeOauthReturnTo(params: URLSearchParams): string {
   const filtered = new URLSearchParams();

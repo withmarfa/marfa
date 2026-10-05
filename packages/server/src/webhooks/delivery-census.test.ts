@@ -31,6 +31,8 @@ const OUTBOUND: Record<string, string> = {
     "pings the liveness URL the operator configures; no credential names it",
   "middleware/error-notifier.ts":
     "posts 500 alerts to the URL the operator configures; no credential names it",
+  "test-browser.ts":
+    "a test helper that asks the system for a free loopback port, and is never part of the server",
 };
 
 const OUTBOUND_PRIMITIVE =

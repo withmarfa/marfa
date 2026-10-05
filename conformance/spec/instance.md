@@ -124,3 +124,23 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
     Reason: the database driver runs each statement synchronously behind a promise, so a loop of database awaits never gives the loop a turn. A job that does not give one stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The one step no turn divides is a restore's COMMIT, which is a single native step; the rows are written in batches before it. A restore holds the write lock until it commits (`search-and-filters.md` 70), and the write probe of `GET /health` then reports `degraded` after the two seconds of statement 12, which is a held lock and not a held loop. The text enrichment sweep reads one batch of at most the configured batch size, which does not grow with the instance, so it is not held to this statement.
 
     Tests: `packages/server/src/routes/long-jobs-health.test.ts › answers within the bound during an archive export of 20,000 items`, `› during an archive restore of that archive`, `› during an NDJSON export of 20,000 items`, `› during a bulk action over 10,000 items`, `› during the blob orphan sweep`, `› during version thinning`, `› during the retirement of inactive grants`. The file measures the processor time the process spends between two turns of the loop and bounds it, so that other work on the machine does not count against the server. Each of these tests except the archive export and the archive restore fails when the job's own turn is removed; those two measure the whole job, and their turns are witnessed by `search-and-filters.md` 65 and 75 for the restore and 78 for the export.
+
+## The root in a browser
+
+20. When a request to `GET /` names `text/html` in `Accept` and either does not name `application/json` or names it after `text/html`, the server SHALL answer `200` with an HTML page.
+
+    Reason: a person who opens the server's address in a browser was handed the instance's description as raw JSON, with nothing in it to read and nothing to do next.
+
+    Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`; `packages/server/src/app.root.test.ts › answers a browser with a page and a program with the JSON`.
+
+21. When any other request is made to `GET /`, a request with no `Accept` among them, the server SHALL answer the JSON description of statements 1, 3 and 4.
+
+    Reason: a program asking for the description must never be handed a page, and `*/*`, which is what a program sends by default, is the description.
+
+    Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`; `packages/server/src/app.root.test.ts › answers a browser with a page and a program with the JSON`.
+
+22. The server SHALL send `Vary: Accept` on every answer to `GET /`.
+
+    Reason: the one address answers a page or the description by what the caller asks for, and a cache must not hand one the other's.
+
+    Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`.
