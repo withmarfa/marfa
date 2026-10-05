@@ -22,6 +22,29 @@ pnpm dev
 
 This starts the server on `http://localhost:8600` with a local SQLite database.
 
+### Making the first key
+
+Until the instance holds a credential, the server logs a one-time bootstrap secret at every boot. In a second terminal, build `marfa` and use the secret to mint the first key:
+
+```bash
+cargo install --locked --path core/marfa-cli
+export MARFA_API_URL=http://localhost:8600
+marfa keys bootstrap          # paste the secret from the server's log, then press Enter
+```
+
+The command prints the operator key. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
+
+```bash
+read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
+marfa status                  # the server, the instance and its health; the counts need a working key
+marfa keys create --label laptop --source laptop
+unset MARFA_API_KEY
+marfa keys keep               # paste the working key that keys create printed
+marfa status                  # now with the item counts
+```
+
+On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
+
 ## Code style
 
 - TypeScript strict mode, ESM-only
@@ -71,6 +94,10 @@ pnpm test:generators
 It needs no server, and CI runs it as a step of the conformance job before
 booting anything — so a change to a spec chapter, a fixture title or a
 numbered statement can be green locally and red in CI without it.
+
+## Releases
+
+A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core` and `@withmarfa/client`, publishes the packages and attaches all three artifacts to a GitHub release. The Swift package lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
 
 ## Conformance suite
 

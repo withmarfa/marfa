@@ -1,6 +1,16 @@
 # Marfa
 
-A typed data layer for structured personal data: items under custom type schemas, edges between them, content-addressed blobs, full-text search and a live event stream, over one HTTP API on SQLite.
+> **Early project.** Marfa is at version 0.0.x. Things will change without notice, and nothing is stable yet. Fuller documentation is on the way.
+
+Marfa is a home for your personal data that you run yourself. You keep your notes, tasks, reading and other records in one place, in a structure you choose, and any app, script or AI agent you trust can use them. As agents take on more of the typing, apps matter more as ways to look at and use your data than as places that hold it, so your data should not live inside one.
+
+- **Your structure.** Define the kinds of things you keep and how they link. Marfa checks everything against them.
+- **Open to every app.** Apps from WithMarfa will use the same interface as anything you build.
+- **Bring data in.** [Connectors](https://github.com/withmarfa/marfa-connectors) pull in data from other services. GitHub, Todoist and RSS exist today.
+- **Use it from anywhere.** A command-line tool, a [TypeScript client](./packages/client) and a [Swift package](https://github.com/withmarfa/marfa-swift), all built on one HTTP API.
+- **Open source.** Everything WithMarfa makes is public. If you are interested, open an issue and say hello.
+
+Under the hood, Marfa is a server that keeps everything in a single SQLite file and speaks plain HTTP. There is no database to set up, and the file is easy to copy and back up. You run it on your own machine or in a container.
 
 ## What is here
 
@@ -13,8 +23,6 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
-
-A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core` and `@withmarfa/client`, publishes the packages and attaches all three artifacts to a GitHub release. The Swift package lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
 
 ## Quick start
 
@@ -32,26 +40,7 @@ cd packages/server
 pnpm dev    # http://localhost:8600
 ```
 
-Until the instance holds a credential, the server logs a one-time bootstrap secret at every boot. In a second terminal, build `marfa` and use the secret to mint the first key:
-
-```bash
-cargo install --locked --path core/marfa-cli
-export MARFA_API_URL=http://localhost:8600
-marfa keys bootstrap          # paste the secret from the server's log, then press Enter
-```
-
-The command prints the operator key. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
-
-```bash
-read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
-marfa status                  # the server, the instance and its health; the counts need a working key
-marfa keys create --label laptop --source laptop
-unset MARFA_API_KEY
-marfa keys keep               # paste the working key that keys create printed
-marfa status                  # now with the item counts
-```
-
-On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
+[`CONTRIBUTING.md`](./CONTRIBUTING.md#making-the-first-key) shows how to make the first key and check the instance.
 
 `.env.example` lists every setting the server reads; the settings schema in `packages/server/src/config.ts` defines each one's type, bounds and default, and the server refuses to start on a value outside them. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 
