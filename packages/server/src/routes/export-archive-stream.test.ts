@@ -291,6 +291,80 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
   });
 });
 
+/** Collects what the server logs and reports as a fault while `run` goes. */
+async function watchingFaults<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; logged: string; reported: unknown[] }> {
+  const lines: string[] = [];
+  const reported: unknown[] = [];
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  globalThis.__marfaReportException = (err) => {
+    reported.push(err);
+  };
+  try {
+    const result = await run();
+    return { result, logged: lines.join(""), reported };
+  } finally {
+    globalThis.__marfaReportException = undefined;
+  }
+}
+
+describe("GET /export?format=archive reports a fault, and not a client leaving", () => {
+  it("logs and reports nothing when the client leaves while the tar is being written", async () => {
+    await seedNotes(ctx, 5);
+    const hash = await upload(ctx, randomBytes(8 * 1024 * 1024));
+    await attach(ctx, hash);
+
+    const { logged, reported } = await watchingFaults(async () => {
+      const res = await exportArchive(ctx);
+      const reader = res.body!.getReader();
+      expect((await reader.read()).done).toBe(false);
+      await reader.cancel();
+      await untilSpoolEmpty();
+    });
+
+    expect(logged).not.toContain("Archive export failed");
+    expect(reported).toEqual([]);
+  });
+
+  it("logs and reports the failure when a blob cannot be read once the body has begun", async () => {
+    await seedNotes(ctx, 5);
+    const hash = await upload(ctx, randomBytes(4 * 1024 * 1024));
+    await attach(ctx, hash);
+    const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+    vi.spyOn(ctx.blobs.disk, "get").mockImplementation(async (wanted) => {
+      const read = await get(wanted);
+      if (!read) return read;
+      let sent = 0;
+      const broken = new Readable({
+        read() {
+          if (sent >= 1024 * 1024) {
+            this.destroy(new Error("disk read failed"));
+            return;
+          }
+          sent += 64 * 1024;
+          this.push(randomBytes(64 * 1024));
+        },
+      });
+      read.stream.destroy();
+      return { ...read, stream: broken };
+    });
+
+    const { logged, reported } = await watchingFaults(async () => {
+      const res = await exportArchive(ctx);
+      await expect(res.arrayBuffer()).rejects.toThrow();
+      await untilSpoolEmpty();
+    });
+
+    expect(logged).toContain("Archive export failed");
+    expect(logged).toContain("disk read failed");
+    expect(reported).toHaveLength(1);
+  });
+});
+
 describe("GET /export?format=archive ends", () => {
   it("with the spool removed when the client leaves while the tar is being written", async () => {
     await seedNotes(ctx, 5);

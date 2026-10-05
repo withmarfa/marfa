@@ -10,6 +10,7 @@ import {
   parseTrustedProxyHeader,
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
+import { errorMessage } from "./error-text.js";
 
 /**
  * The cap on every door under `/keys` when the instance names none.
@@ -398,8 +399,6 @@ export interface OtelSettings {
   /** Nothing is exported, and the SDK never loads, unless this is on. */
   enabled: boolean;
   serviceName: string;
-  /** Stamped on `deployment.environment`; required while exporting. */
-  environment: string | undefined;
   /** Each signal's resolved URL, empty when that signal is not exported. */
   tracesEndpoint: string;
   logsEndpoint: string;
@@ -485,7 +484,7 @@ function setting<T>(parse: (value: string) => T, fallback: () => T) {
       } catch (err) {
         ctx.addIssue({
           code: "custom",
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
         return z.NEVER;
       }
@@ -668,7 +667,7 @@ function fromThrowingParser<T>(parse: (raw: string) => T) {
       return parse(value);
     } catch (err) {
       // The parsers name the setting themselves; the schema names it again.
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       throw new Error(message.replace(/^[A-Z_]+:\s*/, ""), { cause: err });
     }
   };
@@ -830,7 +829,6 @@ const settingsShape = {
   MARFA_PLACEMENT_COUNTRY: optionalText,
 
   MARFA_OTEL_ENABLED: on(false),
-  MARFA_OTEL_ENVIRONMENT: optionalText,
   MARFA_OTEL_SAMPLE_RATIO: setting(decimal(0, 1), () => 0.05),
   OTEL_SERVICE_NAME: setting(text, () => "marfa-server"),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
@@ -971,24 +969,6 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     !s.MARFA_POSTHOG_HOST
   ) {
     refuse("MARFA_POSTHOG_PROJECT_TOKEN", "needs MARFA_POSTHOG_HOST set too");
-  }
-  // Stated rather than inferred: `NODE_ENV` says how the image was built,
-  // which is `production` on every box, so inferring the environment once
-  // labeled a staging deployment's telemetry as production's.
-  const exports =
-    s.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined ||
-    s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT !== undefined ||
-    s.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT !== undefined ||
-    s.MARFA_POSTHOG_HOST !== undefined;
-  if (
-    s.MARFA_OTEL_ENABLED &&
-    exports &&
-    s.MARFA_OTEL_ENVIRONMENT === undefined
-  ) {
-    refuse(
-      "MARFA_OTEL_ENVIRONMENT",
-      "must name the deployment (such as staging or production) when MARFA_OTEL_ENABLED exports telemetry",
-    );
   }
 });
 
@@ -1206,7 +1186,6 @@ export function loadConfig(
     otel: {
       enabled: s.MARFA_OTEL_ENABLED,
       serviceName: s.OTEL_SERVICE_NAME,
-      environment: s.MARFA_OTEL_ENVIRONMENT,
       tracesEndpoint: otlpSignalUrl(
         s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
         s.OTEL_EXPORTER_OTLP_ENDPOINT,

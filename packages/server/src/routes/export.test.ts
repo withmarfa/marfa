@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -402,5 +402,107 @@ describe("GET /export?format=archive", () => {
     expect(
       (await archived(ctx.workingKey)).get(`blobs/${hash}`)?.toString(),
     ).toBe("edge-property-blob");
+  });
+});
+
+describe("GET /export reports a fault, and not a client leaving", () => {
+  async function watching<T>(
+    run: () => Promise<T>,
+  ): Promise<{ logged: string; reported: unknown[] }> {
+    const lines: string[] = [];
+    const reported: unknown[] = [];
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk) => {
+        lines.push(String(chunk));
+        return true;
+      });
+    globalThis.__marfaReportException = (err) => {
+      reported.push(err);
+    };
+    try {
+      await run();
+      // The pull that was reading when the client left has settled by now.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      globalThis.__marfaReportException = undefined;
+      write.mockRestore();
+    }
+    return { logged: lines.join(""), reported };
+  }
+
+  async function seed(count: number): Promise<void> {
+    for (let n = 0; n < count; n++) {
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: `leaving ${String(n)}` },
+        },
+      });
+    }
+  }
+
+  it("logs and reports nothing when the client leaves while a page is being read", async () => {
+    await seed(3);
+    const real = ctx.storage.metadata.get.bind(ctx.storage.metadata);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reading!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    let finished = false;
+    vi.spyOn(ctx.storage.metadata, "get").mockImplementation(async (id) => {
+      reading();
+      await held;
+      const found = await real(id);
+      finished = true;
+      return found;
+    });
+
+    const { logged, reported } = await watching(async () => {
+      const res = await request(ctx.app, "GET", "/export", {
+        key: ctx.workingKey,
+      });
+      const reader = res.body!.getReader();
+      const first = reader.read();
+      // The witness: a pull is reading when the client leaves, which is the
+      // moment the stream's controller closes under it.
+      await started;
+      // Cancelling waits for the read in flight, so it is released after.
+      const left = reader.cancel();
+      release();
+      await left;
+      await first.catch(() => undefined);
+      await vi.waitFor(() => {
+        expect(finished).toBe(true);
+      });
+    });
+
+    expect(logged).not.toContain("Export stream failed");
+    expect(reported).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it("logs and reports a failed read while the client is still there", async () => {
+    await seed(3);
+    vi.spyOn(ctx.storage.metadata, "get").mockRejectedValue(
+      new Error("metadata read failed"),
+    );
+
+    const { logged, reported } = await watching(async () => {
+      const res = await request(ctx.app, "GET", "/export", {
+        key: ctx.workingKey,
+      });
+      await res.text().catch(() => undefined);
+    });
+
+    expect(logged).toContain("Export stream failed");
+    expect(logged).toContain("metadata read failed");
+    expect(reported).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 });

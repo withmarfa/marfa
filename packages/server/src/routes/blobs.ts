@@ -49,6 +49,7 @@ import {
   readsBlobs,
   uploadsBlobs,
 } from "./_blob-reach.js";
+import { errorMessage } from "../error-text.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -794,10 +795,7 @@ export function blobRoutes(
             log("error", "blob.orphaned_after_refused_upload", {
               hash,
               size_bytes: sizeBytes,
-              error:
-                cleanupErr instanceof Error
-                  ? cleanupErr.message
-                  : String(cleanupErr),
+              error: errorMessage(cleanupErr),
             });
           }
         }

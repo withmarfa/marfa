@@ -1,3 +1,6 @@
+import { DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
+import { withoutQueryParameters } from "../error-text.js";
+
 /**
  * Fire-and-forget error webhook notifications with per-error-type debouncing.
  * Used by the error handler to send 500 alerts to a configured webhook URL.
@@ -60,9 +63,16 @@ function isTelegramUrl(webhookUrl: string): boolean {
 
 export function notifyError(
   webhookUrl: string,
-  notification: ErrorNotification,
+  reported: ErrorNotification,
   timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS,
 ): void {
+  // The channel is read by more people than the instance holds data for, so
+  // the text it is sent never carries a failed query's values, whoever built it.
+  const notification = {
+    ...reported,
+    error: withoutQueryParameters(reported.error),
+    environment: DEPLOYMENT_ENVIRONMENT,
+  };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
   const now = Date.now();
   const last = debounceMap.get(errorKey);
@@ -76,10 +86,11 @@ export function notifyError(
       .toISOString()
       .replace("T", " ")
       .replace(/\.\d+Z$/, " UTC");
+    const where = notification.instance
+      ? `${notification.instance}, ${notification.environment}`
+      : notification.environment;
     const text = [
-      notification.instance
-        ? `\u26a0\ufe0f *Marfa 500 Error* (${notification.instance})`
-        : "\u26a0\ufe0f *Marfa 500 Error*",
+      `\u26a0\ufe0f *Marfa 500 Error* (${where})`,
       `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
       notification.error,
       `Request: \`${notification.request_id}\``,

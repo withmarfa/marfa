@@ -111,3 +111,56 @@ describe("redactAttributes — PII denylist", () => {
     expect(input).toEqual({ "user.email": "a@b.com", keep: 1 });
   });
 });
+
+describe("redactAttributes — a failed query's parameters", () => {
+  const VALUE = "bound-value-3e9d51c0";
+  const STATEMENT =
+    'Failed query: insert into "items" ("properties") values (?)';
+  const MESSAGE = `${STATEMENT}\nparams: ${VALUE}`;
+  const FRAMES =
+    "\n    at run (/srv/app.ts:1:1)\n    at tick (/srv/app.ts:2:2)";
+
+  it("keeps the statement of an exception event and drops the values from its message and its stack", () => {
+    // The witness: the input does carry the value, so the absence below is the rule at work.
+    const input = {
+      "exception.type": "Error",
+      "exception.message": MESSAGE,
+      "exception.stacktrace": `Error: ${MESSAGE}${FRAMES}`,
+    };
+    expect(JSON.stringify(input)).toContain(VALUE);
+
+    const out = redactAttributes(input);
+
+    expect(out["exception.message"]).toBe(STATEMENT);
+    expect(out["exception.stacktrace"]).toBe(`Error: ${STATEMENT}${FRAMES}`);
+    expect(out["exception.type"]).toBe("Error");
+    expect(JSON.stringify(out)).not.toContain(VALUE);
+  });
+
+  it("reaches a value nested in a log record's serialized error, and one inside an array", () => {
+    const input = {
+      error_detail: {
+        message: MESSAGE,
+        cause: { message: "SQLITE_FULL", stack: `Error: ${MESSAGE}${FRAMES}` },
+      },
+      lines: [MESSAGE, 7, null],
+    };
+    expect(JSON.stringify(input)).toContain(VALUE);
+
+    const out = redactAttributes(input);
+
+    expect(JSON.stringify(out)).not.toContain(VALUE);
+    expect(out.lines).toEqual([STATEMENT, 7, null]);
+  });
+
+  it("leaves other values as they were, bytes and numbers included", () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const out = redactAttributes({
+      bytes,
+      count: 3,
+      flag: true,
+      note: "plain",
+    });
+    expect(out).toEqual({ bytes, count: 3, flag: true, note: "plain" });
+  });
+});

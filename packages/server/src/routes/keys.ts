@@ -51,6 +51,7 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import { errorMessage } from "../error-text.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -564,7 +565,7 @@ async function resolveGrantItemId(
     // by hand", and a storage fault arriving as the same value would make the
     // trail quietly wrong rather than visibly incomplete.
     log("warn", "keys: grant projection lookup failed for a key.create row", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return null;
   }

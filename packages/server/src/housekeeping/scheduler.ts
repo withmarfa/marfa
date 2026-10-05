@@ -6,6 +6,7 @@ import type {
 } from "../storage/interface.js";
 import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * What one run reports: a flat object of scalars, named by the job.
@@ -289,7 +290,7 @@ export class Housekeeping {
       result = (await job.run()) ?? null;
     } catch (err) {
       outcome = "error";
-      error = err instanceof Error ? err.message : String(err);
+      error = errorMessage(err);
       logJobTickFailure(`Housekeeping ${job.name}`, err, this.stopped);
     }
     const finishedAt = this.nowFn().toISOString();

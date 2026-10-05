@@ -19,6 +19,7 @@ import {
   isDimensionMime,
 } from "./dimensions.js";
 import type { DimensionField, DimensionOutcome } from "./dimensions.js";
+import { errorMessage } from "../error-text.js";
 
 export interface TextEnrichmentSweeperOptions {
   storage: Storage;
@@ -268,7 +269,7 @@ export class TextEnrichmentSweeper {
             );
           }
         } catch (err) {
-          textError = err instanceof Error ? err.message : String(err);
+          textError = errorMessage(err);
         }
       }
 
@@ -395,7 +396,7 @@ export class TextEnrichmentSweeper {
 
       return textError === null ? "extracted" : "failed";
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       await record("failed", message.slice(0, 500)).catch(() => {
         // The item may have been deleted mid-extraction, taking the FK
         // target with it. Losing the bookkeeping row for a gone item is

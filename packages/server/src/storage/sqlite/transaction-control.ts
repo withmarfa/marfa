@@ -1,5 +1,6 @@
 import type { RegistrySnapshot } from "@withmarfa/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { errorMessage } from "../../error-text.js";
 
 type Usability = "usable" | "ended" | "poisoned";
 export type TransactionOutcome =
@@ -103,7 +104,7 @@ export class TransactionFailure extends Error {
 export function originalErrorMessage(error: unknown): string {
   let message = "The transaction could not complete";
   for (let value = error, depth = 0; value != null && depth < 8; depth++) {
-    if (value instanceof Error) message = value.message;
+    if (value instanceof Error) message = errorMessage(value);
     else if (typeof value === "string") message = value;
     if (typeof value !== "object") break;
     value = (value as { cause?: unknown }).cause;

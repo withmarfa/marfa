@@ -1,6 +1,7 @@
 import { TransactionFailure } from "./sqlite/transaction-control.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { log } from "../middleware/logger.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * Work that must happen once a transaction has committed and never if it
@@ -110,7 +111,7 @@ function runSafely(work: () => void): void {
     work();
   } catch (err) {
     log("error", "Work after a commit failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
   }
 }

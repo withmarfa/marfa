@@ -1,3 +1,5 @@
+import { reportableError } from "../error-text.js";
+
 /**
  * Tracks asynchronous operational writes such as the OAuth last-used stamp.
  * Rejections are logged and drained before storage closes. Domain mutations
@@ -25,7 +27,10 @@ export class WriteTracker {
         // One that fails — including one that loses the race against pool
         // teardown — is logged and dropped rather than propagated as an
         // unhandled rejection.
-        console.warn(`[${this.label}] write failed (non-blocking)`, err);
+        console.warn(
+          `[${this.label}] write failed (non-blocking)`,
+          reportableError(err),
+        );
       }
     })();
     this.pending.add(settled);

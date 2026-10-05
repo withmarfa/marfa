@@ -1,4 +1,5 @@
 import { log } from "./middleware/logger.js";
+import { errorMessage } from "./error-text.js";
 
 /**
  * Opt-in liveness heartbeat. GETs an operator-set URL on the housekeeping
@@ -44,7 +45,7 @@ export class HeartbeatPinger {
       return outcome;
     } catch (err) {
       log("warn", "Heartbeat ping failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return { ok: false, status: null };
     }

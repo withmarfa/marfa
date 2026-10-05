@@ -13,6 +13,7 @@ import {
   DISK_DOWN_BELOW_BYTES,
   type HealthProbes,
 } from "./health-probes.js";
+import { errorReason } from "../error-text.js";
 
 type Status = "ok" | "degraded" | "down";
 
@@ -124,7 +125,7 @@ async function timed(
  *  it, since the wrapper's message is the statement and not the failure. */
 function describe(err: unknown): string {
   if (!(err instanceof Error)) return "unknown";
-  return err.cause instanceof Error ? err.cause.message : err.message;
+  return errorReason(err);
 }
 
 async function diskComponent(probes: HealthProbes): Promise<ComponentStatus> {

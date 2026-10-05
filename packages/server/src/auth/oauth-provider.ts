@@ -65,6 +65,7 @@ import {
 } from "./allowlist-withholding.js";
 import { matchesRegisteredRedirectUri } from "./redirect-uri-match.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * Minimal context shape we read off the `hooks.before` and `hooks.after`
@@ -930,7 +931,7 @@ async function resolveClientRevoke(
     };
   } catch (err) {
     log("warn", "oauth client revoke: token precheck failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     throw err;
   }
@@ -1697,7 +1698,7 @@ async function guardRefreshTokenGrant(
   } catch (err) {
     // Fail open to the plugin — never 500 a legitimate refresh on a blip.
     log("warn", "oauth refresh-token precheck failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return;
   }
@@ -1772,7 +1773,7 @@ async function catchUpDeviceCeiling(
   } catch (err) {
     log("warn", "oauth device ceiling precheck failed", {
       client_id: clientId,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return;
   }
@@ -1813,7 +1814,7 @@ async function guardDeviceCodeGrant(
     row = await storage.oauthProvider.findDeviceCodeGrantKey(code);
   } catch (err) {
     log("warn", "oauth device-code precheck failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return;
   }
@@ -1882,7 +1883,7 @@ async function guardAuthorizationCodeGrant(
     );
   } catch (err) {
     log("warn", "oauth authorization-code precheck failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return;
   }

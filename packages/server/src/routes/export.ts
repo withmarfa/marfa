@@ -15,6 +15,8 @@ import { normalizeTimeBound } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { loggablePath } from "../inbound/address.js";
+import { streamFailure } from "../process-faults.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
@@ -301,22 +303,36 @@ export function exportRoutes(
     // holds the read to what the client has taken, so a large export is
     // never held in memory whole.
     let linesThisTurn = 1;
+    // A client that leaves cancels the stream while a pull is still reading,
+    // and that pull's enqueue then throws. Leaving is not a fault.
+    let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await yieldBulkWork();
-        const limit = linesThisTurn;
-        linesThisTurn = LINES_PER_TURN;
-        for (let taken = 0; taken < limit; taken++) {
-          const next = await lines.next();
-          if (next.done) {
-            controller.close();
-            return;
+        try {
+          await yieldBulkWork();
+          const limit = linesThisTurn;
+          linesThisTurn = LINES_PER_TURN;
+          for (let taken = 0; taken < limit; taken++) {
+            const next = await lines.next();
+            if (next.done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(encoder.encode(next.value));
+            if ((controller.desiredSize ?? 0) <= 0) return;
           }
-          controller.enqueue(encoder.encode(next.value));
-          if ((controller.desiredSize ?? 0) <= 0) return;
+        } catch (err) {
+          if (cancelled) return;
+          controller.error(
+            streamFailure("Export stream failed", err, {
+              request_id: c.get("requestId"),
+              path: loggablePath(c.req.path),
+            }),
+          );
         }
       },
       async cancel() {
+        cancelled = true;
         await lines.return(undefined);
       },
     });

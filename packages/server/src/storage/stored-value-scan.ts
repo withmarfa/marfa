@@ -44,6 +44,7 @@
 import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { BLOB_STORE_KINDS } from "./interface.js";
+import { errorMessage } from "../error-text.js";
 
 /** One column, and the set of values this build can interpret in it. */
 export interface ScannedColumn {
@@ -395,7 +396,7 @@ export async function scanStoredValues(
       log("error", "stored-value scan could not read a column", {
         table,
         column,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
       return { scanned: false, values: [] };
     }

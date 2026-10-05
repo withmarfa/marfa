@@ -9,6 +9,7 @@ import {
   finishPendingCopyDeletions,
   type Stores,
 } from "./blob-delete.js";
+import { errorMessage } from "../error-text.js";
 
 export interface IntegrityBounds {
   /** Most copies one run checks, over every store. */
@@ -123,7 +124,7 @@ export class BlobIntegrityChecker {
           log("error", "blob.struck_copy_kept", {
             hash: row.hash,
             store_id: store.id,
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           });
         }
       });

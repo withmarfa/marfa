@@ -27,6 +27,9 @@ import type { BlobLayer } from "../storage/blob-layer.js";
 import type { BlobRead } from "../storage/blob-store.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { errorMessage } from "../error-text.js";
+import { loggablePath } from "../inbound/address.js";
+import { streamFailure } from "../process-faults.js";
 import { mayReadBlob } from "./_blob-reach.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
@@ -216,10 +219,27 @@ export async function handleArchiveExport(
 
   void write()
     .catch((error: unknown) => {
+      // A client that leaves aborts the writer on purpose, which is not a
+      // fault. A failure also closes the body and so also sets the signal,
+      // but it rejects with the failure rather than with the abort.
+      if (
+        stopped.signal.aborted &&
+        error instanceof Error &&
+        error.name === "AbortError"
+      ) {
+        pack.destroy();
+        return;
+      }
       // Ending the body with the failure is what makes the client see a
       // connection cut short and a gzip stream with no end, an archive that
       // cannot be mistaken for a complete one.
-      body.destroy(error instanceof Error ? error : new Error(String(error)));
+      const failure = streamFailure("Archive export failed", error, {
+        request_id: c.get("requestId"),
+        path: loggablePath(c.req.path),
+      });
+      body.destroy(
+        failure instanceof Error ? failure : new Error(errorMessage(failure)),
+      );
       pack.destroy();
     })
     .finally(() => spool.dispose())

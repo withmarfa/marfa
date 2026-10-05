@@ -7,6 +7,7 @@ import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * The retention sweeps. Each is a class with one `runOnce()` that does a
@@ -270,7 +271,7 @@ export class GrantInactivityRetirer {
         if (isConnectionLostError(err)) throw err;
         log("error", "Inactive grant retirement error", {
           grant_item_id: grant.id,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
         continue;
       }

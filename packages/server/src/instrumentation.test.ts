@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { trace } from "@opentelemetry/api";
+import { logs } from "@opentelemetry/api-logs";
 import { Hono } from "hono";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { AppEnv } from "./middleware/auth.js";
@@ -21,9 +23,11 @@ interface ExceptionEntry {
 async function startStubCollector(): Promise<{
   url: string;
   events: CapturedEvent[];
+  requests: { path: string; text: string }[];
   close: () => Promise<void>;
 }> {
   const events: CapturedEvent[] = [];
+  const requests: { path: string; text: string }[] = [];
   const readBody = async (req: IncomingMessage): Promise<string> => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -34,6 +38,7 @@ async function startStubCollector(): Promise<{
   };
   const server: Server = createServer((req, res) => {
     void readBody(req).then((text) => {
+      requests.push({ path: req.url ?? "", text });
       const body = JSON.parse(text) as { batch?: CapturedEvent[] };
       events.push(...(body.batch ?? []));
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -45,6 +50,7 @@ async function startStubCollector(): Promise<{
   return {
     url: `http://127.0.0.1:${String(port)}`,
     events,
+    requests,
     close: () =>
       new Promise((resolve) => {
         server.close(() => {
@@ -111,7 +117,6 @@ describe("unhandled errors reach PostHog's error tracking", () => {
   it("reports a thrown error as an exception with its stack and environment", async () => {
     const boot = await bootInstrumentation({
       MARFA_OTEL_ENABLED: "true",
-      MARFA_OTEL_ENVIRONMENT: "test-environment",
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
     });
@@ -124,9 +129,7 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     const exceptions = collector.events.filter((e) => e.event === "$exception");
     expect(exceptions).toHaveLength(1);
     const [captured] = exceptions;
-    expect(captured?.properties["deployment.environment"]).toBe(
-      "test-environment",
-    );
+    expect(captured?.properties["deployment.environment"]).toBe("production");
     expect(captured?.properties.path).toBe("/explode");
     const list = captured?.properties.$exception_list as ExceptionEntry[];
     expect(list[0]?.type).toBe("Error");
@@ -137,10 +140,54 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     ).toBe(true);
   });
 
+  it("starts with an exporting endpoint and no environment name, and every export says production", async () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exited");
+    });
+    const written: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      written.push(String(chunk));
+      return true;
+    });
+    // The endpoint, the PostHog pair and nothing that names an environment.
+    await bootInstrumentation({
+      MARFA_OTEL_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+      MARFA_POSTHOG_HOST: collector.url,
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(written.join("")).toContain("OpenTelemetry initialized");
+    expect(globalThis.__marfaOtelShutdown).toBeDefined();
+
+    await trace.getTracer("test").startActiveSpan("request", async (span) => {
+      await appThatFails().request("/explode");
+      span.end();
+    });
+    logs.getLogger("test").emit({ body: "a line", attributes: {} });
+    await globalThis.__marfaOtelShutdown?.();
+
+    const named =
+      /"deployment\.environment","value":\{"stringValue":"production"\}/;
+    const sent = (suffix: string) =>
+      collector.requests.filter((r) => r.path.endsWith(suffix));
+    expect(sent("/v1/traces").length).toBeGreaterThan(0);
+    expect(sent("/v1/logs").length).toBeGreaterThan(0);
+    for (const request of [...sent("/v1/traces"), ...sent("/v1/logs")]) {
+      expect(request.text).toMatch(named);
+    }
+    const [exception] = collector.events.filter(
+      (e) => e.event === "$exception",
+    );
+    expect(exception?.properties["deployment.environment"]).toBe("production");
+    trace.disable();
+    logs.disable();
+  });
+
   it("loads and sends nothing with telemetry off", async () => {
     const boot = await bootInstrumentation({
       MARFA_OTEL_ENABLED: "false",
-      MARFA_OTEL_ENVIRONMENT: "test-environment",
       MARFA_POSTHOG_HOST: collector.url,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
     });
@@ -164,7 +211,6 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     await expect(
       bootInstrumentation({
         MARFA_OTEL_ENABLED: "true",
-        MARFA_OTEL_ENVIRONMENT: "test-environment",
         MARFA_POSTHOG_HOST: collector.url,
       }),
     ).rejects.toThrow("exited");

@@ -16,6 +16,7 @@
  */
 
 import { log } from "../middleware/logger.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * What libsql raises when a query reaches a client that `close()` has
@@ -53,7 +54,7 @@ export function logJobTickFailure(
   err: unknown,
   stopped: boolean,
 ): void {
-  const error = err instanceof Error ? err.message : String(err);
+  const error = errorMessage(err);
   if (stopped && isConnectionLostError(err)) {
     log("info", `${job} stood down`, { error });
     return;

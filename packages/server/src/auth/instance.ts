@@ -23,6 +23,7 @@ import {
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
 import { buildSignInThrottlePlugin } from "./sign-in-throttle.js";
+import { errorMessage } from "../error-text.js";
 
 /**
  * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
@@ -420,7 +421,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     () => undefined,
     (err: unknown) => {
       log("error", "auth initialization failed; auth requests will error", {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       return undefined;
     },

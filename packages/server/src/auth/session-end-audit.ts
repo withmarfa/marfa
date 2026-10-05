@@ -6,6 +6,7 @@ import {
   CredentialPersistencePhase,
   credentialRequest,
 } from "./credential-adapter.js";
+import { errorMessage } from "../error-text.js";
 
 /** Prepare the provider's notification plan after its local revocation work. */
 export function withSessionEndAudit<T extends BetterAuthPlugin>(
@@ -84,10 +85,7 @@ export function withSessionEndAudit<T extends BetterAuthPlugin>(
                     .then(() => undefined)
                     .catch((error: unknown) => {
                       log("error", "Session logout notification failed", {
-                        error:
-                          error instanceof Error
-                            ? error.message
-                            : String(error),
+                        error: errorMessage(error),
                       });
                     });
                   request?.notifications.add(notification);

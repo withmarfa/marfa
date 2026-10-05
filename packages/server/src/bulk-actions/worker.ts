@@ -27,6 +27,7 @@ import {
   originalErrorMessage,
   reconcileCommitHooks,
 } from "../storage/sqlite/transaction-control.js";
+import { errorMessage } from "../error-text.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -234,7 +235,7 @@ export class BulkActionWorker {
       }
     } catch (err) {
       log("error", "bulk_action_worker.tick_error", {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       this.scheduleNext(this.currentPollMs);
     } finally {
