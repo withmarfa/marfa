@@ -137,6 +137,64 @@ describe("the status checker", () => {
     expect(listed.undeclaredCodes).toEqual([]);
   });
 
+  it("reads a refusal code from an error described beside its schema", () => {
+    const log = parseRequestLines(OBSERVED_403);
+    const document = {
+      components: {
+        schemas: {
+          ForbiddenError: {
+            type: "object",
+            properties: {
+              code: { type: "string", enum: ["type_not_permitted"] },
+            },
+          },
+        },
+      },
+      paths: {
+        "/items/{id}": {
+          get: {
+            responses: {
+              "403": {
+                description: "",
+                content: {
+                  "application/json": {
+                    schema: {
+                      anyOf: [
+                        {
+                          type: "object",
+                          properties: {
+                            error: {
+                              allOf: [
+                                { $ref: "#/components/schemas/ForbiddenError" },
+                                { description: "What went wrong." },
+                              ],
+                            },
+                          },
+                        },
+                        {
+                          type: "object",
+                          properties: {
+                            error: {
+                              type: "object",
+                              properties: {
+                                code: { type: "string", enum: ["forbidden"] },
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    expect(reportStatuses(log, document).undeclaredCodes).toEqual([]);
+  });
+
   it("passes the same log once the door declares it", () => {
     const report = reportStatuses(
       parseRequestLines([OBSERVED_200, OBSERVED_403].join("\n")),

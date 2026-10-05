@@ -133,105 +133,6 @@
         },
         "description": "A key's own enforcement levers, in the shape `/config` uses. Each lever set here replaces the instance's for this key, looser or stricter; a lever left out stays the instance's."
       },
-      "ItemWithMetadata": {
-        "type": "object",
-        "properties": {
-          "item": {
-            "$ref": "#/components/schemas/Item"
-          },
-          "metadata": {
-            "$ref": "#/components/schemas/Metadata"
-          },
-          "acknowledged": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "item",
-          "metadata"
-        ]
-      },
-      "Item": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "properties": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "state": {
-            "$ref": "#/components/schemas/ItemState"
-          },
-          "tier": {
-            "$ref": "#/components/schemas/Tier"
-          },
-          "version": {
-            "type": "number"
-          },
-          "schema_version": {
-            "type": "integer"
-          },
-          "source": {
-            "type": "string"
-          },
-          "source_id": {
-            "type": "string"
-          },
-          "capture_latitude": {
-            "type": "number"
-          },
-          "capture_longitude": {
-            "type": "number"
-          },
-          "occurred_at": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
-          },
-          "trashed_by_cascade": {
-            "type": "boolean",
-            "description": "Always `true` where present: on an item a trash took into the bin through a cascading edge such as `parent-of`, for as long as the item stays in the bin, even once the item that trash named is purged, to any caller that may read the item. Absent on a row trashed on its own and on every row out of the bin. A connector reads it to tell a trash the person made from one a cascade made."
-          },
-          "trashed_with": {
-            "type": "string",
-            "description": "The item whose trash took this one into the bin, beside `trashed_by_cascade`, whatever became of that item since. Answered only to a caller that may read that item's type."
-          },
-          "edges": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/EdgePage"
-            }
-          },
-          "extensions": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": {}
-            }
-          }
-        },
-        "required": [
-          "id",
-          "type",
-          "properties",
-          "state",
-          "version",
-          "schema_version",
-          "source",
-          "occurred_at",
-          "created_at",
-          "updated_at"
-        ]
-      },
       "ItemState": {
         "type": "string",
         "enum": [
@@ -239,36 +140,16 @@
           "archived",
           "trashed",
           "revoked"
-        ]
+        ],
+        "description": "An item's lifecycle state. `active`: in use, and what a listing returns by default. `archived`: kept and readable by ID, but left out of a default listing. `trashed`: in the trash until restored or purged. `revoked`: retired for good, on `system.*` items only."
       },
       "Tier": {
         "type": "string",
         "enum": [
           "library",
           "feed"
-        ]
-      },
-      "EdgePage": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Edge"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
-          }
-        },
-        "required": [
-          "data",
-          "next_cursor"
-        ]
+        ],
+        "description": "Which layer an item sits in. `library`: what a person chose to keep. `feed`: what arrives in volume from connectors and capture, as it came."
       },
       "Edge": {
         "type": "object",
@@ -319,31 +200,621 @@
         ],
         "description": "An edge is a typed, directed relationship from a source item to a target item."
       },
-      "Metadata": {
+      "Item": {
         "type": "object",
         "properties": {
-          "item_id": {
-            "type": "string"
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the item."
           },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "type": {
+            "type": "string",
+            "description": "The item's type identifier, such as `core.note`."
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The item's properties, by name."
+          },
+          "state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ItemState"
+              },
+              {
+                "description": "The item's lifecycle state."
+              }
+            ]
+          },
+          "tier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The item's tier. It doesn't apply to `system.*` items, which carry `library`."
+              }
+            ]
+          },
+          "version": {
+            "type": "number",
+            "description": "The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is."
+          },
+          "schema_version": {
+            "type": "integer",
+            "description": "The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source the item was written under: the writer's own, or one its key claims. It never changes."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none."
+          },
+          "capture_latitude": {
+            "type": "number",
+            "description": "The latitude where the item was captured. Absent if the writer set none."
+          },
+          "capture_longitude": {
+            "type": "number",
+            "description": "The longitude where the item was captured. Absent if the writer set none."
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "When the item happened, in UTC. Defaults to when it was created."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the item was created, in UTC."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "When the item was last written, in UTC. A tag or extension write moves it too."
+          },
+          "trashed_by_cascade": {
+            "type": "boolean",
+            "description": "Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own."
+          },
+          "trashed_with": {
+            "type": "string",
+            "description": "The ID of the item whose trash took this one into the trash, beside `trashed_by_cascade`, whatever became of that item since. Present only if you can read that item's type."
+          },
+          "edges": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EdgePage"
+            },
+            "description": "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`."
           },
           "extensions": {
             "type": "object",
             "additionalProperties": {
               "type": "object",
               "additionalProperties": {}
-            }
+            },
+            "description": "The item's extension namespaces that you can read, each mapped to its data. Present only where `include` names `extensions`."
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "properties",
+          "state",
+          "version",
+          "schema_version",
+          "source",
+          "occurred_at",
+          "created_at",
+          "updated_at"
+        ],
+        "description": "An item is one record in Marfa."
+      },
+      "EdgePage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            },
+            "description": "The edges on this page."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "description": "A page of edges."
+      },
+      "Metadata": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "The ID of the item the metadata belongs to."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The item's tags."
+          },
+          "extensions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "description": "The item's extension namespaces that you can read, each mapped to its data."
           }
         },
         "required": [
           "item_id",
           "tags",
           "extensions"
-        ]
+        ],
+        "description": "An item's metadata: its tags and its extension namespaces."
+      },
+      "MergePolicy": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MergeStrategy"
+            },
+            "description": "The strategy for each field the policy names."
+          },
+          "default": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MergeStrategy"
+              },
+              {
+                "description": "The strategy for a field `fields` doesn't name. Leave it out for `last_writer_wins`."
+              }
+            ]
+          }
+        },
+        "additionalProperties": {},
+        "description": "How Marfa merges conflicting edits to the items of a type: a strategy for each named field, and a default for the rest."
+      },
+      "MergeStrategy": {
+        "type": "string",
+        "enum": [
+          "last_writer_wins",
+          "keep_both_copies"
+        ],
+        "description": "How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`."
+      },
+      "VersionConflictError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "version_conflict"
+            ],
+            "description": "A machine-readable code for the error. Use it in your logic."
+          },
+          "status": {
+            "type": "number",
+            "enum": [
+              409
+            ],
+            "description": "The HTTP status, always `409`."
+          },
+          "message": {
+            "type": "string",
+            "description": "A description of the error for a person to read. It can change, so don't match on it."
+          }
+        },
+        "required": [
+          "code",
+          "status",
+          "message"
+        ],
+        "description": "The error block of the `version_conflict` refusal."
+      },
+      "AncestorUnavailableError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "ancestor_unavailable"
+            ],
+            "description": "A machine-readable code for the error. Use it in your logic."
+          },
+          "status": {
+            "type": "number",
+            "enum": [
+              409
+            ],
+            "description": "The HTTP status, always `409`."
+          },
+          "message": {
+            "type": "string",
+            "description": "A description of the error for a person to read. It can change, so don't match on it."
+          }
+        },
+        "required": [
+          "code",
+          "status",
+          "message"
+        ],
+        "description": "The error block of the `ancestor_unavailable` refusal."
+      },
+      "VersionPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Version"
+            },
+            "description": "The snapshots on this page."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "description": "A page of an item's version snapshots, oldest first."
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the snapshot."
+          },
+          "item_id": {
+            "type": "string",
+            "description": "The ID of the item."
+          },
+          "version": {
+            "type": "number",
+            "description": "The item version the snapshot records."
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The item's properties at this version."
+          },
+          "type": {
+            "type": "string",
+            "description": "The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it."
+          },
+          "tier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The item's tier at this version."
+              }
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "When the item happened, in UTC, at this version."
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The item's `source_id` at this version, or `null` if it had none."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When Marfa recorded the snapshot, in UTC."
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "version",
+          "properties",
+          "type",
+          "tier",
+          "occurred_at",
+          "source_id",
+          "created_at"
+        ],
+        "description": "A snapshot of an item as it stood at one version, which Marfa records when the item is updated past it."
+      },
+      "BulkCounts": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "integer",
+            "description": "How many entries were `created`."
+          },
+          "updated": {
+            "type": "integer",
+            "description": "How many entries were `updated`."
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "How many entries were `skipped`."
+          },
+          "errored": {
+            "type": "integer",
+            "description": "How many entries were `errored`."
+          }
+        },
+        "required": [
+          "created",
+          "updated",
+          "skipped",
+          "errored"
+        ],
+        "description": "How many entries of a bulk write had each outcome."
+      },
+      "BulkResultOutcome": {
+        "type": "string",
+        "enum": [
+          "created",
+          "updated",
+          "skipped",
+          "errored"
+        ],
+        "description": "What happened to one entry of a bulk write. `created`: it made a new item or edge. `updated`: it changed an existing one. `skipped`: it wrote nothing, for the reason in `reason`. `errored`: it was refused, and `error` says why."
+      },
+      "BulkEntryError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "A machine-readable code for the error. Use it in your logic."
+          },
+          "message": {
+            "type": "string",
+            "description": "A description of the error for a person to read. It can change, so don't match on it."
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "More about the error, such as the field it concerns. Each code defines its own details."
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "Why one entry of a bulk write is `errored`: the error a single write would return."
+      },
+      "ConflictSnapshot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the item."
+          },
+          "version": {
+            "type": "number",
+            "description": "The item version this side shows."
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The item's properties at this version."
+          },
+          "tier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The item's tier at this version."
+              }
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "When the item happened, in UTC, at this version."
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The item's `source_id` at this version, or `null` if it had none."
+          },
+          "type": {
+            "type": "string",
+            "description": "The item's type identifier at this version."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "properties",
+          "tier",
+          "occurred_at",
+          "source_id",
+          "type"
+        ],
+        "description": "An item as it stood at one version, as a conflict shows it."
+      },
+      "DisplayHints": {
+        "type": "object",
+        "properties": {
+          "title_field": {
+            "type": "string",
+            "description": "The field that holds an item's title for display."
+          },
+          "body_field": {
+            "type": "string",
+            "description": "The field that holds an item's body for display."
+          }
+        },
+        "description": "Which fields of a type clients show as an item's title and body."
+      },
+      "VersionPolicy": {
+        "type": "object",
+        "properties": {
+          "recent_days": {
+            "type": "number",
+            "description": "How many days back Marfa keeps every version of an item. Counts from now."
+          },
+          "daily_snapshot_days": {
+            "type": "number",
+            "description": "How many days back Marfa keeps one version per day, after the recent window."
+          },
+          "weekly_snapshot_days": {
+            "type": "number",
+            "description": "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest."
+          },
+          "max_versions": {
+            "type": "number",
+            "description": "The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first."
+          }
+        },
+        "additionalProperties": {},
+        "description": "How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults."
+      },
+      "BulkActionJobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "in_progress",
+          "completed",
+          "failed",
+          "canceled"
+        ],
+        "description": "Where a bulk-action job is. `queued`: waiting to run. `in_progress`: running. `completed`: it reached every matched item. `failed`: it stopped early, and `error` says why. `canceled`: it was canceled before it finished."
+      },
+      "BulkActionResult": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action, such as `purge`."
+          },
+          "matched": {
+            "type": "integer",
+            "description": "How many items the action matched."
+          },
+          "succeeded": {
+            "type": "integer",
+            "description": "How many items the action changed. `0` on a dry run."
+          },
+          "errored": {
+            "type": "integer",
+            "description": "How many matched items the action left unchanged. `0` on a dry run."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "`true` if this was a dry run, which changed nothing."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "On a dry run, the ID of every matched item. On a job, the IDs of the items it changed, if it changed from 1 to 100 of them; absent otherwise."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkActionError"
+            },
+            "description": "On a job, the first 100 items it left unchanged, each with its error. Absent otherwise."
+          },
+          "blob_hashes_referenced": {
+            "type": "integer",
+            "description": "On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise."
+          }
+        },
+        "required": [
+          "action",
+          "matched",
+          "succeeded",
+          "errored",
+          "dry_run"
+        ],
+        "description": "What a bulk action did, or for a dry run, what it matched."
+      },
+      "BulkActionError": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the item."
+          },
+          "code": {
+            "type": "string",
+            "description": "A machine-readable code for the error. Use it in your logic."
+          },
+          "message": {
+            "type": "string",
+            "description": "A description of the error for a person to read. It can change, so don't match on it."
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "More about the error, such as the field it concerns. Each code defines its own details."
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "message"
+        ],
+        "description": "An item a bulk action left unchanged, and why."
+      },
+      "ItemWithMetadata": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Item"
+              },
+              {
+                "description": "The item."
+              }
+            ]
+          },
+          "metadata": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Metadata"
+              },
+              {
+                "description": "The item's metadata."
+              }
+            ]
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "description": "`true` when Marfa accepted a create and wrote nothing: it repeats an `id` you already created, or its natural key matches an item in the trash. Absent otherwise."
+          }
+        },
+        "required": [
+          "item",
+          "metadata"
+        ],
+        "description": "An item with its metadata."
       },
       "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -498,22 +969,51 @@
         "type": "object",
         "properties": {
           "error": {
-            "$ref": "#/components/schemas/VersionConflictError"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionConflictError"
+              },
+              {
+                "description": "What went wrong."
+              }
+            ]
           },
           "current": {
-            "$ref": "#/components/schemas/ConflictSnapshot"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConflictSnapshot"
+              },
+              {
+                "description": "The item as it stands now."
+              }
+            ]
           },
           "ancestor": {
-            "$ref": "#/components/schemas/ConflictSnapshot"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConflictSnapshot"
+              },
+              {
+                "description": "The item at the `version` you sent."
+              }
+            ]
           },
           "conflicting_fields": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "The properties, and fields such as `tier`, that both your write and a write since your `version` changed."
           },
           "merge_policy": {
-            "$ref": "#/components/schemas/MergePolicy"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MergePolicy"
+              },
+              {
+                "description": "The merge policy of the item's type, which `conflict=auto` resolves by."
+              }
+            ]
           }
         },
         "required": [
@@ -522,147 +1022,43 @@
           "ancestor",
           "conflicting_fields",
           "merge_policy"
-        ]
-      },
-      "VersionConflictError": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "enum": [
-              "version_conflict"
-            ]
-          },
-          "status": {
-            "type": "number",
-            "enum": [
-              409
-            ]
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "status",
-          "message"
-        ]
-      },
-      "ConflictSnapshot": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "version": {
-            "type": "number"
-          },
-          "properties": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "tier": {
-            "$ref": "#/components/schemas/Tier"
-          },
-          "occurred_at": {
-            "type": "string"
-          },
-          "source_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "version",
-          "properties",
-          "tier",
-          "occurred_at",
-          "source_id",
-          "type"
-        ]
-      },
-      "MergePolicy": {
-        "type": "object",
-        "properties": {
-          "fields": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/MergeStrategy"
-            },
-            "description": "The strategy for each field the policy names."
-          },
-          "default": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/MergeStrategy"
-              },
-              {
-                "description": "The strategy for a field `fields` doesn't name. Leave it out for `last_writer_wins`."
-              }
-            ]
-          }
-        },
-        "additionalProperties": {},
-        "description": "How Marfa merges conflicting edits to the items of a type: a strategy for each named field, and a default for the rest."
-      },
-      "MergeStrategy": {
-        "type": "string",
-        "enum": [
-          "last_writer_wins",
-          "keep_both_copies"
         ],
-        "description": "How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`."
+        "description": "A stale write whose changes collide: the item now, the item at your version, and what collided."
       },
       "ItemAncestorUnavailable": {
         "type": "object",
         "properties": {
           "error": {
-            "$ref": "#/components/schemas/AncestorUnavailableError"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AncestorUnavailableError"
+              },
+              {
+                "description": "What went wrong."
+              }
+            ]
           },
           "current": {
-            "$ref": "#/components/schemas/ConflictSnapshot"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConflictSnapshot"
+              },
+              {
+                "description": "The item as it stands now."
+              }
+            ]
           },
           "requested_version": {
-            "type": "number"
+            "type": "number",
+            "description": "The `version` you sent."
           }
         },
         "required": [
           "error",
           "current",
           "requested_version"
-        ]
-      },
-      "AncestorUnavailableError": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "enum": [
-              "ancestor_unavailable"
-            ]
-          },
-          "status": {
-            "type": "number",
-            "enum": [
-              409
-            ]
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "status",
-          "message"
-        ]
+        ],
+        "description": "A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now."
       },
       "ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal": {
         "type": "object",
@@ -781,7 +1177,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ItemListRow"
-            }
+            },
+            "description": "The items on this page."
           },
           "next_cursor": {
             "type": [
@@ -794,7 +1191,8 @@
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page of items."
       },
       "ItemListRow": {
         "oneOf": [
@@ -817,11 +1215,12 @@
             "properties": {
               "listed": {
                 "type": "boolean",
-                "description": "Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection."
+                "description": "`true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`."
               }
             }
           }
-        ]
+        ],
+        "description": "An item with its metadata, as a read returns it."
       },
       "MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -864,111 +1263,67 @@
         "type": "object",
         "properties": {
           "item": {
-            "$ref": "#/components/schemas/Item"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Item"
+              },
+              {
+                "description": "The item, with its outbound edges."
+              }
+            ]
           },
           "metadata": {
-            "$ref": "#/components/schemas/Metadata"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Metadata"
+              },
+              {
+                "description": "The item's metadata."
+              }
+            ]
           },
           "backrefs": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePage"
-            }
+            },
+            "description": "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`."
           },
           "listed": {
             "type": "boolean",
-            "description": "Required on conditional copy reads; direct authority is independent of this item-set membership."
+            "description": "`true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`."
           },
           "neighbors": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ItemReadWithMetadata"
-            }
+            },
+            "description": "The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`."
           },
           "neighbors_truncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "`true` if this answer's edges reach more than 100 items, so `neighbors` leaves some out. Page `GET /items/{id}/edges` and `GET /items/{id}/backrefs` for the rest. Present with `include=neighbors`."
           },
           "neighbors_omitted": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many neighbors `neighbors` leaves out because you can't read their type. Present with `include=neighbors`."
           },
           "versions": {
-            "$ref": "#/components/schemas/VersionPage"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionPage"
+              },
+              {
+                "description": "The first page of the item's version snapshots you can read, oldest first, which `GET /items/{id}/versions` continues. Present with `include=versions`."
+              }
+            ]
           }
         },
         "required": [
           "item",
           "metadata"
-        ]
-      },
-      "VersionPage": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Version"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
-          }
-        },
-        "required": [
-          "data",
-          "next_cursor"
-        ]
-      },
-      "Version": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "item_id": {
-            "type": "string"
-          },
-          "version": {
-            "type": "number"
-          },
-          "properties": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "type": {
-            "type": "string",
-            "description": "The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it."
-          },
-          "tier": {
-            "$ref": "#/components/schemas/Tier"
-          },
-          "occurred_at": {
-            "type": "string"
-          },
-          "source_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "item_id",
-          "version",
-          "properties",
-          "type",
-          "tier",
-          "occurred_at",
-          "source_id",
-          "created_at"
-        ]
+        ],
+        "description": "An item as `GET /items/{id}` returns it: the item, its metadata, and the extras `include` asks for."
       },
       "InvalidIdOrValidationErrorRefusal": {
         "type": "object",
@@ -1080,16 +1435,31 @@
         "type": "object",
         "properties": {
           "error": {
-            "$ref": "#/components/schemas/VersionConflictError"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionConflictError"
+              },
+              {
+                "description": "What went wrong."
+              }
+            ]
           },
           "current": {
-            "$ref": "#/components/schemas/ConflictSnapshot"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConflictSnapshot"
+              },
+              {
+                "description": "The item as it stands now."
+              }
+            ]
           }
         },
         "required": [
           "error",
           "current"
-        ]
+        ],
+        "description": "A stale write that carried nothing to merge: the error and the item now."
       },
       "LinkTakenOrSourceIdConflictOrTypeMismatchRefusal": {
         "type": "object",
@@ -1144,12 +1514,14 @@
             "type": "boolean",
             "enum": [
               true
-            ]
+            ],
+            "description": "Always `true`."
           }
         },
         "required": [
           "ok"
-        ]
+        ],
+        "description": "Confirms that the request succeeded."
       },
       "EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal": {
         "type": "object",
@@ -1268,12 +1640,20 @@
         "type": "object",
         "properties": {
           "metadata": {
-            "$ref": "#/components/schemas/Metadata"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Metadata"
+              },
+              {
+                "description": "The item's metadata."
+              }
+            ]
           }
         },
         "required": [
           "metadata"
-        ]
+        ],
+        "description": "An item's metadata."
       },
       "InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
@@ -1352,51 +1732,45 @@
         "type": "object",
         "properties": {
           "counts": {
-            "$ref": "#/components/schemas/BulkCounts"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BulkCounts"
+              },
+              {
+                "description": "How many entries had each outcome."
+              }
+            ]
           },
           "results": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BulkResultEntry"
-            }
+            },
+            "description": "One result per entry, in the order you sent them."
           }
         },
         "required": [
           "counts",
           "results"
-        ]
-      },
-      "BulkCounts": {
-        "type": "object",
-        "properties": {
-          "created": {
-            "type": "integer"
-          },
-          "updated": {
-            "type": "integer"
-          },
-          "skipped": {
-            "type": "integer"
-          },
-          "errored": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "created",
-          "updated",
-          "skipped",
-          "errored"
-        ]
+        ],
+        "description": "What a bulk write did with each entry."
       },
       "BulkResultEntry": {
         "type": "object",
         "properties": {
           "index": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The entry's position in the request, counting from 0."
           },
           "outcome": {
-            "$ref": "#/components/schemas/BulkResultOutcome"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BulkResultOutcome"
+              },
+              {
+                "description": "What happened to the entry."
+              }
+            ]
           },
           "id": {
             "type": "string",
@@ -1410,44 +1784,24 @@
               "duplicate_source",
               "trashed"
             ],
-            "description": "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there."
+            "description": "Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item."
           },
           "error": {
-            "$ref": "#/components/schemas/BulkEntryError"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BulkEntryError"
+              },
+              {
+                "description": "Why the entry was refused. Present when `outcome` is `errored`."
+              }
+            ]
           }
         },
         "required": [
           "index",
           "outcome"
-        ]
-      },
-      "BulkResultOutcome": {
-        "type": "string",
-        "enum": [
-          "created",
-          "updated",
-          "skipped",
-          "errored"
-        ]
-      },
-      "BulkEntryError": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "details": {
-            "type": "object",
-            "additionalProperties": {}
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ]
+        ],
+        "description": "What happened to one entry of a bulk write."
       },
       "BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
@@ -1558,106 +1912,64 @@
         ],
         "description": "An error response."
       },
-      "BulkActionResult": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "matched": {
-            "type": "integer"
-          },
-          "succeeded": {
-            "type": "integer"
-          },
-          "errored": {
-            "type": "integer"
-          },
-          "dry_run": {
-            "type": "boolean"
-          },
-          "ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "errors": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BulkActionError"
-            }
-          },
-          "blob_hashes_referenced": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "action",
-          "matched",
-          "succeeded",
-          "errored",
-          "dry_run"
-        ]
-      },
-      "BulkActionError": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "details": {
-            "type": "object",
-            "additionalProperties": {}
-          }
-        },
-        "required": [
-          "id",
-          "code",
-          "message"
-        ]
-      },
       "BulkActionJob": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the job."
           },
           "action": {
-            "type": "string"
+            "type": "string",
+            "description": "The action, such as `purge`."
           },
           "status": {
-            "$ref": "#/components/schemas/BulkActionJobStatus"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BulkActionJobStatus"
+              },
+              {
+                "description": "Where the job is."
+              }
+            ]
           },
           "matched": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many items the job acts on, fixed when Marfa queued it."
           },
           "processed": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many of the matched items the job has reached so far, changed or not."
           },
           "succeeded": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many items the job has changed so far."
           },
           "errored": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many items the job has left unchanged so far."
           },
           "started_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the job started running, in UTC. Absent until then."
           },
           "finished_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the job completed, failed or was canceled, in UTC. Absent until then."
           },
           "error": {
-            "type": "string"
+            "type": "string",
+            "description": "Why the job failed, for a person to read. Present only when `status` is `failed`."
           },
           "result": {
-            "$ref": "#/components/schemas/BulkActionResult"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BulkActionResult"
+              },
+              {
+                "description": "What the job did. Present once `status` is `completed` or `failed`."
+              }
+            ]
           }
         },
         "required": [
@@ -1668,17 +1980,8 @@
           "processed",
           "succeeded",
           "errored"
-        ]
-      },
-      "BulkActionJobStatus": {
-        "type": "string",
-        "enum": [
-          "queued",
-          "in_progress",
-          "completed",
-          "failed",
-          "canceled"
-        ]
+        ],
+        "description": "A bulk action Marfa runs in the background, with its progress."
       },
       "BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
@@ -1731,21 +2034,30 @@
                 "$ref": "#/components/schemas/ItemState"
               },
               {
-                "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door: these four states are the whole structured vocabulary it accepts, and a write across states is one job per state."
+                "description": "Only items in this lifecycle state. Leave it out for `active` items only, as on `GET /items`. There is no `any`: to act on several states, queue one action per state."
               }
             ]
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "Only items written under this source."
           },
           "tier": {
-            "$ref": "#/components/schemas/Tier"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "Only items in this tier."
+              }
+            ]
           },
           "tags": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Only items that carry all of these tags."
           },
           "occurred_after": {
             "type": "string",
@@ -1756,9 +2068,11 @@
             "description": "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin."
           },
           "filter": {
-            "type": "string"
+            "type": "string",
+            "description": "A filter expression, in the grammar `filter` takes on `GET /items`."
           }
-        }
+        },
+        "description": "Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`."
       },
       "ValidationErrorRefusal": {
         "type": "object",
@@ -1885,7 +2199,8 @@
           "key",
           "purged_at",
           "settled_at"
-        ]
+        ],
+        "description": "What a purge left of an item under its type: a link or natural key it held."
       },
       "InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
         "type": "object",
@@ -1933,12 +2248,14 @@
             "additionalProperties": {
               "type": "object",
               "additionalProperties": {}
-            }
+            },
+            "description": "The item's extension namespaces that you can read, each mapped to its data."
           }
         },
         "required": [
           "extensions"
-        ]
+        ],
+        "description": "An item's extension namespaces that you can read."
       },
       "EdgeResponse": {
         "type": "object",
@@ -2109,7 +2426,14 @@
         "type": "object",
         "properties": {
           "error": {
-            "$ref": "#/components/schemas/VersionConflictError"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionConflictError"
+              },
+              {
+                "description": "What went wrong."
+              }
+            ]
           },
           "current": {
             "allOf": [
@@ -2634,14 +2958,28 @@
             "description": "The version number the type was last saved with."
           },
           "display_hints": {
-            "$ref": "#/components/schemas/DisplayHints"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DisplayHints"
+              },
+              {
+                "description": "Which fields clients show as an item's title and body."
+              }
+            ]
           },
           "link_field": {
             "type": "string",
             "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
-            "$ref": "#/components/schemas/VersionPolicy"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the versions of the type's items."
+              }
+            ]
           },
           "merge_policy": {
             "allOf": [
@@ -2739,43 +3077,6 @@
         ],
         "additionalProperties": {},
         "description": "One field of a type: its type, and how items may fill it."
-      },
-      "DisplayHints": {
-        "type": "object",
-        "properties": {
-          "title_field": {
-            "type": "string",
-            "description": "The field that holds an item's title for display."
-          },
-          "body_field": {
-            "type": "string",
-            "description": "The field that holds an item's body for display."
-          }
-        },
-        "description": "Which fields of a type clients show as an item's title and body."
-      },
-      "VersionPolicy": {
-        "type": "object",
-        "properties": {
-          "recent_days": {
-            "type": "number",
-            "description": "How many days back Marfa keeps every version of an item. Counts from now."
-          },
-          "daily_snapshot_days": {
-            "type": "number",
-            "description": "How many days back Marfa keeps one version per day, after the recent window."
-          },
-          "weekly_snapshot_days": {
-            "type": "number",
-            "description": "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest."
-          },
-          "max_versions": {
-            "type": "number",
-            "description": "The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first."
-          }
-        },
-        "additionalProperties": {},
-        "description": "How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults."
       },
       "TypeNotFoundRefusal": {
         "type": "object",
@@ -3032,14 +3333,28 @@
             "description": "The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type."
           },
           "display_hints": {
-            "$ref": "#/components/schemas/DisplayHints"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DisplayHints"
+              },
+              {
+                "description": "Which fields clients show as an item's title and body."
+              }
+            ]
           },
           "link_field": {
             "type": "string",
             "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
-            "$ref": "#/components/schemas/VersionPolicy"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the versions of the type's items."
+              }
+            ]
           },
           "merge_policy": {
             "allOf": [
@@ -3191,14 +3506,28 @@
             "description": "The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type."
           },
           "display_hints": {
-            "$ref": "#/components/schemas/DisplayHints"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DisplayHints"
+              },
+              {
+                "description": "Which fields clients show as an item's title and body."
+              }
+            ]
           },
           "link_field": {
             "type": "string",
             "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
-            "$ref": "#/components/schemas/VersionPolicy"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the versions of the type's items."
+              }
+            ]
           },
           "merge_policy": {
             "allOf": [
@@ -3323,64 +3652,68 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Occurrence"
-            }
+            },
+            "description": "The occurrences that overlap the window, by start time."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every occurrence in the window in one page."
           },
           "window": {
             "type": "object",
             "properties": {
               "from": {
-                "type": "string"
+                "type": "string",
+                "description": "The start of the window, in UTC."
               },
               "to": {
-                "type": "string"
+                "type": "string",
+                "description": "The end of the window, in UTC."
               }
             },
             "required": [
               "from",
               "to"
-            ]
+            ],
+            "description": "The window you asked for, in UTC."
           },
           "scan": {
             "type": "object",
             "properties": {
               "events_read": {
                 "type": "integer",
-                "description": "Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for."
+                "description": "How many event items this request read. It grows with the size of the calendar more than with the window."
               },
               "occurrences": {
                 "type": "integer",
-                "description": "Occurrences returned, the length of `data`."
+                "description": "How many occurrences `data` holds."
               },
               "max_occurrences": {
                 "type": "integer",
-                "description": "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is."
+                "description": "The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it."
               },
               "series_errors": {
                 "type": "integer",
-                "description": "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two (an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another), so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize."
+                "description": "How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest."
               },
               "max_series_errors": {
                 "type": "integer",
-                "description": "Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these."
+                "description": "The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds."
               },
               "unproductive_iterations": {
                 "type": "integer",
-                "description": "Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window (that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed). It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates (an unreadable rule, a timezone that does not resolve) is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one."
+                "description": "How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here."
               },
               "max_unproductive_iterations": {
                 "type": "integer",
-                "description": "Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it."
+                "description": "The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it."
               },
               "series_unexpanded": {
                 "type": "integer",
-                "description": "Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed."
+                "description": "How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`."
               }
             },
             "required": [
@@ -3392,7 +3725,8 @@
               "unproductive_iterations",
               "max_unproductive_iterations",
               "series_unexpanded"
-            ]
+            ],
+            "description": "What this read cost, and the limits that would stop it."
           },
           "series_errors": {
             "type": "array",
@@ -3400,10 +3734,12 @@
               "type": "object",
               "properties": {
                 "item_id": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The ID of the recurring event."
                 },
                 "message": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "What is wrong with its rule, for a person to read."
                 }
               },
               "required": [
@@ -3411,15 +3747,15 @@
                 "message"
               ]
             },
-            "description": "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once: a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing."
+            "description": "One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none."
           },
           "series_errors_truncated": {
             "type": "boolean",
-            "description": "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total."
+            "description": "`true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise."
           },
           "expansion_incomplete": {
             "type": "boolean",
-            "description": "Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it (the budget is spent walking rules from their own start, before the window is reached), so the moves are narrowing by `type` or fixing the rules `series_errors` names."
+            "description": "`true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise."
           }
         },
         "required": [
@@ -3427,31 +3763,44 @@
           "next_cursor",
           "window",
           "scan"
-        ]
+        ],
+        "description": "The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply."
       },
       "Occurrence": {
         "type": "object",
         "properties": {
           "starts_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the occurrence starts, in UTC."
           },
           "ends_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end."
           },
           "item": {
-            "$ref": "#/components/schemas/Item"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Item"
+              },
+              {
+                "description": "The event: the series for an occurrence computed from its rule, otherwise the occurrence's own item."
+              }
+            ]
           },
           "series_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur."
           },
           "replaces": {
-            "type": "string"
+            "type": "string",
+            "description": "The start, in UTC, of the computed occurrence this stored exception takes the place of. Present only on an exception."
           }
         },
         "required": [
           "starts_at",
           "item"
-        ]
+        ],
+        "description": "One time an event happens."
       },
       "TagCountPage": {
         "type": "object",
@@ -3460,35 +3809,40 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TagCount"
-            }
+            },
+            "description": "Every tag."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every tag in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every tag."
       },
       "TagCount": {
         "type": "object",
         "properties": {
           "tag": {
-            "type": "string"
+            "type": "string",
+            "description": "The tag."
           },
           "count": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How many active items you can read carry the tag."
           }
         },
         "required": [
           "tag",
           "count"
-        ]
+        ],
+        "description": "A tag, and how many items carry it."
       },
       "BlobOrphanPage": {
         "type": "object",
@@ -8332,7 +8686,8 @@
                         }
                       }
                     }
-                  ]
+                  ],
+                  "description": "An item with its metadata."
                 }
               }
             },

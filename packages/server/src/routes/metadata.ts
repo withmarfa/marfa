@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { resolveEnforcement } from "@withmarfa/shared";
-import { pageOf } from "./_schemas.js";
+import { wholeListOf } from "./_schemas.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -17,12 +17,16 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const TagWithCountSchema = z
   .object({
-    tag: z.string(),
-    count: z.number().int(),
+    tag: z.string().describe("The tag."),
+    count: z
+      .number()
+      .int()
+      .describe("How many active items you can read carry the tag."),
   })
+  .describe("A tag, and how many items carry it.")
   .openapi("TagCount");
 
-const TagListSchema = pageOf(TagWithCountSchema, "TagCountPage");
+const TagListSchema = wholeListOf(TagWithCountSchema, "TagCountPage", "tag");
 
 // ---------------------------------------------------------------------------
 // Routes

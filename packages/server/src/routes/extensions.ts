@@ -19,6 +19,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { extensionLabelOf } from "../auth/extension-label.js";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import { readableExtensions } from "./_extension-reach.js";
+import { READABLE_EXTENSIONS_TEXT } from "./_schemas.js";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
@@ -49,8 +50,11 @@ import { requestBlobProof } from "./_blob-reach.js";
 
 const ExtensionsResponseSchema = z
   .object({
-    extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
+    extensions: z
+      .record(z.string(), z.record(z.string(), z.unknown()))
+      .describe(READABLE_EXTENSIONS_TEXT),
   })
+  .describe("An item's extension namespaces that you can read.")
   .openapi("ExtensionsResponse");
 
 const SingleExtensionResponseSchema = z.object({

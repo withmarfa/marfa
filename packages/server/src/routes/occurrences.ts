@@ -746,21 +746,37 @@ async function groupExceptionsBySeries(
 
 const OccurrenceSchema = z
   .object({
-    starts_at: z.string(),
-    ends_at: z.string().optional(),
-    item: ItemSchema,
-    /** Present when this came from expanding a rule rather than from the
-     *  item's own times. */
-    series_id: z.string().optional(),
-    /** Present when a stored exception replaced a computed occurrence;
-     *  carries the start of the occurrence it replaced. */
-    replaces: z.string().optional(),
+    starts_at: z.string().describe("When the occurrence starts, in UTC."),
+    ends_at: z
+      .string()
+      .optional()
+      .describe(
+        "When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.",
+      ),
+    item: ItemSchema.describe(
+      "The event: the series for an occurrence computed from its rule, otherwise the occurrence's own item.",
+    ),
+    series_id: z
+      .string()
+      .optional()
+      .describe(
+        "The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur.",
+      ),
+    replaces: z
+      .string()
+      .optional()
+      .describe(
+        "The start, in UTC, of the computed occurrence this stored exception takes the place of. Present only on an exception.",
+      ),
   })
+  .describe("One time an event happens.")
   .openapi("Occurrence");
 
 const SeriesErrorSchema = z.object({
-  item_id: z.string(),
-  message: z.string(),
+  item_id: z.string().describe("The ID of the recurring event."),
+  message: z
+    .string()
+    .describe("What is wrong with its rule, for a person to read."),
 });
 
 const ScanSchema = z.object({
@@ -768,59 +784,66 @@ const ScanSchema = z.object({
     .number()
     .int()
     .describe(
-      "Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for.",
+      "How many event items this request read. It grows with the size of the calendar more than with the window.",
     ),
-  occurrences: z
-    .number()
-    .int()
-    .describe("Occurrences returned, the length of `data`."),
+  occurrences: z.number().int().describe("How many occurrences `data` holds."),
   max_occurrences: z
     .number()
     .int()
     .describe(
-      "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is.",
+      "The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it.",
     ),
   series_errors: z
     .number()
     .int()
     .describe(
-      "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two (an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another), so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.",
+      "How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest.",
     ),
   max_series_errors: z
     .number()
     .int()
     .describe(
-      "Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these.",
+      "The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds.",
     ),
   unproductive_iterations: z
     .number()
     .int()
     .describe(
-      "Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window (that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed). It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates (an unreadable rule, a timezone that does not resolve) is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.",
+      "How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here.",
     ),
   max_unproductive_iterations: z
     .number()
     .int()
     .describe(
-      "Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it.",
+      "The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it.",
     ),
   series_unexpanded: z
     .number()
     .int()
     .describe(
-      "Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed.",
+      "How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`.",
     ),
 });
 
 const OccurrencesResponseSchema = z
   .object({
-    data: z.array(OccurrenceSchema),
-    next_cursor: NextCursorSchema,
-    window: z.object({ from: z.string(), to: z.string() }),
-    /** What this read cost and what would stop it. Always present: a bound
-     *  that is only mentioned when it fires announces itself too late to
-     *  act on. */
-    scan: ScanSchema,
+    data: z
+      .array(OccurrenceSchema)
+      .describe("The occurrences that overlap the window, by start time."),
+    next_cursor: NextCursorSchema.describe(
+      "Always `null`: Marfa returns every occurrence in the window in one page.",
+    ),
+    window: z
+      .object({
+        from: z.string().describe("The start of the window, in UTC."),
+        to: z.string().describe("The end of the window, in UTC."),
+      })
+      .describe("The window you asked for, in UTC."),
+    // Always present: a bound that is only mentioned when it fires
+    // announces itself too late to act on.
+    scan: ScanSchema.describe(
+      "What this read cost, and the limits that would stop it.",
+    ),
     /** One entry per failure found in a rule — malformed, flooding the
      *  window, no start to unfold from, an unresolvable timezone, or a
      *  `recurrence` holding something that is not a property line. One row
@@ -834,27 +857,24 @@ const OccurrencesResponseSchema = z
       .array(SeriesErrorSchema)
       .optional()
       .describe(
-        "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once: a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing.",
+        "One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none.",
       ),
-    /** Present and true when `series_errors` lists fewer failures than the
-     *  request found. The array is capped rather than the read refused, so
-     *  this is how the response says the list is partial — see
-     *  `scan.series_errors` for how many there actually were. */
     series_errors_truncated: z
       .boolean()
       .optional()
       .describe(
-        "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
+        "`true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise.",
       ),
-    /** Present and true when a series' expansion did not finish. See the
-     *  description below. */
     expansion_incomplete: z
       .boolean()
       .optional()
       .describe(
-        "Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it (the budget is spent walking rules from their own start, before the window is reached), so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
+        "`true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise.",
       ),
   })
+  .describe(
+    "The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply.",
+  )
   .openapi("OccurrencePage");
 
 const occurrencesRoute = createRoute({

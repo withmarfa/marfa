@@ -46,6 +46,9 @@ const TombstoneSchema = z
         "When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item.",
       ),
   })
+  .describe(
+    "What a purge left of an item under its type: a link or natural key it held.",
+  )
   .openapi("Tombstone");
 
 const selectorFields = {

@@ -1635,50 +1635,16 @@ export interface components {
             source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
             source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
         };
-        ItemWithMetadata: {
-            item: components["schemas"]["Item"];
-            metadata: components["schemas"]["Metadata"];
-            acknowledged?: boolean;
-        };
-        Item: {
-            id: string;
-            type: string;
-            properties: {
-                [key: string]: unknown;
-            };
-            state: components["schemas"]["ItemState"];
-            tier?: components["schemas"]["Tier"];
-            version: number;
-            schema_version: number;
-            source: string;
-            source_id?: string;
-            capture_latitude?: number;
-            capture_longitude?: number;
-            occurred_at: string;
-            created_at: string;
-            updated_at: string;
-            /** @description Always `true` where present: on an item a trash took into the bin through a cascading edge such as `parent-of`, for as long as the item stays in the bin, even once the item that trash named is purged, to any caller that may read the item. Absent on a row trashed on its own and on every row out of the bin. A connector reads it to tell a trash the person made from one a cascade made. */
-            trashed_by_cascade?: boolean;
-            /** @description The item whose trash took this one into the bin, beside `trashed_by_cascade`, whatever became of that item since. Answered only to a caller that may read that item's type. */
-            trashed_with?: string;
-            edges?: {
-                [key: string]: components["schemas"]["EdgePage"];
-            };
-            extensions?: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @enum {string} */
+        /**
+         * @description An item's lifecycle state. `active`: in use, and what a listing returns by default. `archived`: kept and readable by ID, but left out of a default listing. `trashed`: in the trash until restored or purged. `revoked`: retired for good, on `system.*` items only.
+         * @enum {string}
+         */
         ItemState: "active" | "archived" | "trashed" | "revoked";
-        /** @enum {string} */
+        /**
+         * @description Which layer an item sits in. `library`: what a person chose to keep. `feed`: what arrives in volume from connectors and capture, as it came.
+         * @enum {string}
+         */
         Tier: "library" | "feed";
-        EdgePage: {
-            data: components["schemas"]["Edge"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
-            next_cursor: string | null;
-        };
         /** @description An edge is a typed, directed relationship from a source item to a target item. */
         Edge: {
             /** @description Unique identifier for the edge. */
@@ -1700,14 +1666,253 @@ export interface components {
             /** @description The edge's version. It goes up by one on every update, including one that changes nothing. */
             version: number;
         };
+        /** @description An item is one record in Marfa. */
+        Item: {
+            /** @description Unique identifier for the item. */
+            id: string;
+            /** @description The item's type identifier, such as `core.note`. */
+            type: string;
+            /** @description The item's properties, by name. */
+            properties: {
+                [key: string]: unknown;
+            };
+            state: components["schemas"]["ItemState"] & unknown;
+            tier?: components["schemas"]["Tier"] & unknown;
+            /** @description The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is. */
+            version: number;
+            /** @description The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it. */
+            schema_version: number;
+            /** @description The source the item was written under: the writer's own, or one its key claims. It never changes. */
+            source: string;
+            /** @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none. */
+            source_id?: string;
+            /** @description The latitude where the item was captured. Absent if the writer set none. */
+            capture_latitude?: number;
+            /** @description The longitude where the item was captured. Absent if the writer set none. */
+            capture_longitude?: number;
+            /** @description When the item happened, in UTC. Defaults to when it was created. */
+            occurred_at: string;
+            /** @description When the item was created, in UTC. */
+            created_at: string;
+            /** @description When the item was last written, in UTC. A tag or extension write moves it too. */
+            updated_at: string;
+            /** @description Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own. */
+            trashed_by_cascade?: boolean;
+            /** @description The ID of the item whose trash took this one into the trash, beside `trashed_by_cascade`, whatever became of that item since. Present only if you can read that item's type. */
+            trashed_with?: string;
+            /** @description The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`. */
+            edges?: {
+                [key: string]: components["schemas"]["EdgePage"];
+            };
+            /** @description The item's extension namespaces that you can read, each mapped to its data. Present only where `include` names `extensions`. */
+            extensions?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description A page of edges. */
+        EdgePage: {
+            /** @description The edges on this page. */
+            data: components["schemas"]["Edge"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            next_cursor: string | null;
+        };
+        /** @description An item's metadata: its tags and its extension namespaces. */
         Metadata: {
+            /** @description The ID of the item the metadata belongs to. */
             item_id: string;
+            /** @description The item's tags. */
             tags: string[];
+            /** @description The item's extension namespaces that you can read, each mapped to its data. */
             extensions: {
                 [key: string]: {
                     [key: string]: unknown;
                 };
             };
+        };
+        /** @description How Marfa merges conflicting edits to the items of a type: a strategy for each named field, and a default for the rest. */
+        MergePolicy: {
+            /** @description The strategy for each field the policy names. */
+            fields?: {
+                [key: string]: components["schemas"]["MergeStrategy"];
+            };
+            default?: components["schemas"]["MergeStrategy"] & unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`.
+         * @enum {string}
+         */
+        MergeStrategy: "last_writer_wins" | "keep_both_copies";
+        /** @description The error block of the `version_conflict` refusal. */
+        VersionConflictError: {
+            /**
+             * @description A machine-readable code for the error. Use it in your logic.
+             * @enum {string}
+             */
+            code: "version_conflict";
+            /**
+             * @description The HTTP status, always `409`.
+             * @enum {number}
+             */
+            status: 409;
+            /** @description A description of the error for a person to read. It can change, so don't match on it. */
+            message: string;
+        };
+        /** @description The error block of the `ancestor_unavailable` refusal. */
+        AncestorUnavailableError: {
+            /**
+             * @description A machine-readable code for the error. Use it in your logic.
+             * @enum {string}
+             */
+            code: "ancestor_unavailable";
+            /**
+             * @description The HTTP status, always `409`.
+             * @enum {number}
+             */
+            status: 409;
+            /** @description A description of the error for a person to read. It can change, so don't match on it. */
+            message: string;
+        };
+        /** @description A page of an item's version snapshots, oldest first. */
+        VersionPage: {
+            /** @description The snapshots on this page. */
+            data: components["schemas"]["Version"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            next_cursor: string | null;
+        };
+        /** @description A snapshot of an item as it stood at one version, which Marfa records when the item is updated past it. */
+        Version: {
+            /** @description Unique identifier for the snapshot. */
+            id: string;
+            /** @description The ID of the item. */
+            item_id: string;
+            /** @description The item version the snapshot records. */
+            version: number;
+            /** @description The item's properties at this version. */
+            properties: {
+                [key: string]: unknown;
+            };
+            /** @description The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it. */
+            type: string;
+            tier: components["schemas"]["Tier"] & unknown;
+            /** @description When the item happened, in UTC, at this version. */
+            occurred_at: string;
+            /** @description The item's `source_id` at this version, or `null` if it had none. */
+            source_id: string | null;
+            /** @description When Marfa recorded the snapshot, in UTC. */
+            created_at: string;
+        };
+        /** @description How many entries of a bulk write had each outcome. */
+        BulkCounts: {
+            /** @description How many entries were `created`. */
+            created: number;
+            /** @description How many entries were `updated`. */
+            updated: number;
+            /** @description How many entries were `skipped`. */
+            skipped: number;
+            /** @description How many entries were `errored`. */
+            errored: number;
+        };
+        /**
+         * @description What happened to one entry of a bulk write. `created`: it made a new item or edge. `updated`: it changed an existing one. `skipped`: it wrote nothing, for the reason in `reason`. `errored`: it was refused, and `error` says why.
+         * @enum {string}
+         */
+        BulkResultOutcome: "created" | "updated" | "skipped" | "errored";
+        /** @description Why one entry of a bulk write is `errored`: the error a single write would return. */
+        BulkEntryError: {
+            /** @description A machine-readable code for the error. Use it in your logic. */
+            code: string;
+            /** @description A description of the error for a person to read. It can change, so don't match on it. */
+            message: string;
+            /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description An item as it stood at one version, as a conflict shows it. */
+        ConflictSnapshot: {
+            /** @description The ID of the item. */
+            id: string;
+            /** @description The item version this side shows. */
+            version: number;
+            /** @description The item's properties at this version. */
+            properties: {
+                [key: string]: unknown;
+            };
+            tier: components["schemas"]["Tier"] & unknown;
+            /** @description When the item happened, in UTC, at this version. */
+            occurred_at: string;
+            /** @description The item's `source_id` at this version, or `null` if it had none. */
+            source_id: string | null;
+            /** @description The item's type identifier at this version. */
+            type: string;
+        };
+        /** @description Which fields of a type clients show as an item's title and body. */
+        DisplayHints: {
+            /** @description The field that holds an item's title for display. */
+            title_field?: string;
+            /** @description The field that holds an item's body for display. */
+            body_field?: string;
+        };
+        /** @description How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults. */
+        VersionPolicy: {
+            /** @description How many days back Marfa keeps every version of an item. Counts from now. */
+            recent_days?: number;
+            /** @description How many days back Marfa keeps one version per day, after the recent window. */
+            daily_snapshot_days?: number;
+            /** @description How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest. */
+            weekly_snapshot_days?: number;
+            /** @description The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first. */
+            max_versions?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Where a bulk-action job is. `queued`: waiting to run. `in_progress`: running. `completed`: it reached every matched item. `failed`: it stopped early, and `error` says why. `canceled`: it was canceled before it finished.
+         * @enum {string}
+         */
+        BulkActionJobStatus: "queued" | "in_progress" | "completed" | "failed" | "canceled";
+        /** @description What a bulk action did, or for a dry run, what it matched. */
+        BulkActionResult: {
+            /** @description The action, such as `purge`. */
+            action: string;
+            /** @description How many items the action matched. */
+            matched: number;
+            /** @description How many items the action changed. `0` on a dry run. */
+            succeeded: number;
+            /** @description How many matched items the action left unchanged. `0` on a dry run. */
+            errored: number;
+            /** @description `true` if this was a dry run, which changed nothing. */
+            dry_run: boolean;
+            /** @description On a dry run, the ID of every matched item. On a job, the IDs of the items it changed, if it changed from 1 to 100 of them; absent otherwise. */
+            ids?: string[];
+            /** @description On a job, the first 100 items it left unchanged, each with its error. Absent otherwise. */
+            errors?: components["schemas"]["BulkActionError"][];
+            /** @description On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise. */
+            blob_hashes_referenced?: number;
+        };
+        /** @description An item a bulk action left unchanged, and why. */
+        BulkActionError: {
+            /** @description The ID of the item. */
+            id: string;
+            /** @description A machine-readable code for the error. Use it in your logic. */
+            code: string;
+            /** @description A description of the error for a person to read. It can change, so don't match on it. */
+            message: string;
+            /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description An item with its metadata. */
+        ItemWithMetadata: {
+            item: components["schemas"]["Item"] & unknown;
+            metadata: components["schemas"]["Metadata"] & unknown;
+            /** @description `true` when Marfa accepted a create and wrote nothing: it repeats an `id` you already created, or its natural key matches an item in the trash. Absent otherwise. */
+            acknowledged?: boolean;
         };
         /** @description An error response. */
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
@@ -1777,57 +1982,21 @@ export interface components {
                 };
             };
         };
+        /** @description A stale write whose changes collide: the item now, the item at your version, and what collided. */
         ItemVersionConflict: {
-            error: components["schemas"]["VersionConflictError"];
-            current: components["schemas"]["ConflictSnapshot"];
-            ancestor: components["schemas"]["ConflictSnapshot"];
+            error: components["schemas"]["VersionConflictError"] & unknown;
+            current: components["schemas"]["ConflictSnapshot"] & unknown;
+            ancestor: components["schemas"]["ConflictSnapshot"] & unknown;
+            /** @description The properties, and fields such as `tier`, that both your write and a write since your `version` changed. */
             conflicting_fields: string[];
-            merge_policy: components["schemas"]["MergePolicy"];
+            merge_policy: components["schemas"]["MergePolicy"] & unknown;
         };
-        VersionConflictError: {
-            /** @enum {string} */
-            code: "version_conflict";
-            /** @enum {number} */
-            status: 409;
-            message: string;
-        };
-        ConflictSnapshot: {
-            id: string;
-            version: number;
-            properties: {
-                [key: string]: unknown;
-            };
-            tier: components["schemas"]["Tier"];
-            occurred_at: string;
-            source_id: string | null;
-            type: string;
-        };
-        /** @description How Marfa merges conflicting edits to the items of a type: a strategy for each named field, and a default for the rest. */
-        MergePolicy: {
-            /** @description The strategy for each field the policy names. */
-            fields?: {
-                [key: string]: components["schemas"]["MergeStrategy"];
-            };
-            default?: components["schemas"]["MergeStrategy"] & unknown;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * @description How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`.
-         * @enum {string}
-         */
-        MergeStrategy: "last_writer_wins" | "keep_both_copies";
+        /** @description A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now. */
         ItemAncestorUnavailable: {
-            error: components["schemas"]["AncestorUnavailableError"];
-            current: components["schemas"]["ConflictSnapshot"];
+            error: components["schemas"]["AncestorUnavailableError"] & unknown;
+            current: components["schemas"]["ConflictSnapshot"] & unknown;
+            /** @description The `version` you sent. */
             requested_version: number;
-        };
-        AncestorUnavailableError: {
-            /** @enum {string} */
-            code: "ancestor_unavailable";
-            /** @enum {number} */
-            status: 409;
-            message: string;
         };
         /** @description An error response. */
         ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusal: {
@@ -1880,15 +2049,18 @@ export interface components {
                 };
             };
         };
+        /** @description A page of items. */
         ItemPage: {
+            /** @description The items on this page. */
             data: components["schemas"]["ItemListRow"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
         /** @description An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape. */
         ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemReadWithMetadata"];
+        /** @description An item with its metadata, as a read returns it. */
         ItemReadWithMetadata: components["schemas"]["ItemWithMetadata"] & {
-            /** @description Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
             listed?: boolean;
         };
         /** @description An error response. */
@@ -1908,37 +2080,23 @@ export interface components {
                 };
             };
         };
+        /** @description An item as `GET /items/{id}` returns it: the item, its metadata, and the extras `include` asks for. */
         ItemDetail: {
-            item: components["schemas"]["Item"];
-            metadata: components["schemas"]["Metadata"];
+            item: components["schemas"]["Item"] & unknown;
+            metadata: components["schemas"]["Metadata"] & unknown;
+            /** @description The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`. */
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
-            /** @description Required on conditional copy reads; direct authority is independent of this item-set membership. */
+            /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Read-View`. */
             listed?: boolean;
+            /** @description The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`. */
             neighbors?: components["schemas"]["ItemReadWithMetadata"][];
+            /** @description `true` if this answer's edges reach more than 100 items, so `neighbors` leaves some out. Page `GET /items/{id}/edges` and `GET /items/{id}/backrefs` for the rest. Present with `include=neighbors`. */
             neighbors_truncated?: boolean;
+            /** @description How many neighbors `neighbors` leaves out because you can't read their type. Present with `include=neighbors`. */
             neighbors_omitted?: number;
-            versions?: components["schemas"]["VersionPage"];
-        };
-        VersionPage: {
-            data: components["schemas"]["Version"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
-            next_cursor: string | null;
-        };
-        Version: {
-            id: string;
-            item_id: string;
-            version: number;
-            properties: {
-                [key: string]: unknown;
-            };
-            /** @description The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it. */
-            type: string;
-            tier: components["schemas"]["Tier"];
-            occurred_at: string;
-            source_id: string | null;
-            created_at: string;
+            versions?: components["schemas"]["VersionPage"] & unknown;
         };
         /** @description An error response. */
         InvalidIdOrValidationErrorRefusal: {
@@ -1991,9 +2149,10 @@ export interface components {
                 };
             };
         };
+        /** @description A stale write that carried nothing to merge: the error and the item now. */
         ItemStaleVersion: {
-            error: components["schemas"]["VersionConflictError"];
-            current: components["schemas"]["ConflictSnapshot"];
+            error: components["schemas"]["VersionConflictError"] & unknown;
+            current: components["schemas"]["ConflictSnapshot"] & unknown;
         };
         /** @description An error response. */
         LinkTakenOrSourceIdConflictOrTypeMismatchRefusal: {
@@ -2017,8 +2176,12 @@ export interface components {
          * @enum {string}
          */
         ConflictMode: "auto" | "manual" | "callback";
+        /** @description Confirms that the request succeeded. */
         Ok: {
-            /** @enum {boolean} */
+            /**
+             * @description Always `true`.
+             * @enum {boolean}
+             */
             ok: true;
         };
         /** @description An error response. */
@@ -2072,8 +2235,9 @@ export interface components {
                 };
             };
         };
+        /** @description An item's metadata. */
         MetadataResponse: {
-            metadata: components["schemas"]["Metadata"];
+            metadata: components["schemas"]["Metadata"] & unknown;
         };
         /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -2109,36 +2273,25 @@ export interface components {
                 };
             };
         };
+        /** @description What a bulk write did with each entry. */
         BulkResponse: {
-            counts: components["schemas"]["BulkCounts"];
+            counts: components["schemas"]["BulkCounts"] & unknown;
+            /** @description One result per entry, in the order you sent them. */
             results: components["schemas"]["BulkResultEntry"][];
         };
-        BulkCounts: {
-            created: number;
-            updated: number;
-            skipped: number;
-            errored: number;
-        };
+        /** @description What happened to one entry of a bulk write. */
         BulkResultEntry: {
+            /** @description The entry's position in the request, counting from 0. */
             index: number;
-            outcome: components["schemas"]["BulkResultOutcome"];
+            outcome: components["schemas"]["BulkResultOutcome"] & unknown;
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row. */
             id?: string;
             /**
-             * @description Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.
+             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item.
              * @enum {string}
              */
             reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed";
-            error?: components["schemas"]["BulkEntryError"];
-        };
-        /** @enum {string} */
-        BulkResultOutcome: "created" | "updated" | "skipped" | "errored";
-        BulkEntryError: {
-            code: string;
-            message: string;
-            details?: {
-                [key: string]: unknown;
-            };
+            error?: components["schemas"]["BulkEntryError"] & unknown;
         };
         /** @description An error response. */
         BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -2191,39 +2344,29 @@ export interface components {
                 };
             };
         };
-        BulkActionResult: {
-            action: string;
-            matched: number;
-            succeeded: number;
-            errored: number;
-            dry_run: boolean;
-            ids?: string[];
-            errors?: components["schemas"]["BulkActionError"][];
-            blob_hashes_referenced?: number;
-        };
-        BulkActionError: {
-            id: string;
-            code: string;
-            message: string;
-            details?: {
-                [key: string]: unknown;
-            };
-        };
+        /** @description A bulk action Marfa runs in the background, with its progress. */
         BulkActionJob: {
+            /** @description Unique identifier for the job. */
             id: string;
+            /** @description The action, such as `purge`. */
             action: string;
-            status: components["schemas"]["BulkActionJobStatus"];
+            status: components["schemas"]["BulkActionJobStatus"] & unknown;
+            /** @description How many items the job acts on, fixed when Marfa queued it. */
             matched: number;
+            /** @description How many of the matched items the job has reached so far, changed or not. */
             processed: number;
+            /** @description How many items the job has changed so far. */
             succeeded: number;
+            /** @description How many items the job has left unchanged so far. */
             errored: number;
+            /** @description When the job started running, in UTC. Absent until then. */
             started_at?: string;
+            /** @description When the job completed, failed or was canceled, in UTC. Absent until then. */
             finished_at?: string;
+            /** @description Why the job failed, for a person to read. Present only when `status` is `failed`. */
             error?: string;
-            result?: components["schemas"]["BulkActionResult"];
+            result?: components["schemas"]["BulkActionResult"] & unknown;
         };
-        /** @enum {string} */
-        BulkActionJobStatus: "queued" | "in_progress" | "completed" | "failed" | "canceled";
         /** @description An error response. */
         BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
@@ -2241,17 +2384,21 @@ export interface components {
                 };
             };
         };
+        /** @description Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`. */
         BulkActionFilter: {
             /** @description Restrict to one type, subtypes included. A type the credential cannot read, with nothing readable under it, is refused `403 type_not_permitted`; one it can read and not write matches nothing. A type nothing registers is accepted. */
             type?: string;
             state?: components["schemas"]["ItemState"] & unknown;
+            /** @description Only items written under this source. */
             source?: string;
-            tier?: components["schemas"]["Tier"];
+            tier?: components["schemas"]["Tier"] & unknown;
+            /** @description Only items that carry all of these tags. */
             tags?: string[];
             /** @description Lower bound on the item's own time (`occurred_at`, falling back to `created_at`) strictly after this. Exclusive, as every bound but `updated_after` is. */
             occurred_after?: string;
             /** @description Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin. */
             occurred_before?: string;
+            /** @description A filter expression, in the grammar `filter` takes on `GET /items`. */
             filter?: string;
         };
         /** @description An error response. */
@@ -2305,6 +2452,7 @@ export interface components {
                 };
             };
         };
+        /** @description What a purge left of an item under its type: a link or natural key it held. */
         Tombstone: {
             /** @description The link value, or the natural key's `source_id`. */
             key: string;
@@ -2330,7 +2478,9 @@ export interface components {
                 };
             };
         };
+        /** @description An item's extension namespaces that you can read. */
         ExtensionsResponse: {
+            /** @description The item's extension namespaces that you can read, each mapped to its data. */
             extensions: {
                 [key: string]: {
                     [key: string]: unknown;
@@ -2411,7 +2561,7 @@ export interface components {
         };
         /** @description A stale update's answer: the refusal and the current edge. */
         EdgeVersionConflict: {
-            error: components["schemas"]["VersionConflictError"];
+            error: components["schemas"]["VersionConflictError"] & unknown;
             current: components["schemas"]["Edge"] & unknown;
         };
         /** @description An error response. */
@@ -2635,10 +2785,10 @@ export interface components {
             };
             /** @description The version number the type was last saved with. */
             version: number;
-            display_hints?: components["schemas"]["DisplayHints"];
+            display_hints?: components["schemas"]["DisplayHints"] & unknown;
             /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
-            version_policy?: components["schemas"]["VersionPolicy"];
+            version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
         };
         /**
@@ -2672,26 +2822,6 @@ export interface components {
             maxLength?: number;
             /** @description The most elements an `array` field allows. */
             maxItems?: number;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Which fields of a type clients show as an item's title and body. */
-        DisplayHints: {
-            /** @description The field that holds an item's title for display. */
-            title_field?: string;
-            /** @description The field that holds an item's body for display. */
-            body_field?: string;
-        };
-        /** @description How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults. */
-        VersionPolicy: {
-            /** @description How many days back Marfa keeps every version of an item. Counts from now. */
-            recent_days?: number;
-            /** @description How many days back Marfa keeps one version per day, after the recent window. */
-            daily_snapshot_days?: number;
-            /** @description How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest. */
-            weekly_snapshot_days?: number;
-            /** @description The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first. */
-            max_versions?: number;
         } & {
             [key: string]: unknown;
         };
@@ -2804,10 +2934,10 @@ export interface components {
             required?: string[];
             /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
             compatible_with?: string | string[];
-            display_hints?: components["schemas"]["DisplayHints"];
+            display_hints?: components["schemas"]["DisplayHints"] & unknown;
             /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
-            version_policy?: components["schemas"]["VersionPolicy"];
+            version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             /** @description The type's identifier, such as `acme.deal` or `user.recipe`. */
             id: string;
@@ -2868,10 +2998,10 @@ export interface components {
             required?: string[];
             /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
             compatible_with?: string | string[];
-            display_hints?: components["schemas"]["DisplayHints"];
+            display_hints?: components["schemas"]["DisplayHints"] & unknown;
             /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
-            version_policy?: components["schemas"]["VersionPolicy"];
+            version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
         } & {
             [key: string]: unknown;
@@ -2909,56 +3039,74 @@ export interface components {
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
         };
+        /** @description The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply. */
         OccurrencePage: {
+            /** @description The occurrences that overlap the window, by start time. */
             data: components["schemas"]["Occurrence"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every occurrence in the window in one page. */
             next_cursor: string | null;
+            /** @description The window you asked for, in UTC. */
             window: {
+                /** @description The start of the window, in UTC. */
                 from: string;
+                /** @description The end of the window, in UTC. */
                 to: string;
             };
+            /** @description What this read cost, and the limits that would stop it. */
             scan: {
-                /** @description Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for. */
+                /** @description How many event items this request read. It grows with the size of the calendar more than with the window. */
                 events_read: number;
-                /** @description Occurrences returned, the length of `data`. */
+                /** @description How many occurrences `data` holds. */
                 occurrences: number;
-                /** @description Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is. */
+                /** @description The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it. */
                 max_occurrences: number;
-                /** @description Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two (an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another), so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize. */
+                /** @description How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest. */
                 series_errors: number;
-                /** @description Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these. */
+                /** @description The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds. */
                 max_series_errors: number;
-                /** @description Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window (that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed). It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates (an unreadable rule, a timezone that does not resolve) is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one. */
+                /** @description How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here. */
                 unproductive_iterations: number;
-                /** @description Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it. */
+                /** @description The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it. */
                 max_unproductive_iterations: number;
-                /** @description Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed. */
+                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`. */
                 series_unexpanded: number;
             };
-            /** @description One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once: a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing. */
+            /** @description One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none. */
             series_errors?: {
+                /** @description The ID of the recurring event. */
                 item_id: string;
+                /** @description What is wrong with its rule, for a person to read. */
                 message: string;
             }[];
-            /** @description Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total. */
+            /** @description `true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
             series_errors_truncated?: boolean;
-            /** @description Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it (the budget is spent walking rules from their own start, before the window is reached), so the moves are narrowing by `type` or fixing the rules `series_errors` names. */
+            /** @description `true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise. */
             expansion_incomplete?: boolean;
         };
+        /** @description One time an event happens. */
         Occurrence: {
+            /** @description When the occurrence starts, in UTC. */
             starts_at: string;
+            /** @description When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end. */
             ends_at?: string;
-            item: components["schemas"]["Item"];
+            item: components["schemas"]["Item"] & unknown;
+            /** @description The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur. */
             series_id?: string;
+            /** @description The start, in UTC, of the computed occurrence this stored exception takes the place of. Present only on an exception. */
             replaces?: string;
         };
+        /** @description A page holding every tag. */
         TagCountPage: {
+            /** @description Every tag. */
             data: components["schemas"]["TagCount"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every tag in one page. */
             next_cursor: string | null;
         };
+        /** @description A tag, and how many items carry it. */
         TagCount: {
+            /** @description The tag. */
             tag: string;
+            /** @description How many active items you can read carry the tag. */
             count: number;
         };
         /** @description A page holding every orphan. */

@@ -215,12 +215,17 @@ function codesIn(schema: unknown): string[] {
     const branches = record[key];
     if (Array.isArray(branches)) out.push(...branches.flatMap(codesIn));
   }
+  type ErrorPart = { properties?: { code?: unknown }; enum?: unknown };
   const error = (record.properties as Record<string, unknown> | undefined)
-    ?.error as { properties?: { code?: unknown }; enum?: unknown } | undefined;
-  const code = (error?.properties?.code ?? error) as
-    { enum?: unknown } | undefined;
-  if (Array.isArray(code?.enum)) {
-    out.push(...code.enum.filter((c): c is string => typeof c === "string"));
+    ?.error as (ErrorPart & { allOf?: unknown }) | undefined;
+  // A described `error` is published as an `allOf` of its schema and its text.
+  const parts = [error, ...(Array.isArray(error?.allOf) ? error.allOf : [])];
+  for (const part of parts as (ErrorPart | undefined)[]) {
+    const code = (part?.properties?.code ?? part) as
+      { enum?: unknown } | undefined;
+    if (Array.isArray(code?.enum)) {
+      out.push(...code.enum.filter((c): c is string => typeof c === "string"));
+    }
   }
   return out;
 }

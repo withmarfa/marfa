@@ -13,6 +13,7 @@ import {
   WrittenPropertiesSchema,
 } from "../routes/_schemas.js";
 import type { DeclaresKeys } from "../routes/_unknown-body-keys.js";
+import { REFUSAL_TEXT } from "../openapi.js";
 
 /**
  * The bulk-action match set, and the only declaration of it.
@@ -41,11 +42,17 @@ export const BulkActionFilterShape = z
     // what the caller is about to write to and a caller checks it against a
     // listing.
     state: ItemStateEnum.optional().describe(
-      "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: the active state alone, so an unnarrowed action does not reach rows the caller has archived or deleted. There is no `any` sentinel on this door: these four states are the whole structured vocabulary it accepts, and a write across states is one job per state.",
+      "Only items in this lifecycle state. Leave it out for `active` items only, as on `GET /items`. There is no `any`: to act on several states, queue one action per state.",
     ),
-    source: z.string().optional(),
-    tier: TierEnum.optional(),
-    tags: z.array(z.string()).optional(),
+    source: z
+      .string()
+      .optional()
+      .describe("Only items written under this source."),
+    tier: TierEnum.optional().describe("Only items in this tier."),
+    tags: z
+      .array(z.string())
+      .optional()
+      .describe("Only items that carry all of these tags."),
     occurred_after: z
       .string()
       .optional()
@@ -58,9 +65,16 @@ export const BulkActionFilterShape = z
       .describe(
         "Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin.",
       ),
-    /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
-    filter: z.string().optional(),
+    filter: z
+      .string()
+      .optional()
+      .describe(
+        "A filter expression, in the grammar `filter` takes on `GET /items`.",
+      ),
   })
+  .describe(
+    "Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`.",
+  )
   .openapi("BulkActionFilter");
 
 /** The same shape as the request takes it: absent means "every item". */
@@ -142,52 +156,124 @@ export const BULK_ACTION_SHAPES: Record<
 
 export const BulkActionErrorEntrySchema = z
   .object({
-    id: z.string(),
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.string(), z.unknown()).optional(),
+    id: z.string().describe("The ID of the item."),
+    code: z.string().describe(REFUSAL_TEXT.code),
+    message: z.string().describe(REFUSAL_TEXT.message),
+    details: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(REFUSAL_TEXT.details),
   })
+  .describe("An item a bulk action left unchanged, and why.")
   .openapi("BulkActionError");
 
 export type BulkActionErrorEntry = z.infer<typeof BulkActionErrorEntrySchema>;
 
+const BULK_ACTION_TEXT = "The action, such as `purge`.";
+
 export const BulkActionResultSchema = z
   .object({
-    action: z.string(),
-    matched: z.number().int(),
-    succeeded: z.number().int(),
-    errored: z.number().int(),
-    dry_run: z.boolean(),
-    ids: z.array(z.string()).optional(),
-    errors: z.array(BulkActionErrorEntrySchema).optional(),
-    /** Unique blob hashes referenced by the items that were purged. Not a
-     *  strict orphan count: what a blob is still referenced by is the
-     *  `blob-orphans` housekeeping job's answer, on its own schedule.
-     *  Omitted for non-purge actions. */
-    blob_hashes_referenced: z.number().int().optional(),
+    action: z.string().describe(BULK_ACTION_TEXT),
+    matched: z.number().int().describe("How many items the action matched."),
+    succeeded: z
+      .number()
+      .int()
+      .describe("How many items the action changed. `0` on a dry run."),
+    errored: z
+      .number()
+      .int()
+      .describe(
+        "How many matched items the action left unchanged. `0` on a dry run.",
+      ),
+    dry_run: z
+      .boolean()
+      .describe("`true` if this was a dry run, which changed nothing."),
+    ids: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "On a dry run, the ID of every matched item. On a job, the IDs of the items it changed, if it changed from 1 to 100 of them; absent otherwise.",
+      ),
+    errors: z
+      .array(BulkActionErrorEntrySchema)
+      .optional()
+      .describe(
+        "On a job, the first 100 items it left unchanged, each with its error. Absent otherwise.",
+      ),
+    // Not a strict orphan count: what a blob is still referenced by is the
+    // `blob-orphans` housekeeping job's answer, on its own schedule.
+    blob_hashes_referenced: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "On a purge job, how many distinct blobs the purged items referenced, whether or not anything still references them. Absent otherwise.",
+      ),
   })
+  .describe("What a bulk action did, or for a dry run, what it matched.")
   .openapi("BulkActionResult");
 
 export type BulkActionResult = z.infer<typeof BulkActionResultSchema>;
 
 export const BulkActionJobStatusSchema = z
   .enum(["queued", "in_progress", "completed", "failed", "canceled"])
+  .describe(
+    "Where a bulk-action job is. `queued`: waiting to run. `in_progress`: running. `completed`: it reached every matched item. `failed`: it stopped early, and `error` says why. `canceled`: it was canceled before it finished.",
+  )
   .openapi("BulkActionJobStatus");
 
 export const BulkActionJobSchema = z
   .object({
-    id: z.string(),
-    action: z.string(),
-    status: BulkActionJobStatusSchema,
-    matched: z.number().int(),
-    processed: z.number().int(),
-    succeeded: z.number().int(),
-    errored: z.number().int(),
-    started_at: z.string().optional(),
-    finished_at: z.string().optional(),
-    error: z.string().optional(),
-    result: BulkActionResultSchema.optional(),
+    id: z.string().describe("Unique identifier for the job."),
+    action: z.string().describe(BULK_ACTION_TEXT),
+    status: BulkActionJobStatusSchema.describe("Where the job is."),
+    matched: z
+      .number()
+      .int()
+      .describe("How many items the job acts on, fixed when Marfa queued it."),
+    processed: z
+      .number()
+      .int()
+      .describe(
+        "How many of the matched items the job has reached so far, changed or not.",
+      ),
+    succeeded: z
+      .number()
+      .int()
+      .describe("How many items the job has changed so far."),
+    errored: z
+      .number()
+      .int()
+      .describe("How many items the job has left unchanged so far."),
+    started_at: z
+      .string()
+      .optional()
+      .describe("When the job started running, in UTC. Absent until then."),
+    finished_at: z
+      .string()
+      .optional()
+      .describe(
+        "When the job completed, failed or was canceled, in UTC. Absent until then.",
+      ),
+    error: z
+      .string()
+      .optional()
+      .describe(
+        "Why the job failed, for a person to read. Present only when `status` is `failed`.",
+      ),
+    result: BulkActionResultSchema.optional().describe(
+      "What the job did. Present once `status` is `completed` or `failed`.",
+    ),
   })
+  .describe("A bulk action Marfa runs in the background, with its progress.")
   .openapi("BulkActionJob");
 
 export type BulkActionJob = z.infer<typeof BulkActionJobSchema>;
+
+/** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
+export const BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
+  Record<string, z.ZodType>
+> = {
+  BulkActionJobStatus: BulkActionJobStatusSchema,
+  BulkActionResult: BulkActionResultSchema,
+};

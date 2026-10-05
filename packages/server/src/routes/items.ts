@@ -62,6 +62,7 @@ import {
   createOpenAPIRouter,
   IDEMPOTENCY_IN_FLIGHT,
   OkResponseSchema,
+  REFUSAL_TEXT,
   makeErrorResponseSchema,
 } from "../openapi.js";
 import {
@@ -74,6 +75,8 @@ import {
   MergeStrategyEnum,
   TierEnum,
   VersionConflictErrorSchema,
+  AncestorUnavailableErrorSchema,
+  AT_THIS_VERSION,
   pageOf,
   resolveStateFilter,
   TagSchema,
@@ -118,30 +121,49 @@ const ConflictSnapshotSchema = z
   .object({
     // The row, because a create names a natural key and not an id: refused
     // here, it learns which row the key resolved from this and nothing else.
-    id: z.string(),
-    version: z.number(),
-    properties: z.record(z.string(), z.unknown()),
+    id: z.string().describe("The ID of the item."),
+    version: z.number().describe("The item version this side shows."),
+    properties: z
+      .record(z.string(), z.unknown())
+      .describe(AT_THIS_VERSION.properties),
     // The version check covers these three beside the properties, so a
     // collision can name one; without them here the refusal names a field
     // the caller has no way to read either side of.
-    tier: TierEnum,
-    occurred_at: z.string(),
-    source_id: z.string().nullable(),
+    tier: TierEnum.describe(AT_THIS_VERSION.tier),
+    occurred_at: z.string().describe(AT_THIS_VERSION.occurred_at),
+    source_id: z.string().nullable().describe(AT_THIS_VERSION.source_id),
     // And the type, because a stale move onto a row moved since collides
     // on it: the refusal shows the type the row has and the one the
     // caller read.
-    type: z.string(),
+    type: z.string().describe("The item's type identifier at this version."),
   })
+  .describe("An item as it stood at one version, as a conflict shows it.")
   .openapi("ConflictSnapshot");
+
+/** The two sides of a conflict, worded once for every conflict answer. */
+const CONFLICT_SIDES = {
+  error: REFUSAL_TEXT.error,
+  current: "The item as it stands now.",
+  ancestor: "The item at the `version` you sent.",
+} as const;
 
 export const ConflictResponseSchema = z
   .object({
-    error: VersionConflictErrorSchema,
-    current: ConflictSnapshotSchema,
-    ancestor: ConflictSnapshotSchema,
-    conflicting_fields: z.array(z.string()),
-    merge_policy: MergePolicySchema,
+    error: VersionConflictErrorSchema.describe(CONFLICT_SIDES.error),
+    current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
+    ancestor: ConflictSnapshotSchema.describe(CONFLICT_SIDES.ancestor),
+    conflicting_fields: z
+      .array(z.string())
+      .describe(
+        "The properties, and fields such as `tier`, that both your write and a write since your `version` changed.",
+      ),
+    merge_policy: MergePolicySchema.describe(
+      "The merge policy of the item's type, which `conflict=auto` resolves by.",
+    ),
   })
+  .describe(
+    "A stale write whose changes collide: the item now, the item at your version, and what collided.",
+  )
   .openapi("ItemVersionConflict");
 
 /**
@@ -154,31 +176,32 @@ export const ConflictResponseSchema = z
  */
 const StaleVersionSchema = z
   .object({
-    error: VersionConflictErrorSchema,
-    current: ConflictSnapshotSchema,
+    error: VersionConflictErrorSchema.describe(CONFLICT_SIDES.error),
+    current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
   })
+  .describe(
+    "A stale write that carried nothing to merge: the error and the item now.",
+  )
   .openapi("ItemStaleVersion");
 
-/**
- * The refusal for a write based on a version with no snapshot it may be
- * merged against: none is held, or the writer may not read the one that is.
- * Distinct from `version_conflict` because it cannot be resolved: there
- * is no ancestor, so no field can be shown not to have collided, and a client
- * merging against an empty one spawns siblings holding text nobody typed.
- */
+/** The refusal for a write whose base version cannot be merged against. */
 export const AncestorUnavailableSchema = z
   .object({
-    error: z
-      .object({
-        code: z.literal("ancestor_unavailable"),
-        status: z.literal(409),
-        message: z.string(),
-      })
-      .openapi("AncestorUnavailableError"),
-    current: ConflictSnapshotSchema,
-    requested_version: z.number(),
+    error: AncestorUnavailableErrorSchema.describe(CONFLICT_SIDES.error),
+    current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
+    requested_version: z.number().describe("The `version` you sent."),
   })
+  .describe(
+    "A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now.",
+  )
   .openapi("ItemAncestorUnavailable");
+
+/** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
+export const ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
+  Record<string, z.ZodType>
+> = {
+  ConflictSnapshot: ConflictSnapshotSchema,
+};
 
 /**
  * Who resolves a collision on this write.
@@ -614,6 +637,7 @@ const listItemsRoute = createRoute({
               // both shapes' required keys, which no row has.
               .openapi("ItemListRow", {}, { unionPreferredType: "oneOf" }),
             "ItemPage",
+            { page: "A page of items.", data: "The items on this page." },
           ),
         },
       },
