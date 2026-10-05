@@ -409,6 +409,11 @@ export const CHAIN_REFUSALS = {
   ),
 } as const;
 
+const UNDECLARED_QUERY_REFUSAL = chainRefusal(
+  ["validation_error"],
+  "`validation_error`: the query has a parameter this endpoint doesn't take.",
+);
+
 const READ_VIEW_REFUSAL = chainRefusal(
   ["read_view_changed"],
   "`read_view_changed`: the read view in `X-Marfa-Read-View` has changed. Rebuild the working copy.",
@@ -647,6 +652,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       description:
         "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
       responses: {
+        "400": UNDECLARED_QUERY_REFUSAL.response,
         "200": {
           description: "The instance",
           content: {

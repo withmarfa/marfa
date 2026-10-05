@@ -65,8 +65,26 @@ function withRouteGuards<R extends RouteConfig>(route: R): R {
     route.security === undefined || route.security.length === 0
       ? []
       : [requireDeclaredCredential, copyBoundary];
+  // Every door refuses a query key it does not declare, so a door with no
+  // other 400 still declares that one.
+  const responses =
+    route.responses[400] === undefined
+      ? {
+          ...route.responses,
+          400: {
+            content: {
+              "application/json": {
+                schema: makeErrorResponseSchema(["validation_error"]),
+              },
+            },
+            description:
+              "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+          },
+        }
+      : route.responses;
   return {
     ...route,
+    responses,
     middleware: [
       ...gate,
       ...rest,
