@@ -687,7 +687,13 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       );
     }
     setNoStore(c);
-    return c.html(renderDevicePage({ prefilled: rawCode, error }));
+    return c.html(
+      renderDevicePage({
+        prefilled: rawCode,
+        error,
+        nonce: c.var.cspNonce,
+      }),
+    );
   });
 
   router.get("/device/consent", async (c) => {

@@ -144,3 +144,11 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
     Reason: the one address answers a page or the description by what the caller asks for, and a cache must not hand one the other's.
 
     Tests: `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`.
+
+## Pages
+
+23. WHEN the server answers with an HTML page, it SHALL send a `Content-Security-Policy` that allows a script only from its own origin or carrying a nonce the policy names, and a style only from its own origin, and that names a nonce of its own for each response.
+
+    Reason: the sign-in, consent, device approval and error pages act on the owner's signed-in session, so a policy that refuses inline script without a nonce and any script from another origin limits what an injection into one of them can do. A nonce reused across responses is one a page can be made to repeat. A blob's bytes are not a page of this server and keep the policy of `blobs.md` 25.
+
+    Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts`; `packages/server/src/routes/blob-door-census.test.ts`.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
+import { renderDevicePage } from "./test-render.js";
 import {
-  renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
 } from "./device-pages.js";

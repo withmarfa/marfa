@@ -161,6 +161,35 @@ describe("the instance", () => {
     }
   });
 
+  it("sends a content security policy with every HTML page and a nonce of its own with each", async () => {
+    const asBrowser = { accept: "text/html" };
+    const nonces = new Set<string>();
+    // The root, a page, and the page a path nothing serves answers.
+    for (const path of [
+      "/",
+      "/auth/sign-in",
+      "/auth/device",
+      "/no-such-page",
+    ]) {
+      const res = await fetch(`${apiUrl}${path}`, { headers: asBrowser });
+      expect(res.headers.get("content-type"), path).toContain("text/html");
+      const policy = res.headers.get("content-security-policy") ?? "";
+      expect(policy, path).toContain("default-src 'none'");
+      expect(policy, path).toContain("style-src 'self'");
+      expect(policy, path).not.toContain("unsafe-inline");
+      const nonce = /script-src 'self' 'nonce-([^']+)'/.exec(policy)?.[1];
+      expect(nonce, path).toBeTruthy();
+      nonces.add(nonce ?? "");
+    }
+    expect(nonces.size).toBe(4);
+
+    // The witness: the same root asked the way a program asks is JSON, and
+    // sends no page policy.
+    const data = await fetch(`${apiUrl}/`);
+    expect(data.headers.get("content-type")).toContain("application/json");
+    expect(data.headers.get("content-security-policy")).toBeNull();
+  });
+
   it("serves a route for every feature it advertises", async () => {
     // The witness first, so the assertions after it are about something. A
     // path nothing serves answers `404 not_found`, which is exactly what

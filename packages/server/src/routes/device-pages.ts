@@ -30,6 +30,9 @@ interface DevicePageParams {
   prefilled: string;
   /** Error code from a previous attempt. */
   error?: string;
+  /** The nonce the response's content security policy names, which the
+   *  inline script carries. */
+  nonce: string;
 }
 
 interface DeviceConsentParams {
@@ -202,7 +205,7 @@ export function renderDevicePage(params: DevicePageParams): string {
       </div>
     </form>
     <script src="/auth/static/submit-state.js"></script>
-    <script>${OTP_SCRIPT}</script>
+    <script nonce="${escapeHtml(params.nonce)}">${OTP_SCRIPT}</script>
   `;
 
   return renderAuthLayout({ title: "Sign in on your device", bodyHtml });
@@ -322,7 +325,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="approve">
         ${hidden.join("")}
-        <div class="gsub" style="margin-bottom:10px">${visible.join("")}</div>
+        <div class="gsub gsub--above-actions">${visible.join("")}</div>
         <button type="submit" class="btn btn--primary" data-loading-label="Approving...">Approve</button>
       </form>
       <form method="POST" action="/auth/device/consent" novalidate>

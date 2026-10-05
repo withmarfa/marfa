@@ -523,6 +523,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       : undefined;
 
     const html = renderConsentScreen({
+      nonce: c.var.cspNonce,
       clientName,
       // Public clients (DCR / `token_endpoint_auth_method: none`) self-assert
       // their name with no vetted identity behind it. Flag them so the user

@@ -85,6 +85,9 @@ import {
 
 interface ConsentParams {
   clientName: string;
+  /** The nonce the response's content security policy names, which the
+   *  inline script carries. */
+  nonce: string;
   /**
    * When `true`, the client has no verified identity — a public / DCR client
    * (PKCE, `token_endpoint_auth_method: none`). The screen shows a single
@@ -902,7 +905,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           <span class="gtop"><span class="glabel">${escapeHtml(g.label)}</span>${CHEVRON}</span>
           <span class="gdesc">${escapeHtml(g.desc)}</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox"${masterChecked} aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw"><input type="checkbox"${masterChecked} aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub">${rows}</div>
     </details>`;
@@ -944,7 +947,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
     const newSection =
       addedVisible.length > 0
-        ? `<p class="lsec" style="margin-top:8px">New</p>${groupedTiles(addedVisible)}`
+        ? `<p class="lsec lsec--first">New</p>${groupedTiles(addedVisible)}`
         : "";
     // The standing grant keeps the same partition the new request uses, and
     // it renders collapsed rather than as a second full stack of tiles. That
@@ -1023,7 +1026,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     const removedList = removedLabels.join(", ");
     const removedSection =
       removedLabels.length > 0
-        ? `<p class="lsec" style="margin-top:24px">No longer needed</p><p class="rmeta" style="padding-top:2px">${escapeHtml(
+        ? `<p class="lsec lsec--later">No longer needed</p><p class="rmeta rmeta--list">${escapeHtml(
             `${removedList.charAt(0).toUpperCase()}${removedList.slice(1)}`,
           )}</p>`
         : "";
@@ -1069,10 +1072,15 @@ export function renderConsentScreen(params: ConsentParams): string {
   // indeterminate master when partially ticked. Scoped per `.grp` so the
   // duplicate groups in a re-consent diff don't cross-wire. The master toggle
   // carries no `name`, so only the per-type members submit. Minified with
-  // `replace(/\s+/g, " ")` — no `//` line comments.
+  // `replace(/\s+/g, " ")` — no `//` line comments. A click on a group's
+  // switch must not also open or close the group, which an inline handler used
+  // to stop and the policy no longer allows.
   const enhancementScript = `
     (function () {
       document.querySelectorAll('.grp').forEach(function (grp) {
+        grp.querySelectorAll(':scope > summary .sw').forEach(function (sw) {
+          sw.addEventListener('click', function (e) { e.stopPropagation(); });
+        });
         var master = grp.querySelector(':scope > summary input[type="checkbox"]');
         var members = grp.querySelectorAll('.gsub input[type="checkbox"]');
         if (!master || !members.length) return;
@@ -1107,7 +1115,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
       </div>
     </form>
-    <script>${enhancementScript}</script>
+    <script nonce="${escapeHtml(params.nonce)}">${enhancementScript}</script>
     <script src="/auth/static/submit-state.js"></script>
   `;
 

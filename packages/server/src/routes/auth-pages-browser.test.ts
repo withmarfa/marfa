@@ -7,7 +7,7 @@
  * "already submitting" mark after Back.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Browser, Page } from "playwright-core";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { createTestAccount, createTestContext } from "../test-utils.js";
@@ -92,10 +92,28 @@ async function signIn(page: Page): Promise<void> {
   await page.click('button[type="submit"]');
 }
 
+/** What the browser refused to run or apply on a page, by the policy. A
+ *  refusal is reported to the console and to nobody else, so a page whose
+ *  script was blocked still loads and looks fine until somebody uses it. */
+const refusals: string[] = [];
+
+afterEach(() => {
+  // Every flow below runs under the policy, so none may have been refused
+  // anything. The one test that provokes a refusal clears it itself.
+  expect(refusals).toEqual([]);
+  refusals.length = 0;
+});
+
 async function newPage(): Promise<Page> {
   if (browser === null) throw new Error("no browser");
   const context = await browser.newContext();
-  return await context.newPage();
+  const page = await context.newPage();
+  page.on("console", (message) => {
+    if (message.text().includes("Content Security Policy")) {
+      refusals.push(message.text());
+    }
+  });
+  return page;
 }
 
 inBrowser("the consent page, in a browser", () => {
@@ -266,6 +284,61 @@ inBrowser("the device approval page, in a browser", () => {
       const approve = page.locator('button:has-text("Approve")');
       expect(await approve.isDisabled()).toBe(false);
       expect(await page.locator("text=Working").count()).toBe(0);
+    } finally {
+      await page.context().close();
+    }
+  });
+});
+
+inBrowser("the policy, in a browser", () => {
+  it("runs the pages' own scripts and applies their own styles", async () => {
+    const page = await newPage();
+    try {
+      // The device entry page's inline script turns one input into cells.
+      await page.goto(`${origin}/auth/device`);
+      await page.waitForSelector("[data-otp] input");
+      expect(await page.locator("[data-otp] input").count()).toBe(8);
+
+      // The consent page's inline script makes a group's switch drive its
+      // members.
+      await page.goto(await authorizeUrl("Policy App"));
+      await signIn(page);
+      await page.waitForURL(/\/auth\/authorize\?/);
+      const master = page
+        .locator('.grp > summary input[type="checkbox"]')
+        .first();
+      const members = page.locator('.gsub input[type="checkbox"]');
+      expect(await members.first().isChecked()).toBe(true);
+      await master.uncheck();
+      expect(await members.first().isChecked()).toBe(false);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it("refuses an inline script and an inline style that carry no nonce", async () => {
+    const page = await newPage();
+    try {
+      await page.goto(`${origin}/auth/sign-in`);
+      // The witness for every flow above, which assert nothing was refused:
+      // here something is injected, and the browser does refuse it.
+      await page.evaluate(`(() => {
+        const script = document.createElement("script");
+        script.textContent = "window.injected = true";
+        document.head.appendChild(script);
+        const style = document.createElement("style");
+        style.textContent = "main { display: none }";
+        document.head.appendChild(style);
+      })()`);
+      expect(await page.evaluate("window.injected === true")).toBe(false);
+      expect(
+        await page.evaluate(
+          'getComputedStyle(document.querySelector("main")).display',
+        ),
+      ).not.toBe("none");
+      expect(refusals.some((text) => text.includes("script-src"))).toBe(true);
+      expect(refusals.some((text) => text.includes("style-src"))).toBe(true);
+      refusals.length = 0;
     } finally {
       await page.context().close();
     }

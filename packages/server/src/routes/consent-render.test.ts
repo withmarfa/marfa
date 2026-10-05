@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
+import { renderConsentScreen } from "./test-render.js";
 import {
-  renderConsentScreen,
   SCOPE_LABELS,
   SCOPE_SHORT,
   scopeShort,
@@ -394,7 +394,7 @@ describe("renderConsentScreen — soft-tile groups", () => {
   it("ships the master-toggle cascade enhancement script", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toMatch(
-      /<script>[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
+      /<script nonce="test-nonce">[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
     );
     expect(html).toContain("indeterminate");
   });
@@ -582,7 +582,7 @@ describe("renderConsentScreen — re-consent diff", () => {
     // half went.
     expect(html).toContain(">No longer needed<");
     expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks \(read and write\)</,
+      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Tasks \(read and write\)</,
     );
   });
 
@@ -605,7 +605,7 @@ describe("renderConsentScreen — re-consent diff", () => {
     });
     expect(html).toContain(">No longer needed<");
     expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Your name and picture</,
+      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Your name and picture</,
     );
     expect(html).not.toContain(">Profile<");
   });

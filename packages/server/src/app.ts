@@ -27,6 +27,7 @@ import { itemRoutes } from "./routes/items.js";
 import { renderRootPage } from "./routes/root-page.js";
 import { renderSignedInPage } from "./routes/signed-in-page.js";
 import { setNoStore } from "./routes/no-store.js";
+import { pageSecurityPolicy } from "./routes/content-security-policy.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
@@ -260,6 +261,10 @@ export function createApp(
       referrerPolicy: "strict-origin-when-cross-origin",
     }),
   );
+  // The policy for every page the server renders. Its own middleware and not
+  // an option of `secureHeaders`, which writes after the handler and would
+  // replace the policy the blob doors send for the bytes they serve.
+  app.use("*", pageSecurityPolicy);
 
   // Global request-body size cap for the JSON write surface — a
   // memory-exhaustion DoS guard. `bodyLimit` rejects (via Content-Length
