@@ -64,6 +64,29 @@ describe("POST /webhooks", () => {
     expect(body.secret.startsWith("****")).toBe(false);
   });
 
+  it("measures caller-supplied secret minimums in UTF-16 code units", async () => {
+    for (const [secret, status] of [
+      ["😀".repeat(16), 201],
+      ["😀".repeat(15) + "a", 400],
+      ["a".repeat(32), 201],
+      ["a".repeat(31), 400],
+    ] as const) {
+      const res = await request(ctx.app, "POST", "/webhooks", {
+        key: ctx.workingKey,
+        body: {
+          url: "https://example.com/utf16",
+          events: ["item.created"],
+          secret,
+        },
+      });
+      expect(res.status, `secret length ${String(secret.length)}`).toBe(status);
+      if (status === 201) {
+        const body = (await res.json()) as WebhookResponse;
+        expect(body.secret).toBe(secret);
+      }
+    }
+  });
+
   it("rejects a malformed URL with 400", async () => {
     const res = await request(ctx.app, "POST", "/webhooks", {
       key: ctx.workingKey,

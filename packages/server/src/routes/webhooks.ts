@@ -8,6 +8,7 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import {
+  minStringLength,
   MarfaError,
   ErrorCode,
   WEBHOOK_DELIVERY_STATUSES,
@@ -176,13 +177,11 @@ const createWebhookRoute = createRoute({
               .describe(
                 "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.",
               ),
-            secret: z
-              .string()
-              .min(
-                MIN_WEBHOOK_SECRET_LENGTH,
-                `secret must be at least ${String(MIN_WEBHOOK_SECRET_LENGTH)} characters`,
-              )
-              .optional(),
+            secret: minStringLength(
+              z.string(),
+              MIN_WEBHOOK_SECRET_LENGTH,
+              `secret must be at least ${String(MIN_WEBHOOK_SECRET_LENGTH)} characters`,
+            ).optional(),
           }),
         },
       },
