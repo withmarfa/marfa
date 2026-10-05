@@ -138,9 +138,9 @@ updates:
   # `[workspace]`, so the entry for `/core` never sees it.
   #
   # A single group for minor and patch updates, with majors as separate pull
-  # requests. Dependabot counts a `0.x` minor bump as a minor update, so a
-  # breaking change in a `0.x` crate can arrive inside the group. The run on
-  # the pull request is what catches it.
+  # requests. For Cargo, Dependabot applies the pre-1.0 rule: a `0.x` crate
+  # moving to a new minor (`0.40` to `0.41`) is a major update, so it gets its
+  # own pull request and does not join the group.
   - package-ecosystem: "cargo"
     directory: "/core"
     schedule:
