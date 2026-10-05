@@ -37,14 +37,16 @@ import {
 } from "../auth/bootstrap-secret.js";
 import type { Storage, StoredApiKey } from "../storage/interface.js";
 import {
+  ENFORCEMENT_COMPONENTS,
   EnforcementOverrideSchema,
+  KEY_FIELD_TEXT,
   KeyResponseSchema,
   nullableRef,
-  pageOf,
   PermissionEnum,
   PermissionLevelEnum,
   TierEnum,
   TypePermissionLevelEnum,
+  wholeListOf,
 } from "./_schemas.js";
 import {
   createOpenAPIRouter,
@@ -120,51 +122,56 @@ const SourcesSchema = z
     `a key claims at most ${String(MAX_CLAIMED_SOURCES)} sources`,
   )
   .describe(
-    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
+    "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any.",
   );
 
 /** A stored key as every door that returns one returns it, plaintext aside. */
 const ApiKeySchema = z
   .object({
-    id: z.string(),
-    label: z.string(),
-    source: z.string(),
-    sources: z
-      .array(z.string())
-      .describe(
-        "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
-      ),
-    permissions: z
-      .array(PermissionEnum)
-      .describe(
-        "The permissions this credential holds, as the literals themselves. Empty on a key that holds none.",
-      ),
+    id: z.string().describe(KEY_FIELD_TEXT.id),
+    label: z.string().describe(KEY_FIELD_TEXT.label),
+    source: z.string().describe(KEY_FIELD_TEXT.source),
+    sources: z.array(z.string()).describe(KEY_FIELD_TEXT.sources),
+    permissions: z.array(PermissionEnum).describe(KEY_FIELD_TEXT.permissions),
     oauth_client_id: z
       .string()
       .optional()
-      .describe(
-        "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
-      ),
-    default_tier: TierEnum,
-    is_operator: z.boolean(),
-    type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-    extension_permissions: z.record(z.string(), PermissionLevelEnum),
-    edge_permissions: z.record(z.string(), PermissionLevelEnum),
-    metadata_permissions: z.record(z.string(), PermissionLevelEnum),
+      .describe(KEY_FIELD_TEXT.oauth_client_id),
+    default_tier: TierEnum.describe(KEY_FIELD_TEXT.default_tier),
+    is_operator: z.boolean().describe(KEY_FIELD_TEXT.is_operator),
+    type_permissions: z
+      .record(z.string(), TypePermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.type_permissions),
+    extension_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.extension_permissions),
+    edge_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.edge_permissions),
+    metadata_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.metadata_permissions),
     // Declared because the handler sends them: a listing returns stored rows
     // whole, so a field a row can carry and the declaration omits is a field
     // a generated client cannot read.
-    profile_permissions: z.record(z.string(), PermissionLevelEnum),
-    enforcement_override: EnforcementOverrideSchema.optional(),
-    created_at: z.string(),
+    profile_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.profile_permissions),
+    enforcement_override: EnforcementOverrideSchema.describe(
+      KEY_FIELD_TEXT.enforcement_override,
+    ).optional(),
+    created_at: z.string().describe(KEY_FIELD_TEXT.created_at),
     expires_at: z
       .string()
       .nullable()
       .describe(
-        "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. The key listing omits it, and the change and revoke doors answer `404 api_key_not_found` for it.",
+        "When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires.",
       ),
-    last_used_at: z.string().nullable(),
+    last_used_at: z.string().nullable().describe(KEY_FIELD_TEXT.last_used_at),
   })
+  .describe(
+    "An API key, without its plaintext: what it may reach and when it was used.",
+  )
   .openapi("ApiKey");
 
 // ---------------------------------------------------------------------------
@@ -188,6 +195,12 @@ const ApiKeySchema = z
  */
 const keyDoors = standingPermission("keys.mint", { operatorToo: true });
 
+const KEYS_MINT_REFUSAL =
+  "- `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it.";
+
+const KEY_NOT_FOUND =
+  "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`.";
+
 const createKeyRoute = createRoute({
   operationId: "createKey",
   method: "post",
@@ -195,8 +208,7 @@ const createKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it). The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
-
+    "Creates an API key and returns it with its plaintext `key`, shown only here. If the body names none of `permissions`, the five permission maps and `sources`, the key gets everything you hold; if it names any, the key holds only what it names.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {
@@ -211,34 +223,58 @@ const createKeyRoute = createRoute({
       content: {
         "application/json": {
           schema: z.strictObject({
-            label: z.string().min(1, "label is required"),
+            label: z
+              .string()
+              .min(1, "label is required")
+              .describe(KEY_FIELD_TEXT.label),
             // Trimmed before it is measured, so a source of spaces is refused
             // here rather than stored empty, where the natural-key lookup
             // reads it as no source at all and a repeated create collides.
             source: maxStringLength(
               z.string().trim().min(1, "source is required"),
               200,
+            ).describe(
+              "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later.",
             ),
             sources: SourcesSchema.optional(),
-            permissions: z.array(PermissionEnum).optional(),
-            default_tier: TierEnum.optional(),
-            is_operator: z.boolean().optional(),
+            permissions: z
+              .array(PermissionEnum)
+              .optional()
+              .describe(
+                "The permissions to give the key, such as `audit.read`.",
+              ),
+            default_tier: TierEnum.optional().describe(
+              `${KEY_FIELD_TEXT.default_tier} Leave it out for \`library\`.`,
+            ),
+            is_operator: z
+              .boolean()
+              .optional()
+              .describe(
+                "`true` to create another operator key, which holds no permissions, maps or claimed sources. Only the operator key can create one.",
+              ),
             type_permissions: z
               .record(z.string(), TypePermissionLevelEnum)
-              .optional(),
+              .optional()
+              .describe(KEY_FIELD_TEXT.type_permissions),
             extension_permissions: z
               .record(z.string(), PermissionLevelEnum)
-              .optional(),
+              .optional()
+              .describe(KEY_FIELD_TEXT.extension_permissions),
             edge_permissions: z
               .record(z.string(), PermissionLevelEnum)
-              .optional(),
+              .optional()
+              .describe(KEY_FIELD_TEXT.edge_permissions),
             metadata_permissions: z
               .record(z.string(), PermissionLevelEnum)
-              .optional(),
+              .optional()
+              .describe(KEY_FIELD_TEXT.metadata_permissions),
             profile_permissions: z
               .record(z.string(), PermissionLevelEnum)
-              .optional(),
-            enforcement_override: EnforcementOverrideSchema.optional(),
+              .optional()
+              .describe(KEY_FIELD_TEXT.profile_permissions),
+            enforcement_override: EnforcementOverrideSchema.describe(
+              "Enforcement levers for this key alone. Leave it out for none, so the key follows the instance's.",
+            ).optional(),
           }),
         },
       },
@@ -251,7 +287,8 @@ const createKeyRoute = createRoute({
           schema: KeyResponseSchema,
         },
       },
-      description: "API key created",
+      description:
+        "Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `write` on every map. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items.",
     },
     400: {
       content: {
@@ -263,7 +300,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, claimed more than 1,000 sources, or the bootstrap secret was refused.",
+        "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.",
     },
     401: {
       content: {
@@ -280,7 +317,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: you don't hold `keys.mint`, you asked for reach your credential doesn't cover (a working key may grant only its own `source` and what it claims), you gave reach to an operator key, or you minted an operator key without being one. `details.required_scope` names a missing permission and `details.source` a source you may not grant. A refused bootstrap mint leaves the secret unused.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it gives an operator key any reach; or it asks for an operator key and you aren't one. `details.required_scope` or `details.source` names what you lack.",
     },
     409: {
       content: {
@@ -289,7 +326,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "The `source` is already another unrevoked key's own, named in `details.source`: no two unrevoked keys hold one source as their own. Keys that claim it in `sources` write under it too, so a row's source does not name the key that wrote it, and two keys share a natural key by both claiming a source in `sources`.",
+        "- `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
     },
   },
 });
@@ -301,17 +338,18 @@ const listKeysRoute = createRoute({
   tags: ["Access"],
   summary: "List API keys",
   description:
-    "Returns the API keys within the caller's reach, the caller included, without plaintext, which is only ever returned at creation time. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+    "Returns the API keys you could have created, your own included, without their plaintext. The operator key gets every key. Requires `keys.mint` or the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(ApiKeySchema, "ApiKeyPage"),
+          schema: wholeListOf(ApiKeySchema, "ApiKeyPage", "key you can reach"),
         },
       },
-      description: "List of API keys",
+      description:
+        "Returns the keys, in one page. A key past its `expires_at` isn't listed.",
     },
     401: {
       content: {
@@ -327,7 +365,7 @@ const listKeysRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller does not hold `keys.mint`",
+      description: KEYS_MINT_REFUSAL,
     },
   },
 });
@@ -339,13 +377,13 @@ const currentKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Get the current key",
   description:
-    "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`.",
+    "Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
   security: [{ bearerAuth: [] }],
   middleware: keysOnly,
   responses: {
     200: {
       content: { "application/json": { schema: ApiKeySchema } },
-      description: "The calling key",
+      description: "Returns your key.",
     },
     401: {
       content: {
@@ -361,7 +399,8 @@ const currentKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "The credential is a signed-in app's token, not a key",
+      description:
+        "- `forbidden`: your credential is a signed-in app's token, not a key.",
     },
   },
 });
@@ -373,12 +412,12 @@ const revokeKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
+    "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint` or the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {
     params: z.object({
-      id: z.string().describe("ID of the API key to revoke"),
+      id: z.string().describe("The ID of the key."),
     }),
   },
   responses: {
@@ -388,8 +427,7 @@ const revokeKeyRoute = createRoute({
           schema: OkResponseSchema,
         },
       },
-      description:
-        "Key revoked. The next request bearing it answers `401 unauthorized`.",
+      description: "Returns `ok: true`.",
     },
     400: {
       content: {
@@ -397,7 +435,7 @@ const revokeKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Malformed key ID",
+      description: "- `validation_error`: `id` isn't a valid key ID.",
     },
     401: {
       content: {
@@ -413,8 +451,7 @@ const revokeKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "`keys.mint` required, unless the caller is the operator key",
+      description: KEYS_MINT_REFUSAL,
     },
     404: {
       content: {
@@ -422,8 +459,7 @@ const revokeKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["api_key_not_found"]),
         },
       },
-      description:
-        "`api_key_not_found`: no key was revoked. The ID is unknown, the key is already revoked or past its `expires_at`, or it is beyond your reach. The answer does not say which, so it does not reveal whether a key exists. Only the operator key is told whether an ID was unknown or the key already revoked.",
+      description: `${KEY_NOT_FOUND} The operator key's message says when the key was already revoked.`,
     },
   },
 });
@@ -433,23 +469,43 @@ const revokeKeyRoute = createRoute({
 // than the strict object's generic "unrecognized keys"; a caller is told
 // which field it may not change.
 const UpdateKeyBodySchema = z.strictObject({
-  label: z.string().min(1).optional(),
-  default_tier: TierEnum.optional(),
+  label: z.string().min(1).optional().describe(KEY_FIELD_TEXT.label),
+  default_tier: TierEnum.optional().describe(KEY_FIELD_TEXT.default_tier),
   sources: SourcesSchema.optional(),
-  type_permissions: z.record(z.string(), TypePermissionLevelEnum).optional(),
-  extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-  permissions: z.array(PermissionEnum).optional(),
+  type_permissions: z
+    .record(z.string(), TypePermissionLevelEnum)
+    .optional()
+    .describe(KEY_FIELD_TEXT.type_permissions),
+  extension_permissions: z
+    .record(z.string(), PermissionLevelEnum)
+    .optional()
+    .describe(KEY_FIELD_TEXT.extension_permissions),
+  edge_permissions: z
+    .record(z.string(), PermissionLevelEnum)
+    .optional()
+    .describe(KEY_FIELD_TEXT.edge_permissions),
+  metadata_permissions: z
+    .record(z.string(), PermissionLevelEnum)
+    .optional()
+    .describe(KEY_FIELD_TEXT.metadata_permissions),
+  profile_permissions: z
+    .record(z.string(), PermissionLevelEnum)
+    .optional()
+    .describe(KEY_FIELD_TEXT.profile_permissions),
+  permissions: z
+    .array(PermissionEnum)
+    .optional()
+    .describe("The permissions the key holds, such as `audit.read`."),
   enforcement_override: nullableRef(EnforcementOverrideSchema)
     .optional()
-    .describe("`null` clears the override; an object replaces it whole."),
+    .describe(
+      "Replaces the key's enforcement levers whole. `null` clears them.",
+    ),
   source: z
     .string()
     .optional()
     .describe(
-      "A key's source is immutable: a body carrying this field is refused `400 validation_error`. Revoke the key and mint another to change it.",
+      "Can't change. To give a key another source, create a new key and revoke this one.",
     ),
 });
 
@@ -460,12 +516,12 @@ const updateKeyRoute = createRoute({
   tags: ["Access"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable; revoke and recreate to change it. Requires `keys.mint`. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
+    "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint` or the operator key.",
   security: [{ bearerAuth: [] }],
   middleware: keyDoors,
   request: {
     params: z.object({
-      id: z.string().describe("ID of the API key to update"),
+      id: z.string().describe("The ID of the key."),
     }),
     body: {
       content: {
@@ -478,7 +534,7 @@ const updateKeyRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: ApiKeySchema } },
-      description: "Key updated",
+      description: "Returns the updated key.",
     },
     400: {
       content: {
@@ -490,7 +546,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "`validation_error`: the update is invalid, for example it carries `source`, which can't change.",
+        "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
     },
     401: {
       content: {
@@ -507,7 +563,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: you don't hold `keys.mint` (the operator key needn't), or the edit widens a permission map past what you hold, or `sources` past your own `source` and what you claim. The operator key is no ceiling, but no map on an operator key can be widened by anyone. A key an app created can only be narrowed. `details.required_scope` and `details.source` name what is missing.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body gives the key a permission, map entry or source you don't hold; it gives an operator key any reach; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing.",
     },
     404: {
       content: {
@@ -515,7 +571,7 @@ const updateKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["api_key_not_found"]),
         },
       },
-      description: "No key with this id is within the caller's reach",
+      description: KEY_NOT_FOUND,
     },
   },
 });
@@ -917,6 +973,9 @@ const EVERY_TYPE = { "*": "write" } as const;
 
 export function keyRoutes(storage: Storage, salt: string) {
   const router = createOpenAPIRouter<AppEnv>();
+  for (const [name, schema] of Object.entries(ENFORCEMENT_COMPONENTS)) {
+    router.openAPIRegistry.register(name, schema);
+  }
 
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");

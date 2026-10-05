@@ -61,11 +61,17 @@ export const TierEnum = z.enum(["library", "feed"]).openapi("Tier");
 /** The instance-wide permissions a credential can hold. */
 export const PermissionEnum = z
   .enum(PERMISSIONS as unknown as [string, ...string[]])
+  .describe(
+    "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access.",
+  )
   .openapi("Permission");
 
 /** What a credential may do with one type: read it, write it, or neither. */
 export const TypePermissionLevelEnum = z
   .enum(["read", "write", "none"])
+  .describe(
+    "What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach.",
+  )
   .openapi("TypePermissionLevel");
 
 /**
@@ -74,6 +80,9 @@ export const TypePermissionLevelEnum = z
  */
 export const PermissionLevelEnum = z
   .enum(["read", "write"])
+  .describe(
+    "What a key may do with an entry: `read` it, or `write` it (which includes reading). A name no entry covers is denied.",
+  )
   .openapi("PermissionLevel");
 
 /**
@@ -512,10 +521,17 @@ export const ItemDetailSchema = z
  * enforcing; taking the strictness as a parameter is what stops the two
  * drifting.
  */
-export const enforcementSchema = (strict: boolean) => {
+const enforcementSchema = (strict: boolean) => {
   const obj = strict ? z.strictObject : z.object;
-  const typeList = z.array(z.string());
-  const typesAndSources = { types: typeList, sources: z.array(z.string()) };
+  const typeList = z
+    .array(z.string())
+    .describe("The types the lever applies to.");
+  const typesAndSources = {
+    types: typeList,
+    sources: z
+      .array(z.string())
+      .describe("The sources the lever lets through on those types."),
+  };
   // The component names carry the strictness, because the two shapes are not
   // the same shape: the strict one refuses a key the permissive one keeps,
   // and one name over both would publish whichever was registered first as
@@ -524,16 +540,35 @@ export const enforcementSchema = (strict: boolean) => {
   // block sits under is the property's job to say.
   const suffix = strict ? "Strict" : "";
   const typesOnly = obj({ types: typeList })
-    .optional()
+    .describe("A lever that applies to the types it names.")
     .openapi(`TypeLever${suffix}`);
   const typesAndSourcesLever = obj(typesAndSources)
-    .optional()
+    .describe(
+      "A lever that applies to the types it names, and lets through the sources it names.",
+    )
     .openapi(`TypeAndSourceLever${suffix}`);
-  return obj({
-    strict_mode: typesOnly,
-    source_allowlist: typesAndSourcesLever,
-    source_filter: typesAndSourcesLever,
+  const block = obj({
+    strict_mode: typesOnly
+      .describe(
+        "Types on which a write may not set a property the type doesn't declare.",
+      )
+      .optional(),
+    source_allowlist: typesAndSourcesLever
+      .describe("Types that take new items only from the listed sources.")
+      .optional(),
+    source_filter: typesAndSourcesLever
+      .describe(
+        "Types whose listings, searches and exports show only items from the listed sources. A read by ID isn't narrowed.",
+      )
+      .optional(),
   });
+  return {
+    block,
+    components: {
+      [`TypeLever${suffix}`]: typesOnly,
+      [`TypeAndSourceLever${suffix}`]: typesAndSourcesLever,
+    },
+  };
 };
 
 /**
@@ -544,15 +579,66 @@ export const enforcementSchema = (strict: boolean) => {
  * schema under the same component names, and the registry keeps whichever
  * reached it first without saying so.
  */
-export const EnforcementReadSchema = enforcementSchema(false);
+const enforcementRead = enforcementSchema(false);
+export const EnforcementReadSchema = enforcementRead.block;
 
 /** The strict block the instance config's write takes, built once. */
-export const EnforcementWriteSchema = enforcementSchema(true);
+const enforcementWrite = enforcementSchema(true);
+export const EnforcementWriteSchema = enforcementWrite.block;
 
 /** A key's per-credential override: the same levers, permissive. */
 export const EnforcementOverrideSchema = EnforcementReadSchema.describe(
-  "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
+  "A key's own enforcement levers, in the shape `/config` uses. Each lever set here replaces the instance's for this key, looser or stricter; a lever left out stays the instance's.",
 ).openapi("EnforcementOverride");
+
+/**
+ * The named schemas the levers are built from, for a router to register
+ * before its routes, each lever ahead of the block that holds it. A
+ * component takes its description from the first schema the generator meets
+ * under its name, and every field naming one of these describes it, so
+ * without this the first field's text would become the component's.
+ */
+export const ENFORCEMENT_COMPONENTS: Record<string, z.ZodType> = {
+  ...enforcementRead.components,
+  ...enforcementWrite.components,
+  EnforcementOverride: EnforcementOverrideSchema,
+};
+
+/**
+ * Field text every key answer shares, and the bodies that write the same
+ * fields where the words hold for both.
+ */
+export const KEY_FIELD_TEXT = {
+  id: "Unique identifier for the key.",
+  label: "A name for the key, to tell it apart from your other keys.",
+  source:
+    "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change.",
+  sources:
+    "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none.",
+  permissions:
+    "The permissions the key holds, such as `audit.read`. Empty if it holds none.",
+  oauth_client_id:
+    "The `client_id` of the app whose sign-in token created this key. Absent on every other key.",
+  default_tier:
+    "The tier an item this key creates goes to when the write names none.",
+  is_operator:
+    "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items.",
+  type_permissions:
+    "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers.",
+  extension_permissions:
+    "Extension namespaces the key may `read` or `write`, by namespace or `*`.",
+  edge_permissions:
+    "Edge types the key may `read` or `write`, by edge type or `*`.",
+  metadata_permissions:
+    "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both.",
+  profile_permissions:
+    "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it.",
+  enforcement_override:
+    "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's.",
+  created_at: "When the key was created, in UTC.",
+  last_used_at:
+    "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour.",
+} as const;
 
 /**
  * An API key as a create route answers it, on both doors that mint one.
@@ -565,30 +651,46 @@ export const EnforcementOverrideSchema = EnforcementReadSchema.describe(
  */
 export const KeyResponseSchema = z
   .object({
-    id: z.string(),
-    key: z.string(),
-    label: z.string(),
-    source: z.string(),
-    sources: z
-      .array(z.string())
+    id: z.string().describe(KEY_FIELD_TEXT.id),
+    key: z
+      .string()
       .describe(
-        "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
+        "The plaintext key, which you send as a bearer token. Save it: no other response shows it.",
       ),
-    permissions: z.array(PermissionEnum),
-    oauth_client_id: z.string().optional(),
-    default_tier: TierEnum,
-    is_operator: z.boolean(),
-    type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-    extension_permissions: z.record(z.string(), PermissionLevelEnum),
-    edge_permissions: z.record(z.string(), PermissionLevelEnum),
-    metadata_permissions: z.record(z.string(), PermissionLevelEnum),
+    label: z.string().describe(KEY_FIELD_TEXT.label),
+    source: z.string().describe(KEY_FIELD_TEXT.source),
+    sources: z.array(z.string()).describe(KEY_FIELD_TEXT.sources),
+    permissions: z.array(PermissionEnum).describe(KEY_FIELD_TEXT.permissions),
+    oauth_client_id: z
+      .string()
+      .optional()
+      .describe(KEY_FIELD_TEXT.oauth_client_id),
+    default_tier: TierEnum.describe(KEY_FIELD_TEXT.default_tier),
+    is_operator: z.boolean().describe(KEY_FIELD_TEXT.is_operator),
+    type_permissions: z
+      .record(z.string(), TypePermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.type_permissions),
+    extension_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.extension_permissions),
+    edge_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.edge_permissions),
+    metadata_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.metadata_permissions),
     // Declared because the handler sends it: a field every mint returns and
     // the published shape omits is one a generated client cannot read.
-    profile_permissions: z.record(z.string(), PermissionLevelEnum),
-    enforcement_override: EnforcementOverrideSchema.optional(),
-    created_at: z.string(),
-    last_used_at: z.string().nullable(),
+    profile_permissions: z
+      .record(z.string(), PermissionLevelEnum)
+      .describe(KEY_FIELD_TEXT.profile_permissions),
+    enforcement_override: EnforcementOverrideSchema.describe(
+      KEY_FIELD_TEXT.enforcement_override,
+    ).optional(),
+    created_at: z.string().describe(KEY_FIELD_TEXT.created_at),
+    last_used_at: z.string().nullable().describe(KEY_FIELD_TEXT.last_used_at),
   })
+  .describe("A new API key, with its plaintext `key`.")
   .openapi("KeyResponse");
 
 /** A tag a write may carry: not empty, not blank, and short enough to name

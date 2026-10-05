@@ -15,6 +15,124 @@
       }
     },
     "schemas": {
+      "TypeLever": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types the lever applies to."
+          }
+        },
+        "required": [
+          "types"
+        ],
+        "description": "A lever that applies to the types it names."
+      },
+      "TypeAndSourceLever": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types the lever applies to."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sources the lever lets through on those types."
+          }
+        },
+        "required": [
+          "types",
+          "sources"
+        ],
+        "description": "A lever that applies to the types it names, and lets through the sources it names."
+      },
+      "TypeLeverStrict": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types the lever applies to."
+          }
+        },
+        "required": [
+          "types"
+        ],
+        "additionalProperties": false,
+        "description": "A lever that applies to the types it names."
+      },
+      "TypeAndSourceLeverStrict": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types the lever applies to."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sources the lever lets through on those types."
+          }
+        },
+        "required": [
+          "types",
+          "sources"
+        ],
+        "additionalProperties": false,
+        "description": "A lever that applies to the types it names, and lets through the sources it names."
+      },
+      "EnforcementOverride": {
+        "type": "object",
+        "properties": {
+          "strict_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TypeLever"
+              },
+              {
+                "description": "Types on which a write may not set a property the type doesn't declare."
+              }
+            ]
+          },
+          "source_allowlist": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TypeAndSourceLever"
+              },
+              {
+                "description": "Types that take new items only from the listed sources."
+              }
+            ]
+          },
+          "source_filter": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TypeAndSourceLever"
+              },
+              {
+                "description": "Types whose listings, searches and exports show only items from the listed sources. A read by ID isn't narrowed."
+              }
+            ]
+          }
+        },
+        "description": "A key's own enforcement levers, in the shape `/config` uses. Each lever set here replaces the instance's for this key, looser or stricter; a lever left out stays the instance's."
+      },
       "ItemWithMetadata": {
         "type": "object",
         "properties": {
@@ -3715,50 +3833,58 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/HousekeepingJob"
-            }
+            },
+            "description": "Every housekeeping job."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every housekeeping job in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every housekeeping job."
       },
       "HousekeepingJob": {
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The job's name, such as `trash-purge`."
           },
           "interval_ms": {
-            "type": "integer"
+            "type": "integer",
+            "description": "How often the job runs, in milliseconds."
           },
           "next_run_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the job is next due, in UTC."
           },
           "running_since": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the current run started, in UTC, or `null` if the job isn't running."
           },
           "last_started_at": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the latest run started, in UTC, or `null` if the job has never run."
           },
           "last_finished_at": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the last run finished, in UTC, or `null` if none has finished."
           },
           "last_outcome": {
             "anyOf": [
@@ -3768,13 +3894,15 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "How the last run ended, or `null` if none has finished."
           },
           "last_error": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The error the last run hit, or `null` if it had none."
           },
           "last_result": {
             "anyOf": [
@@ -3784,7 +3912,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "What the last run reported, or `null` if it reported nothing."
           }
         },
         "required": [
@@ -3797,14 +3926,16 @@
           "last_outcome",
           "last_error",
           "last_result"
-        ]
+        ],
+        "description": "A housekeeping job: a task Marfa runs on itself on a schedule, and its last run."
       },
       "HousekeepingOutcome": {
         "type": "string",
         "enum": [
           "ok",
           "error"
-        ]
+        ],
+        "description": "How a run ended: `ok` if it finished, `error` if it failed."
       },
       "HousekeepingReport": {
         "type": "object",
@@ -3823,22 +3954,33 @@
               "type": "null"
             }
           ]
-        }
+        },
+        "description": "What a run reports, under names its job chooses, such as `deleted` or `copied`."
       },
       "HousekeepingRun": {
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The job's name."
           },
           "started_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the run started, in UTC."
           },
           "finished_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the run finished, in UTC."
           },
           "outcome": {
-            "$ref": "#/components/schemas/HousekeepingOutcome"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HousekeepingOutcome"
+              },
+              {
+                "description": "How the run ended."
+              }
+            ]
           },
           "result": {
             "anyOf": [
@@ -3848,13 +3990,15 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "What the run reported, or `null` if it reported nothing."
           },
           "error": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The error the run hit, or `null` if it had none."
           }
         },
         "required": [
@@ -3864,7 +4008,8 @@
           "outcome",
           "result",
           "error"
-        ]
+        ],
+        "description": "One run of a housekeeping job."
       },
       "HousekeepingJobNotFoundRefusal": {
         "type": "object",
@@ -4734,80 +4879,108 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the key."
           },
           "key": {
-            "type": "string"
+            "type": "string",
+            "description": "The plaintext key, which you send as a bearer token. Save it: no other response shows it."
           },
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "A name for the key, to tell it apart from your other keys."
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change."
           },
           "sources": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing."
+            "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none."
           },
           "permissions": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Permission"
-            }
+            },
+            "description": "The permissions the key holds, such as `audit.read`. Empty if it holds none."
           },
           "oauth_client_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The `client_id` of the app whose sign-in token created this key. Absent on every other key."
           },
           "default_tier": {
-            "$ref": "#/components/schemas/Tier"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The tier an item this key creates goes to when the write names none."
+              }
+            ]
           },
           "is_operator": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items."
           },
           "type_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/TypePermissionLevel"
-            }
+            },
+            "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
           },
           "extension_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
           },
           "edge_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Edge types the key may `read` or `write`, by edge type or `*`."
           },
           "metadata_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
           },
           "profile_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
           },
           "enforcement_override": {
-            "$ref": "#/components/schemas/EnforcementOverride"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnforcementOverride"
+              },
+              {
+                "description": "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's."
+              }
+            ]
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the key was created, in UTC."
           },
           "last_used_at": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour."
           }
         },
         "required": [
@@ -4826,7 +4999,8 @@
           "profile_permissions",
           "created_at",
           "last_used_at"
-        ]
+        ],
+        "description": "A new API key, with its plaintext `key`."
       },
       "Permission": {
         "type": "string",
@@ -4838,7 +5012,8 @@
           "items.purge",
           "keys.mint",
           "grants.manage"
-        ]
+        ],
+        "description": "A permission a credential can hold. `schema.write` replaces and deletes types and edge types, `keys.mint` creates and manages keys, `items.purge` purges trashed items, `webhooks.manage` manages webhooks, `config.manage` reads and replaces `/config`, `audit.read` reads the audit log, and `grants.manage` lists and revokes other apps' access."
       },
       "TypePermissionLevel": {
         "type": "string",
@@ -4846,64 +5021,16 @@
           "read",
           "write",
           "none"
-        ]
+        ],
+        "description": "What a key may do with a type: `read` it, `write` it (which includes reading), or `none`, which denies a type a wildcard entry would reach."
       },
       "PermissionLevel": {
         "type": "string",
         "enum": [
           "read",
           "write"
-        ]
-      },
-      "EnforcementOverride": {
-        "type": "object",
-        "properties": {
-          "strict_mode": {
-            "$ref": "#/components/schemas/TypeLever"
-          },
-          "source_allowlist": {
-            "$ref": "#/components/schemas/TypeAndSourceLever"
-          },
-          "source_filter": {
-            "$ref": "#/components/schemas/TypeAndSourceLever"
-          }
-        },
-        "description": "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config."
-      },
-      "TypeLever": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types"
-        ]
-      },
-      "TypeAndSourceLever": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types",
-          "sources"
-        ]
+        ],
+        "description": "What a key may do with an entry: `read` it, or `write` it (which includes reading). A name no entry covers is denied."
       },
       "ApiKeyPage": {
         "type": "object",
@@ -4912,105 +5039,132 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ApiKey"
-            }
+            },
+            "description": "Every key you can reach."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every key you can reach in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "A page holding every key you can reach."
       },
       "ApiKey": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the key."
           },
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "A name for the key, to tell it apart from your other keys."
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key has it as its own, and it can't change."
           },
           "sources": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing."
+            "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none."
           },
           "permissions": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Permission"
             },
-            "description": "The permissions this credential holds, as the literals themselves. Empty on a key that holds none."
+            "description": "The permissions the key holds, such as `audit.read`. Empty if it holds none."
           },
           "oauth_client_id": {
             "type": "string",
-            "description": "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly."
+            "description": "The `client_id` of the app whose sign-in token created this key. Absent on every other key."
           },
           "default_tier": {
-            "$ref": "#/components/schemas/Tier"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tier"
+              },
+              {
+                "description": "The tier an item this key creates goes to when the write names none."
+              }
+            ]
           },
           "is_operator": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "`true` if this is an operator key. An operator key opens the routes that run the instance, such as `/housekeeping`, and holds no permissions, so it reads and writes no items."
           },
           "type_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/TypePermissionLevel"
-            }
+            },
+            "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
           },
           "extension_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
           },
           "edge_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Edge types the key may `read` or `write`, by edge type or `*`."
           },
           "metadata_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
           },
           "profile_permissions": {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
-            }
+            },
+            "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
           },
           "enforcement_override": {
-            "$ref": "#/components/schemas/EnforcementOverride"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnforcementOverride"
+              },
+              {
+                "description": "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's."
+              }
+            ]
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the key was created, in UTC."
           },
           "expires_at": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. The key listing omits it, and the change and revoke doors answer `404 api_key_not_found` for it."
+            "description": "When the key stops working, in UTC, or `null` if it doesn't expire. A key created through the API never expires."
           },
           "last_used_at": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour."
           }
         },
         "required": [
@@ -5029,7 +5183,8 @@
           "created_at",
           "expires_at",
           "last_used_at"
-        ]
+        ],
+        "description": "An API key, without its plaintext: what it may reach and when it was used."
       },
       "ApiKeyNotFoundRefusal": {
         "type": "object",
@@ -5070,88 +5225,80 @@
         "type": "object",
         "properties": {
           "instance_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the instance, the same value `GET /` returns."
           },
           "enforcement": {
             "type": "object",
             "properties": {
               "strict_mode": {
-                "$ref": "#/components/schemas/TypeLever"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeLever"
+                  },
+                  {
+                    "description": "Types on which a write may not set a property the type doesn't declare."
+                  }
+                ]
               },
               "source_allowlist": {
-                "$ref": "#/components/schemas/TypeAndSourceLever"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeAndSourceLever"
+                  },
+                  {
+                    "description": "Types that take new items only from the listed sources."
+                  }
+                ]
               },
               "source_filter": {
-                "$ref": "#/components/schemas/TypeAndSourceLever"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeAndSourceLever"
+                  },
+                  {
+                    "description": "Types whose listings, searches and exports show only items from the listed sources. A read by ID isn't narrowed."
+                  }
+                ]
               }
-            }
+            },
+            "description": "The instance's enforcement levers, which apply to every credential that doesn't set its own. Absent: no lever is on."
           },
           "audit_retention_days": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 36500
+            "maximum": 36500,
+            "description": "Days Marfa keeps audit log entries. `0` keeps them with no age limit. Absent: the server's default applies."
           },
           "event_log_retention_hours": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 876000
+            "maximum": 876000,
+            "description": "Hours Marfa keeps events, which a stream can replay from a cursor. `0` keeps them with no age limit. Absent: the server's default applies."
           },
           "trash_retention_days": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 36500
+            "maximum": 36500,
+            "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
           },
           "inbound_handled_retention_days": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 36500
+            "maximum": 36500,
+            "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
           },
           "inbound_pending_retention_days": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 36500
+            "maximum": 36500,
+            "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
           }
         },
         "required": [
           "instance_id"
-        ]
-      },
-      "TypeLeverStrict": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types"
         ],
-        "additionalProperties": false
-      },
-      "TypeAndSourceLeverStrict": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "types",
-          "sources"
-        ],
-        "additionalProperties": false
+        "description": "The instance configuration: its enforcement levers and retention settings, with the instance's ID."
       },
       "InvalidPropertiesOrValidationErrorRefusal": {
         "type": "object",
@@ -5355,17 +5502,20 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the owner's account."
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "description": "The owner's email address, in lowercase."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The owner's name."
           },
           "created_at": {
             "type": "string",
-            "description": "ISO 8601 instant"
+            "description": "When the owner was created, in UTC."
           }
         },
         "required": [
@@ -5373,7 +5523,8 @@
           "email",
           "name",
           "created_at"
-        ]
+        ],
+        "description": "The owner is the one person who can sign in to the instance."
       },
       "OwnerNotFoundRefusal": {
         "type": "object",
@@ -5653,7 +5804,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AuditEntry"
-            }
+            },
+            "description": "The entries, newest first."
           },
           "next_cursor": {
             "type": [
@@ -5666,44 +5818,53 @@
         "required": [
           "data",
           "next_cursor"
-        ]
+        ],
+        "description": "One page of audit log entries."
       },
       "AuditEntry": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for the entry."
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When Marfa recorded the entry, in UTC."
           },
           "key_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping."
           },
           "action": {
-            "type": "string"
+            "type": "string",
+            "description": "What happened, such as `key.create` or `owner.created`."
           },
           "resource_type": {
-            "type": "string"
+            "type": "string",
+            "description": "The kind of resource acted on, such as `key`."
           },
           "resource_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The ID of the resource acted on, or `null` if there is none."
           },
           "client_ip": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The IP address of the request that acted, or `null` if the entry records none."
           },
           "details": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {},
+            "description": "More about the action. What it holds depends on `action`."
           }
         },
         "required": [
@@ -5715,7 +5876,8 @@
           "resource_id",
           "client_ip",
           "details"
-        ]
+        ],
+        "description": "An audit log entry records one action and who took it."
       },
       "RateLimitedRefusal": {
         "type": "object",
@@ -23763,7 +23925,7 @@
           "Instance"
         ],
         "summary": "List housekeeping jobs",
-        "description": "Returns every housekeeping job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
+        "description": "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job turned off by a server setting isn't listed, unless `/config` can turn it back on. Requires the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -23990,7 +24152,7 @@
           "Instance"
         ],
         "summary": "Run a housekeeping job",
-        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
+        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -31926,7 +32088,7 @@
           "Access"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and a mint can narrow and can never widen. A key holds exactly what its body names. The families are `permissions`, the five permission maps and `sources`, and naming one, even empty, names it. A body naming none takes the creator's whole set, permissions and maps alike; a body naming any holds only what it names and nothing in the others, so a key minted with only `permissions` holds those permissions and no map entry or claimed source, and a key minted with a type map and no `permissions` holds no permission. A signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once (the mint consumes it). The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+        "description": "Creates an API key and returns it with its plaintext `key`, shown only here. If the body names none of `permissions`, the five permission maps and `sources`, the key gets everything you hold; if it names any, the key holds only what it names.",
         "security": [
           {
             "bearerAuth": []
@@ -31941,12 +32103,14 @@
                 "properties": {
                   "label": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "A name for the key, to tell it apart from your other keys."
                   },
                   "source": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 200
+                    "maxLength": 200,
+                    "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other unrevoked key may have it as its own, and it can't change later."
                   },
                   "sources": {
                     "type": "array",
@@ -31956,52 +32120,73 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any."
                   },
                   "permissions": {
                     "type": "array",
                     "items": {
                       "$ref": "#/components/schemas/Permission"
-                    }
+                    },
+                    "description": "The permissions to give the key, such as `audit.read`."
                   },
                   "default_tier": {
-                    "$ref": "#/components/schemas/Tier"
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Tier"
+                      },
+                      {
+                        "description": "The tier an item this key creates goes to when the write names none. Leave it out for `library`."
+                      }
+                    ]
                   },
                   "is_operator": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "`true` to create another operator key, which holds no permissions, maps or claimed sources. Only the operator key can create one."
                   },
                   "type_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/TypePermissionLevel"
-                    }
+                    },
+                    "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
                   },
                   "extension_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
                   },
                   "edge_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Edge types the key may `read` or `write`, by edge type or `*`."
                   },
                   "metadata_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
                   },
                   "profile_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
                   },
                   "enforcement_override": {
-                    "$ref": "#/components/schemas/EnforcementOverride"
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/EnforcementOverride"
+                      },
+                      {
+                        "description": "Enforcement levers for this key alone. Leave it out for none, so the key follows the instance's."
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -32015,7 +32200,7 @@
         },
         "responses": {
           "201": {
-            "description": "API key created",
+            "description": "Returns the new key with its plaintext `key`. When the operator key creates an ordinary key from a body naming no permission, map or `sources`, the key holds every permission and `write` on every map. On a new instance, the first request sends the one-time secret from the server's startup log as its bearer token, and returns the operator key, which reads no items.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32042,7 +32227,7 @@
             }
           },
           "400": {
-            "description": "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, claimed more than 1,000 sources, or the bootstrap secret was refused.",
+            "description": "- `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: a field is invalid, such as a permission level that doesn't exist or more than 1,000 `sources`, or `source` or a claimed source starts with `oauth:`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32102,7 +32287,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: you don't hold `keys.mint`, you asked for reach your credential doesn't cover (a working key may grant only its own `source` and what it claims), you gave reach to an operator key, or you minted an operator key without being one. `details.required_scope` names a missing permission and `details.source` a source you may not grant. A refused bootstrap mint leaves the secret unused.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it gives an operator key any reach; or it asks for an operator key and you aren't one. `details.required_scope` or `details.source` names what you lack.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32132,7 +32317,7 @@
             }
           },
           "409": {
-            "description": "The `source` is already another unrevoked key's own, named in `details.source`: no two unrevoked keys hold one source as their own. Keys that claim it in `sources` write under it too, so a row's source does not name the key that wrote it, and two keys share a natural key by both claiming a source in `sources`.",
+            "description": "- `conflict`: another unrevoked key already has this `source` as its own. `details.source` names it. To let two keys write under one source, claim it in `sources` instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32283,7 +32468,7 @@
           "Access"
         ],
         "summary": "List API keys",
-        "description": "Returns the API keys within the caller's reach, the caller included, without plaintext, which is only ever returned at creation time. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+        "description": "Returns the API keys you could have created, your own included, without their plaintext. The operator key gets every key. Requires `keys.mint` or the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -32291,7 +32476,7 @@
         ],
         "responses": {
           "200": {
-            "description": "List of API keys",
+            "description": "Returns the keys, in one page. A key past its `expires_at` isn't listed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32378,7 +32563,7 @@
             }
           },
           "403": {
-            "description": "Caller does not hold `keys.mint`",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32510,7 +32695,7 @@
           "Access"
         ],
         "summary": "Get the current key",
-        "description": "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`.",
+        "description": "Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
         "security": [
           {
             "bearerAuth": []
@@ -32518,7 +32703,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The calling key",
+            "description": "Returns your key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32608,7 +32793,7 @@
             }
           },
           "403": {
-            "description": "The credential is a signed-in app's token, not a key",
+            "description": "- `forbidden`: your credential is a signed-in app's token, not a key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32787,7 +32972,7 @@
           "Access"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
+        "description": "Revokes an API key at once: Marfa stops accepting it, ends its open event streams and stops its queued bulk actions. You can revoke any key you could have created, your own included. Requires `keys.mint` or the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -32797,17 +32982,17 @@
           {
             "schema": {
               "type": "string",
-              "description": "ID of the API key to revoke"
+              "description": "The ID of the key."
             },
             "required": true,
-            "description": "ID of the API key to revoke",
+            "description": "The ID of the key.",
             "name": "id",
             "in": "path"
           }
         ],
         "responses": {
           "200": {
-            "description": "Key revoked. The next request bearing it answers `401 unauthorized`.",
+            "description": "Returns `ok: true`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32834,7 +33019,7 @@
             }
           },
           "400": {
-            "description": "Malformed key ID",
+            "description": "- `validation_error`: `id` isn't a valid key ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32894,7 +33079,7 @@
             }
           },
           "403": {
-            "description": "`keys.mint` required, unless the caller is the operator key",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32924,7 +33109,7 @@
             }
           },
           "404": {
-            "description": "`api_key_not_found`: no key was revoked. The ID is unknown, the key is already revoked or past its `expires_at`, or it is beyond your reach. The answer does not say which, so it does not reveal whether a key exists. Only the operator key is told whether an ID was unknown or the key already revoked.",
+            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The operator key's message says when the key was already revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33075,7 +33260,7 @@
           "Access"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable; revoke and recreate to change it. Requires `keys.mint`. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
+        "description": "Updates a key's label, default tier, permissions, maps, claimed `sources` or enforcement levers, and returns it. Each field you send replaces its old value, and a field you leave out stays. Requires `keys.mint` or the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -33085,10 +33270,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "ID of the API key to update"
+              "description": "The ID of the key."
             },
             "required": true,
-            "description": "ID of the API key to update",
+            "description": "The ID of the key.",
             "name": "id",
             "in": "path"
           }
@@ -33102,10 +33287,18 @@
                 "properties": {
                   "label": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "A name for the key, to tell it apart from your other keys."
                   },
                   "default_tier": {
-                    "$ref": "#/components/schemas/Tier"
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Tier"
+                      },
+                      {
+                        "description": "The tier an item this key creates goes to when the write names none."
+                      }
+                    ]
                   },
                   "sources": {
                     "type": "array",
@@ -33115,43 +33308,49 @@
                       "maxLength": 200
                     },
                     "maxItems": 1000,
-                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no permission or map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused."
+                    "description": "Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the operator key can grant any."
                   },
                   "type_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/TypePermissionLevel"
-                    }
+                    },
+                    "description": "Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers."
                   },
                   "extension_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
                   },
                   "edge_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Edge types the key may `read` or `write`, by edge type or `*`."
                   },
                   "metadata_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both."
                   },
                   "profile_permissions": {
                     "type": "object",
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
-                    }
+                    },
+                    "description": "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it."
                   },
                   "permissions": {
                     "type": "array",
                     "items": {
                       "$ref": "#/components/schemas/Permission"
-                    }
+                    },
+                    "description": "The permissions the key holds, such as `audit.read`."
                   },
                   "enforcement_override": {
                     "anyOf": [
@@ -33162,11 +33361,11 @@
                         "type": "null"
                       }
                     ],
-                    "description": "`null` clears the override; an object replaces it whole."
+                    "description": "Replaces the key's enforcement levers whole. `null` clears them."
                   },
                   "source": {
                     "type": "string",
-                    "description": "A key's source is immutable: a body carrying this field is refused `400 validation_error`. Revoke the key and mint another to change it."
+                    "description": "Can't change. To give a key another source, create a new key and revoke this one."
                   }
                 },
                 "additionalProperties": false
@@ -33176,7 +33375,7 @@
         },
         "responses": {
           "200": {
-            "description": "Key updated",
+            "description": "Returns the updated key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33203,7 +33402,7 @@
             }
           },
           "400": {
-            "description": "`validation_error`: the update is invalid, for example it carries `source`, which can't change.",
+            "description": "- `missing_required_field`: a lever in `enforcement_override` lacks `types` or `sources`.\n- `validation_error`: `id` isn't a valid key ID, the body carries `source`, or a field is invalid, such as a claimed source that starts with `oauth:`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33263,7 +33462,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: you don't hold `keys.mint` (the operator key needn't), or the edit widens a permission map past what you hold, or `sources` past your own `source` and what you claim. The operator key is no ceiling, but no map on an operator key can be widened by anyone. A key an app created can only be narrowed. `details.required_scope` and `details.source` name what is missing.",
+            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the operator key; the body gives the key a permission, map entry or source you don't hold; it gives an operator key any reach; or it widens a key an app created, which only narrows. `details.required_scope` or `details.source` names what's missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33293,7 +33492,7 @@
             }
           },
           "404": {
-            "description": "No key with this id is within the caller's reach",
+            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33446,7 +33645,7 @@
           "Instance"
         ],
         "summary": "Get the configuration",
-        "description": "Returns the instance configuration (the optional `enforcement` levers plus the cleanup-job retention overrides) under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
+        "description": "Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -33454,7 +33653,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Instance config",
+            "description": "Returns the configuration.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33541,7 +33740,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33671,7 +33870,7 @@
           "Instance"
         ],
         "summary": "Replace the configuration",
-        "description": "Overwrites the instance config with the supplied object: full replacement, not a merge. A cleanup-job retention override of `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing. Requires `config.manage`.",
+        "description": "Replaces the instance configuration with the body and returns it. A setting you leave out goes back to its default, so send the whole configuration with your change. Requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -33686,47 +33885,75 @@
                 "properties": {
                   "instance_id": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing."
                   },
                   "enforcement": {
                     "type": "object",
                     "properties": {
                       "strict_mode": {
-                        "$ref": "#/components/schemas/TypeLeverStrict"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/TypeLeverStrict"
+                          },
+                          {
+                            "description": "Types on which a write may not set a property the type doesn't declare."
+                          }
+                        ]
                       },
                       "source_allowlist": {
-                        "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
+                          },
+                          {
+                            "description": "Types that take new items only from the listed sources."
+                          }
+                        ]
                       },
                       "source_filter": {
-                        "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/TypeAndSourceLeverStrict"
+                          },
+                          {
+                            "description": "Types whose listings, searches and exports show only items from the listed sources. A read by ID isn't narrowed."
+                          }
+                        ]
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "description": "The instance's enforcement levers, which apply to every credential that doesn't set its own. Absent: no lever is on."
                   },
                   "audit_retention_days": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 36500
+                    "maximum": 36500,
+                    "description": "Days Marfa keeps audit log entries. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
                   "event_log_retention_hours": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 876000
+                    "maximum": 876000,
+                    "description": "Hours Marfa keeps events, which a stream can replay from a cursor. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
                   "trash_retention_days": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 36500
+                    "maximum": 36500,
+                    "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
                   "inbound_handled_retention_days": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 36500
+                    "maximum": 36500,
+                    "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
                   "inbound_pending_retention_days": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 36500
+                    "maximum": 36500,
+                    "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
                   }
                 },
                 "additionalProperties": false
@@ -33736,7 +33963,7 @@
         },
         "responses": {
           "200": {
-            "description": "Instance config updated",
+            "description": "Returns the configuration as stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33763,7 +33990,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body names a key Marfa does not recognize, a cleanup-job retention override below `0`, or an `instance_id` that names a different instance.",
+            "description": "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33823,7 +34050,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "- `forbidden`: you don't hold `config.manage`. The operator key doesn't hold it either. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33976,7 +34203,7 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. Every row is checked before anything is written, and everything the restore writes commits together: type and edge-type registrations first, so a restore into an empty instance can write the items that use them, then blob rows, items, edges and their events, so a restore that fails or is interrupted leaves none of them. A registration the instance already holds identically is skipped, and one it holds differently fails the whole restore. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Original item and edge dates and every archived item snapshot are preserved. Historical properties are not checked against current type schemas. Duplicate items retain their live metadata, dates and history. Entries under names the restore does not read are skipped without being held in memory. While a restore writes, other writes wait for it. Keys, webhooks, configuration and tombstones are not restored. Trashed items are restored only when explicitly included in the export. Until the first public release, archives are supported only by the build that wrote them; format 0 promises no compatibility between builds.",
+        "description": "Restores an archive that `GET /export?format=archive` made, and returns counts of what it wrote and skipped. It writes all of the archive or none of it. Only the build that wrote an archive is sure to read it. Requires the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -33984,6 +34211,7 @@
         ],
         "requestBody": {
           "required": true,
+          "description": "The archive file, as `GET /export?format=archive` returned it.",
           "content": {
             "application/gzip": {
               "schema": {
@@ -33995,44 +34223,54 @@
         },
         "responses": {
           "200": {
-            "description": "Restore result",
+            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "imported": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many items Marfa wrote."
                     },
                     "duplicates": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many items Marfa skipped because their ID, natural key or link is already taken."
                     },
                     "edges_imported": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many edges Marfa wrote."
                     },
                     "edges_skipped": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many edges Marfa skipped."
                     },
                     "edges_skipped_reasons": {
                       "type": "object",
                       "additionalProperties": {
                         "type": "number"
-                      }
+                      },
+                      "description": "How many edges Marfa skipped for each reason, such as `endpoint_missing` or `already_present`."
                     },
                     "blobs_imported": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them."
                     },
                     "types_registered": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many types Marfa registered."
                     },
                     "types_skipped": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many types Marfa skipped because the instance already registers them identically."
                     },
                     "edge_types_registered": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many edge types Marfa registered."
                     },
                     "edge_types_skipped": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "How many edge types Marfa skipped because the instance already registers them identically."
                     }
                   },
                   "required": [
@@ -34069,7 +34307,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the archive is invalid or at an unsupported version, carries an entry it reads more than once, or carries a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: a row carries a property its type does not declare, and the strict-mode lever names that type.\n\nThe restore writes nothing.",
+            "description": "- `validation_error`: the body isn't a valid archive, or the archive is at another format version, carries an entry twice, has an invalid row, or has a `manifest.json`, `types.ndjson` or line of `items.ndjson` or `edges.ndjson` larger than 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34129,7 +34367,7 @@
             }
           },
           "403": {
-            "description": "Admin required",
+            "description": "- `forbidden`: your key isn't an operator key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34159,7 +34397,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n\nThe restore writes nothing.",
+            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34879,10 +35117,10 @@
             "bearerAuth": []
           }
         ],
-        "description": "Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. An instance boots with no owner, and `POST /owner` creates one. Operator key only.",
+        "description": "Returns the owner: the one account that can sign in to the instance and approve apps. A new instance has no owner until `POST /owner` creates one. Requires the operator key.",
         "responses": {
           "200": {
-            "description": "The owner",
+            "description": "Returns the owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34969,7 +35207,7 @@
             }
           },
           "403": {
-            "description": "Caller is not the operator key",
+            "description": "- `forbidden`: your key isn't an operator key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34999,7 +35237,7 @@
             }
           },
           "404": {
-            "description": "This instance has no owner yet",
+            "description": "- `owner_not_found`: the instance has no owner yet.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35134,7 +35372,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. The password is judged by the sign-in surface's own length rule. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
+        "description": "Creates the owner, the one account that can sign in to the instance, and returns it. The owner can sign in at once with the email address and password. No other route creates an account. Requires the operator key.",
         "requestBody": {
           "required": true,
           "content": {
@@ -35145,15 +35383,17 @@
                   "email": {
                     "type": "string",
                     "maxLength": 254,
-                    "format": "email"
+                    "format": "email",
+                    "description": "The owner's email address, which they sign in with. Marfa stores it in lowercase."
                   },
                   "password": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "The password the owner signs in with."
                   },
                   "name": {
                     "type": "string",
                     "maxLength": 200,
-                    "description": "Falls back to the address's local part when absent or blank."
+                    "description": "The owner's name. Leave it out or blank to use the part of `email` before the `@`."
                   }
                 },
                 "required": [
@@ -35166,7 +35406,7 @@
         },
         "responses": {
           "201": {
-            "description": "The owner, created",
+            "description": "Returns the new owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35193,7 +35433,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body is malformed, or the password is outside the sign-in surface's length rule. For the password, the error names `password` and the bound.",
+            "description": "- `missing_required_field`: `email` or `password` is missing.\n- `validation_error`: a field is invalid, such as an `email` that isn't an email address or a `password` shorter or longer than sign-in allows. For `password`, the message names the limit.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35253,7 +35493,7 @@
             }
           },
           "403": {
-            "description": "Caller is not the operator key",
+            "description": "- `forbidden`: your key isn't an operator key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35283,7 +35523,7 @@
             }
           },
           "409": {
-            "description": "- `owner_exists`: this instance already has an owner, whatever the body.",
+            "description": "- `owner_exists`: the instance already has an owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35436,7 +35676,7 @@
           "Export and restore"
         ],
         "summary": "Export items and edges",
-        "description": "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection or its readable history references that `GET /blobs/{hash}` would serve the caller, which `POST /restore` can ingest. Each archive item line carries `versions`, every stored earlier snapshot the caller may read under its historical type, strictly below the selected current row's version, `lending_blobs`, the digests in that row's properties that lend its reach, and `lending_extensions`, the digests that lend its reach in each extension namespace the line carries. Each archive edge line carries `lending_blobs`, the digests in that edge's properties that lend its reach. A restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read.",
+        "description": "Exports the items you can read, with their tags and readable extensions, followed by the edges between them. Without `state`, trashed items are left out. With `format=archive`, returns a file that `POST /restore` reads.",
         "security": [
           {
             "bearerAuth": []
@@ -35446,50 +35686,50 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches."
+              "description": "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix."
             },
             "required": false,
-            "description": "Filter to one type, subtypes included. Refused `400 unknown_type` if nothing registers it, and `403 type_not_permitted` if the credential cannot read it or any type under it. A wildcard answers the readable types it matches.",
+            "description": "Only export items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
             "name": "type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass."
+              "description": "Only export items in this lifecycle state. Without it, you get every state but `trashed`. Send `any` to include trashed items too."
             },
             "required": false,
-            "description": "Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass.",
+            "description": "Only export items in this lifecycle state. Without it, you get every state but `trashed`. Send `any` to include trashed items too.",
             "name": "state",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Narrow to rows stamped with this `source`."
+              "description": "Only export items stamped with this source."
             },
             "required": false,
-            "description": "Narrow to rows stamped with this `source`.",
+            "description": "Only export items stamped with this source.",
             "name": "source",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time."
+              "description": "Only export items whose own time (`occurred_at`, else `created_at`) is after this time."
             },
             "required": false,
-            "description": "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly after this. Not the modification time.",
+            "description": "Only export items whose own time (`occurred_at`, else `created_at`) is after this time.",
             "name": "occurred_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this."
+              "description": "Only export items whose own time (`occurred_at`, else `created_at`) is before this time."
             },
             "required": false,
-            "description": "Include only items whose own time (`occurred_at`, falling back to `created_at`) is strictly before this.",
+            "description": "Only export items whose own time (`occurred_at`, else `created_at`) is before this time.",
             "name": "occurred_before",
             "in": "query"
           },
@@ -35500,17 +35740,17 @@
                 "ndjson",
                 "archive"
               ],
-              "description": "Output format: `ndjson` (default) or `archive`"
+              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`."
             },
             "required": false,
-            "description": "Output format: `ndjson` (default) or `archive`",
+            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`.",
             "name": "format",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /restore` reads. If Marfa fails after it starts sending an archive, it ends the connection early, so what you received is not a complete archive and does not unpack.",
+            "description": "With `format=ndjson`, a JSON object per line: `{ \"item\", \"metadata\" }` for each item, then `{ \"edge\" }` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
@@ -35543,7 +35783,7 @@
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, such as a `format` other than `ndjson` or `archive`, a `state` that isn't a lifecycle state or `any`, or a time that isn't an instant.\n- `unknown_type`: `type` is a concrete type that nothing registers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35603,7 +35843,7 @@
             }
           },
           "403": {
-            "description": "The credential reaches no type, or `type` names a registered type it cannot read and none under it. Otherwise the door is narrowed to the types it reads.",
+            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37775,7 +38015,7 @@
           "Instance"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads; item/edge reads, SSE, and search are not logged. Requires `audit.read`.",
+        "description": "Returns audit log entries, newest first. Marfa records changes and exports here, not other reads. Requires `audit.read`.",
         "security": [
           {
             "bearerAuth": []
@@ -37785,50 +38025,50 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter to a single action."
+              "description": "Only return entries with this action, such as `key.create`."
             },
             "required": false,
-            "description": "Filter to a single action.",
+            "description": "Only return entries with this action, such as `key.create`.",
             "name": "action",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Filter to a single resource type."
+              "description": "Only return entries for this kind of resource, such as `key`."
             },
             "required": false,
-            "description": "Filter to a single resource type.",
+            "description": "Only return entries for this kind of resource, such as `key`.",
             "name": "resource_type",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Filter to a single resource id."
+              "description": "Only return entries for the resource with this ID."
             },
             "required": false,
-            "description": "Filter to a single resource id.",
+            "description": "Only return entries for the resource with this ID.",
             "name": "resource_id",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include entries written strictly after this instant."
+              "description": "Only return entries recorded after this time."
             },
             "required": false,
-            "description": "Include entries written strictly after this instant.",
+            "description": "Only return entries recorded after this time.",
             "name": "created_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include entries written strictly before this instant."
+              "description": "Only return entries recorded before this time."
             },
             "required": false,
-            "description": "Include entries written strictly before this instant.",
+            "description": "Only return entries recorded before this time.",
             "name": "created_before",
             "in": "query"
           },
@@ -37858,7 +38098,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Paginated audit log entries",
+            "description": "Returns a page of entries.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37885,7 +38125,7 @@
             }
           },
           "400": {
-            "description": "A query parameter is outside what the door accepts.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, such as a time that isn't a timestamp, or `cursor` is malformed or came from another listing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37945,7 +38185,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the credential does not hold `audit.read`. The operator key holds no permission, so it is refused too.",
+            "description": "- `forbidden`: you don't hold `audit.read`. The operator key doesn't hold it either. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38077,10 +38317,10 @@
           "Instance"
         ],
         "summary": "Describe the instance",
-        "description": "Answers without a credential: the instance's name, the build it runs as `version`, the `instance_id` that tells two instances answering the same shape apart, the contract version as `contract`, and the surfaces it carries as `features`. `contract` equals this document's `info.version`, so a client generated from this document can tell whether a server speaks the contract it was generated for.",
+        "description": "Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
         "responses": {
           "200": {
-            "description": "The instance",
+            "description": "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38088,25 +38328,28 @@
                   "properties": {
                     "name": {
                       "type": "string",
-                      "const": "marfa"
+                      "const": "marfa",
+                      "description": "Always `marfa`."
                     },
                     "version": {
                       "type": "string",
-                      "description": "The deployed build."
+                      "description": "The build the instance runs."
                     },
                     "instance_id": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Unique identifier for the instance. `GET /config` and an archive's manifest show the same value."
                     },
                     "contract": {
                       "type": "integer",
                       "minimum": 0,
-                      "description": "The contract version, which stays at 0 until the first public release."
+                      "description": "The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release."
                     },
                     "features": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "The features the instance serves, such as `items` and `webhooks`."
                     }
                   },
                   "required": [
@@ -38496,7 +38739,7 @@
           "Access"
         ],
         "summary": "Register an OAuth client",
-        "description": "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
+        "description": "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
         "requestBody": {
           "required": true,
           "content": {
@@ -38509,35 +38752,37 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Required for the authorization_code grant."
+                    "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`."
                   },
                   "grant_types": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Defaults to [\"authorization_code\"]."
+                    "description": "The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`."
                   },
                   "response_types": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Defaults to [\"code\"]."
+                    "description": "The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`."
                   },
                   "client_name": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "The app's name, which Marfa shows a person asked to approve it."
                   },
                   "application_type": {
                     "type": "string",
-                    "description": "Defaults to \"web\"."
+                    "description": "`web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`."
                   },
                   "scope": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Space-separated scopes to register the client for. Leave it out to register it for every scope the instance allows."
                   },
                   "token_endpoint_auth_method": {
                     "type": "string",
-                    "description": "Defaults to \"client_secret_basic\"."
+                    "description": "How the client proves itself at the token endpoint. Defaults to `client_secret_basic`. Send `none` for a public client, which gets no `client_secret`."
                   }
                 }
               }
@@ -38546,61 +38791,72 @@
         },
         "responses": {
           "201": {
-            "description": "The registered client, including the issued client_id.",
+            "description": "Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "client_id": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Unique identifier for the client."
                     },
                     "client_secret": {
                       "type": "string",
-                      "description": "Confidential clients only."
+                      "description": "The secret the client proves itself with at the token endpoint. Absent for a public client."
                     },
                     "client_id_issued_at": {
-                      "type": "integer"
+                      "type": "integer",
+                      "description": "When the client was registered, in seconds since the Unix epoch."
                     },
                     "scope": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows."
                     },
                     "redirect_uris": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "The redirect URIs, as registered."
                     },
                     "grant_types": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "The grants, as registered."
                     },
                     "response_types": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "The response types, as registered."
                     },
                     "token_endpoint_auth_method": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "How the client proves itself at the token endpoint."
                     },
                     "client_secret_expires_at": {
                       "type": "integer",
-                      "description": "0 for a secret that does not expire."
+                      "description": "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't."
                     },
                     "client_name": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The app's name, as registered."
                     },
                     "application_type": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "`web` or `native`."
                     },
                     "disabled": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "`true` if the client is disabled."
                     },
                     "dpop_bound_access_tokens": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "`true` if the client always uses DPoP for its token requests."
                     }
                   }
                 }
@@ -38625,7 +38881,7 @@
             }
           },
           "400": {
-            "description": "An RFC 7591 error object rather than this server's envelope, because the registration door answers the RFC's shape to clients written against it. A query parameter, which this door doesn't take, is the exception: it returns `validation_error` in this server's envelope, as on every other endpoint.",
+            "description": "An error in the shape RFC 7591 defines:\n- `invalid_client_metadata`: a field is invalid, such as `grant_types` naming `client_credentials`.\n- `invalid_redirect_uri`: a redirect URI is missing, malformed or not allowed for the `application_type`.\n- `invalid_scope`: `scope` names a scope the instance doesn't allow.\n\nAn unknown query parameter gets Marfa's own `validation_error` instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38678,7 +38934,7 @@
             }
           },
           "401": {
-            "description": "The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential.",
+            "description": "An error in the shape RFC 6750 defines:\n- `invalid_token`: the request sends a bearer token, such as an API key. Register with no credential.",
             "content": {
               "application/json": {
                 "schema": {

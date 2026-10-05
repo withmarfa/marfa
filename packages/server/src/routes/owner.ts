@@ -18,7 +18,11 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly, requireAuth } from "../middleware/auth.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OPERATOR_ONLY_RESPONSE,
+} from "../openapi.js";
 import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
 import type {
@@ -30,21 +34,29 @@ import { errorMessage } from "../error-text.js";
 
 const OwnerSchema = z
   .object({
-    id: z.string(),
-    email: z.string(),
-    name: z.string(),
-    created_at: z.string().describe("ISO 8601 instant"),
+    id: z.string().describe("Unique identifier for the owner's account."),
+    email: z.string().describe("The owner's email address, in lowercase."),
+    name: z.string().describe("The owner's name."),
+    created_at: z.string().describe("When the owner was created, in UTC."),
   })
+  .describe("The owner is the one person who can sign in to the instance.")
   .openapi("Owner");
 
 const CreateOwnerBodySchema = z.object({
-  email: z.email().max(254),
+  email: z
+    .email()
+    .max(254)
+    .describe(
+      "The owner's email address, which they sign in with. Marfa stores it in lowercase.",
+    ),
   // The length bound is the sign-in surface's own and is not restated
   // here; a refusal names it.
-  password: z.string(),
+  password: z.string().describe("The password the owner signs in with."),
   name: maxStringLength(z.string().trim(), 200)
     .optional()
-    .describe("Falls back to the address's local part when absent or blank."),
+    .describe(
+      "The owner's name. Leave it out or blank to use the part of `email` before the `@`.",
+    ),
 });
 
 const unauthorized = {
@@ -52,13 +64,6 @@ const unauthorized = {
     "application/json": { schema: makeErrorResponseSchema(["unauthorized"]) },
   },
   description: "Unauthorized",
-};
-
-const notTheOperator = {
-  content: {
-    "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
-  },
-  description: "Caller is not the operator key",
 };
 
 const getOwnerRoute = createRoute({
@@ -70,21 +75,21 @@ const getOwnerRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. An instance boots with no owner, and `POST /owner` creates one. Operator key only.",
+    "Returns the owner: the one account that can sign in to the instance and approve apps. A new instance has no owner until `POST /owner` creates one. Requires the operator key.",
   responses: {
     200: {
       content: { "application/json": { schema: OwnerSchema } },
-      description: "The owner",
+      description: "Returns the owner.",
     },
     401: unauthorized,
-    403: notTheOperator,
+    403: OPERATOR_ONLY_RESPONSE,
     404: {
       content: {
         "application/json": {
           schema: makeErrorResponseSchema(["owner_not_found"]),
         },
       },
-      description: "This instance has no owner yet",
+      description: "- `owner_not_found`: the instance has no owner yet.",
     },
   },
 });
@@ -98,7 +103,7 @@ const createOwnerRoute = createRoute({
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   description:
-    "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. The password is judged by the sign-in surface's own length rule. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
+    "Creates the owner, the one account that can sign in to the instance, and returns it. The owner can sign in at once with the email address and password. No other route creates an account. Requires the operator key.",
   request: {
     body: {
       content: { "application/json": { schema: CreateOwnerBodySchema } },
@@ -107,7 +112,7 @@ const createOwnerRoute = createRoute({
   responses: {
     201: {
       content: { "application/json": { schema: OwnerSchema } },
-      description: "The owner, created",
+      description: "Returns the new owner.",
     },
     400: {
       content: {
@@ -119,18 +124,17 @@ const createOwnerRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body is malformed, or the password is outside the sign-in surface's length rule. For the password, the error names `password` and the bound.",
+        "- `missing_required_field`: `email` or `password` is missing.\n- `validation_error`: a field is invalid, such as an `email` that isn't an email address or a `password` shorter or longer than sign-in allows. For `password`, the message names the limit.",
     },
     401: unauthorized,
-    403: notTheOperator,
+    403: OPERATOR_ONLY_RESPONSE,
     409: {
       content: {
         "application/json": {
           schema: makeErrorResponseSchema(["owner_exists"]),
         },
       },
-      description:
-        "- `owner_exists`: this instance already has an owner, whatever the body.",
+      description: "- `owner_exists`: the instance already has an owner.",
     },
   },
 });
