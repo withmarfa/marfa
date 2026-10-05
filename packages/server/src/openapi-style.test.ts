@@ -23,16 +23,27 @@ interface Operation {
   operation: Json;
 }
 
+/**
+ * Every operation, and every request Marfa sends to a webhook, which
+ * `API-STYLE.md` holds to the same rules.
+ */
 function operations(): Operation[] {
   const out: Operation[] = [];
-  const paths = (document.paths ?? {}) as Record<string, Json>;
-  for (const [path, methods] of Object.entries(paths)) {
-    for (const [method, operation] of Object.entries(methods)) {
-      if (METHODS.has(method)) {
-        out.push({
-          key: `${method.toUpperCase()} ${path}`,
-          operation: operation as Json,
-        });
+  const sources: [string, unknown][] = [
+    ["", document.paths],
+    ["webhook ", document.webhooks],
+  ];
+  for (const [prefix, entries] of sources) {
+    for (const [name, methods] of Object.entries(
+      (entries ?? {}) as Record<string, Json>,
+    )) {
+      for (const [method, operation] of Object.entries(methods)) {
+        if (METHODS.has(method)) {
+          out.push({
+            key: `${prefix}${method.toUpperCase()} ${name}`,
+            operation: operation as Json,
+          });
+        }
       }
     }
   }
@@ -134,11 +145,11 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
  */
 const CEILINGS = {
   summaryForm: 0,
-  descriptionLength: 16,
-  parameterUndescribed: 2,
-  parameterLength: 4,
-  schemaUndescribed: 58,
-  fieldUndescribed: 215,
+  descriptionLength: 13,
+  parameterUndescribed: 0,
+  parameterLength: 1,
+  schemaUndescribed: 54,
+  fieldUndescribed: 197,
   fieldLength: 6,
   responseLength: 0,
 };
@@ -162,6 +173,12 @@ describe("the API description follows API-STYLE.md", () => {
       ).toBe(ceiling);
     });
   }
+
+  it("holds the requests Marfa sends to a webhook to the same rules", () => {
+    expect(
+      operations().filter(({ key }) => key.startsWith("webhook ")),
+    ).not.toEqual([]);
+  });
 
   it("gives each shared parameter one text everywhere", () => {
     // On the stream the read view resumes a copy rather than certifying one

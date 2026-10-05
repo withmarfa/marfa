@@ -1,4 +1,5 @@
 import { EVENT_LIMITS } from "./_event-limits.js";
+import type { StreamIncompleteReason } from "./_stream-incomplete.js";
 import type { Context } from "hono";
 import { ErrorCode, MarfaError, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -53,13 +54,6 @@ const COPY_EVENT_TYPES = new Set(
     ] as const
   ).map(wireEventName),
 );
-type Incomplete =
-  | "replay_failed"
-  | "backlog_overflow"
-  | "live_delivery_failed"
-  | "credential_ended"
-  | "reader_behind"
-  | "server_stopping";
 
 export function copyStreamRequest(c: Context<AppEnv>): {
   after: bigint | null;
@@ -178,7 +172,7 @@ export async function buildCopyStream(
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let keepAlive: ReturnType<typeof setInterval> | undefined;
   let onRoom: (() => void) | undefined;
-  let openingFailure: Incomplete | undefined;
+  let openingFailure: StreamIncompleteReason | undefined;
   let tail: Promise<void> = Promise.resolve();
   let heartbeatPending = false;
   let head = 0n;
@@ -230,7 +224,7 @@ export async function buildCopyStream(
       }, stallMs).unref();
     }
   };
-  const incomplete = (reason: Incomplete): void => {
+  const incomplete = (reason: StreamIncompleteReason): void => {
     if (!controller) {
       openingFailure ??= reason;
       abort.abort();
@@ -241,7 +235,7 @@ export async function buildCopyStream(
       cursor: state.lastSent === null ? null : String(state.lastSent),
     });
   };
-  const failed = (error: unknown, reason: Incomplete): void => {
+  const failed = (error: unknown, reason: StreamIncompleteReason): void => {
     if (isClosed()) return;
     if (
       error instanceof MarfaError &&
@@ -286,7 +280,7 @@ export async function buildCopyStream(
   const decide = <T>(
     read: (authority: ReadViewAuthority) => Promise<T> | T,
     disclose: (value: T) => void,
-    reason: Incomplete = "live_delivery_failed",
+    reason: StreamIncompleteReason = "live_delivery_failed",
   ): Promise<void> => {
     const turn = tail.then(async () => {
       if (isClosed()) return;

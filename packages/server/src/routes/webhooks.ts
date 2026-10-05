@@ -1,6 +1,6 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
-import { pageOf } from "./_schemas.js";
+import { pageOf, wholeListOf } from "./_schemas.js";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
@@ -107,10 +107,16 @@ const EventNameSchema = z.enum(WEBHOOK_EVENTS);
 // Schemas
 // ---------------------------------------------------------------------------
 
+const URL_TEXT =
+  "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery.";
+const EVENTS_TEXT = "The events to send. Name each one: there's no wildcard.";
+const TYPE_FILTER_TEXT =
+  "Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered.";
+
 const WebhookSchema = z
   .object({
-    id: z.string(),
-    url: z.string(),
+    id: z.string().describe("Unique identifier for the webhook."),
+    url: z.string().describe("The URL Marfa posts events to."),
     // Deliberately `string`, where the request side is the enum.
     //
     // A stored row holds whatever was valid when it was written, and typing
@@ -118,32 +124,79 @@ const WebhookSchema = z
     // cannot guarantee: retire an event and every row that subscribed to it
     // becomes a response the specification says is impossible. The constraint
     // belongs on the way in, which is where it is enforced.
-    events: z.array(z.string()),
-    type_filter: z.string().nullable().optional(),
-    secret: z.string(),
-    active: z.boolean(),
-    created_at: z.string(),
-    updated_at: z.string(),
+    events: z
+      .array(z.string())
+      .describe("The events Marfa sends, such as `item.created`."),
+    type_filter: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered.",
+      ),
+    secret: z
+      .string()
+      .describe(
+        "The key Marfa signs each delivery with. Only `POST /webhooks` returns it whole; other responses show `****` and its last four characters.",
+      ),
+    active: z
+      .boolean()
+      .describe("`true` if Marfa sends events to the webhook."),
+    created_at: z.string().describe("When the webhook was created, in UTC."),
+    updated_at: z.string().describe("When the webhook last changed, in UTC."),
   })
-  .openapi("Webhook");
+  .openapi("Webhook", {
+    description:
+      "A webhook sends the events you choose, as you can read them, to a URL.",
+  });
 
 const DeliverySchema = z
   .object({
-    id: z.string(),
-    status: z.enum(WEBHOOK_DELIVERY_STATUSES),
-    webhook_id: z.string(),
-    event_type: z.string(),
-    status_code: z.number().nullable(),
+    id: z
+      .string()
+      .describe(
+        "Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt.",
+      ),
+    status: z
+      .enum(WEBHOOK_DELIVERY_STATUSES)
+      .describe(
+        "`pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.",
+      ),
+    webhook_id: z
+      .string()
+      .describe("The ID of the webhook the delivery belongs to."),
+    event_type: z
+      .string()
+      .describe("The event delivered, such as `item.created`."),
+    status_code: z
+      .number()
+      .nullable()
+      .describe(
+        "The HTTP status the receiver answered on the latest recorded attempt, or `null` if that attempt got no answer or no attempt has run.",
+      ),
     attempt: z
       .number()
       .describe(
-        "Cumulative accepted-outcome ordinal, not a census of concurrent or lost HTTP sends.",
+        "How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more.",
       ),
-    succeeded: z.boolean(),
-    error: z.string().nullable(),
-    created_at: z.string(),
+    succeeded: z.boolean().describe("`true` if `status` is `success`."),
+    error: z
+      .string()
+      .nullable()
+      .describe(
+        "Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt.",
+      ),
+    created_at: z.string().describe("When Marfa queued the delivery, in UTC."),
   })
-  .openapi("WebhookDelivery");
+  .openapi("WebhookDelivery", {
+    description:
+      "A delivery is one event Marfa sends, or tries to send, to a webhook's URL.",
+  });
+
+/** The refusal every webhook door gives a credential without the permission. */
+const MANAGE_REFUSAL = "- `forbidden`: you don't have `webhooks.manage`.";
+const NOT_FOUND = "- `webhook_not_found`: no webhook of yours has this ID.";
+const WEBHOOK_ID = z.string().describe("The ID of the webhook.");
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -152,6 +205,9 @@ const DeliverySchema = z
 /** Every webhook door takes `webhooks.manage`. */
 const managesWebhooks = standingPermission("webhooks.manage");
 
+const INVALID_FIELD =
+  "a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`";
+
 const createWebhookRoute = createRoute({
   operationId: "createWebhook",
   method: "post",
@@ -159,7 +215,7 @@ const createWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Create a webhook",
   description:
-    "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.",
+    "Creates a webhook that sends the events you name to `url`. It belongs to your key, or your app's grant: Marfa deletes it when that is revoked, and sends nothing while it lacks `webhooks.manage` or the key has expired.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -167,21 +223,26 @@ const createWebhookRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            url: z.string().min(1, "url is required"),
+            url: z.string().min(1, "url is required").describe(URL_TEXT),
             events: z
               .array(EventNameSchema)
-              .min(1, "events must be a non-empty array"),
+              .min(1, "events must be a non-empty array")
+              .describe(EVENTS_TEXT),
             type_filter: z
               .string()
               .nullish()
               .describe(
-                "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.",
+                `${TYPE_FILTER_TEXT} Leave it out, blank or \`null\` for every type.`,
               ),
             secret: minStringLength(
               z.string(),
               MIN_WEBHOOK_SECRET_LENGTH,
               `secret must be at least ${String(MIN_WEBHOOK_SECRET_LENGTH)} characters`,
-            ).optional(),
+            )
+              .optional()
+              .describe(
+                "The key Marfa signs each delivery with. Leave it out for Marfa to generate one.",
+              ),
           }),
         },
       },
@@ -194,7 +255,8 @@ const createWebhookRoute = createRoute({
           schema: WebhookSchema,
         },
       },
-      description: "Webhook created",
+      description:
+        "Returns the new webhook with its whole `secret`, which no other response shows. Use it to check each delivery's `X-Marfa-Signature`.",
     },
     400: {
       content: {
@@ -205,7 +267,7 @@ const createWebhookRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error",
+      description: `- \`validation_error\`: ${INVALID_FIELD}; \`secret\` is too short; or \`type_filter\` is \`*\`, malformed or a list.\n- \`missing_required_field\`: \`url\` or \`events\` is missing.`,
     },
     401: {
       content: {
@@ -221,7 +283,7 @@ const createWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "The credential does not hold `webhooks.manage`.",
+      description: MANAGE_REFUSAL,
     },
   },
 });
@@ -233,17 +295,17 @@ const listWebhooksRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here; the plaintext is only returned at create time.",
+    "Returns every webhook that belongs to you, with each `secret` shortened to its last four characters.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(WebhookSchema, "WebhookPage"),
+          schema: wholeListOf(WebhookSchema, "WebhookPage", "webhook you own"),
         },
       },
-      description: "List of webhooks (secrets redacted)",
+      description: "Returns your webhooks.",
     },
     401: {
       content: {
@@ -259,8 +321,7 @@ const listWebhooksRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one.",
+      description: MANAGE_REFUSAL,
     },
   },
 });
@@ -272,13 +333,11 @@ const getWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Get a webhook",
   description:
-    "Returns one outbound webhook subscription by id, with its secret redacted.",
+    "Returns a webhook, with its `secret` shortened to its last four characters.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
-    params: z.object({
-      id: z.string().describe("Id of the webhook to fetch."),
-    }),
+    params: z.object({ id: WEBHOOK_ID }),
   },
   responses: {
     200: {
@@ -287,7 +346,7 @@ const getWebhookRoute = createRoute({
           schema: WebhookSchema,
         },
       },
-      description: "Webhook details (secret redacted)",
+      description: "Returns the webhook.",
     },
     401: {
       content: {
@@ -303,8 +362,7 @@ const getWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one.",
+      description: MANAGE_REFUSAL,
     },
     404: {
       content: {
@@ -312,7 +370,7 @@ const getWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["webhook_not_found"]),
         },
       },
-      description: "Webhook not found, or registered by another credential",
+      description: NOT_FOUND,
     },
   },
 });
@@ -324,26 +382,31 @@ const updateWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here; delete the subscription and create a new one.",
+    "Updates a webhook and returns it. Fields you leave out keep their values. Changing `url`, or setting `active` to `false`, cancels its pending deliveries. To change the secret, create a new webhook.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
-    params: z.object({
-      id: z.string().describe("Id of the webhook to update."),
-    }),
+    params: z.object({ id: WEBHOOK_ID }),
     body: {
       content: {
         "application/json": {
           schema: z.object({
-            url: z.string().optional(),
-            events: z.array(EventNameSchema).min(1).optional(),
+            url: z.string().optional().describe(URL_TEXT),
+            events: z
+              .array(EventNameSchema)
+              .min(1)
+              .optional()
+              .describe(EVENTS_TEXT),
             type_filter: z
               .string()
               .nullish()
+              .describe(`${TYPE_FILTER_TEXT} Blank or \`null\` removes it.`),
+            active: z
+              .boolean()
+              .optional()
               .describe(
-                "One trimmed item subtree pattern. Blank or null clears the filter; qualified wildcards and unregistered identifiers are accepted. Global * and comma-separated alternatives are refused. Edges are independent of this item filter.",
+                "`false` stops sending events and cancels pending deliveries. `true` starts again.",
               ),
-            active: z.boolean().optional(),
           }),
         },
       },
@@ -356,18 +419,15 @@ const updateWebhookRoute = createRoute({
           schema: WebhookSchema,
         },
       },
-      description: "Updated webhook (secret redacted)",
+      description: "Returns the updated webhook.",
     },
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "validation_error",
-            "missing_required_field",
-          ]),
+          schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Validation error",
+      description: `- \`validation_error\`: ${INVALID_FIELD}; or \`type_filter\` is \`*\`, malformed or a list.`,
     },
     401: {
       content: {
@@ -383,7 +443,7 @@ const updateWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "The credential does not hold `webhooks.manage`.",
+      description: MANAGE_REFUSAL,
     },
     404: {
       content: {
@@ -391,7 +451,7 @@ const updateWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["webhook_not_found"]),
         },
       },
-      description: "Webhook not found",
+      description: NOT_FOUND,
     },
   },
 });
@@ -402,14 +462,11 @@ const deleteWebhookRoute = createRoute({
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Delete a webhook",
-  description:
-    "Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.",
+  description: "Deletes a webhook and cancels its pending deliveries.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
-    params: z.object({
-      id: z.string().describe("Id of the webhook to delete."),
-    }),
+    params: z.object({ id: WEBHOOK_ID }),
   },
   responses: {
     200: {
@@ -418,7 +475,7 @@ const deleteWebhookRoute = createRoute({
           schema: OkResponseSchema,
         },
       },
-      description: "Webhook deleted",
+      description: "Returns `ok: true`.",
     },
     401: {
       content: {
@@ -434,7 +491,7 @@ const deleteWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "The credential does not hold `webhooks.manage`.",
+      description: MANAGE_REFUSAL,
     },
     404: {
       content: {
@@ -442,7 +499,7 @@ const deleteWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["webhook_not_found"]),
         },
       },
-      description: "Webhook not found",
+      description: NOT_FOUND,
     },
   },
 });
@@ -454,23 +511,30 @@ const redeliverRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Redeliver a failed delivery",
   description:
-    "Queues one retained failed delivery using the current subscription address and secret. Stable delivery and event identity are preserved. The cumulative attempt ordinal counts accepted outcomes, not every concurrent or lost HTTP send.",
+    "Sends a `dead_letter` delivery again, to the webhook's current `url`, and returns it as `pending`. The delivery keeps its ID, and Marfa makes up to 8 more attempts.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
-  request: { params: z.object({ id: z.string(), delivery_id: z.string() }) },
+  request: {
+    params: z.object({
+      id: WEBHOOK_ID,
+      delivery_id: z.string().describe("The ID of the delivery."),
+    }),
+  },
   responses: {
     202: {
-      description: "Delivery queued",
+      description:
+        "Returns the delivery as `pending`. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome.",
       content: { "application/json": { schema: DeliverySchema } },
     },
     403: {
-      description: "The credential does not hold webhooks.manage.",
+      description: MANAGE_REFUSAL,
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
     },
     404: {
-      description: "Webhook not found",
+      description:
+        "- `webhook_not_found`: no webhook of yours has this ID, or it has no delivery with this `delivery_id`.",
       content: {
         "application/json": {
           schema: makeErrorResponseSchema(["webhook_not_found"]),
@@ -478,7 +542,8 @@ const redeliverRoute = createRoute({
       },
     },
     409: {
-      description: "Delivery cannot be redelivered",
+      description:
+        "- `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off.",
       content: {
         "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
       },
@@ -493,13 +558,11 @@ const listDeliveriesRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
   description:
-    "Returns recent delivery rows for one subscription, newest first, with the last accepted outcome and cumulative accepted-outcome ordinal. This is not a census of concurrent or lost HTTP sends.",
+    "Returns a page of a webhook's deliveries, newest first. Marfa deletes a delivery that isn't `pending` once it's older than the instance's audit retention.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
-    params: z.object({
-      id: z.string().describe("Id of the webhook whose deliveries to list."),
-    }),
+    params: z.object({ id: WEBHOOK_ID }),
     query: z.object({
       limit: pageLimit({ max: MAX_PAGE_LIMIT, default: DEFAULT_PAGE_LIMIT }),
       cursor: pageCursor(),
@@ -509,10 +572,13 @@ const listDeliveriesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(DeliverySchema, "WebhookDeliveryPage"),
+          schema: pageOf(DeliverySchema, "WebhookDeliveryPage", {
+            page: "A page of a webhook's deliveries, newest first.",
+            data: "The deliveries, newest first.",
+          }),
         },
       },
-      description: "List of delivery rows",
+      description: "Returns a page of deliveries.",
     },
     401: {
       content: {
@@ -528,8 +594,7 @@ const listDeliveriesRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "The credential does not hold `webhooks.manage`. Reading the webhook configuration takes the same permission as registering one.",
+      description: MANAGE_REFUSAL,
     },
     404: {
       content: {
@@ -537,7 +602,7 @@ const listDeliveriesRoute = createRoute({
           schema: makeErrorResponseSchema(["webhook_not_found"]),
         },
       },
-      description: "Webhook not found",
+      description: NOT_FOUND,
     },
   },
 });

@@ -13,6 +13,8 @@
  *   3. Injects the routes defined as plain Hono handlers (the instance
  *      root, the SSE stream and OAuth dynamic client registration), which
  *      the reflection cannot see.
+ *   4. Adds the stream's frames and the request Marfa sends to a webhook,
+ *      which no route declares.
  *
  * Both the live `/openapi.json` endpoint (`app.ts`) and the committed
  * `openapi.json` (`scripts/generate-openapi.ts`) call this, so the two never
@@ -29,6 +31,8 @@ import {
 import { toOpenApiPath } from "./openapi-path.js";
 import { CONTRACT_HEADER, CONTRACT_VERSION } from "./contract.js";
 import { bodyCapFor } from "./middleware/body-cap.js";
+import { WEBHOOK_EVENTS } from "./routes/webhooks.js";
+import { STREAM_INCOMPLETE_REASONS } from "./routes/_stream-incomplete.js";
 
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
@@ -36,6 +40,7 @@ import { bodyCapFor } from "./middleware/body-cap.js";
 // constraint; the generic preserves the real return type for callers.
 interface OpenAPIDoc {
   paths?: object;
+  webhooks?: object;
   tags?: unknown[];
   components?: object;
 }
@@ -62,6 +67,8 @@ const GENERAL_SECTIONS = [
   "A body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /auth/oauth2/register` takes JSON too, but answers a request that isn't JSON with its own error, not this one.",
   "## Time",
   "Every time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.",
+  "## Event stream",
+  "`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.",
   "## Every response",
   "Every response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version, and `X-Request-ID`, which identifies the request if you report a problem.",
 ].join("\n\n");
@@ -380,6 +387,9 @@ function chainRefusal(
   return refusal;
 }
 
+const WRITE_CONTENTION_TEXT =
+  "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.";
+
 /**
  * Applied as floors: a route that declares the status itself keeps its own.
  *
@@ -403,10 +413,7 @@ export const CHAIN_REFUSALS = {
     ["rate_limited"],
     "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
   ),
-  writeContention: chainRefusal(
-    ["write_contention"],
-    "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
-  ),
+  writeContention: chainRefusal(["write_contention"], WRITE_CONTENTION_TEXT),
   internalError: chainRefusal(
     ["internal_error"],
     "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
@@ -640,6 +647,337 @@ function withResponseHeaders(
   return { ...operation, responses: next };
 }
 
+const schemaRef = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+
+/** A field holding a named schema, with its own text beside the reference. */
+const described = (name: string, description: string) => ({
+  allOf: [schemaRef(name), { description }],
+});
+
+const COPY_INSTANCE_ID = {
+  type: "string",
+  description:
+    "Only on a copy stream: the instance's ID, as `GET /` returns it.",
+};
+const COPY_READ_VIEW = {
+  type: "string",
+  description:
+    "Only on a copy stream: the read view to send as `X-Marfa-Read-View`, to resume or to read the working copy's data.",
+};
+
+/**
+ * The frames of `GET /events`, and the bodies of the webhook deliveries built
+ * from the same events. Built when the document is, not when this module
+ * loads: the event names come from `routes/webhooks.ts`, which reaches this
+ * module through `openapi.ts`, so they may not exist yet at load.
+ */
+function eventSchemas(): Record<string, unknown> {
+  const itemEvents = WEBHOOK_EVENTS.filter((name) => !name.startsWith("edge."));
+  const edgeEvents = WEBHOOK_EVENTS.filter((name) => name.startsWith("edge."));
+  const marker = (name: string) => ({
+    type: "string",
+    const: name,
+    description: "The frame's name, which is also its `event:`.",
+  });
+  const deliveryFields = {
+    type: "object",
+    properties: {
+      event_id: {
+        type: "string",
+        description:
+          "The event's ID in the log, the same as its `id:` on `GET /events`.",
+      },
+      delivery_id: {
+        type: "string",
+        description:
+          "The ID of the delivery, the same on every attempt. Use it to recognize a repeat.",
+      },
+      delivered_at: {
+        type: "string",
+        description: "When Marfa sent this attempt, in UTC.",
+      },
+    },
+    required: ["event_id", "delivery_id", "delivered_at"],
+  };
+  return {
+    ItemEventFrame: {
+      type: "object",
+      description:
+        "An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions.",
+      properties: {
+        event_type: {
+          type: "string",
+          enum: itemEvents,
+          description: "The event, which is also the frame's `event:`.",
+        },
+        item: described(
+          "Item",
+          "The item after the change. On `item.deleted` and `item.purged` of an item a cascade trashed, it carries `trashed_by_cascade`, and `trashed_with` if you can read that item's type.",
+        ),
+        metadata: {
+          oneOf: [schemaRef("Metadata"), { type: "null" }],
+          description:
+            "The item's tags and extensions after the change, with only the namespaces you can read. The stream leaves it out when the event carries none, and a webhook sends `null`.",
+        },
+        restored_with: {
+          type: "string",
+          description:
+            "On `item.restored` of an item another item's restore brought back: the ID of that item, if you can read its type.",
+        },
+        listed: {
+          type: "boolean",
+          description:
+            "Only on a copy stream: `true` if the item is in the set you can list, `false` if you can read it only by ID.",
+        },
+      },
+      required: ["event_type", "item"],
+    },
+    EdgeEventFrame: {
+      type: "object",
+      description:
+        "An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`.",
+      properties: {
+        event_type: {
+          type: "string",
+          enum: edgeEvents,
+          description: "The event, which is also the frame's `event:`.",
+        },
+        edge: described(
+          "Edge",
+          "The edge after the change, or before it for `edge.deleted`.",
+        ),
+        source_type: {
+          type: "string",
+          description:
+            "The type of the edge's source item when the event happened.",
+        },
+        purged_with: {
+          type: "string",
+          description:
+            "On `edge.deleted` of an edge a purge removed: the ID of the purged item.",
+        },
+      },
+      required: ["event_type", "edge"],
+    },
+    StreamCursorFrame: {
+      type: "object",
+      description:
+        "The stream's first frame, with no `id:`: where the log stood when the stream opened. If Marfa can't read the log within 5 seconds, an ordinary stream leaves it out, so don't wait for it, and a copy stream ends with `stream_incomplete`.",
+      properties: {
+        event_type: marker("stream_cursor"),
+        cursor: {
+          type: "string",
+          description:
+            "The ID of the latest event in the log, or `0` if it's empty. Read state after this frame, and you can resume from this ID without missing a change.",
+        },
+        instance_id: COPY_INSTANCE_ID,
+        read_view: COPY_READ_VIEW,
+      },
+      required: ["event_type", "cursor"],
+    },
+    StreamLiveFrame: {
+      type: "object",
+      description:
+        "Sent once, with no `id:`, when the catch-up is over: everything up to `cursor` has been sent or withheld, and what follows is live. A stream that ends early never sends it.",
+      properties: {
+        event_type: marker("stream_live"),
+        cursor: {
+          type: ["string", "null"],
+          description:
+            "A position you can resume from without receiving again what the catch-up covered. `null` only when Marfa couldn't read the log in time and had nothing to replay.",
+        },
+        instance_id: COPY_INSTANCE_ID,
+        read_view: COPY_READ_VIEW,
+      },
+      required: ["event_type", "cursor"],
+    },
+    StreamIncompleteFrame: {
+      type: "object",
+      description:
+        "The last frame, with no `id:`, when the stream can no longer deliver what it opened with. Marfa sends nothing past the gap, so reconnect with the last `id:` you received. `reader_behind` comes when 4 MiB of frames wait unread, or when you take none for 30 seconds during the catch-up.",
+      properties: {
+        event_type: marker("stream_incomplete"),
+        reason: {
+          type: "string",
+          enum: [...STREAM_INCOMPLETE_REASONS],
+          description:
+            "`replay_failed`: catch-up failed. `backlog_overflow`: changes piled up as it opened. `live_delivery_failed`: live events failed. `credential_ended`: your credential ended. `reader_behind`: you fell behind. `server_stopping`: Marfa is stopping.",
+        },
+        cursor: {
+          type: ["string", "null"],
+          description:
+            "The ID of the last event the stream sent, or `null` if it sent none.",
+        },
+      },
+      required: ["event_type", "reason", "cursor"],
+    },
+    CatchupTooOldFrame: {
+      type: "object",
+      description:
+        "The last frame when the log no longer holds the events after your `Last-Event-ID`. Read state again from the API, then open a new stream. On an ordinary stream its `id:` is `min_retained_id`: don't resume from it.",
+      properties: {
+        event_type: marker("catchup_too_old"),
+        min_retained_id: {
+          type: "string",
+          description: "The ID of the oldest event the log still holds.",
+        },
+        requested: {
+          type: "string",
+          description: "The `Last-Event-ID` you sent.",
+        },
+      },
+      required: ["event_type", "min_retained_id", "requested"],
+    },
+    CursorAheadFrame: {
+      type: "object",
+      description:
+        "The last frame, with no `id:`, when your `Last-Event-ID` is past the latest event in the log, as after the instance is restored to an earlier state. Read state again from the API.",
+      properties: {
+        event_type: marker("cursor_ahead"),
+        requested: {
+          type: "string",
+          description: "The `Last-Event-ID` you sent.",
+        },
+        head: {
+          type: "string",
+          description: "The ID of the latest event in the log.",
+        },
+      },
+      required: ["event_type", "requested", "head"],
+    },
+    ReadViewChangedFrame: {
+      type: "object",
+      description:
+        "The last frame of a copy stream, with no `id:`, when its read view changes, such as after a retype or a narrowed key. Rebuild the working copy.",
+      properties: { event_type: marker("read_view_changed") },
+      required: ["event_type"],
+    },
+    EventStreamFrame: {
+      description:
+        "One frame of `GET /events`. Its `event_type` is also its `event:`.",
+      oneOf: [
+        "StreamCursorFrame",
+        "ItemEventFrame",
+        "EdgeEventFrame",
+        "StreamLiveFrame",
+        "StreamIncompleteFrame",
+        "CatchupTooOldFrame",
+        "CursorAheadFrame",
+        "ReadViewChangedFrame",
+      ].map(schemaRef),
+    },
+    WebhookItemEvent: {
+      description: "The body of a webhook delivery of an item event.",
+      allOf: [
+        schemaRef("ItemEventFrame"),
+        {
+          ...deliveryFields,
+          required: [...deliveryFields.required, "metadata"],
+        },
+      ],
+    },
+    WebhookEdgeEvent: {
+      description: "The body of a webhook delivery of an edge event.",
+      allOf: [schemaRef("EdgeEventFrame"), deliveryFields],
+    },
+    WebhookEvent: {
+      description:
+        "The body of a webhook delivery: the event, with its ID and the delivery's.",
+      oneOf: [schemaRef("WebhookItemEvent"), schemaRef("WebhookEdgeEvent")],
+    },
+  };
+}
+
+/**
+ * The requests Marfa sends to a webhook's URL, as the top-level `webhooks`
+ * of the document.
+ */
+function webhookRequests(): Record<string, unknown> {
+  return {
+    event: {
+      post: {
+        operationId: "receiveWebhookEvent",
+        tags: ["Webhooks"],
+        summary: "Receive an event",
+        description:
+          "Marfa sends this request to a webhook's `url` for each event it subscribes to, with only what the webhook's credential can read when it's sent. A delivery can arrive more than once: use `delivery_id` to recognize a repeat.",
+        parameters: [
+          {
+            name: "X-Marfa-Signature",
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+            description:
+              "`t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw body>` under the webhook's `secret`. Check it, and that `t` is recent, before you trust the body.",
+          },
+          {
+            name: "X-Marfa-Event-Type",
+            in: "header",
+            required: true,
+            schema: { type: "string", enum: [...WEBHOOK_EVENTS] },
+            description: "The event, the same as `event_type` in the body.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: schemaRef("WebhookEvent") },
+          },
+        },
+        responses: {
+          "2XX": {
+            description:
+              "Marfa records the delivery as `success`. It doesn't read the response body.",
+          },
+          default: {
+            description:
+              "Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `dead_letter`.",
+          },
+        },
+      },
+    },
+  };
+}
+
+const EXAMPLE_ITEM_ID = "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b";
+const EXAMPLE_TIME = "2026-10-03T09:30:00.000Z";
+
+/** A stream opened without a cursor, as it reads on the wire. */
+const STREAM_EXAMPLE = [
+  ": connected",
+  "",
+  "event: stream_cursor",
+  `data: ${JSON.stringify({ event_type: "stream_cursor", cursor: "1041" })}`,
+  "",
+  "event: stream_live",
+  `data: ${JSON.stringify({ event_type: "stream_live", cursor: "1041" })}`,
+  "",
+  "id: 1042",
+  "event: item.created",
+  `data: ${JSON.stringify({
+    event_type: "item.created",
+    item: {
+      id: EXAMPLE_ITEM_ID,
+      type: "core.note",
+      properties: {
+        title: "Reading list",
+        body: "Finish the chapter on tides.",
+      },
+      state: "active",
+      tier: "library",
+      version: 1,
+      schema_version: 0,
+      source: "notes-app",
+      occurred_at: EXAMPLE_TIME,
+      created_at: EXAMPLE_TIME,
+      updated_at: EXAMPLE_TIME,
+    },
+    metadata: { item_id: EXAMPLE_ITEM_ID, tags: [], extensions: {} },
+  })}`,
+  "",
+  "",
+].join("\n");
+
 /**
  * Consumer routes defined as plain Hono handlers, invisible to the
  * `createRoute` reflection. Documented here so the reference is complete.
@@ -698,16 +1036,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Event stream"],
       summary: "Stream change events",
       description:
-        "Opens a Server-Sent Events stream of item and edge changes the caller can read. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
-        'For a certified working copy, use exactly `?edges=all&copy=1`. Bootstrap omits both resume headers; resumption sends both `Last-Event-ID` and `X-Marfa-Read-View`. Its no-id `stream_cursor` and `stream_live` markers contain exact string fields `event_type`, `cursor`, `instance_id` and `read_view`. A known coherent head is required; failed opening reads end incomplete without a certificate. Only completed replay and held-frame delivery produce `stream_live`. Copy item and metadata frames additionally carry boolean `listed`, classifying item-set membership independently of direct-ID read authority. A view that changes after the stream opens sends only the no-id terminal `read_view_changed` with data `{"event_type":"read_view_changed"}` and closes. Copy markers use body certificates, never the HTTP response certificate header. The remaining ordinary-stream rules apply except where these copy guarantees are stricter.\n\n' +
-        'The stream opens with a `stream_cursor` frame, carrying `{ "event_type": "stream_cursor", "cursor": "<event id>" }`, the log position the stream opened at. It does not wait for anything to happen, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
-        "For an ordinary stream, treat the frame as the first one delivered rather than as guaranteed. Reading the head is bounded, so a stream opened while the database is not answering carries no cursor instead of holding its events back, and a client that receives none proceeds with no cursor of its own. Do not gate hydration on its arrival.\n\n" +
-        'Once the replay is done, and the live frames held while it ran are drained, the stream sends a `stream_live` frame, carrying `{ "event_type": "stream_live", "cursor": "<event id>" | null }` and no SSE `id:`. It says the prologue is over: everything up to `cursor` has been sent or withheld, and what follows is live. A frame the `type` filter or the credential withholds is not written at all, so a client cannot otherwise tell that it has caught up, and its cursor is one a client may resume from without being sent again what the replay covered. It is null only where no position is known: a head read that outran its budget with nothing to replay. A stream that ends short never sends it.\n\n' +
-        "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.\n\n" +
-        "An item frame carries `event_type` and `item`, and an edge frame `event_type`, `edge` and `source_type`, the type of the edge's source item when the event was published. An edge frame reaches a subscriber that may read its edge type and that `source_type`, on a replay as on a live frame, so the edges a purge takes reach only a subscriber that could read the purged item. An `item.restored` frame for a row another item's restore brought back, by `POST /items/{id}/restore`, a transition out of the bin or a bulk transition, also carries `restored_with` naming that item, to a subscriber that may read that item's type; an `edge.deleted` frame for an edge a purge took also carries `purged_with` naming the purged item. No other frame carries either. The `item` of an `item.deleted` or `item.purged` frame for a row a cascade trashed carries `trashed_by_cascade`, and `trashed_with` naming the item that trash named, to a subscriber that may read its type.\n\n" +
-        'A stream that can no longer deliver what it opened with sends a terminal `stream_incomplete` frame, `{ "event_type": "stream_incomplete", "reason": "\u2026", "cursor": "<event id>" | null }`, and closes. `reason` is one of `replay_failed` (the catch-up failed), `backlog_overflow` (the frames held while the stream opened outgrew their buffer), `live_delivery_failed` (the subscription or a read of the credential failed), `credential_ended` (the credential no longer stands: a key revoked, deleted or past its expiry, a sign-in token revoked or expired, or its app disconnected), `reader_behind` (a live frame found 4 MiB of frames unread, or the client took no frame for 30 seconds while a replay, which waits for room before every frame, waited for it) or `server_stopping` (the instance is stopping, and sends this to every stream it has open before it closes them). Nothing after the gap is ever sent, so the last `id:` received is still the last event held and the recovery is to reconnect with it: the frame carries no `id:` of its own for that reason, and `cursor` repeats the position for a client that is not tracking one. That is the opposite of `catchup_too_old`, which says the log can no longer serve the cursor at all and the client has to re-read state instead.\n\n' +
-        "The stream answers to the credential as it stands: it reads it again before each batch of frames and at each heartbeat, every 30 seconds. A key narrowed meanwhile narrows the stream; one that no longer stands ends it with `stream_incomplete` and `credential_ended`, and nothing written after the change is sent. An app reconnects with the token it refreshed to.\n\n" +
-        'A `Last-Event-ID` past the log\'s head is a position the log never issued, which is what a client holds after the instance is restored behind it. The stream answers a terminal `cursor_ahead` frame, `{ "event_type": "cursor_ahead", "requested": "<event id>", "head": "<event id>" }`, with no SSE `id:`, and closes; the client re-reads state from the API, as for `catchup_too_old`.',
+        "Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.",
       security: [{ bearerAuth: [] }],
       parameters: [
         {
@@ -716,12 +1045,12 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string", enum: ["1"] },
           description:
-            "Select certified copy mode; requires explicit edges=all and forbids every other query key.",
+            "Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `read_view`, and its item frames carry `listed`.",
         },
         {
           ...READ_VIEW_PARAMETER,
           description:
-            "In copy mode, send one certificate together with Last-Event-ID to resume. Bootstrap omits both headers. This header is invalid on an ordinary stream.",
+            "On a copy stream, the `read_view` from the last `stream_cursor` or `stream_live` you received. Send it with `Last-Event-ID` to resume, and leave both out to start a new copy.",
         },
         {
           name: "type",
@@ -729,7 +1058,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Comma-separated item types, up to 10 entries, resolved exactly as the same parameter on `/items`, `/search` and `/export`: an entry nothing registers is refused `400 unknown_type`, a registered one the credential may not read is refused `403 type_not_permitted`, and a wildcard streams the types it matches that the credential may read. A named type covers its subtree, so `core.media` delivers `core.media.song`, and a type that declares `core.media` as its parent answers too even when its identifier sits in another namespace. The explicit `core.media.*` spelling means the same thing. The global `*` is rejected rather than accepted, as it is on those surfaces (to receive everything, omit the parameter), and so is any entry outside the type-identifier grammar. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
+            "Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type.",
         },
         {
           name: "edges",
@@ -737,7 +1066,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string", enum: ["all", "none"], default: "all" },
           description:
-            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored. It is your own parameter and narrows nothing else: every edge frame is separately held to the two permissions `GET /edges/{id}` asks for, read on the edge type and read on the source item's type, on a replay exactly as on a live frame.",
+            "Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`.",
         },
         {
           name: "Last-Event-ID",
@@ -745,25 +1074,31 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Resume from this event id, replaying events the client missed. It must be an id the log issued, written as a decimal number with no sign, spaces or leading zeros; anything else is refused `400 validation_error`, and an id past the log's head is answered with a terminal `cursor_ahead` frame. Empty is no cursor only for an ordinary stream; copy mode refuses it.",
+            "The ID of the last event you received. Marfa replays every event after it that the log still holds, then goes live. Send it as the stream wrote it. Empty means none, except on a copy stream.",
         },
       ],
       responses: {
         "200": {
-          description: "A `text/event-stream` of item and edge change events.",
-          content: { "text/event-stream": { schema: { type: "string" } } },
+          description:
+            "Returns the stream. Each frame's `event:` names it:\n- `stream_cursor`: first, where the log stands.\n- An event, such as `item.created`, with its event ID as `id:`.\n- `stream_live`: once the catch-up is over.\n- `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `read_view_changed`: last, before the stream closes.",
+          content: {
+            "text/event-stream": {
+              schema: { $ref: "#/components/schemas/EventStreamFrame" },
+              example: STREAM_EXAMPLE,
+            },
+          },
         },
         "400": chainRefusal(
           ["validation_error", "unknown_type"],
-          "- `validation_error`: more than 10 `type` entries, a `type` entry that is `*` or outside the type-identifier grammar, an `edges` value outside the enum, a `Last-Event-ID` that is not a decimal event ID, or, in copy mode, an extra or duplicate query key, an empty or malformed header, or one resume header without the other.\n- `unknown_type`: a `type` entry nothing registers.",
+          "- `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Read-View`.\n- `unknown_type`: a `type` entry isn't registered.",
         ).response,
         "403": chainRefusal(
           ["type_not_permitted"],
-          "The credential reaches no type, or a `type` entry names a registered type it cannot read and none under it. Otherwise the stream is narrowed to the types it reads.",
+          "- `type_not_permitted`: you can't read any type, or a `type` entry names a type you can't read, with no subtype you can.",
         ).response,
         "503": chainRefusal(
-          ["stream_capacity_exhausted"],
-          "This instance is already serving its maximum number of live viewers. Only a deployment that sets a viewer cap answers this.",
+          ["stream_capacity_exhausted", "write_contention"],
+          `- \`stream_capacity_exhausted\`: the instance is serving as many streams as its operator allows. Try again later.\n- ${WRITE_CONTENTION_TEXT}`,
         ).response,
       },
     },
@@ -1030,6 +1365,10 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   for (const refusal of WRITTEN_REFUSALS) {
     schemas[refusal.name] ??= refusal.schema;
   }
+  for (const [name, schema] of Object.entries(eventSchemas())) {
+    if (name in schemas) throw new Error(`Schema ${name} is defined twice`);
+    schemas[name] = schema;
+  }
 
   spec.components = {
     ...(spec.components ?? {}),
@@ -1038,5 +1377,6 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   };
 
   spec.paths = nextPaths;
+  spec.webhooks = webhookRequests();
   return spec;
 }
