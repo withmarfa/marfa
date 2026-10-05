@@ -98,9 +98,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * A failed query's message names the values it was bound to, and an exception
  * event carries that message and a stack that repeats it. No attribute name
- * says so, so every text value is held to it, however deeply a log record
- * nests it: the message, the stack, and the serialized error an application
- * log line carries.
+ * says so, so every text value is held to it, to {@link MAX_VALUE_DEPTH}
+ * levels of nesting: the message, the stack, and the serialized error an
+ * application log line carries.
  */
 function withoutParameters(value: unknown, depth = 0): unknown {
   if (typeof value === "string") return withoutQueryParameters(value);

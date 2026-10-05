@@ -1,6 +1,7 @@
 /**
- * Every place that turns a caught error into text goes through
- * `error-text.ts`.
+ * No source file turns a caught error into text by hand, in the three forms
+ * the server has used, outside `error-text.ts`. Other forms, such as `${err}`
+ * in a template or `err.message` read after a narrowing `if`, are not read.
  *
  * **A census, because the failure it prevents is silent.** A failed query's
  * message carries the values it was bound to, and `err.message` or
