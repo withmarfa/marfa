@@ -10354,7 +10354,9 @@ describe("where a file sits", () => {
     const unsuited =
       "a file at the path would be another kind of file than the item";
     expect(
-      pulled.value.flagged.filter((file) => file.flag === "unsuited"),
+      pulled.value.flagged
+        .filter((file) => file.flag === "unsuited")
+        .sort((one, other) => one.path.localeCompare(other.path)),
       "the pull counted an item it did not write without naming it",
     ).toEqual([
       { path: "data.md", flag: "unsuited", reason: unsuited, item: image },
@@ -15013,7 +15015,8 @@ describe("a file that is not a document", () => {
     expect(
       offline.value.flagged
         .filter((file) => file.flag === "absent")
-        .map((file) => [file.item, file.path]),
+        .map((file) => [file.item, file.path])
+        .sort(),
       "the pull counted a file item whose bytes it could not have without naming it",
     ).toEqual([
       ["01a00000-0000-7000-8000-0000000000f1", "photo.png"],
