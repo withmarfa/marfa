@@ -48,6 +48,9 @@ async function seed(path: string, sql: string): Promise<void> {
   client.close();
 }
 
+const A_ROW =
+  "\nINSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z');";
+
 function digest(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -78,7 +81,7 @@ describe("a database whose schema is not this build's", () => {
     ["edge_blob_references", "idx_edge_blob_references_edge"],
     ["extension_blob_references", "idx_extension_blob_references_item"],
   ])(
-    "is refused when it holds this build's tables but lacks %s, naming it",
+    "is refused when it holds rows and lacks %s, naming it",
     async (table, index) => {
       // Created empty by the DDL, a missing index table would describe none of
       // the rows the file already holds.
@@ -90,12 +93,14 @@ describe("a database whose schema is not this build's", () => {
       expect(start).toBeGreaterThan(0);
       // Its triggers go with it: SQLite will not create a trigger on a table
       // that is not there.
+      // It holds a row, since a file that lacks tables and holds none is
+      // one this build began creating, and is completed.
       await seed(
         path,
         (SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end))
           .split("\n")
           .filter((line) => !line.includes(`ON \`${table}\``))
-          .join("\n"),
+          .join("\n") + A_ROW,
       );
       const before = digest(path);
 

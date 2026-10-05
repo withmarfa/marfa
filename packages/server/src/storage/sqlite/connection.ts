@@ -130,11 +130,20 @@ function referenceSchema() {
   return reference;
 }
 
+/** The name prefix of each virtual table's shadow tables. */
+function shadowTablePrefixes(objects: Map<string, SchemaObject>): string[] {
+  return [...objects]
+    .filter(([, o]) => o.sql?.startsWith("CREATE VIRTUAL TABLE") === true)
+    .map(([name]) => `${name}_`);
+}
+
 /**
  * How the file's schema differs from this build's, one phrase per object,
  * or none when every table, index and trigger this build declares and the
- * file holds is the one this build would create, and a file holding any of
- * this build's tables holds them all.
+ * file holds is the one this build would create. The tables a file lacks
+ * are returned apart, because whether that is a difference depends on
+ * what the file holds: only a file holding any of this build's tables is
+ * asked, since a new file holds none.
  *
  * **Every difference, because `IF NOT EXISTS` hides every difference.** A
  * missing column fails on the first read of it, a column this build no
@@ -148,15 +157,15 @@ function referenceSchema() {
  * creates or alters a table, an index or a trigger, so no caller can make
  * this refuse an instance.
  */
-async function schemaDifferences(client: Client): Promise<string[]> {
+async function schemaDifferences(
+  client: Client,
+): Promise<{ differences: string[]; missingTables: string[] }> {
   const ref = await referenceSchema();
   const found = await schemaObjects(client);
   const differences: string[] = [];
   // A virtual table's shadow tables are SQLite's to shape and may change
   // with the library; the virtual table's own DDL is what this build chose.
-  const shadowPrefixes = [...ref.objects]
-    .filter(([, o]) => o.sql?.startsWith("CREATE VIRTUAL TABLE") === true)
-    .map(([name]) => `${name}_`);
+  const shadowPrefixes = shadowTablePrefixes(ref.objects);
   for (const [name, object] of found) {
     if (shadowPrefixes.some((prefix) => name.startsWith(prefix))) continue;
     const expected = ref.objects.get(name);
@@ -193,8 +202,8 @@ async function schemaDifferences(client: Client): Promise<string[]> {
   }
   // A table this build declares and the file lacks would be created empty
   // by the DDL below, so a file written before the table existed opens with
-  // an index or a log that silently describes none of its rows. Only a file
-  // that already holds this build's tables is asked: a new file holds none.
+  // an index or a log that silently describes none of its rows.
+  const missingTables: string[] = [];
   const holdsThisBuild = [...found.keys()].some(
     (name) => ref.objects.get(name)?.type === "table",
   );
@@ -206,10 +215,33 @@ async function schemaDifferences(client: Client): Promise<string[]> {
       // absence is no sign of which build wrote the file.
       if (object.sql?.startsWith("CREATE VIRTUAL TABLE") === true) continue;
       if (shadowPrefixes.some((prefix) => name.startsWith(prefix))) continue;
-      differences.push(`the file lacks the ${name} table`);
+      missingTables.push(name);
     }
   }
-  return differences;
+  return { differences, missingTables };
+}
+
+/**
+ * Whether any of this build's tables in `client`'s file holds a row.
+ *
+ * A table this build does not declare is not read: a replication sidecar
+ * keeps its own tables in the file and writes rows to them whatever state
+ * this build's tables are in.
+ */
+async function holdsRows(client: Client): Promise<boolean> {
+  const ref = await referenceSchema();
+  const found = await schemaObjects(client);
+  const shadow = shadowTablePrefixes(ref.objects);
+  for (const [name, object] of ref.objects) {
+    if (object.type !== "table" || !found.has(name)) continue;
+    if (name.startsWith("sqlite_")) continue;
+    if (shadow.some((prefix) => name.startsWith(prefix))) continue;
+    const rows = await client.execute(
+      `SELECT 1 FROM \`${name.replaceAll("`", "``")}\` LIMIT 1`,
+    );
+    if (rows.rows.length > 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -980,12 +1012,24 @@ export async function createConnection(sqlitePath: string): Promise<{
   // there with a driver error naming the index, after the PRAGMAs have
   // rewritten the header, and anything nothing indexes fails nowhere until
   // a request meets it.
-  const differences = await schemaDifferences(client);
-  if (differences.length > 0) {
+  const { differences, missingTables } = await schemaDifferences(client);
+  // A file that lacks some of this build's tables and holds no rows is one
+  // this build began creating and did not finish, and is completed by the
+  // DDL below. The DDL is a series of statements, each applied on its own,
+  // so a start that stopped partway leaves the first of them, and it
+  // inserts nothing, so that file is empty. One that holds rows was
+  // written by another build, and completing it would open the missing
+  // tables empty beside rows they should describe.
+  if (
+    differences.length > 0 ||
+    (missingTables.length > 0 && (await holdsRows(client)))
+  ) {
     client.close();
     throw new RefusedDatabaseError(
-      `The schema in ${sqlitePath} is not this build's: ${differences.join("; ")}. ` +
-        REFUSED_DATABASE_REMEDY,
+      `The schema in ${sqlitePath} is not this build's: ${[
+        ...differences,
+        ...missingTables.map((name) => `the file lacks the ${name} table`),
+      ].join("; ")}. ` + REFUSED_DATABASE_REMEDY,
     );
   }
 

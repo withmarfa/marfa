@@ -89,7 +89,7 @@ An owner backs up an instance by backing up the machine it runs on. The data dir
 
 Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
 
-15. When the server starts on a database whose schema differs from its own, or that still holds a retired registry table or the retired setting `space_config`, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
+15. When the server starts on a database that still holds a retired registry table or the retired setting `space_config`, or whose schema differs from its own and that statement 25 does not complete, it SHALL refuse to start, SHALL change nothing in the file, and SHALL say in its message that the way forward is to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse an archive that build did not write.
 
     Reason: an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. The message does not promise a restore the contract does not.
 
@@ -158,3 +158,11 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
     Reason: a nonce that repeats across responses can be read from one page and carried by an injection into the next.
 
     Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts › uses a nonce of its own for each response`.
+
+## An unfinished database
+
+25. WHEN the server starts on a database that holds some of its own tables and lacks the rest, and none of the tables it creates holds a row, it SHALL create the tables it lacks and start, unless statement 15 refuses the database for holding a retired registry table or the retired setting `space_config`.
+
+    Reason: the server creates its tables one statement at a time, so a start that is stopped partway leaves a database with the first of them. Nothing is written to the server's own tables before the last is made, so none holds a row, and creating the rest leaves what a new database holds. A table the server does not create, such as a replication sidecar's, may hold rows and does not count. Refusing the database would send an owner looking for another build when no other build wrote it. A database that lacks tables and holds a row in one the server creates is not this case, and statement 15 refuses it.
+
+    Tests: `packages/server/src/storage/sqlite/incomplete-database.test.ts › is completed when it holds no rows, and ends as a fresh file does`; `packages/server/src/storage/sqlite/incomplete-database.test.ts › leaves a table this build does not declare alone while completing`.

@@ -13,6 +13,8 @@ import type { BulkActionJobLease } from "../interface.js";
 
 let storage: Awaited<ReturnType<typeof createSqliteStorage>>;
 let directory: string;
+const AN_API_KEY_ROW =
+  "INSERT INTO api_keys (id, key_hash, label, source, created_at) VALUES ('k1', 'h1', 'acme', 'integration:acme/thing', '2026-01-01T00:00:00.000Z')";
 const clock = Date.now();
 const at = (offset: number) => new Date(clock + offset).toISOString();
 beforeEach(async () => {
@@ -329,6 +331,8 @@ it.each(["checkpoint columns", "carried ledger", "hash ledger"] as const)(
     expect(sql).not.toBe(SCHEMA_SQL);
     const raw = createClient({ url: `file:${path}` });
     await raw.executeMultiple(sql);
+    // A file that lacks tables and holds no rows is completed, not refused.
+    if (missing !== "checkpoint columns") await raw.execute(AN_API_KEY_ROW);
     raw.close();
     await expect(createSqliteStorage(path)).rejects.toThrow(
       missing === "checkpoint columns"
