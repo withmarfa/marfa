@@ -147,6 +147,8 @@ const DisplayHintsSchema = z
   .openapi("DisplayHints");
 
 const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
+const DISPLAY_HINTS = "Which fields clients show as an item's title and body.";
+const VERSION_POLICY = "How long Marfa keeps the versions of the type's items.";
 const COMPATIBLE_WITH = "The types this one is a structural superset of.";
 
 const LinkFieldSchema = z
@@ -186,6 +188,14 @@ const VersionPolicySchema = z
     "How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults.",
   )
   .openapi("VersionPolicy");
+
+/** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
+export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
+  Record<string, z.ZodType>
+> = {
+  DisplayHints: DisplayHintsSchema,
+  VersionPolicy: VersionPolicySchema,
+};
 
 /**
  * A type as the two authoring doors take it.
@@ -251,9 +261,9 @@ const typeDefinitionBody = {
     .describe(
       `${COMPATIBLE_WITH} Marfa checks the claim when you save the type. A bare string names one type.`,
     ),
-  display_hints: DisplayHintsSchema.optional(),
+  display_hints: DisplayHintsSchema.optional().describe(DISPLAY_HINTS),
   link_field: LinkFieldSchema.optional(),
-  version_policy: VersionPolicySchema.optional(),
+  version_policy: VersionPolicySchema.optional().describe(VERSION_POLICY),
   merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
 };
 
@@ -400,9 +410,9 @@ const TypeSchemaResponse = z
     version: z
       .number()
       .describe("The version number the type was last saved with."),
-    display_hints: DisplayHintsSchema.optional(),
+    display_hints: DisplayHintsSchema.optional().describe(DISPLAY_HINTS),
     link_field: LinkFieldSchema.optional(),
-    version_policy: VersionPolicySchema.optional(),
+    version_policy: VersionPolicySchema.optional().describe(VERSION_POLICY),
     merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
   })
   .describe(

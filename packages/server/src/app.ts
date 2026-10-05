@@ -66,6 +66,9 @@ import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { configRoutes } from "./routes/config.js";
 import { DESCRIBED_ONLY_BY_REFERENCE } from "./routes/_schemas.js";
+import { ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/items.js";
+import { TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/types.js";
+import { BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./bulk-actions/types.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
@@ -712,7 +715,12 @@ export function createApp(
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
   // OpenAPI spec — generated from route definitions
-  for (const [name, schema] of Object.entries(DESCRIBED_ONLY_BY_REFERENCE)) {
+  for (const [name, schema] of Object.entries({
+    ...DESCRIBED_ONLY_BY_REFERENCE,
+    ...ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE,
+    ...TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE,
+    ...BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE,
+  })) {
     app.openAPIRegistry.register(name, schema);
   }
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {

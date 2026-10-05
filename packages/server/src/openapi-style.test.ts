@@ -148,9 +148,9 @@ const CEILINGS = {
   descriptionLength: 0,
   parameterUndescribed: 0,
   parameterLength: 0,
-  schemaUndescribed: 35,
-  fieldUndescribed: 123,
-  fieldLength: 6,
+  schemaUndescribed: 0,
+  fieldUndescribed: 0,
+  fieldLength: 0,
   responseLength: 0,
 };
 

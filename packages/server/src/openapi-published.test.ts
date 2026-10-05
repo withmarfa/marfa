@@ -53,7 +53,16 @@ function openRefusals(document: Record<string, unknown>): string[] {
       string,
       { properties?: Record<string, unknown> }
     >;
-    const error = properties.error;
+    // A described reference reaches here as `allOf`, the error block in one
+    // branch and the field's own text in the other.
+    const error =
+      properties.error === undefined
+        ? undefined
+        : ((
+            (properties.error as { allOf?: (typeof properties)[string][] })
+              .allOf ?? [properties.error]
+          ).find((branch) => branch.properties !== undefined) ??
+          properties.error);
     if (error === undefined) {
       // The registration's `415` is the sign-in library's own shape, which
       // names its code beside the message rather than under `error`.

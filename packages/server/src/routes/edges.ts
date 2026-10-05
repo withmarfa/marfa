@@ -28,6 +28,7 @@ import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
+  REFUSAL_TEXT,
   makeErrorResponseSchema,
 } from "../openapi.js";
 import {
@@ -78,7 +79,7 @@ import { pageLimit, pageCursor } from "../page-limits.js";
  */
 const EdgeConflictSchema = z
   .object({
-    error: VersionConflictErrorSchema,
+    error: VersionConflictErrorSchema.describe(REFUSAL_TEXT.error),
     current: EdgeSchema.describe(
       "The edge as it stands now. Merge your change over it and try again.",
     ),

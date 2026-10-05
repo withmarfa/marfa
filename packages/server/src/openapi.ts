@@ -394,8 +394,9 @@ export function makeErrorResponseSchema<
 
 export const OkResponseSchema = z
   .object({
-    ok: z.literal(true),
+    ok: z.literal(true).describe("Always `true`."),
   })
+  .describe("Confirms that the request succeeded.")
   .openapi("Ok");
 
 /** The 403 of a door behind `operatorOnly`. */

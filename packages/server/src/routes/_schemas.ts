@@ -29,6 +29,7 @@ import {
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 import { MAX_TAG_LENGTH } from "../tag-limits.js";
+import { REFUSAL_TEXT } from "../openapi.js";
 
 /**
  * The lifecycle states an item can be in, as a Zod enum.
@@ -46,6 +47,9 @@ import { MAX_TAG_LENGTH } from "../tag-limits.js";
  */
 export const ItemStateEnum = z
   .enum(ITEM_STATES as unknown as [ItemState, ...ItemState[]])
+  .describe(
+    "An item's lifecycle state. `active`: in use, and what a listing returns by default. `archived`: kept and readable by ID, but left out of a default listing. `trashed`: in the trash until restored or purged. `revoked`: retired for good, on `system.*` items only.",
+  )
   .openapi("ItemState");
 
 /**
@@ -56,7 +60,12 @@ export const ItemStateEnum = z
  * one, and a generated client then carries one type per door for one
  * vocabulary.
  */
-export const TierEnum = z.enum(["library", "feed"]).openapi("Tier");
+export const TierEnum = z
+  .enum(["library", "feed"])
+  .describe(
+    "Which layer an item sits in. `library`: what a person chose to keep. `feed`: what arrives in volume from connectors and capture, as it came.",
+  )
+  .openapi("Tier");
 
 /** The instance-wide permissions a credential can hold. */
 export const PermissionEnum = z
@@ -209,78 +218,130 @@ export const NextCursorSchema = z
  * response, which is the first page of that type's edges, cut at 50 by
  * default, that `GET /items/{id}/edges?edge_type=X&cursor=...` continues.
  */
-export const EdgePageSchema = pageOf(EdgeSchema, "EdgePage");
+export const EdgePageSchema = pageOf(EdgeSchema, "EdgePage", {
+  page: "A page of edges.",
+  data: "The edges on this page.",
+});
+
+/** The extension namespaces a credential may read, on every answer that
+ *  carries them. */
+export const READABLE_EXTENSIONS_TEXT =
+  "The item's extension namespaces that you can read, each mapped to its data.";
 
 export const ItemSchema = z
   .object({
-    id: z.string(),
-    type: z.string(),
-    properties: z.record(z.string(), z.unknown()),
-    state: ItemStateEnum,
-    /** Optional — `system.*` items have no tier. */
-    tier: TierEnum.optional(),
-    version: z.number(),
-    schema_version: z.number().int(),
-    source: z.string(),
-    source_id: z.string().optional(),
-    capture_latitude: z.number().optional(),
-    capture_longitude: z.number().optional(),
-    occurred_at: z.string(),
-    created_at: z.string(),
-    updated_at: z.string(),
+    id: z.string().describe("Unique identifier for the item."),
+    type: z
+      .string()
+      .describe("The item's type identifier, such as `core.note`."),
+    properties: z
+      .record(z.string(), z.unknown())
+      .describe("The item's properties, by name."),
+    state: ItemStateEnum.describe("The item's lifecycle state."),
+    tier: TierEnum.optional().describe(
+      "The item's tier. Absent on `system.*` items, which have none.",
+    ),
+    version: z
+      .number()
+      .describe(
+        "The item's version. It starts at 1 and goes up by one on each update.",
+      ),
+    schema_version: z
+      .number()
+      .int()
+      .describe(
+        "The `version` the item's type had when the item was created. Marfa doesn't act on it.",
+      ),
+    source: z
+      .string()
+      .describe(
+        "The source the item was written under: the writer's own, or one its key claims. It never changes.",
+      ),
+    source_id: z
+      .string()
+      .optional()
+      .describe(
+        "The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none.",
+      ),
+    capture_latitude: z
+      .number()
+      .optional()
+      .describe(
+        "The latitude where the item was captured. Absent if the writer set none.",
+      ),
+    capture_longitude: z
+      .number()
+      .optional()
+      .describe(
+        "The longitude where the item was captured. Absent if the writer set none.",
+      ),
+    occurred_at: z
+      .string()
+      .describe(
+        "When the item happened, in UTC. Defaults to when it was created.",
+      ),
+    created_at: z.string().describe("When the item was created, in UTC."),
+    updated_at: z
+      .string()
+      .describe(
+        "When the item was last written, in UTC. A tag or extension write moves it too.",
+      ),
     trashed_by_cascade: z
       .boolean()
       .optional()
       .describe(
-        "Always `true` where present: on an item a trash took into the bin through a cascading edge such as `parent-of`, for as long as the item stays in the bin, even once the item that trash named is purged, to any caller that may read the item. Absent on a row trashed on its own and on every row out of the bin. A connector reads it to tell a trash the person made from one a cascade made.",
+        "Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own.",
       ),
     trashed_with: z
       .string()
       .optional()
       .describe(
-        "The item whose trash took this one into the bin, beside `trashed_by_cascade`, whatever became of that item since. Answered only to a caller that may read that item's type.",
+        "The ID of the item whose trash took this one into the trash, beside `trashed_by_cascade`, whatever became of that item since. Present only if you can read that item's type.",
       ),
-    /**
-     * Hydrated outbound edges per type. Always populated on single-item GETs;
-     * opt-in on list GETs via ?include=edges. An empty object means no edges
-     * or hydration was skipped.
-     */
-    edges: z.record(z.string(), EdgePageSchema).optional(),
-    /**
-     * Hydrated extension namespaces. Opt-in on list GETs via
-     * ?include=extensions; filtered by caller permissions (same rule as
-     * GET /items/:id/extensions). An empty object means no extensions or
-     * hydration was skipped. Absent when the caller did not opt in.
-     */
+    edges: z
+      .record(z.string(), EdgePageSchema)
+      .optional()
+      .describe(
+        "The item's outbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/edges` continues. Absent where an operation doesn't return edges, such as a listing without `include=edges`.",
+      ),
     extensions: z
       .record(z.string(), z.record(z.string(), z.unknown()))
-      .optional(),
+      .optional()
+      .describe(
+        `${READABLE_EXTENSIONS_TEXT} Present only where \`include\` names \`extensions\`.`,
+      ),
   })
+  .describe("An item is one record in Marfa.")
   .openapi("Item");
 
 // MetadataSchema does not include `about` — entity references are carried
 // as first-class `about` edges.
 export const MetadataSchema = z
   .object({
-    item_id: z.string(),
-    tags: z.array(z.string()),
-    extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
+    item_id: z.string().describe("The ID of the item the metadata belongs to."),
+    tags: z.array(z.string()).describe("The item's tags."),
+    extensions: z
+      .record(z.string(), z.record(z.string(), z.unknown()))
+      .describe(READABLE_EXTENSIONS_TEXT),
   })
+  .describe("An item's metadata: its tags and its extension namespaces.")
   .openapi("Metadata");
+
+const THE_ITEM = "The item.";
+const THE_ITEMS_METADATA = "The item's metadata.";
 
 export const ItemWithMetadataSchema = z
   .object({
-    item: ItemSchema,
-    metadata: MetadataSchema,
-    /** Present when the request was accepted and deliberately wrote
-     *  nothing. Two paths produce it, and they answer the same question —
-     *  a create the server has already performed, arriving again: the
-     *  natural-key re-sync of an item the user has trashed, and a create
-     *  repeating an `id` the caller already created. Absent everywhere
-     *  else, so a caller reading it as a boolean sees the distinction
-     *  rather than having to infer it from the state. */
-    acknowledged: z.boolean().optional(),
+    item: ItemSchema.describe(THE_ITEM),
+    metadata: MetadataSchema.describe(THE_ITEMS_METADATA),
+    acknowledged: z
+      .boolean()
+      .optional()
+      .describe(
+        "`true` when Marfa accepted a create and wrote nothing: it repeats an `id` you already created, or its natural key matches an item in the trash. Absent otherwise.",
+      ),
   })
+  .describe("An item with its metadata.")
   .openapi("ItemWithMetadata");
 
 export const ItemReadWithMetadataSchema = ItemWithMetadataSchema.extend({
@@ -290,7 +351,9 @@ export const ItemReadWithMetadataSchema = ItemWithMetadataSchema.extend({
     .describe(
       "Required on conditional copy reads. Whether this item belongs to the effective source-filtered item set, before local type and tier selection.",
     ),
-}).openapi("ItemReadWithMetadata");
+})
+  .describe("An item with its metadata, as a read returns it.")
+  .openapi("ItemReadWithMetadata");
 
 /**
  * How a collision on one field is resolved.
@@ -322,6 +385,18 @@ export const MergePolicySchema = z
   )
   .openapi("MergePolicy");
 
+/** The error block of a `409` that hands back the row beside it. */
+function conflictErrorOf<const C extends string>(code: C, name: string) {
+  return z
+    .object({
+      code: z.literal(code).describe(REFUSAL_TEXT.code),
+      status: z.literal(409).describe("The HTTP status, always `409`."),
+      message: z.string().describe(REFUSAL_TEXT.message),
+    })
+    .describe(`The error block of the \`${code}\` refusal.`)
+    .openapi(name);
+}
+
 /**
  * The refusal block every single-write `version_conflict` carries.
  *
@@ -330,18 +405,30 @@ export const MergePolicySchema = z
  * merge — but the refusal itself is the same three fields on both, and a
  * client branches on `code` without knowing which door answered.
  */
-export const VersionConflictErrorSchema = z
-  .object({
-    code: z.literal("version_conflict"),
-    status: z.literal(409),
-    /** Prose for a person. Branch on `code`, never on this. */
-    message: z.string(),
-  })
-  .openapi("VersionConflictError");
+export const VersionConflictErrorSchema = conflictErrorOf(
+  "version_conflict",
+  "VersionConflictError",
+);
+
+/**
+ * The refusal block of a write based on a version with no snapshot it may
+ * be merged against: none is held, or the writer may not read the one that
+ * is. Distinct from `version_conflict` because it cannot be resolved: there
+ * is no ancestor, so no field can be shown not to have collided, and a
+ * client merging against an empty one spawns siblings holding text nobody
+ * typed.
+ */
+export const AncestorUnavailableErrorSchema = conflictErrorOf(
+  "ancestor_unavailable",
+  "AncestorUnavailableError",
+);
 
 /** What a bulk page did with one entry. */
 export const BulkResultOutcomeEnum = z
   .enum(["created", "updated", "skipped", "errored"])
+  .describe(
+    "What happened to one entry of a bulk write. `created`: it made a new item or edge. `updated`: it changed an existing one. `skipped`: it wrote nothing, for the reason in `reason`. `errored`: it was refused, and `error` says why.",
+  )
   .openapi("BulkResultOutcome");
 
 /**
@@ -354,15 +441,22 @@ export const BulkResultOutcomeEnum = z
  */
 export const BulkEntryErrorSchema = z
   .object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.string(), z.unknown()).optional(),
+    code: z.string().describe(REFUSAL_TEXT.code),
+    message: z.string().describe(REFUSAL_TEXT.message),
+    details: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(REFUSAL_TEXT.details),
   })
+  .describe(
+    "Why one entry of a bulk write is `errored`: the error a single write would return.",
+  )
   .openapi("BulkEntryError");
 
 /** An item's metadata document, as the five metadata doors answer it. */
 export const MetadataResponseSchema = z
-  .object({ metadata: MetadataSchema })
+  .object({ metadata: MetadataSchema.describe(THE_ITEMS_METADATA) })
+  .describe("An item's metadata.")
   .openapi("MetadataResponse");
 
 /** One edge, as the three single-edge doors answer it. */
@@ -384,8 +478,11 @@ export type BulkSkipReason = (typeof BULK_SKIP_REASONS)[number];
 /** What one entry of a bulk page came out as, on either bulk door. */
 export const BulkResultEntrySchema = z
   .object({
-    index: z.number().int(),
-    outcome: BulkResultOutcomeEnum,
+    index: z
+      .number()
+      .int()
+      .describe("The entry's position in the request, counting from 0."),
+    outcome: BulkResultOutcomeEnum.describe("What happened to the entry."),
     id: z
       .string()
       .optional()
@@ -396,20 +493,24 @@ export const BulkResultEntrySchema = z
       .enum(BULK_SKIP_REASONS)
       .optional()
       .describe(
-        "Why a `skipped` entry wrote nothing. `duplicate_source`: under `create_only`, an item with this `source` and `source_id` exists. `duplicate_id`: under `create_only`, an item with this `id` exists. `duplicate_edge`: under `create_only`, an edge with this `source_id`, `target_id` and `edge_type` exists. `trashed`: under `upsert`, the `source` and `source_id` match an item in the trash, which stays there.",
+        "Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item.",
       ),
-    error: BulkEntryErrorSchema.optional(),
+    error: BulkEntryErrorSchema.optional().describe(
+      "Why the entry was refused. Present when `outcome` is `errored`.",
+    ),
   })
+  .describe("What happened to one entry of a bulk write.")
   .openapi("BulkResultEntry");
 
 /** How a bulk page's entries came out, counted by outcome. */
 export const BulkCountsSchema = z
   .object({
-    created: z.number().int(),
-    updated: z.number().int(),
-    skipped: z.number().int(),
-    errored: z.number().int(),
+    created: z.number().int().describe("How many entries were `created`."),
+    updated: z.number().int().describe("How many entries were `updated`."),
+    skipped: z.number().int().describe("How many entries were `skipped`."),
+    errored: z.number().int().describe("How many entries were `errored`."),
   })
+  .describe("How many entries of a bulk write had each outcome.")
   .openapi("BulkCounts");
 
 /** `atomic` on both bulk doors. */
@@ -431,9 +532,12 @@ export const BulkEnableFanoutSchema = z
 /** What a bulk page did, on either bulk door. */
 export const BulkResponseSchema = z
   .object({
-    counts: BulkCountsSchema,
-    results: z.array(BulkResultEntrySchema),
+    counts: BulkCountsSchema.describe("How many entries had each outcome."),
+    results: z
+      .array(BulkResultEntrySchema)
+      .describe("One result per entry, in the order you sent them."),
   })
+  .describe("What a bulk write did with each entry.")
   .openapi("BulkResponse");
 
 /**
@@ -448,68 +552,98 @@ export function nullableRef<T extends z.ZodType>(schema: T) {
   return z.union([schema, z.null()]);
 }
 
+/** The fields a snapshot of an item holds as they were at its version, on
+ *  the history and on a conflict's two sides alike. */
+export const AT_THIS_VERSION = {
+  properties: "The item's properties at this version.",
+  tier: "The item's tier at this version.",
+  occurred_at: "When the item happened, in UTC, at this version.",
+  source_id:
+    "The item's `source_id` at this version, or `null` if it had none.",
+} as const;
+
 export const VersionSchema = z
   .object({
-    id: z.string(),
-    item_id: z.string(),
-    version: z.number(),
-    properties: z.record(z.string(), z.unknown()),
+    id: z.string().describe("Unique identifier for the snapshot."),
+    item_id: z.string().describe("The ID of the item."),
+    version: z.number().describe("The item version the snapshot records."),
+    properties: z
+      .record(z.string(), z.unknown())
+      .describe(AT_THIS_VERSION.properties),
     type: z
       .string()
       .describe(
         "The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it.",
       ),
-    tier: TierEnum,
-    occurred_at: z.string(),
-    source_id: z.string().nullable(),
-    created_at: z.string(),
+    tier: TierEnum.describe(AT_THIS_VERSION.tier),
+    occurred_at: z.string().describe(AT_THIS_VERSION.occurred_at),
+    source_id: z.string().nullable().describe(AT_THIS_VERSION.source_id),
+    created_at: z
+      .string()
+      .describe("When Marfa recorded the snapshot, in UTC."),
   })
+  .describe(
+    "A snapshot of an item as it stood at one version, which Marfa records when the item is updated past it.",
+  )
   .openapi("Version");
 
 /** A page of an item's history, oldest first, holding only the snapshots
  *  the credential may read. */
-export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
+export const VersionPageSchema = pageOf(VersionSchema, "VersionPage", {
+  page: "A page of an item's version snapshots, oldest first.",
+  data: "The snapshots on this page.",
+});
 
 /**
- * The single-item read response. The base shape (`item` with outbound `edges`
- * hydrated, plus `metadata`) is always present; the three optional blocks are
- * opt-in via `?include=` and widen the 1-hop neighborhood the caller gets in
- * one round trip instead of a per-section fan-out:
+ * The single-item read response.
  *
- * - `backrefs` — inbound edges grouped by type (same block shape as `edges`),
- *   capped + cursored per type. Opt in with `include=backrefs`.
- * - `neighbors` — the far-end items of the item's edges (outbound targets and,
- *   when `backrefs` is also requested, inbound sources), each with its metadata
- *   and permission-filtered. Opt in with `include=neighbors`. Paired with
- *   `neighbors_truncated`: the combined neighbor set is capped, and when the cap
- *   bites this flag is `true` — the only signal for that case, since the
- *   per-type edge block's `next_cursor` does not cover a combined-set overflow.
- *   Consumers must page the per-type edge/backref endpoints when it is set.
- * - `neighbors_omitted` — how many of the item's neighbors were left out
- *   because the caller may not read them. Distinct from `neighbors_truncated`,
- *   which is about a bound; this is about permission. Without it a partial
- *   neighborhood reads as a complete one, and a caller missing an edge scope
- *   renders an item with none of its relations as though it had none.
- * - `versions` — the first page of the item's version snapshots, oldest
- *   first, as `GET /items/{id}/versions` answers it, which its `next_cursor`
- *   continues. Opt in with `include=versions`.
+ * `neighbors_truncated` is the only signal that the combined neighbor set
+ * across edge types was capped: each per-type block's `next_cursor` covers
+ * only its own type. `neighbors_omitted` is about permission rather than a
+ * bound; without it a partial neighborhood reads as a complete one.
  */
 export const ItemDetailSchema = z
   .object({
-    item: ItemSchema,
-    metadata: MetadataSchema,
-    backrefs: z.record(z.string(), EdgePageSchema).optional(),
+    item: ItemSchema.describe("The item, with its outbound edges."),
+    metadata: MetadataSchema.describe(THE_ITEMS_METADATA),
+    backrefs: z
+      .record(z.string(), EdgePageSchema)
+      .optional()
+      .describe(
+        "The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. Present with `include=backrefs`.",
+      ),
     listed: z
       .boolean()
       .optional()
       .describe(
         "Required on conditional copy reads; direct authority is independent of this item-set membership.",
       ),
-    neighbors: z.array(ItemReadWithMetadataSchema).optional(),
-    neighbors_truncated: z.boolean().optional(),
-    neighbors_omitted: z.number().int().optional(),
-    versions: VersionPageSchema.optional(),
+    neighbors: z
+      .array(ItemReadWithMetadataSchema)
+      .optional()
+      .describe(
+        "The items you can read at the other end of this answer's edges, each with its metadata: the targets of `item.edges`, and the sources of `backrefs` if you asked for both. Present with `include=neighbors`.",
+      ),
+    neighbors_truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        "`true` if this answer's edges reach more than 100 items, so `neighbors` leaves some out. Page `GET /items/{id}/edges` and `GET /items/{id}/backrefs` for the rest. Present with `include=neighbors`.",
+      ),
+    neighbors_omitted: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "How many neighbors `neighbors` leaves out because you can't read their type. Present with `include=neighbors`.",
+      ),
+    versions: VersionPageSchema.optional().describe(
+      "The first page of the item's version snapshots you can read, oldest first, which `GET /items/{id}/versions` continues. Present with `include=versions`.",
+    ),
   })
+  .describe(
+    "An item as `GET /items/{id}` returns it: the item, its metadata, and the extras `include` asks for.",
+  )
   .openapi("ItemDetail");
 
 /**
@@ -592,8 +726,9 @@ export const EnforcementOverrideSchema = EnforcementReadSchema.describe(
 ).openapi("EnforcementOverride");
 
 /**
- * The named schemas that every field naming them describes in its own words,
- * registered once on the app.
+ * The named schemas that a field naming them describes in its own words,
+ * registered once on the app. The route modules that declare such schemas
+ * export their own record beside this one, and the app registers them all.
  *
  * The generator takes a component's description from the first schema it
  * meets under the component's name, and registered schemas ahead of every
@@ -605,6 +740,20 @@ export const DESCRIBED_ONLY_BY_REFERENCE: Readonly<Record<string, z.ZodType>> =
     ...enforcementRead.levers,
     ...enforcementWrite.levers,
     EnforcementOverride: EnforcementOverrideSchema,
+    // Ahead of the objects whose fields describe them, since a schema is
+    // met as it is generated, in this order.
+    ItemState: ItemStateEnum,
+    Tier: TierEnum,
+    Edge: EdgeSchema,
+    Item: ItemSchema,
+    Metadata: MetadataSchema,
+    MergePolicy: MergePolicySchema,
+    VersionConflictError: VersionConflictErrorSchema,
+    AncestorUnavailableError: AncestorUnavailableErrorSchema,
+    VersionPage: VersionPageSchema,
+    BulkCounts: BulkCountsSchema,
+    BulkResultOutcome: BulkResultOutcomeEnum,
+    BulkEntryError: BulkEntryErrorSchema,
   };
 
 /**
