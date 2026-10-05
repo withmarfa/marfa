@@ -188,6 +188,7 @@ describe("POST /items/bulk-actions purge with expected_ids", () => {
       max_items: 1,
       dry_run: true,
     });
+    expect(unnarrowed.status).toBe(400);
     expect(unnarrowed.error?.error.code).toBe("bulk_cap_exceeded");
 
     const result = await runToCompletion({

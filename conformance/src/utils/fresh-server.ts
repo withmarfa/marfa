@@ -35,6 +35,16 @@ export interface FreshServer {
   /** The SQLite file this server writes to, so a fixture about the write
    *  lock can hold it from outside the process. */
   sqlitePath: string;
+  /**
+   * Stops the server's process without removing its state, runs
+   * `whileStopped` while nothing is writing to the database file, and boots
+   * the server again on the same state. The keys and the data stay; the port
+   * does not, so `apiUrl` is the new one when this resolves.
+   *
+   * For a state the doors refuse to produce, which a fixture arranges in the
+   * stored file and the next boot reads.
+   */
+  restart(whileStopped?: () => void | Promise<void>): Promise<void>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
@@ -72,6 +82,47 @@ export async function stopFreshServers(): Promise<void> {
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) {
     throw new AggregateError(failures, "fixture servers failed to stop");
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The grace a stopped server gets before it is killed outright. */
+const STOP_GRACE_MS = 20_000;
+
+/**
+ * Stops the process a state directory's pid file names, leaving the state.
+ * The server runs as its own process group, so the group is signaled.
+ */
+async function stopProcess(state: string): Promise<void> {
+  const pid = Number(readFileSync(join(state, "server.pid"), "utf8").trim());
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`the pid file under ${state} names no process`);
+  }
+  const signal = (name: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  };
+  signal("SIGTERM");
+  const deadline = Date.now() + STOP_GRACE_MS;
+  while (processAlive(pid) && Date.now() < deadline) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  if (processAlive(pid)) {
+    signal("SIGKILL");
+    while (processAlive(pid)) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
   }
 }
 
@@ -216,13 +267,29 @@ export async function bootFreshServer(
     await stop();
     throw err;
   }
-  return {
+  const server: FreshServer = {
     apiUrl,
     operatorKey,
     workingKey,
     sqlitePath: join(state, "marfa.db"),
+    async restart(whileStopped) {
+      await stopProcess(state);
+      await whileStopped?.();
+      const again = await run("up");
+      if (again.status !== 0) {
+        throw new Error(
+          `could not boot the server again into ${state}:\n${again.output}`,
+        );
+      }
+      const after = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
+      if (!after.MARFA_API_URL) {
+        throw new Error(`the second boot into ${state} wrote no address`);
+      }
+      server.apiUrl = after.MARFA_API_URL;
+    },
     stop,
   };
+  return server;
 }
 
 /**
