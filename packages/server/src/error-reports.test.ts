@@ -15,10 +15,12 @@
  * report before asserting what it does not carry.
  */
 import { EventEmitter } from "node:events";
+import { inspect } from "node:util";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
+import { serve } from "@hono/node-server";
 import { trace } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import {
@@ -35,6 +37,9 @@ import { createErrorHandler } from "./middleware/error-handler.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
 import { itemWrites } from "./storage/item-writes.js";
 import { createTestContext, request, type TestContext } from "./test-utils.js";
+
+/** What the fixture makes the driver say, which is why the statement failed. */
+const REASON = "refused by the fixture";
 
 const CANARY_PROPERTY = "canary-property-7c1e9a52";
 const CANARY_TAG = "canary-tag-4d08b6f3";
@@ -93,7 +98,7 @@ async function refuseInsertsInto(
       __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     }
   ).__sqliteRun(
-    `CREATE TRIGGER refuse_inserts BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'refused by the fixture'); END`,
+    `CREATE TRIGGER refuse_inserts BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, '${REASON}'); END`,
     [],
   );
 }
@@ -129,10 +134,15 @@ async function stopTelemetry(): Promise<void> {
 }
 
 /** Holds each of these sinks to the rule: it received the report, and the value is not in it. */
-function expectNoValue(sinks: Record<string, string>, value: string): void {
+function expectNoValue(
+  sinks: Record<string, string>,
+  value: string,
+  reason = REASON,
+): void {
   for (const [name, text] of Object.entries(sinks)) {
-    // The report arrived, and it still names what failed.
+    // The report arrived, and it still names what failed and why.
     expect.soft(text, `${name} received the report`).toContain("Failed query");
+    expect.soft(text, `${name} gives the driver's reason`).toContain(reason);
     expect.soft(text, `${name} carries the value`).not.toContain(value);
   }
 }
@@ -249,6 +259,7 @@ describe.each(WRITES)("an unhandled failed write of $name", (write) => {
     const error = raised[0] as Error;
     expect(error.message).toContain(write.canary);
     expect(error.stack).toContain(write.canary);
+    expect((error.cause as Error).message).toContain(REASON);
 
     await globalThis.__marfaOtelShutdown?.();
     // The webhook is fire-and-forget; give its request time to land.
@@ -340,5 +351,125 @@ describe("a failed write no request is waiting on", () => {
       },
       CANARY_PROPERTY,
     );
+  });
+});
+
+describe("a read that fails after the response has begun", () => {
+  let ctx: TestContext;
+  let collector: Awaited<ReturnType<typeof startCollector>>;
+  let server: ReturnType<typeof serve>;
+  let url: string;
+  let stdout: string[];
+
+  beforeAll(async () => {
+    collector = await startCollector();
+    ctx = await createTestContext();
+    server = serve({ fetch: ctx.app.fetch, port: 0, hostname: "127.0.0.1" });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    url = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+    await ctx.cleanup();
+    await collector.close();
+  });
+
+  beforeEach(() => {
+    collector.received.length = 0;
+    stdout = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+  });
+
+  afterEach(stopTelemetry);
+
+  it("reaches no sink, the server's own error printing included, with the values the failed statement was bound to", async () => {
+    for (let n = 0; n < 3; n++) {
+      const created = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: `exported ${String(n)}` },
+        },
+      });
+      expect(created.status).toBe(201);
+    }
+    await bootTelemetry(collector.url);
+
+    // The export reads each item's metadata as it streams. The second read
+    // finds the table gone, which fails a real statement after the first
+    // line has been sent and the response has begun.
+    const storage = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    const real = ctx.storage.metadata.get.bind(ctx.storage.metadata);
+    let reads = 0;
+    let raised: Error | undefined;
+    vi.spyOn(ctx.storage.metadata, "get").mockImplementation(async (id) => {
+      reads += 1;
+      if (reads === 2) await storage.__sqliteRun("DROP TABLE metadata", []);
+      try {
+        return await real(id);
+      } catch (error) {
+        raised = error as Error;
+        throw error;
+      }
+    });
+    const printed: unknown[][] = [];
+    const errors = vi
+      .spyOn(console, "error")
+      .mockImplementation((...args: unknown[]) => {
+        printed.push(args);
+      });
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+
+    const response = await fetch(`${url}/export`, {
+      headers: { Authorization: `Bearer ${ctx.workingKey}` },
+    });
+    await response.text().catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(raised).toBeDefined();
+    });
+    await globalThis.__marfaOtelShutdown?.();
+
+    // The witness: the failure carries the id the statement was bound to, in
+    // its message, its stack and its own fields, which is what the server's
+    // printing of an error shows.
+    const failure = raised as Error & { params?: unknown };
+    const bound = String((failure.params as unknown[])[0]);
+    expect(failure.message).toContain(bound);
+    expect(failure.stack).toContain(bound);
+    expect(inspect(failure)).toContain(bound);
+    expect((failure.cause as Error).message).toContain("no such table");
+    // The server answered the failure itself, so the stream ended in error.
+    expect(errors).toHaveBeenCalled();
+
+    expectNoValue(
+      {
+        "the log line on stdout": stdout.join(""),
+        "the exported log record": bodiesAt(collector, (p) =>
+          p.endsWith("/v1/logs"),
+        ),
+        "the exception sent to error tracking": bodiesAt(collector, (p) =>
+          p.startsWith("/batch"),
+        ),
+      },
+      bound,
+      "no such table",
+    );
+    // What the server's own logging printed, as it would print it.
+    expect.soft(inspect(printed, { depth: 10 })).not.toContain(bound);
+    expect.soft(stderr.join("")).not.toContain(bound);
   });
 });

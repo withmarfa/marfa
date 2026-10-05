@@ -1,3 +1,4 @@
+import { reportableError } from "./error-text.js";
 import {
   formatErrorSummary,
   log,
@@ -20,6 +21,24 @@ export function reportFault(
     error_detail: serializeError(err),
   });
   globalThis.__marfaReportException?.(err, details);
+}
+
+/**
+ * What to end a response body with when reading it fails after the response
+ * began, so `onError` never sees the failure.
+ *
+ * The server's own logging of a failed stream prints the error whole, fields
+ * included, and a failed query carries the values it was bound to in its
+ * `query` and `params`. So the failure is reported here, and the stream is
+ * given a copy that carries none of them.
+ */
+export function streamFailure(
+  message: string,
+  err: unknown,
+  details: Record<string, string | undefined> = {},
+): unknown {
+  reportFault(message, err, details);
+  return reportableError(err);
 }
 
 /**

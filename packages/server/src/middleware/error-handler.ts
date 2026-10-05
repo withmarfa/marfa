@@ -3,9 +3,9 @@ import { HTTPException } from "hono/http-exception";
 import { MarfaError } from "@withmarfa/shared";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
-import { log } from "./logger.js";
+import { formatErrorSummary, log, serializeError } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
-import { errorMessage, errorStack, reportableError } from "../error-text.js";
+import { errorStack } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 
@@ -180,13 +180,18 @@ export function createErrorHandler(config: {
       );
     }
 
+    // The summary walks the cause chain, so a failed query reads as its
+    // statement and the driver's reason, with the values it was bound to out.
+    const summary = formatErrorSummary(err);
+
     // `request_id` is the join key to the access-log line for the same
     // request, and the path and method say where it was.
     log("error", "Unhandled error", {
       request_id: c.get("requestId"),
       method: c.req.method,
       path: loggablePath(c.req.path),
-      error: errorMessage(err),
+      error: summary,
+      error_detail: serializeError(err),
       stack: errorStack(err),
     });
 
@@ -200,8 +205,13 @@ export function createErrorHandler(config: {
     // API-only + null-guarded — no-op when OTel is off.
     const span = trace.getActiveSpan();
     if (span) {
-      if (err instanceof Error)
-        span.recordException(reportableError(err) as Error);
+      if (err instanceof Error) {
+        span.recordException({
+          name: err.name,
+          message: summary,
+          stack: errorStack(err),
+        });
+      }
       span.setStatus({ code: SpanStatusCode.ERROR });
     }
 
@@ -211,7 +221,7 @@ export function createErrorHandler(config: {
         {
           timestamp: new Date().toISOString(),
           request_id: c.get("requestId"),
-          error: errorMessage(err),
+          error: summary,
           path: loggablePath(c.req.path),
           method: c.req.method,
           ...(instance && { instance }),

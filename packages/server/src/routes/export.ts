@@ -15,6 +15,8 @@ import { normalizeTimeBound } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
+import { loggablePath } from "../inbound/address.js";
+import { streamFailure } from "../process-faults.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
@@ -303,17 +305,26 @@ export function exportRoutes(
     let linesThisTurn = 1;
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
-        await yieldBulkWork();
-        const limit = linesThisTurn;
-        linesThisTurn = LINES_PER_TURN;
-        for (let taken = 0; taken < limit; taken++) {
-          const next = await lines.next();
-          if (next.done) {
-            controller.close();
-            return;
+        try {
+          await yieldBulkWork();
+          const limit = linesThisTurn;
+          linesThisTurn = LINES_PER_TURN;
+          for (let taken = 0; taken < limit; taken++) {
+            const next = await lines.next();
+            if (next.done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(encoder.encode(next.value));
+            if ((controller.desiredSize ?? 0) <= 0) return;
           }
-          controller.enqueue(encoder.encode(next.value));
-          if ((controller.desiredSize ?? 0) <= 0) return;
+        } catch (err) {
+          controller.error(
+            streamFailure("Export stream failed", err, {
+              request_id: c.get("requestId"),
+              path: loggablePath(c.req.path),
+            }),
+          );
         }
       },
       async cancel() {

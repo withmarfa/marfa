@@ -96,11 +96,17 @@
 
     Tests: `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
 
-25. If a request meets a fault for which the server holds no refusal, or work no request is waiting on fails, then the server SHALL NOT carry the values a failed database statement was bound to in any report of the fault: not in its log, not in the telemetry it exports, not in the exception it sends to error tracking, and not in the notification it sends to the error webhook. The statement itself and the driver's own error stay.
+25. When the server reports a fault of its own that no refusal names, whether the fault ended a request, ended a response body after the response began, or failed work no request was waiting on, the server SHALL NOT carry in the report any value that a failed database statement was bound to, on any sink it writes to: its log, its own printing of a failed response body, the telemetry it exports, the exception it sends to error tracking, and the notification it sends to the error webhook.
 
-    Reason: the values of a failed write are what was being written, its properties, tags and hashes, and each of those destinations is read by people and services the instance's data does not otherwise reach. The statement and the driver's error are what an operator needs to find the fault. A report is read from the instance's own sinks and not over HTTP, so the server's own suite asserts it rather than the referee.
+    Reason: the values of a failed write are what was being written, its properties, tags and hashes, and each of those destinations is read by people and services the instance's data does not otherwise reach. A report is read from the instance's own sinks and not over HTTP, so the server's own suite asserts it rather than the referee.
 
     Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text-census.test.ts`.
+
+26. When the server reports a fault in which a database statement failed, the server SHALL carry in the report the statement, with placeholders where its values were, and the driver's own reason for the failure, except a reason that repeats a value the statement was bound to, which the report withholds.
+
+    Reason: the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint. A driver sometimes quotes a token of the text it was given, such as a malformed search query, and that token is the value 25 keeps out.
+
+    Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text.test.ts`.
 
 ## Codes the fixtures produce
 

@@ -1,8 +1,10 @@
 import { DrizzleQueryError } from "drizzle-orm";
+import { createClient } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { originalErrorMessage } from "./storage/sqlite/transaction-control.js";
 import {
   errorMessage,
+  errorReason,
   errorStack,
   reportableError,
   withoutQueryParameters,
@@ -194,5 +196,64 @@ describe("the original message a transaction failure reports", () => {
     const orphan = new DrizzleQueryError(STATEMENT, ["x", VALUE], undefined);
     expect(orphan.message).toContain(VALUE);
     expect(originalErrorMessage(orphan)).toBe(`Failed query: ${STATEMENT}`);
+  });
+});
+
+describe("the driver's reason beneath a failed query", () => {
+  /** What the real driver raises for a statement, as the query layer would wrap it. */
+  async function failure(
+    sql: string,
+    args: string[],
+    setup: string[] = [],
+  ): Promise<DrizzleQueryError> {
+    const client = createClient({ url: ":memory:" });
+    for (const statement of setup) await client.execute(statement);
+    try {
+      await client.execute({ sql, args });
+    } catch (error) {
+      return new DrizzleQueryError(sql, args, error as Error);
+    }
+    throw new Error("the statement was meant to fail");
+  }
+
+  it("is kept when it names the constraint or the table and not a value", async () => {
+    const failed = await failure(
+      "insert into i(id) values (?), (?)",
+      ["bound-value-3e9d51c0", "bound-value-3e9d51c0"],
+      ["create table i(id text primary key)"],
+    );
+    expect(failed.cause!.message).toContain("UNIQUE constraint");
+    for (const text of [
+      formatErrorSummary(failed),
+      JSON.stringify(serializeError(failed)),
+      errorReason(failed),
+      JSON.stringify(reportableError(failed), ["message", "cause"]),
+    ]) {
+      expect(text).toContain("UNIQUE constraint failed: i.id");
+      expect(text).not.toContain("bound-value-3e9d51c0");
+    }
+  });
+
+  it("is withheld when the driver quotes a token of what the statement was bound to", async () => {
+    const failed = await failure(
+      "select * from t where t match ?",
+      ["canaryzzq:term"],
+      ["create virtual table t using fts5(x)"],
+    );
+    // The witness: the real driver does repeat the token in its message.
+    expect(failed.cause!.message).toContain("canaryzzq");
+
+    for (const text of [
+      formatErrorSummary(failed),
+      JSON.stringify(serializeError(failed)),
+      JSON.stringify(reportableError(failed), ["message", "cause", "stack"]),
+    ]) {
+      expect(text).toContain("Failed query");
+      expect(text).toContain("withheld");
+      expect(text).not.toContain("canaryzzq");
+    }
+    expect(errorReason(failed)).toContain("withheld");
+    expect(errorReason(failed)).not.toContain("canaryzzq");
+    expect(formatErrorSummary(failed)).toContain("SQLITE_ERROR");
   });
 });

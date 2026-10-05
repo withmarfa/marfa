@@ -73,19 +73,86 @@ export function withoutQueryParameters(text: string): string {
   );
 }
 
+const WORD = /[A-Za-z0-9_]{3,}/g;
+
+/** The words of the values each failed query was bound to, held for the driver errors beneath it. */
+const boundWords = new WeakMap<object, ReadonlySet<string>>();
+
+function wordsOf(value: unknown, into: Set<string>, depth = 0): void {
+  if (typeof value === "string") {
+    for (const word of value.match(WORD) ?? []) into.add(word);
+  } else if (typeof value === "number" || typeof value === "bigint") {
+    wordsOf(String(value), into, depth);
+  } else if (Array.isArray(value) && depth < 3) {
+    for (const item of value) wordsOf(item, into, depth + 1);
+  }
+}
+
+/**
+ * Notes, for each error beneath a failed query, the words of what the query
+ * was bound to. The driver's own message is kept in a report because it says
+ * what failed, but the driver sometimes quotes a token of the text it was
+ * given: a malformed full-text search says `near "token"`, and a filter on a
+ * column that is not there names it. A message that does is withheld.
+ */
+function rememberBound(failure: QueryFailure): void {
+  const words = new Set<string>();
+  wordsOf(failure.params, words);
+  let step: unknown = (failure as { cause?: unknown }).cause;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (step === null || typeof step !== "object") return;
+    boundWords.set(step, words);
+    step = (step as { cause?: unknown }).cause;
+  }
+}
+
+const WITHHELD =
+  "[withheld: it repeats a value the failed statement was bound to]";
+
+function echoesBoundValue(error: unknown, text: string): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const words = boundWords.get(error);
+  if (words === undefined) return false;
+  return (text.match(WORD) ?? []).some((word) => words.has(word));
+}
+
 /**
  * `text`, which came from `error`'s message or stack, with a failed query's
- * values removed: exactly where `error` is the failed query, and by the net
- * otherwise.
+ * values removed: exactly where `error` is the failed query, by the net
+ * otherwise, and withheld where `error` is a driver error beneath a failed
+ * query and repeats one of its values.
+ *
+ * Callers walk a cause chain from the top, so a failed query has been seen
+ * before the errors beneath it are read.
  */
 export function withoutParametersOf(error: unknown, text: string): string {
   try {
+    if (isQueryFailure(error)) rememberBound(error);
+    else if (echoesBoundValue(error, text)) return WITHHELD;
     const exact = isQueryFailure(error)
       ? text.split(composedMessage(error)).join(statementOf(error))
       : text;
     return withoutQueryParameters(exact);
   } catch {
     return withoutQueryParameters(text);
+  }
+}
+
+/**
+ * Why a failure happened, for a report that has room for one line: the
+ * error an error wrapped when it wrapped one, since the query layer's own
+ * message is the statement, and the error itself otherwise.
+ */
+export function errorReason(error: unknown): string {
+  try {
+    const cause = error instanceof Error ? error.cause : undefined;
+    if (cause instanceof Error) {
+      if (isQueryFailure(error)) rememberBound(error);
+      return errorMessage(cause);
+    }
+    return errorMessage(error);
+  } catch {
+    return "unknown error";
   }
 }
 

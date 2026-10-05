@@ -1,5 +1,5 @@
 /**
- * No source file turns a caught error into text by hand, in the three forms
+ * No source file turns a caught error into text by hand, in the four forms
  * the server has used, outside `error-text.ts`. Other forms, such as `${err}`
  * in a template or `err.message` read after a narrowing `if`, are not read.
  *
@@ -7,7 +7,7 @@
  * message carries the values it was bound to, and `err.message` or
  * `String(err)` copies them into whatever the text is sent to. Nothing about
  * such a line looks wrong, and a test of one sink says nothing of the next
- * file's. So the server's source is read for the three forms the code has used
+ * file's. So the server's source is read for the four forms the code has used
  * to do it, and each has to be spelled `errorMessage(err)` or
  * `reportableError(err)` instead.
  */
@@ -56,6 +56,23 @@ function caughtNames(file: ts.SourceFile): Set<string> {
   };
   visit(file);
   return names;
+}
+
+/** A call to the helper that reports a failure and returns what a stream may end with. */
+function isStreamFailure(node: ts.Node, file: ts.SourceFile): boolean {
+  return (
+    ts.isCallExpression(node) &&
+    node.expression.getText(file) === "streamFailure"
+  );
+}
+
+/** Whether an expression reads one of the caught names. */
+function mentions(node: ts.Node, names: Set<string>): boolean {
+  if (ts.isIdentifier(node) && names.has(node.text)) return true;
+  return (
+    ts.forEachChild(node, (child) => mentions(child, names) || undefined) ===
+    true
+  );
 }
 
 /** What a source text does by hand that `error-text.ts` does once, as "line: form". */
@@ -112,6 +129,19 @@ function handWrittenErrorText(source: string): string[] {
     ) {
       at(node, "prints a caught value whole: use reportableError");
     }
+    // `controller.error(x)` or `body.destroy(x)` ending a response body with
+    // a caught value, which the server's own logging then prints whole.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ["error", "destroy"].includes(node.expression.name.text) &&
+      node.expression.expression.getText(file) !== "console" &&
+      node.arguments.some(
+        (a) => !isStreamFailure(a, file) && mentions(a, caught),
+      )
+    ) {
+      at(node, "ends a stream with a caught value: use streamFailure");
+    }
     ts.forEachChild(node, visit);
   };
   visit(file);
@@ -138,6 +168,8 @@ describe("how the server turns a caught error into text", () => {
       "  console.warn('z', err);",
       "}",
       "work().catch((reason) => log('w', { error: String(reason) }));",
+      "try { pull(); } catch (failure) { controller.error(failure); }",
+      "try { pull(); } catch (failure) { body.destroy(failure instanceof Error ? failure : new Error('x')); }",
     ].join("\n");
     const found = handWrittenErrorText(source);
     expect(found.map((f) => f.split(":")[0])).toEqual([
@@ -146,6 +178,8 @@ describe("how the server turns a caught error into text", () => {
       "3",
       "4",
       "6",
+      "7",
+      "8",
     ]);
   });
 
@@ -156,6 +190,7 @@ describe("how the server turns a caught error into text", () => {
       "}",
       "log('a', { count: String(total), error: errorMessage(failure) });",
       "const text = String(lastReplayedId);",
+      "try { pull(); } catch (failure) { controller.error(streamFailure('m', failure)); }",
     ].join("\n");
     expect(handWrittenErrorText(source)).toEqual([]);
   });
