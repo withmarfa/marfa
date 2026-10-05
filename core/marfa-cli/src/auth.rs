@@ -547,13 +547,26 @@ pub fn signed_out(origin: &str) -> CliError {
 
 #[cfg(unix)]
 fn fingerprint(origin: &str) -> String {
-    format!("{:x}", Sha256::digest(origin.as_bytes()))
+    hex::encode(Sha256::digest(origin.as_bytes()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::door::{Answer, Door};
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_fingerprint_preserves_the_sha256_digest() {
+        assert_eq!(
+            fingerprint("hello world"),
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+        assert_eq!(
+            fingerprint(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
 
     fn token_door(status: &'static str, body: &str) -> (String, Door) {
         let root = format!(

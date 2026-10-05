@@ -188,7 +188,7 @@ impl Cache {
                 size += read as u64;
             }
             to.sync_all().map_err(Copy::Cache)?;
-            Ok((format!("{PREFIX}{:x}", hasher.finalize()), size))
+            Ok((format!("{PREFIX}{}", hex::encode(hasher.finalize())), size))
         })();
         match copied {
             Ok((hash, size)) => Ok((hash, size, incoming)),
@@ -223,7 +223,7 @@ pub(crate) fn named(hash: &str) -> Result<String> {
 }
 
 pub(crate) fn name_of(bytes: &[u8]) -> String {
-    format!("{PREFIX}{:x}", Sha256::digest(bytes))
+    format!("{PREFIX}{}", hex::encode(Sha256::digest(bytes)))
 }
 
 /// The hex becomes a file name, so nothing but 64 lowercase hex digits may reach one.
@@ -559,6 +559,24 @@ mod tests {
     }
 
     const EMPTY: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    #[test]
+    fn blob_names_preserve_the_sha256_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        for (bytes, expected) in [
+            (&b""[..], EMPTY),
+            (
+                &b"hello world"[..],
+                "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+            ),
+        ] {
+            assert_eq!(name_of(bytes), expected);
+            let held = cache.keep(expected, bytes).unwrap();
+            assert_eq!(held.file_name().unwrap(), hex_of(expected).unwrap());
+            assert_eq!(fs::read(held).unwrap(), bytes);
+        }
+    }
 
     #[test]
     fn a_hash_names_a_file_and_nothing_else_does() {

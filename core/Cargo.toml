@@ -18,7 +18,8 @@ serde = { version = "1", features = ["derive"] }
 # `preserve_order`: without it a folder writes a person's frontmatter back
 # in alphabetical order.
 serde_json = { version = "1", features = ["preserve_order"] }
-sha2 = "0.10"
+sha2 = "0.11"
+hex = "0.4"
 base64 = "0.23"
 thiserror = "2"
 yaml-rust2 = "0.13"
