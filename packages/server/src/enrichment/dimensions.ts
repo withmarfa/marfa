@@ -165,8 +165,8 @@ export async function deriveDimensions(
 
   if (mime.startsWith("image/")) {
     // Synchronous and header-only, over PNG, JPEG, GIF, WebP, AVIF and
-    // HEIF/HEIC. Returns undefined rather than throwing for a format it
-    // does not read, which is the failure mode this wants: an absence to
+    // HEIF/HEIC. Returns undefined for invalid data or a format it does
+    // not read, which is the failure mode this wants: an absence to
     // record rather than an error to classify.
     const size = imageDimensionsFromData(data);
     if (!size) return { kind: "unreadable", reason: "no image reader" };
