@@ -158,3 +158,17 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
     Reason: a nonce that repeats across responses can be read from one page and carried by an injection into the next.
 
     Tests: `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`; `packages/server/src/routes/content-security-policy.test.ts › uses a nonce of its own for each response`.
+
+## An unfinished database
+
+25. WHEN the server starts on a database that holds some of its own tables and lacks the rest, and no table it holds has a row, it SHALL create the tables it lacks and start.
+
+    Reason: the server creates its tables one statement at a time, so a start that is stopped partway leaves a database with the first of them. It holds no rows, because nothing is written before the last table is made, and creating the rest leaves what a new database holds. Refusing it would send an owner looking for another build when no other build wrote it.
+
+    Tests: `packages/server/src/storage/sqlite/incomplete-database.test.ts › is completed when it holds no rows, and ends as a fresh file does`; `packages/server/src/storage/sqlite/incomplete-database.test.ts › is completed when only the triggers are missing`.
+
+26. WHEN the server starts on a database that lacks some of its own tables and holds a row in any table it has, it SHALL refuse to start as statement 15 does, and SHALL say in its message that the database is incomplete, which tables hold data and which tables it lacks.
+
+    Reason: a table created empty beside rows it should describe, such as the index of an item's blobs, would make every reader see an incomplete answer without an error. A database in that state was written by another build or was damaged, and the way forward for it is the one statement 15 gives.
+
+    Tests: `packages/server/src/storage/sqlite/incomplete-database.test.ts › is refused as incomplete, naming what it lacks and leaving the file, when it holds rows`; `packages/server/src/storage/sqlite/schema-mismatch-refusal.test.ts`.
