@@ -18,7 +18,7 @@
  * twenty lines from where this goes, and it is stronger here rather than
  * weaker:
  *
- * - A throw here is the one process exiting, with every background job
+ * - A throw here is the one process exiting, with every housekeeping job
  *   it drives.
  * - The realistic population is a rollback: a value a newer build wrote,
  *   met by an older one. Refusing makes the recovery action the thing that
@@ -203,12 +203,12 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "value it found.",
   },
   {
-    table: "background_jobs",
+    table: "housekeeping",
     column: "last_outcome",
-    castType: "BackgroundJobOutcome",
+    castType: "HousekeepingOutcome",
     because:
       "A record, not a decision. Nothing branches on the value: the " +
-      "scheduler writes it after every run and the background job door " +
+      "scheduler writes it after every run and the housekeeping door " +
       "shows it to the operator as it is, so an unrecognized value is " +
       "displayed, never mishandled, and the next run overwrites it.",
   },

@@ -162,7 +162,7 @@ export const BulkActionResultSchema = z
     errors: z.array(BulkActionErrorEntrySchema).optional(),
     /** Unique blob hashes referenced by the items that were purged. Not a
      *  strict orphan count: what a blob is still referenced by is the
-     *  `blob-orphans` background job's answer, on its own schedule.
+     *  `blob-orphans` housekeeping job's answer, on its own schedule.
      *  Omitted for non-purge actions. */
     blob_hashes_referenced: z.number().int().optional(),
   })

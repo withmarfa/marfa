@@ -1,5 +1,5 @@
 /**
- * How the background job scheduler reports a run that did not finish.
+ * How the housekeeping scheduler reports a run that did not finish.
  *
  * A run cut short because the process is going away has not failed. The
  * scheduler is stopped before the storage client closes, so a query still
@@ -44,8 +44,8 @@ export function isConnectionLostError(err: unknown): boolean {
 
 /**
  * Report a failed run at the level it deserves. `job` names what failed,
- * and the line is that name plus its fate: `Background job trash-purge`
- * becomes `Background job trash-purge error` or `Background job trash-purge
+ * and the line is that name plus its fate: `Housekeeping trash-purge`
+ * becomes `Housekeeping trash-purge error` or `Housekeeping trash-purge
  * stood down`.
  */
 export function logJobTickFailure(

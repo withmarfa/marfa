@@ -110,7 +110,7 @@ describe("the outbound census", () => {
       ),
     );
     expect(built.map(([file]) => file).sort()).toEqual([
-      "background-jobs/registrations.ts",
+      "housekeeping/registrations.ts",
     ]);
     for (const [, options] of built) {
       expect(options).toBe(

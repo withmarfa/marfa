@@ -137,11 +137,7 @@ describe("one envelope for every list and search", () => {
       template: "/connectors/{id}/agreements",
       path: () => `/connectors/${connectorId}/agreements`,
     },
-    {
-      template: "/background-jobs",
-      path: () => "/background-jobs",
-      operator: true,
-    },
+    { template: "/housekeeping", path: () => "/housekeeping", operator: true },
     {
       template: "/blobs/orphans",
       path: () => "/blobs/orphans",

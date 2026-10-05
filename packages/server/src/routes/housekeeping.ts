@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly } from "../middleware/auth.js";
-import type { BackgroundJobs } from "../background-jobs/scheduler.js";
+import type { Housekeeping } from "../housekeeping/scheduler.js";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -14,7 +14,7 @@ import { nullableRef, pageOf } from "./_schemas.js";
 // Schemas
 // ---------------------------------------------------------------------------
 
-const OutcomeSchema = z.enum(["ok", "error"]).openapi("BackgroundJobOutcome");
+const OutcomeSchema = z.enum(["ok", "error"]).openapi("HousekeepingOutcome");
 
 /**
  * What a run reports.
@@ -25,11 +25,11 @@ const OutcomeSchema = z.enum(["ok", "error"]).openapi("BackgroundJobOutcome");
  * holds every registered job to it. Declared rather than left unknown: a
  * report a caller cannot read the type of is one it has to guess at.
  */
-const BackgroundJobReportSchema = z
+const HousekeepingReportSchema = z
   .record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()]))
-  .openapi("BackgroundJobReport");
+  .openapi("HousekeepingReport");
 
-const BackgroundJobSchema = z
+const HousekeepingJobSchema = z
   .object({
     name: z.string(),
     interval_ms: z.number().int(),
@@ -39,26 +39,26 @@ const BackgroundJobSchema = z
     last_finished_at: z.string().nullable(),
     last_outcome: nullableRef(OutcomeSchema),
     last_error: z.string().nullable(),
-    last_result: nullableRef(BackgroundJobReportSchema),
+    last_result: nullableRef(HousekeepingReportSchema),
   })
-  .openapi("BackgroundJob");
+  .openapi("HousekeepingJob");
 
-const BackgroundJobRunSchema = z
+const HousekeepingRunSchema = z
   .object({
     name: z.string(),
     started_at: z.string(),
     finished_at: z.string(),
     outcome: OutcomeSchema,
-    result: nullableRef(BackgroundJobReportSchema),
+    result: nullableRef(HousekeepingReportSchema),
     error: z.string().nullable(),
   })
-  .openapi("BackgroundJobRun");
+  .openapi("HousekeepingRun");
 
 const NameParam = z.object({
   name: z
     .string()
     .regex(/^[a-z][a-z0-9-]*$/)
-    .describe("The background job's name, as `GET /background-jobs` lists it."),
+    .describe("The housekeeping job's name, as `GET /housekeeping` lists it."),
 });
 
 const operatorResponses = {
@@ -77,43 +77,43 @@ const operatorResponses = {
 // Route definitions
 // ---------------------------------------------------------------------------
 
-const listBackgroundJobsRoute = createRoute({
-  operationId: "listBackgroundJobs",
+const listHousekeepingRoute = createRoute({
+  operationId: "listHousekeeping",
   method: "get",
   path: "/",
   tags: ["Instance"],
-  summary: "List background jobs",
+  summary: "List housekeeping jobs",
   description:
-    "Returns every background job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
+    "Returns every housekeeping job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: pageOf(BackgroundJobSchema, "BackgroundJobPage"),
+          schema: pageOf(HousekeepingJobSchema, "HousekeepingJobPage"),
         },
       },
-      description: "Returns every background job, in one page.",
+      description: "Returns every housekeeping job, in one page.",
     },
     ...operatorResponses,
   },
 });
 
-const runBackgroundJobRoute = createRoute({
-  operationId: "runBackgroundJob",
+const runHousekeepingRoute = createRoute({
+  operationId: "runHousekeeping",
   method: "post",
   path: "/{name}/run",
   tags: ["Instance"],
-  summary: "Run a background job",
+  summary: "Run a housekeeping job",
   description:
-    "Runs a background job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
+    "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.",
   security: [{ bearerAuth: [] }],
   middleware: operatorOnly,
   request: { params: NameParam },
   responses: {
     200: {
-      content: { "application/json": { schema: BackgroundJobRunSchema } },
+      content: { "application/json": { schema: HousekeepingRunSchema } },
       description: "Returns the run.",
     },
     400: {
@@ -129,20 +129,20 @@ const runBackgroundJobRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["background_job_not_found"]),
+          schema: makeErrorResponseSchema(["housekeeping_job_not_found"]),
         },
       },
       description:
-        "- `background_job_not_found`: this instance runs no background job with this name.",
+        "- `housekeeping_job_not_found`: this instance runs no housekeeping job with this name.",
     },
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["background_job_running"]),
+          schema: makeErrorResponseSchema(["housekeeping_job_running"]),
         },
       },
       description:
-        "- `background_job_running`: the background job is already running. Try again when the run finishes.",
+        "- `housekeeping_job_running`: the housekeeping job is already running. Try again when the run finishes.",
     },
   },
 });
@@ -151,26 +151,26 @@ const runBackgroundJobRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function backgroundJobRoutes(backgroundJobs: BackgroundJobs) {
+export function housekeepingRoutes(housekeeping: Housekeeping) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listBackgroundJobsRoute, async (c) => {
-    const data = await backgroundJobs.list();
+  router.openapi(listHousekeepingRoute, async (c) => {
+    const data = await housekeeping.list();
     return c.json({ data, next_cursor: null }, 200);
   });
 
-  router.openapi(runBackgroundJobRoute, async (c) => {
+  router.openapi(runHousekeepingRoute, async (c) => {
     const { name } = c.req.valid("param");
-    const result = await backgroundJobs.runNow(name);
+    const result = await housekeeping.runNow(name);
     if (result.kind === "unknown") {
       throw new MarfaError(
-        ErrorCode.BACKGROUND_JOB_NOT_FOUND,
-        `This instance runs no background job named ${name}`,
+        ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND,
+        `This instance runs no housekeeping job named ${name}`,
       );
     }
     if (result.kind === "running") {
       throw new MarfaError(
-        ErrorCode.BACKGROUND_JOB_RUNNING,
+        ErrorCode.HOUSEKEEPING_JOB_RUNNING,
         `${name} is in the middle of a run`,
       );
     }

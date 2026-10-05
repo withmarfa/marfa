@@ -3,7 +3,7 @@ import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
-import { BackgroundJobs } from "../background-jobs/scheduler.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -483,7 +483,7 @@ describe("bootstrap sentinel", () => {
     const app = createApp(
       storage,
       blobs,
-      new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
+      new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
       {
         port: 0,
         sqlitePath: "",

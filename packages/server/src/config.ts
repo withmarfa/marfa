@@ -121,7 +121,7 @@ export interface AppConfig {
   auditCleanupIntervalMs: number;
   /** Days a revoked application-grant row survives before the purger
    *  drops it. Default 90; env override `MARFA_REVOKED_GRANT_RETENTION_DAYS`.
-   *  `0` switches the background job off.
+   *  `0` switches the housekeeping job off.
    *
    *  **Ninety rather than a number of its own, and matching
    *  `AUDIT_RETENTION_DAYS` on purpose.** The revoked grant row and the audit row that
@@ -138,18 +138,18 @@ export interface AppConfig {
    *  env override `MARFA_GRANT_INACTIVITY_DAYS`; `0` disables. */
   grantInactivityDays?: number;
   /** Hours an event_log entry survives at least before the event-log
-   *  background job may purge it.
+   *  housekeeping job may purge it.
    *  Default 168 (7 days). Controls how far back a client's SSE replay
    *  cursor can reach; a request whose `Last-Event-ID` is followed by an
    *  event no longer retained gets a terminal `catchup_too_old` event.
    *  Optional on the type so callers constructing `AppConfig` literals
-   *  don't have to supply it; `background-jobs/registrations.ts` applies the
+   *  don't have to supply it; `housekeeping/registrations.ts` applies the
    *  168 fallback. */
   eventLogRetentionHours?: number;
   /** Cadence (ms) for the event-log cleanup sweep that purges expired
    *  `event_log` rows. Default 3_600_000 (1h); env override
    *  `MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS`. Optional on the type;
-   *  `background-jobs/registrations.ts` applies the 1h fallback when unset. */
+   *  `housekeeping/registrations.ts` applies the 1h fallback when unset. */
   eventLogCleanupIntervalMs?: number;
   versionThinningIntervalMs: number;
   versionRecentDays: number;
@@ -157,14 +157,14 @@ export interface AppConfig {
   versionWeeklySnapshotDays: number;
   versionMaxVersions: number;
   /** Days a trashed item survives before it's hard-deleted by the trash
-   *  purger. `0` switches the background job off. Default: 60. */
+   *  purger. `0` switches the housekeeping job off. Default: 60. */
   trashRetentionDays: number;
   trashPurgeIntervalMs: number;
   /** Cadence (ms) for the better-auth session cleanup sweep — drops
    *  `auth_session` rows whose `expires_at` has passed. Default
    *  3_600_000 (1h); env override `AUTH_SESSION_CLEANUP_INTERVAL_MS`.
    *  No retention-window knob — Better Auth itself owns the TTL.
-   *  Optional on the type; `background-jobs/registrations.ts` applies the 1h
+   *  Optional on the type; `housekeeping/registrations.ts` applies the 1h
    *  fallback. */
   authSessionCleanupIntervalMs?: number;
   /** Days a grantless DCR (`auth_oauth_client`) row survives before the
@@ -172,13 +172,13 @@ export interface AppConfig {
    *  AND carries zero grants (no access token, no refresh token, no
    *  projected `system.connection` app item). Unauthenticated DCR lets
    *  clients accumulate forever; this bounds the abandoned ones. `0`
-   *  switches the background job off. Default 30. Env override
+   *  switches the housekeeping job off. Default 30. Env override
    *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type;
-   *  `background-jobs/registrations.ts` applies the 30-day fallback. */
+   *  `housekeeping/registrations.ts` applies the 30-day fallback. */
   dcrClientRetentionDays?: number;
   /** Cadence (ms) for the grantless-DCR-client reaper sweep. Default
    *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
-   *  Optional on the type; `background-jobs/registrations.ts` applies the
+   *  Optional on the type; `housekeeping/registrations.ts` applies the
    *  24h fallback. */
   dcrClientCleanupIntervalMs?: number;
   /** Cadence (ms) for the unreferenced-blob sweep, `blob-orphans`. A full
@@ -199,7 +199,7 @@ export interface AppConfig {
   blobMinCopies?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
    *  the copies its policy wants; an upload wakes it too. A positive
-   *  integer, since the background job has no off switch: a store the
+   *  integer, since the housekeeping job has no off switch: a store the
    *  configuration names is a store whose copies are kept. Default
    *  60_000; env override
    *  `MARFA_BLOB_REPLICATE_INTERVAL_MS`. */
@@ -223,7 +223,7 @@ export interface AppConfig {
   /** Cadence (ms) for the `rate_limit_windows` GC sweep that drops rows
    *  past their `expires_at`. Default 3_600_000 (1h); env override
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional;
-   *  `background-jobs/registrations.ts` applies the 1h fallback when unset. */
+   *  `housekeeping/registrations.ts` applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
   /** Deterministic text extraction from file blobs. On unless
    *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
@@ -364,7 +364,7 @@ export interface AppConfig {
    *  context's `AppConfig` literal need not supply it. */
   otel?: OtelSettings;
   /** Liveness heartbeat target (`MARFA_HEARTBEAT_URL`). Empty = off, the
-   *  default. When set, the server GETs this URL on its background job
+   *  default. When set, the server GETs this URL on its housekeeping
    *  cadence so something running elsewhere can notice when the pings
    *  stop — a process cannot report its own death. A ping, not a report:
    *  no payload leaves. */
@@ -372,11 +372,11 @@ export interface AppConfig {
   /** Heartbeat cadence in ms (`MARFA_HEARTBEAT_INTERVAL_MS`, default
    *  60000). Ignored while `heartbeatUrl` is unset. */
   heartbeatIntervalMs?: number;
-  /** How often (ms) the background job scheduler asks its table what is due
-   *  (`MARFA_BACKGROUND_JOB_POLL_INTERVAL_MS`, default 1000). The floor on
-   *  how late a background job runs after it falls due, and on how soon a wake is
+  /** How often (ms) the housekeeping scheduler asks its table what is due
+   *  (`MARFA_HOUSEKEEPING_POLL_INTERVAL_MS`, default 1000). The floor on
+   *  how late a housekeeping job runs after it falls due, and on how soon a wake is
    *  answered. Optional on the type; `index.ts` applies the default. */
-  backgroundJobPollIntervalMs?: number;
+  housekeepingPollIntervalMs?: number;
   /** Ceiling on concurrent SSE viewers per server instance
    *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
    *  memory bound: viewers hold no database connection, so any limit is
@@ -792,7 +792,7 @@ const settingsShape = {
     MAX_RETENTION_DAYS,
   ),
 
-  MARFA_BACKGROUND_JOB_POLL_INTERVAL_MS: count(1_000),
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(1_000),
   AUDIT_RETENTION_DAYS: count(90, 0, MAX_RETENTION_DAYS),
   AUDIT_CLEANUP_INTERVAL_MS: count(86_400_000),
   MARFA_REVOKED_GRANT_RETENTION_DAYS: count(90, 0, MAX_RETENTION_DAYS),
@@ -1231,7 +1231,7 @@ export function loadConfig(
     },
     heartbeatUrl: s.MARFA_HEARTBEAT_URL,
     heartbeatIntervalMs: s.MARFA_HEARTBEAT_INTERVAL_MS,
-    backgroundJobPollIntervalMs: s.MARFA_BACKGROUND_JOB_POLL_INTERVAL_MS,
+    housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
     sseMaxViewers: s.MARFA_SSE_MAX_VIEWERS,
     ...(warnings.length > 0 && { settingWarnings: warnings }),
   };

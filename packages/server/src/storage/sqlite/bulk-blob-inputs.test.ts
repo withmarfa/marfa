@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { jobLease } from "../../bulk-actions/checkpoint.js";
-import { BlobOrphanReporter } from "../../background-jobs/blob-orphans.js";
+import { BlobOrphanReporter } from "../../housekeeping/blob-orphans.js";
 
 let ctx: TestContext | undefined;
 const now = () => new Date().toISOString();

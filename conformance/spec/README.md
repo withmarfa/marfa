@@ -12,7 +12,7 @@ The specification has two halves.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `blobs.md`: uploads, downloads, ranges and the link door.
 - `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
-- `background-jobs.md`: the background jobs the server runs on itself, listed and run on demand.
+- `housekeeping.md`: the housekeeping jobs the server runs on itself, listed and run on demand.
 - `connectors.md`: a process outside the server registering under its key, heartbeating, reporting its runs, holding its registration, and keeping its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's webhook endpoints, the door a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
@@ -42,6 +42,6 @@ The device's half runs against a scripted server the fixture controls, because t
 
 ## Outside the fixtures
 
-- Enrichment and OCR are switched off for a run; no statement covers what the sweeper does to a file item after the fact but `background-jobs.md` 5 and 6, whose fixtures each boot a server of their own with enrichment on.
-- Rate limiting is switched off for a run, because a run that mints and revokes one key per file would spend the key doors' allowance on its own setup. What that allowance is, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. The caps on every other path group are the server's own numbers and no statement covers them.
+- Enrichment and OCR are switched off for a run; no statement covers what the sweeper does to a file item after the fact but `housekeeping.md` 5 and 6, whose fixtures each boot a server of their own with enrichment on.
+- Rate limiting is switched off for a run, because a run that mints and revokes one key per file would spend the key doors' allowance on its own housekeeping. What that allowance is, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. The caps on every other path group are the server's own numbers and no statement covers them.
 - The boot mint. A fresh instance mints its first key once through `POST /keys` with the one-time secret printed in its boot log as the bearer token; the answer is one key, the operator key, which is also what the suite provisions with. `scripts/marfa-server.ts` performs it and `src/utils/target.test.ts` pins how the answer is read; no fixture repeats it, because the secret is consumed by the first mint. A boot mint naming `sources` is refused `403 forbidden` as a mint of any operator key is, and the secret still mints afterwards; `packages/server/src/routes/keys.test.ts` asserts it.

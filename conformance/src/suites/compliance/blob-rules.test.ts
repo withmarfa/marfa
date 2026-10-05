@@ -31,8 +31,8 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
 }
 
 /**
- * Runs a background job through its door and answers the run's result.
- * The server this fixture shares runs the same background jobs on its own
+ * Runs a housekeeping job through its door and answers the run's result.
+ * The server this fixture shares runs the same housekeeping jobs on its own
  * schedule,
  * and an upload wakes replication, so a run asked for while the scheduler
  * holds the name answers 409; the in-flight run is the same work, and the
@@ -40,7 +40,7 @@ function bootEnv(name: "MARFA_API_URL" | "MARFA_BLOB_PATH" | "S3_ENDPOINT") {
  */
 async function run<T>(name: string): Promise<T> {
   for (let i = 0; i < 50; i++) {
-    const res = await operator.runBackgroundJob(name);
+    const res = await operator.runHousekeeping(name);
     if (res.status === 409) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       continue;

@@ -11,9 +11,9 @@ import {
   seedOauthBearer,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { BackgroundJobs } from "../background-jobs/scheduler.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
-import { registerBackgroundJobs } from "../background-jobs/registrations.js";
+import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
 
 interface Endpoint {
   id: string;
@@ -1059,16 +1059,16 @@ describe("the inbound delivery sweep", () => {
       freshPending,
     ]);
 
-    const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
       pollIntervalMs: 3_600_000,
     });
-    registerBackgroundJobs(backgroundJobs, ctx.storage, ctx.blobs, ctx.config);
-    await backgroundJobs.start();
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
     try {
-      const ran = await backgroundJobs.runNow("inbound-delivery-cleanup");
+      const ran = await housekeeping.runNow("inbound-delivery-cleanup");
       expect(ran.kind).toBe("ran");
     } finally {
-      await backgroundJobs.stop();
+      await housekeeping.stop();
     }
     const left = (await deliveries(ctx, connector, "?state=any")).data.map(
       (d) => d.id,
@@ -1526,7 +1526,7 @@ describe("inbound charged storage and cleanup", () => {
     ).toEqual([ids[3]]);
   });
 
-  it("uses current retention overrides on each ordinary background job pass", async () => {
+  it("uses current retention overrides on each ordinary housekeeping pass", async () => {
     const ctx = await context();
     const connector = await register(ctx);
     const made = await endpoint(ctx, connector);
@@ -1538,11 +1538,11 @@ describe("inbound charged storage and cleanup", () => {
       "UPDATE inbound_deliveries SET handled_at = ? WHERE id = ?",
       [new Date(Date.now() - 10 * 86400000).toISOString(), id],
     );
-    const backgroundJobs = new BackgroundJobs(ctx.storage.backgroundJobs, {
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
       pollIntervalMs: 3600000,
     });
-    registerBackgroundJobs(backgroundJobs, ctx.storage, ctx.blobs, ctx.config);
-    await backgroundJobs.start();
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
     try {
       expect(
         (
@@ -1555,7 +1555,7 @@ describe("inbound charged storage and cleanup", () => {
           })
         ).status,
       ).toBe(200);
-      await backgroundJobs.runNow("inbound-delivery-cleanup");
+      await housekeeping.runNow("inbound-delivery-cleanup");
       expect(await ctx.storage.inbound.body(connector.id, id)).toEqual(
         Buffer.from("body"),
       );
@@ -1567,7 +1567,7 @@ describe("inbound charged storage and cleanup", () => {
           })
         ).status,
       ).toBe(200);
-      await backgroundJobs.runNow("inbound-delivery-cleanup");
+      await housekeeping.runNow("inbound-delivery-cleanup");
       expect(await ctx.storage.inbound.body(connector.id, id)).toBeNull();
       for (const value of [-1, 1.5])
         expect(
@@ -1579,7 +1579,7 @@ describe("inbound charged storage and cleanup", () => {
           ).status,
         ).toBe(400);
     } finally {
-      await backgroundJobs.stop();
+      await housekeeping.stop();
     }
   });
 

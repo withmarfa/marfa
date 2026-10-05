@@ -4,7 +4,7 @@
  *
  * The holder in the first case is a transaction on another connection of
  * the same process, between two of its statements: the shape every request
- * transaction and every background job run has while its body awaits. Such a
+ * transaction and every housekeeping run has while its body awaits. Such a
  * holder needs the event loop to finish, so a wait that blocks the loop
  * can only end by giving up; the heartbeat below is what tells a wait that
  * yields from one that blocks.

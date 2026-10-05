@@ -1,5 +1,5 @@
 /**
- * The background jobs table's own rules, each asserted from both sides: what
+ * The housekeeping table's own rules, each asserted from both sides: what
  * the row does under the condition, and what it does without it.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorage } from "./index.js";
-import type { BackgroundJobStore, Storage } from "../interface.js";
+import type { HousekeepingStore, Storage } from "../interface.js";
 
 const T0 = Date.parse("2026-09-20T12:00:00.000Z");
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
@@ -15,10 +15,10 @@ const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
 let tmpDir: string | undefined;
 let storage: Storage | undefined;
 
-async function store(): Promise<BackgroundJobStore> {
-  tmpDir = mkdtempSync(join(tmpdir(), "marfa-background-jobs-"));
+async function store(): Promise<HousekeepingStore> {
+  tmpDir = mkdtempSync(join(tmpdir(), "marfa-housekeeping-"));
   storage = await createSqliteStorage(join(tmpDir, "marfa.db"));
-  return storage.backgroundJobs;
+  return storage.housekeeping;
 }
 
 afterEach(async () => {
@@ -29,7 +29,7 @@ afterEach(async () => {
   tmpDir = undefined;
 });
 
-describe("SqliteBackgroundJobStore", () => {
+describe("SqliteHousekeepingStore", () => {
   it("serves a run's report as the door declares it, or not at all", async () => {
     const hk = await store();
     // The column holds whatever the build that wrote it reported, and a row

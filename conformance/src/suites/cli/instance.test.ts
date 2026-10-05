@@ -52,19 +52,19 @@ async function upload(text: string): Promise<string> {
 }
 
 /**
- * Runs a background job by name and answers what the run reported.
+ * Runs a housekeeping job by name and answers what the run reported.
  *
- * The server this file shares runs the same background jobs on its own
+ * The server this file shares runs the same housekeeping jobs on its own
  * clock, and a name the scheduler is already running answers `409`: the run
  * in flight is the same work, so the ask is repeated rather than failed.
  */
-async function runBackgroundJob(
+async function runHousekeepingJob(
   name: string,
 ): Promise<{ name: string; outcome: string }> {
   for (let attempt = 0; attempt < 50; attempt++) {
     const outcome = await c.operator.run([
       "--json",
-      "background-jobs",
+      "housekeeping",
       "run",
       name,
     ]);
@@ -78,10 +78,10 @@ async function runBackgroundJob(
     try {
       envelope = JSON.parse(outcome.stderr.trim()) as typeof envelope;
     } catch {
-      throw new Error(`marfa background-jobs run ${name}: ${outcome.stderr}`);
+      throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
     }
     if (envelope.error.server?.status !== 409) {
-      throw new Error(`marfa background-jobs run ${name}: ${outcome.stderr}`);
+      throw new Error(`marfa housekeeping run ${name}: ${outcome.stderr}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -528,8 +528,8 @@ describe("the instance from the terminal", () => {
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
 
-    // The stores, the orphan report and the background jobs table are the
-    // operator's too; a background job run by name answers what it did,
+    // The stores, the orphan report and the housekeeping table are the
+    // operator's too; a housekeeping job run by name answers what it did,
     // and a name the server does not run is a refusal the envelope carries
     // whole.
     const stores = await c.operator.json<{
@@ -572,7 +572,7 @@ describe("the instance from the terminal", () => {
     await vi.waitFor(
       async () => {
         orphaned = await upload(`nothing names me ${unique("orphan")}`);
-        await runBackgroundJob("blob-orphans");
+        await runHousekeepingJob("blob-orphans");
         reported = (
           await c.operator.json<{ data: { hash: string }[] }>([
             "blobs",
@@ -598,7 +598,7 @@ describe("the instance from the terminal", () => {
     // whatever else on the instance is unreferenced, as any run does; what
     // it must never do is touch the blob an item names, which is why those
     // bytes are read back after it rather than trusted to a report.
-    await runBackgroundJob("blob-orphans");
+    await runHousekeepingJob("blob-orphans");
     const swept = (
       await c.operator.json<{ data: { hash: string }[] }>(["blobs", "orphans"])
     ).data.map((row) => row.hash);
@@ -613,22 +613,22 @@ describe("the instance from the terminal", () => {
     ).toBe(0);
     expect(kept.stdout).toBe("an item names me");
     const jobs = await c.operator.json<{ data: { name: string }[] }>([
-      "background-jobs",
+      "housekeeping",
       "list",
     ]);
     const names = jobs.data.map((job) => job.name);
     expect(names).toContain("trash-purge");
-    const ran = await runBackgroundJob("trash-purge");
+    const ran = await runHousekeepingJob("trash-purge");
     expect(ran.name).toBe("trash-purge");
     expect(ran.outcome).toBe("ok");
     const unknown = await c.operator.refused([
-      "background-jobs",
+      "housekeeping",
       "run",
       "no-such-job",
     ]);
     expect(unknown.code).toBe(1);
     expect(unknown.envelope.error.server?.code).toBe(
-      "background_job_not_found",
+      "housekeeping_job_not_found",
     );
     expect(unknown.envelope.error.code).toBe("not_found");
   });

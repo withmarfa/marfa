@@ -20,7 +20,7 @@ let operator: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("enrichment-inheritance", {
     MARFA_ENRICHMENT_ENABLED: "true",
-    // Driven through the background job door rather than the scheduler.
+    // Driven through the housekeeping door rather than the scheduler.
     MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   client = new MarfaClient({
@@ -100,7 +100,7 @@ describe("the enrichment sweep", () => {
     const document = await fileItem("acme.document", text, "text/plain");
     const attachment = await fileItem("acme.attachment", text, "text/plain");
 
-    const run = await operator.runBackgroundJob("enrichment-sweep");
+    const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
     expect(run.data.outcome).toBe("ok");
 

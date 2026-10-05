@@ -111,7 +111,7 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
     Tests: `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`. The server's own suite holds the cursor, the copy stream and a stream that opens after the stop has begun: `packages/server/src/routes/events-shutdown.test.ts`, and with a real process and a keep-alive client, `packages/server/src/shutdown-stream.test.ts`.
 
-18. When the server is stopped, it SHALL wait for the bulk action and the background job runs in flight, the webhook deliveries among them, before it closes its storage, and SHALL exit with status 0 when the server and the storage have closed, within eight seconds of the signal at the most.
+18. When the server is stopped, it SHALL wait for the bulk action and the housekeeping runs in flight, the webhook deliveries among them, before it closes its storage, and SHALL exit with status 0 when the server and the storage have closed, within eight seconds of the signal at the most.
 
     Reason: a run cut off mid-write leaves its record unwritten, and a stop that the runtime kills is read as a crash. A run that outlives its wait is resumed at the next start and does not make the stop a failure.
 
@@ -119,7 +119,7 @@ An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows
 
 ## Long jobs
 
-19. While the server runs an archive export, an archive restore, an NDJSON export, a bulk action or a background job sweep that walks rows (the blob orphan sweep, version thinning and the retirement of inactive grants), it SHALL hand the event loop to other requests between units of work of bounded size, so that how long a request waits for the loop depends on the size of one unit and not on the size of the job or of the instance.
+19. While the server runs an archive export, an archive restore, an NDJSON export, a bulk action or a housekeeping sweep that walks rows (the blob orphan sweep, version thinning and the retirement of inactive grants), it SHALL hand the event loop to other requests between units of work of bounded size, so that how long a request waits for the loop depends on the size of one unit and not on the size of the job or of the instance.
 
     Reason: the database driver runs each statement synchronously behind a promise, so a loop of database awaits never gives the loop a turn. A job that does not give one stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The one step no turn divides is a restore's COMMIT, which is a single native step; the rows are written in batches before it. A restore holds the write lock until it commits (`search-and-filters.md` 70), and the write probe of `GET /health` then reports `degraded` after the two seconds of statement 12, which is a held lock and not a held loop. The text enrichment sweep reads one batch of at most the configured batch size, which does not grow with the instance, so it is not held to this statement.
 

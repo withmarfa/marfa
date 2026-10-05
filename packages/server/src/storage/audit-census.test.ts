@@ -35,7 +35,7 @@ const READS: Record<string, string> = {
   OwnerStore: "find",
   BulkActionJobStore: "scanPendingPropertyPatches getById carriedItems",
   EnrichmentStore: "listCandidates get",
-  BackgroundJobStore: "listDue list get",
+  HousekeepingStore: "listDue list get",
   ConnectorStore: "list get listRuns",
   ConnectorStateStore: "getState lookupAgreements listAgreements",
   InboundStore: "listEndpoints target backlog listDeliveries body",
@@ -70,7 +70,7 @@ const WRITES: Record<string, string> = {
   BulkActionJobStore:
     "create claimNext beginChunk checkpointChunk completeOwned failOwned cancel recoverStale gcExpired",
   EnrichmentStore: "upsert delete",
-  BackgroundJobStore:
+  HousekeepingStore:
     "upsert removeExcept clearRunning claimDue claim finish wake",
   ConnectorStore: "register remove heartbeat recordRun takeHold releaseHold",
   ConnectorStateStore: "putState writeAgreements clear",

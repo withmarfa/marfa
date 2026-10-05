@@ -12,7 +12,7 @@ import {
  *
  * **A server of its own, because the claim is about a setting.** The run's
  * shared server boots with limiting off: the suite mints and revokes a key
- * per file and would spend the allowance on the run's own setup.
+ * per file and would spend the allowance on the run's own housekeeping.
  * Turning it on there would change every other file's instance, and a
  * fixture that lowered the limit on the shared server would refuse work
  * that has nothing to do with this chapter.

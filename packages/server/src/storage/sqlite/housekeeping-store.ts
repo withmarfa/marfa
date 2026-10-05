@@ -1,20 +1,20 @@
 import { and, eq, isNotNull, isNull, lte, notInArray, sql } from "drizzle-orm";
 import type {
-  BackgroundJobFinish,
-  BackgroundJobOutcome,
-  BackgroundJobRow,
-  BackgroundJobStore,
+  HousekeepingFinish,
+  HousekeepingOutcome,
+  HousekeepingRow,
+  HousekeepingStore,
 } from "../interface.js";
-import type { BackgroundJobReport } from "../../background-jobs/scheduler.js";
-import { backgroundJobs } from "./schema.js";
+import type { HousekeepingReport } from "../../housekeeping/scheduler.js";
+import { housekeeping } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-type Row = typeof backgroundJobs.$inferSelect;
+type Row = typeof housekeeping.$inferSelect;
 
 /**
  * What the column holds, read as what the door declares.
  *
- * The column is written from a `BackgroundJobReport`, but a row survives the
+ * The column is written from a `HousekeepingReport`, but a row survives the
  * build that wrote it: an instance upgraded across this change holds
  * whatever the previous scheduler's jobs returned, which was anything at
  * all. A value that is not a flat object of scalars is dropped rather than
@@ -24,12 +24,12 @@ type Row = typeof backgroundJobs.$inferSelect;
  * than it did, and no report at all is what the door says for a name that
  * has never run.
  */
-function toReport(raw: string): BackgroundJobReport | null {
+function toReport(raw: string): HousekeepingReport | null {
   const parsed: unknown = JSON.parse(raw);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return null;
   }
-  const out: BackgroundJobReport = {};
+  const out: HousekeepingReport = {};
   for (const [name, value] of Object.entries(
     parsed as Record<string, unknown>,
   )) {
@@ -47,7 +47,7 @@ function toReport(raw: string): BackgroundJobReport | null {
   return out;
 }
 
-function toRow(row: Row): BackgroundJobRow {
+function toRow(row: Row): HousekeepingRow {
   return {
     name: row.name,
     interval_ms: row.interval_ms,
@@ -55,13 +55,13 @@ function toRow(row: Row): BackgroundJobRow {
     running_since: row.running_since,
     last_started_at: row.last_started_at,
     last_finished_at: row.last_finished_at,
-    last_outcome: row.last_outcome as BackgroundJobOutcome | null,
+    last_outcome: row.last_outcome as HousekeepingOutcome | null,
     last_error: row.last_error,
     last_result: row.last_result === null ? null : toReport(row.last_result),
   };
 }
 
-export class SqliteBackgroundJobStore implements BackgroundJobStore {
+export class SqliteHousekeepingStore implements HousekeepingStore {
   constructor(private db: DrizzleDb) {}
 
   async upsert(
@@ -70,13 +70,13 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
     nextRunAt: string,
   ): Promise<void> {
     await this.db
-      .insert(backgroundJobs)
+      .insert(housekeeping)
       .values({ name, interval_ms: intervalMs, next_run_at: nextRunAt })
       .onConflictDoUpdate({
-        target: backgroundJobs.name,
+        target: housekeeping.name,
         set: {
           interval_ms: intervalMs,
-          next_run_at: sql`min(${backgroundJobs.next_run_at}, ${nextRunAt})`,
+          next_run_at: sql`min(${housekeeping.next_run_at}, ${nextRunAt})`,
         },
       })
       .run();
@@ -84,51 +84,51 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
 
   async removeExcept(names: readonly string[]): Promise<string[]> {
     const rows = await this.db
-      .delete(backgroundJobs)
+      .delete(housekeeping)
       .where(
         names.length > 0
-          ? notInArray(backgroundJobs.name, [...names])
+          ? notInArray(housekeeping.name, [...names])
           : sql`1 = 1`,
       )
-      .returning({ name: backgroundJobs.name })
+      .returning({ name: housekeeping.name })
       .all();
     return rows.map((row) => row.name);
   }
 
   async clearRunning(): Promise<string[]> {
     const rows = await this.db
-      .update(backgroundJobs)
+      .update(housekeeping)
       .set({ running_since: null })
-      .where(isNotNull(backgroundJobs.running_since))
-      .returning({ name: backgroundJobs.name })
+      .where(isNotNull(housekeeping.running_since))
+      .returning({ name: housekeeping.name })
       .all();
     return rows.map((row) => row.name);
   }
 
   async listDue(now: string): Promise<string[]> {
     const rows = await this.db
-      .select({ name: backgroundJobs.name })
-      .from(backgroundJobs)
+      .select({ name: housekeeping.name })
+      .from(housekeeping)
       .where(
         and(
-          isNull(backgroundJobs.running_since),
-          lte(backgroundJobs.next_run_at, now),
+          isNull(housekeeping.running_since),
+          lte(housekeeping.next_run_at, now),
         ),
       )
-      .orderBy(backgroundJobs.next_run_at)
+      .orderBy(housekeeping.next_run_at)
       .all();
     return rows.map((row) => row.name);
   }
 
-  async claimDue(name: string, now: string): Promise<BackgroundJobRow | null> {
+  async claimDue(name: string, now: string): Promise<HousekeepingRow | null> {
     const rows = await this.db
-      .update(backgroundJobs)
+      .update(housekeeping)
       .set({ running_since: now, last_started_at: now })
       .where(
         and(
-          eq(backgroundJobs.name, name),
-          isNull(backgroundJobs.running_since),
-          lte(backgroundJobs.next_run_at, now),
+          eq(housekeeping.name, name),
+          isNull(housekeeping.running_since),
+          lte(housekeeping.next_run_at, now),
         ),
       )
       .returning()
@@ -137,15 +137,12 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
     return row ? toRow(row) : null;
   }
 
-  async claim(name: string, now: string): Promise<BackgroundJobRow | null> {
+  async claim(name: string, now: string): Promise<HousekeepingRow | null> {
     const rows = await this.db
-      .update(backgroundJobs)
+      .update(housekeeping)
       .set({ running_since: now, last_started_at: now })
       .where(
-        and(
-          eq(backgroundJobs.name, name),
-          isNull(backgroundJobs.running_since),
-        ),
+        and(eq(housekeeping.name, name), isNull(housekeeping.running_since)),
       )
       .returning()
       .all();
@@ -153,9 +150,9 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
     return row ? toRow(row) : null;
   }
 
-  async finish(name: string, outcome: BackgroundJobFinish): Promise<void> {
+  async finish(name: string, outcome: HousekeepingFinish): Promise<void> {
     await this.db
-      .update(backgroundJobs)
+      .update(housekeeping)
       .set({
         running_since: null,
         last_finished_at: outcome.finishedAt,
@@ -168,9 +165,9 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
         // either holds unless the interval falls earlier; a run started on
         // or after its schedule sets the next one. Compared as ISO strings,
         // which order as instants do.
-        next_run_at: sql`CASE WHEN ${backgroundJobs.next_run_at} > ${backgroundJobs.running_since} THEN min(${backgroundJobs.next_run_at}, ${outcome.nextRunAt}) ELSE ${outcome.nextRunAt} END`,
+        next_run_at: sql`CASE WHEN ${housekeeping.next_run_at} > ${housekeeping.running_since} THEN min(${housekeeping.next_run_at}, ${outcome.nextRunAt}) ELSE ${outcome.nextRunAt} END`,
       })
-      .where(eq(backgroundJobs.name, name))
+      .where(eq(housekeeping.name, name))
       .run();
   }
 
@@ -179,29 +176,29 @@ export class SqliteBackgroundJobStore implements BackgroundJobStore {
     // snapshot can miss a claim or finish. A live run's hint is strictly
     // after its start so finish preserves even a same-millisecond wake.
     const result = await this.db
-      .update(backgroundJobs)
+      .update(housekeeping)
       .set({
-        next_run_at: sql`CASE WHEN ${backgroundJobs.running_since} IS NULL THEN min(${backgroundJobs.next_run_at}, ${now}) ELSE max(${now}, strftime('%Y-%m-%dT%H:%M:%fZ', ${backgroundJobs.running_since}, '+0.001 seconds')) END`,
+        next_run_at: sql`CASE WHEN ${housekeeping.running_since} IS NULL THEN min(${housekeeping.next_run_at}, ${now}) ELSE max(${now}, strftime('%Y-%m-%dT%H:%M:%fZ', ${housekeeping.running_since}, '+0.001 seconds')) END`,
       })
-      .where(eq(backgroundJobs.name, name))
+      .where(eq(housekeeping.name, name))
       .run();
     return result.rowsAffected > 0;
   }
 
-  async list(): Promise<BackgroundJobRow[]> {
+  async list(): Promise<HousekeepingRow[]> {
     const rows = await this.db
       .select()
-      .from(backgroundJobs)
-      .orderBy(backgroundJobs.name)
+      .from(housekeeping)
+      .orderBy(housekeeping.name)
       .all();
     return rows.map(toRow);
   }
 
-  async get(name: string): Promise<BackgroundJobRow | null> {
+  async get(name: string): Promise<HousekeepingRow | null> {
     const row = await this.db
       .select()
-      .from(backgroundJobs)
-      .where(eq(backgroundJobs.name, name))
+      .from(housekeeping)
+      .where(eq(housekeeping.name, name))
       .get();
     return row ? toRow(row) : null;
   }

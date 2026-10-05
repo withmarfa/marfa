@@ -9,7 +9,7 @@ import { createApp } from "../app.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
-import { BackgroundJobs } from "../background-jobs/scheduler.js";
+import { Housekeeping } from "../housekeeping/scheduler.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -50,7 +50,7 @@ async function createConfigContext(): Promise<ConfigContext> {
   const app = createApp(
     storage,
     blobs,
-    new BackgroundJobs(storage.backgroundJobs, { pollIntervalMs: 1_000 }),
+    new Housekeeping(storage.housekeeping, { pollIntervalMs: 1_000 }),
     {
       port: 0,
       sqlitePath: "",
@@ -222,7 +222,7 @@ describe("Instance config — round trips", () => {
   });
 
   it("PUT persists the retention overrides rather than discarding them", async () => {
-    // The background jobs read these fields, so a value the route accepts
+    // The housekeeping jobs read these fields, so a value the route accepts
     // and drops is worse than one it refuses: PUT is a full replacement, so
     // following the documentation un-sets the neighbors.
     const res = await request(configCtx.app, "PUT", "/config", {
@@ -389,7 +389,7 @@ describe("Instance config — round trips", () => {
 
 it("rejects unsupported inbound horizons before saving and restarts at the supported boundaries", async () => {
   const ctx = await createTestContext();
-  const scheduler = new BackgroundJobs(ctx.storage.backgroundJobs, {
+  const scheduler = new Housekeeping(ctx.storage.housekeeping, {
     pollIntervalMs: 1000,
   });
   try {
@@ -426,7 +426,7 @@ it("rejects unsupported inbound horizons before saving and restarts at the suppo
       ctx.storage.inbound.cleanup({ handledDays: 0, pendingDays: 0 }),
     ).resolves.toEqual({ deleted: 0, remaining: false });
     const stamp = new Date().toISOString();
-    await ctx.storage.backgroundJobs.upsert(
+    await ctx.storage.housekeeping.upsert(
       "owned-boundary",
       2147483647,
       new Date(Date.parse(stamp) + 2147483647).toISOString(),
@@ -436,7 +436,7 @@ it("rejects unsupported inbound horizons before saving and restarts at the suppo
         __sqliteRun(query: string, params: unknown[]): Promise<unknown>;
       }
     ).__sqliteRun(
-      "UPDATE background_jobs SET last_finished_at = ? WHERE name = ?",
+      "UPDATE housekeeping SET last_finished_at = ? WHERE name = ?",
       [stamp, "owned-boundary"],
     );
     scheduler.register({
@@ -446,7 +446,7 @@ it("rejects unsupported inbound horizons before saving and restarts at the suppo
       run: () => Promise.resolve({ deleted: 0 }),
     });
     await expect(scheduler.start()).resolves.toBeUndefined();
-    const row = (await ctx.storage.backgroundJobs.list()).find(
+    const row = (await ctx.storage.housekeeping.list()).find(
       (r) => r.name === "owned-boundary",
     );
     expect(row?.next_run_at).toBe(

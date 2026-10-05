@@ -306,7 +306,7 @@ function isBusy(err: unknown): boolean {
  * whole process: nothing else runs, the lock's holder included, when the
  * holder is a transaction of this same process sitting between two of its
  * statements. That is the ordinary shape of contention here, because the
- * background job scheduler starts runs beside the request path and a run's
+ * housekeeping scheduler starts runs beside the request path and a run's
  * transaction interleaves with the next claim. With the native wait such
  * a writer stops the server for the whole timeout and then fails anyway;
  * with a sleep the holder reaches its commit and the retry succeeds. A

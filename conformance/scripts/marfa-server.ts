@@ -257,7 +257,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
       process.env.MARFA_ENRICHMENT_OCR_ENABLED || "false",
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
-    // purge as two runs through the background job door. The sweep's own
+    // purge as two runs through the housekeeping door. The sweep's own
     // cadence stays a day, but its first run is thirty seconds after boot
     // and a run is a run — so a fixture that reads the report has to expect
     // one of its own rows to have been purged by the scheduler and ask
