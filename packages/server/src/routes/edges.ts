@@ -35,6 +35,7 @@ import {
   EdgePageSchema,
   EdgeSchema,
   VersionConflictErrorSchema,
+  edgeTripleFields,
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import {
@@ -86,6 +87,15 @@ const EdgeConflictSchema = z
   .openapi("EdgeVersionConflict");
 
 const MAX_EDGE_TYPE_FILTER = 10;
+
+/** The 400 of the two listings of one item's edges. */
+const LISTING_REFUSED =
+  "a query parameter is unknown or invalid, or `edge_type` names more than 10 edge types";
+
+/** The 403 the edge-type half of an edge write answers, on `PATCH` and
+ *  `DELETE`, where an edge type the key can't read answers `404`. */
+const EDGE_TYPE_WRITE_REFUSED =
+  "- `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -260,7 +270,7 @@ const listEdgesRoute = createRoute({
         },
       },
       description:
-        "`validation_error`: `edge_type` names more than 10 edge types.",
+        "- `validation_error`: a query parameter is unknown or invalid, `edge_type` names more than 10 edge types, or `cursor` came from the other order.",
     },
     401: {
       content: {
@@ -276,7 +286,7 @@ const listEdgesRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "`type_not_permitted`: your credential reaches no type.",
+      description: READ_REFUSED,
     },
   },
 });
@@ -302,23 +312,11 @@ const createEdgeRoute = createRoute({
               .describe(
                 "A UUIDv7 you choose for the edge. Leave it out and Marfa creates one.",
               ),
-            source_id: z
-              .string()
-              .describe("The ID of the item the edge starts from."),
-            target_id: z
-              .string()
-              .describe("The ID of the item the edge points to."),
-            edge_type: z
-              .string()
-              .describe(
-                "The identifier of the edge type, such as `parent-of`.",
-              ),
+            ...edgeTripleFields,
             properties: z
               .record(z.string(), z.unknown())
               .optional()
-              .describe(
-                "The edge's properties, as the edge type declares them. Leave it out for none.",
-              ),
+              .describe("The edge's properties. Leave it out for none."),
           }),
         },
       },
@@ -360,7 +358,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as properties the edge type doesn't allow.\n- `edge_constraint_violation`: the edge breaks its edge type's rules, such as its cardinality or type constraints.\n- `edge_cycle`: the edge would close a cycle.",
+        "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.\n- `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.\n- `edge_cycle`: the edge would close a cycle.",
     },
     401: {
       content: {
@@ -380,7 +378,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "- `edge_permission_denied`: you don't have write on the edge type.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+        "- `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
     },
     404: {
       content: {
@@ -401,7 +399,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "`id_reused`: `id` belongs to a different edge. `details.differs` says whether `source_id`, `target_id` or `edge_type` differs. If you can't read that edge, only `details.existing_id` is set.",
+        "`id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set.",
     },
   },
 });
@@ -432,7 +430,7 @@ const getEdgeRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "`type_not_permitted`: your credential reaches no type.",
+      description: READ_REFUSED,
     },
     404: {
       content: {
@@ -472,13 +470,13 @@ const updateEdgeRoute = createRoute({
               .string()
               .optional()
               .describe(
-                "The ID of the source item to move the edge to. It works only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`), and replaces the edge the target held. Send it or `target_id`, not both.",
+                "The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time.",
               ),
             target_id: z
               .string()
               .optional()
               .describe(
-                "The ID of the target item to move the edge to. It works only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`), and replaces the edge the source held. Send it or `source_id`, not both.",
+                "The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time.",
               ),
             version: z
               .number()
@@ -531,8 +529,7 @@ const updateEdgeRoute = createRoute({
           ]),
         },
       },
-      description:
-        "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or on the new source's type, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+      description: `${EDGE_TYPE_WRITE_REFUSED}\n- \`type_not_permitted\`: you can read the source item's type, or the new source's, but don't have write on it, or your credential reaches no type. \`details.grant\` names the missing grant.`,
     },
     404: {
       content: {
@@ -545,7 +542,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "- `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.\n- `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.\n- `edge_type_not_found`: the edge's type is no longer registered.",
+        "- `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.\n- `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.\n- `edge_type_not_found`: you move an end of an edge whose edge type is no longer registered.",
     },
   },
 });
@@ -577,8 +574,7 @@ const deleteEdgeRoute = createRoute({
           ]),
         },
       },
-      description:
-        "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+      description: `${EDGE_TYPE_WRITE_REFUSED}\n- \`type_not_permitted\`: you can read the source item's type but don't have write on it, or your credential reaches no type. \`details.grant\` names the missing grant.`,
     },
     404: {
       content: {
@@ -974,8 +970,7 @@ const listFromSourceRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id", "validation_error"]),
         },
       },
-      description:
-        "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
+      description: `- \`invalid_id\`: the ID is not a valid item ID.\n- \`validation_error\`: ${LISTING_REFUSED}.`,
     },
     401: {
       content: {
@@ -1038,8 +1033,7 @@ const listBackrefsRoute = createRoute({
           schema: makeErrorResponseSchema(["invalid_id", "validation_error"]),
         },
       },
-      description:
-        "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
+      description: `- \`invalid_id\`: the ID is not a valid item ID.\n- \`validation_error\`: ${LISTING_REFUSED}.`,
     },
     401: {
       content: {

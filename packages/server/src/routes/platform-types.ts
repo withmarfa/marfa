@@ -28,7 +28,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * silent no-op.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { pageOf } from "./_schemas.js";
+import { wholeListOf } from "./_schemas.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly } from "../middleware/auth.js";
@@ -71,11 +71,15 @@ const listDriftRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(DriftedTypeSchema, "DriftedPlatformTypePage"),
+          schema: wholeListOf(
+            DriftedTypeSchema,
+            "DriftedPlatformTypePage",
+            "stale type",
+          ),
         },
       },
       description:
-        "Returns the stale types in one page: `next_cursor` is always `null`. A type removed since the server started stays listed until it restarts.",
+        "Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts.",
     },
     401: {
       content: {
@@ -143,7 +147,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "- `type_not_found`: no platform type has this identifier.\n- `not_found`: another request already deleted the type.",
+        "- `type_not_found`: no platform type has this identifier.\n- `not_found`: the type was deleted after the server started.",
     },
     409: {
       content: {
@@ -152,7 +156,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: the build still ships the type, items still carry it, or another type inherits from it (`details.child_types` lists them).",
+        "`conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them).",
     },
   },
 });

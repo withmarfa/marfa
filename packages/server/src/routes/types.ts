@@ -37,7 +37,7 @@ import {
   requireTypeReplacement,
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
-import { MergePolicySchema, pageOf } from "./_schemas.js";
+import { MergePolicySchema, wholeListOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -91,7 +91,7 @@ const FieldDefinitionSchema = z
     type: z
       .enum(FIELD_TYPES as unknown as [string, ...string[]])
       .describe(
-        "The field's type. A `thumbnail` holds a small image of at most 16 KiB, sent as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, and never under `title`, `body`, `description` or `name`.",
+        "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`.",
       ),
     description: z.string().optional().describe("What the field holds."),
     required: z
@@ -110,7 +110,7 @@ const FieldDefinitionSchema = z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()
       .describe(
-        "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, or its `items_type` on an array. `bcp47` and `iso3166` stay as `format`.",
+        "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.",
       ),
     searchable: z
       .boolean()
@@ -146,10 +146,13 @@ const DisplayHintsSchema = z
   .describe("Which fields of a type clients show as an item's title and body.")
   .openapi("DisplayHints");
 
+const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
+const COMPATIBLE_WITH = "The types this one is a structural superset of.";
+
 const LinkFieldSchema = z
   .string()
   .describe(
-    "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash.",
+    "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`.",
   );
 
 const VersionPolicySchema = z
@@ -170,7 +173,7 @@ const VersionPolicySchema = z
       .number()
       .optional()
       .describe(
-        "How many days back Marfa keeps one version per week, after the daily window. Older versions are deleted.",
+        "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest.",
       ),
     max_versions: z
       .number()
@@ -208,19 +211,19 @@ const typeDefinitionBody = {
     .min(0)
     .optional()
     .describe(
-      "A number for you to track changes to the type. Marfa never changes it. Leave it out and it's 0.",
+      "A number for you to track changes to the type. Marfa never changes it. Leave it out for 0.",
     ),
   parent: z
     .string()
     .optional()
     .describe(
-      "The identifier of the type this one inherits from. You need write on it, unless Marfa ships it. Leave it out for a type with no parent.",
+      "The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent.",
     ),
   label: z
     .string()
     .optional()
     .describe(
-      "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier.",
+      "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier.",
     ),
   description: z.string().optional().describe("What the type is for."),
   // Strings rather than the role enum the response carries, because the
@@ -231,7 +234,7 @@ const typeDefinitionBody = {
     .array(z.string())
     .optional()
     .describe(
-      `The structural roles the type plays: ${TYPE_ROLES.join(", ")}. An edge type's \`role:<name>\` constraint matches types by role.`,
+      `The structural roles the type plays: ${TYPE_ROLES.map((role) => `\`${role}\``).join(", ")}. An edge type's \`role:<name>\` constraint matches types by role.`,
     ),
   required: z
     .array(z.string())
@@ -246,14 +249,12 @@ const typeDefinitionBody = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe(
-      "The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type.",
+      `${COMPATIBLE_WITH} Marfa checks the claim when you save the type. A bare string names one type.`,
     ),
   display_hints: DisplayHintsSchema.optional(),
   link_field: LinkFieldSchema.optional(),
   version_policy: VersionPolicySchema.optional(),
-  merge_policy: MergePolicySchema.optional().describe(
-    "How Marfa merges conflicting edits to the type's items.",
-  ),
+  merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
 };
 
 // `fields` leads the shape, and `id` follows it, because a refusal names
@@ -374,10 +375,7 @@ const TypeSchemaResponse = z
     // Clients resolve a sibling type's read-as relationship from this field,
     // so it must reach the generated spec — an omission here strips it from
     // every generated client even though the runtime body carries it.
-    compatible_with: z
-      .array(z.string())
-      .optional()
-      .describe("The types this one is a structural superset of."),
+    compatible_with: z.array(z.string()).optional().describe(COMPATIBLE_WITH),
     // Edges constrain on roles, so a client deciding whether an item may be
     // pointed at a container reads this. Omitting it from the spec would strip
     // it from every generated client while the runtime kept returning it.
@@ -391,7 +389,9 @@ const TypeSchemaResponse = z
           .openapi("TypeRole"),
       )
       .optional()
-      .describe("The structural roles the type plays, its parents' included."),
+      .describe(
+        "The structural roles the type plays, including those it inherits.",
+      ),
     fields: z
       .record(z.string(), FieldDefinitionSchema)
       .describe(
@@ -403,9 +403,7 @@ const TypeSchemaResponse = z
     display_hints: DisplayHintsSchema.optional(),
     link_field: LinkFieldSchema.optional(),
     version_policy: VersionPolicySchema.optional(),
-    merge_policy: MergePolicySchema.optional().describe(
-      "How Marfa merges conflicting edits to the type's items.",
-    ),
+    merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
   })
   .describe(
     "A type says which fields the items of that type hold, and what else Marfa does for them.",
@@ -434,11 +432,15 @@ const listTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(TypeSchemaResponse, "TypeDefinitionPage"),
+          schema: wholeListOf(
+            TypeSchemaResponse,
+            "TypeDefinitionPage",
+            "type",
+          ),
         },
       },
       description:
-        "Returns every type in one page: `next_cursor` is always `null`. A type lists only its own fields, so resolve the rest through `parent`.",
+        "Returns every type. A type lists only its own fields, so resolve the rest through `parent`.",
     },
     401: {
       content: {
@@ -545,7 +547,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: the body has no `fields`.\n- `validation_error`: `id` is malformed, or `parent` isn't a registered type.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field of the type.\n- `property_shadows_field`: a field is named like one every item has, such as `title`.\n- `inheritance_violation`: the type changes the shape of an inherited field.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has, such as `title`.\n- `inheritance_violation`: the type changes an inherited field's shape.",
     },
     401: {
       content: {
@@ -651,13 +653,14 @@ const replaceTypeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "inheritance_violation",
             "invalid_schema",
+            "missing_required_field",
             "property_shadows_field",
             "validation_error",
           ]),
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: the identifier is malformed, or the `parent` chain is circular or too deep.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: a field's shape differs from the same field above or below it.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
     },
     401: {
       content: {
@@ -678,7 +681,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you lack `schema.write` and the change needs it, including adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
+        "- `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
     },
     404: {
       content: {

@@ -1662,9 +1662,9 @@ export interface components {
             source_id: string;
             /** @description The ID of the item the edge points to. */
             target_id: string;
-            /** @description The identifier of the edge's edge type, such as `parent-of`. */
+            /** @description The identifier of the edge type, such as `parent-of`. */
             edge_type: string;
-            /** @description The edge's properties, as its edge type declares them. */
+            /** @description The edge's properties, by name. */
             properties: {
                 [key: string]: unknown;
             };
@@ -2419,16 +2419,16 @@ export interface components {
              * @enum {string}
              */
             cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. */
+            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
             source_type_constraints: string[];
-            /** @description The types an edge's target item can have. */
+            /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
             target_type_constraints: string[];
             /**
              * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name. */
+            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. */
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -2439,20 +2439,20 @@ export interface components {
              * @enum {string}
              */
             written_at: "source" | "target";
-            /** @description Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`. */
+            /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
             shipped: boolean;
         };
         /** @description One property an edge of an edge type can carry. */
         EdgePropertyDefinition: {
-            /** @description One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail. */
+            /** @description The property's type: one of the field types a type's `fields` take, except `thumbnail`. */
             type: string;
             /** @description What the property holds. */
             description?: string;
-            /** @description `true` if every edge of the type must have the property. */
+            /** @description `true` if every edge of the type should have the property. */
             required?: boolean;
-            /** @description The values an `enum` property allows. */
+            /** @description The values an `enum` property takes. */
             enum_values?: string[];
-            /** @description One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail. */
+            /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
             items_type?: string;
             /** @description A refinement of a `string` property, such as `bcp47`. It can't be `thumbnail`: an edge carries no thumbnail. */
             format?: string;
@@ -2530,7 +2530,7 @@ export interface components {
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name. Leave it out for none. */
+            /** @description The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. Leave it out for none. */
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
@@ -2544,7 +2544,7 @@ export interface components {
         };
         EdgeTypePage: {
             data: components["schemas"]["EdgeType"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every edge type in one page. */
             next_cursor: string | null;
         };
         /** @description An error response. */
@@ -2583,7 +2583,7 @@ export interface components {
         };
         TypeDefinitionPage: {
             data: components["schemas"]["TypeDefinition"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every type in one page. */
             next_cursor: string | null;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
@@ -2598,7 +2598,7 @@ export interface components {
             parent?: string;
             /** @description The types this one is a structural superset of. */
             compatible_with?: string[];
-            /** @description The structural roles the type plays, its parents' included. */
+            /** @description The structural roles the type plays, including those it inherits. */
             roles?: components["schemas"]["TypeRole"][];
             /** @description The type's own fields, by name. `GET /types/{id}` adds the fields it inherits. */
             fields: {
@@ -2607,7 +2607,7 @@ export interface components {
             /** @description The version number the type was last saved with. */
             version: number;
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash. */
+            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
@@ -2620,7 +2620,7 @@ export interface components {
         /** @description One field of a type: its type, and how items may fill it. */
         FieldDefinition: {
             /**
-             * @description The field's type. A `thumbnail` holds a small image of at most 16 KiB, sent as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, and never under `title`, `body`, `description` or `name`.
+             * @description The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`.
              * @enum {string}
              */
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
@@ -2633,7 +2633,7 @@ export interface components {
             /** @description The type of each element of an `array` field. */
             items_type?: string;
             /**
-             * @description A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, or its `items_type` on an array. `bcp47` and `iso3166` stay as `format`.
+             * @description A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.
              * @enum {string}
              */
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
@@ -2659,7 +2659,7 @@ export interface components {
             recent_days?: number;
             /** @description How many days back Marfa keeps one version per day, after the recent window. */
             daily_snapshot_days?: number;
-            /** @description How many days back Marfa keeps one version per week, after the daily window. Older versions are deleted. */
+            /** @description How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest. */
             weekly_snapshot_days?: number;
             /** @description The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first. */
             max_versions?: number;
@@ -2761,22 +2761,22 @@ export interface components {
             fields: {
                 [key: string]: components["schemas"]["FieldDefinition"];
             };
-            /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out and it's 0. */
+            /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out for 0. */
             version?: number;
-            /** @description The identifier of the type this one inherits from. You need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
+            /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier. */
             label?: string;
             /** @description What the type is for. */
             description?: string;
-            /** @description The structural roles the type plays: container. An edge type's `role:<name>` constraint matches types by role. */
+            /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
             required?: string[];
             /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
             compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash. */
+            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
@@ -2784,23 +2784,6 @@ export interface components {
             id: string;
         } & {
             [key: string]: unknown;
-        };
-        /** @description An error response. */
-        InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "inheritance_violation" | "invalid_schema" | "property_shadows_field" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description An error response. */
         CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal: {
@@ -2842,22 +2825,22 @@ export interface components {
             fields: {
                 [key: string]: components["schemas"]["FieldDefinition"];
             };
-            /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out and it's 0. */
+            /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out for 0. */
             version?: number;
-            /** @description The identifier of the type this one inherits from. You need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
+            /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier. */
             label?: string;
             /** @description What the type is for. */
             description?: string;
-            /** @description The structural roles the type plays: container. An edge type's `role:<name>` constraint matches types by role. */
+            /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
             required?: string[];
             /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
             compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash. */
+            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
@@ -3564,7 +3547,7 @@ export interface components {
         };
         DriftedPlatformTypePage: {
             data: components["schemas"]["DriftedPlatformType"][];
-            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            /** @description Always `null`: Marfa returns every stale type in one page. */
             next_cursor: string | null;
         };
         /** @description A platform type that this build no longer ships. */
@@ -7980,7 +7963,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: `edge_type` names more than 10 edge types.
+             *     - `validation_error`: a query parameter is unknown or invalid, or `edge_type` names more than 10 edge types.
              */
             400: {
                 headers: {
@@ -8126,7 +8109,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: `edge_type` names more than 10 edge types.
+             *     - `validation_error`: a query parameter is unknown or invalid, or `edge_type` names more than 10 edge types.
              */
             400: {
                 headers: {
@@ -8258,7 +8241,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
-            /** @description `validation_error`: `edge_type` names more than 10 edge types. */
+            /** @description - `validation_error`: a query parameter is unknown or invalid, `edge_type` names more than 10 edge types, or `cursor` came from the other order. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8288,7 +8271,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted`: your credential reaches no type. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8373,7 +8356,7 @@ export interface operations {
                     target_id: string;
                     /** @description The identifier of the edge type, such as `parent-of`. */
                     edge_type: string;
-                    /** @description The edge's properties, as the edge type declares them. Leave it out for none. */
+                    /** @description The edge's properties. Leave it out for none. */
                     properties?: {
                         [key: string]: unknown;
                     };
@@ -8418,8 +8401,8 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.
              *     - `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.
-             *     - `validation_error`: a field is invalid, such as properties the edge type doesn't allow.
-             *     - `edge_constraint_violation`: the edge breaks its edge type's rules, such as its cardinality or type constraints.
+             *     - `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.
+             *     - `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.
              *     - `edge_cycle`: the edge would close a cycle.
              */
             400: {
@@ -8453,10 +8436,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you don't have write on the edge type.
-             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.
-             *
-             *     Both name the missing grant in `details.grant`.
+             * @description - `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -8491,7 +8472,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
-            /** @description `id_reused`: `id` belongs to a different edge. `details.differs` says whether `source_id`, `target_id` or `edge_type` differs. If you can't read that edge, only `details.existing_id` is set. */
+            /** @description `id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8633,7 +8614,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted`: your credential reaches no type. */
+            /** @description - `type_not_permitted`: your credential reaches no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8775,10 +8756,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it.
-             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.
-             *
-             *     Both name the missing grant in `details.grant`.
+             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -8912,9 +8891,9 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
-                    /** @description The ID of the source item to move the edge to. It works only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`), and replaces the edge the target held. Send it or `target_id`, not both. */
+                    /** @description The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time. */
                     source_id?: string;
-                    /** @description The ID of the target item to move the edge to. It works only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`), and replaces the edge the source held. Send it or `source_id`, not both. */
+                    /** @description The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time. */
                     target_id?: string;
                     /** @description The version of the edge your change is based on, from a read. If the edge has moved on, the update fails with `version_conflict`. */
                     version: number;
@@ -8974,10 +8953,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it.
-             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or on the new source's type, or your credential reaches no type.
-             *
-             *     Both name the missing grant in `details.grant`.
+             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the source item's type, or the new source's, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -8996,7 +8973,7 @@ export interface operations {
             /**
              * @description - `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.
              *     - `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.
-             *     - `edge_type_not_found`: the edge's type is no longer registered.
+             *     - `edge_type_not_found`: you move an end of an edge whose edge type is no longer registered.
              */
             404: {
                 headers: {
@@ -9151,7 +9128,7 @@ export interface operations {
             };
             /**
              * @description - `validation_error`: the body is malformed, or has more than 5,000 entries.
-             *     - `missing_required_field`: an entry is missing `source_id`, `target_id` or `edge_type`.
+             *     - `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.
              *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
              */
             400: {
@@ -9184,9 +9161,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_not_permitted`: you don't have write on an entry's source item type, or your credential reaches no type.
-             *     - `edge_permission_denied`: you don't have write on an entry's edge type.
-             *     - `bulk_atomic_rollback`: one of these under `atomic`.
+             * @description - `type_not_permitted`: your credential reaches no type.
+             *     - `bulk_atomic_rollback`: with `atomic` true, you don't have write on an entry's source item type or edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.
              */
             403: {
                 headers: {
@@ -9289,7 +9265,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every edge type in one page: `next_cursor` is always `null`. `shipped` tells the two kinds apart. */
+            /** @description Returns every edge type. `shipped` tells the two kinds apart. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9412,7 +9388,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `id` or `reverse_name` isn't a valid edge type identifier, `written_at` is `target` with no `reverse_name`, or the body names `extends`.
+             * @description - `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.
              *     - `missing_required_field`: `id` or `cardinality` is missing.
              *     - `invalid_schema`: a property's `type` isn't a field type.
              */
@@ -9463,7 +9439,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
-            /** @description `conflict`: `id` is the name of an edge type Marfa ships, or `id` or `reverse_name` is already the ID or reverse name of another edge type. */
+            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9687,7 +9663,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every type in one page: `next_cursor` is always `null`. A type lists only its own fields, so resolve the rest through `parent`. */
+            /** @description Returns every type. A type lists only its own fields, so resolve the rest through `parent`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9808,11 +9784,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `missing_required_field`: the body has no `fields`.
-             *     - `validation_error`: `id` is malformed, or `parent` isn't a registered type.
-             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field of the type.
-             *     - `property_shadows_field`: a field is named like one every item has, such as `title`.
-             *     - `inheritance_violation`: the type changes the shape of an inherited field.
+             * @description - `missing_required_field`: `fields` is missing.
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
+             *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.
+             *     - `property_shadows_field`: a field has the name of one every item has, such as `title`.
+             *     - `inheritance_violation`: the type changes an inherited field's shape.
              */
             400: {
                 headers: {
@@ -10090,10 +10066,10 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `fields` is missing.
-             *     - `validation_error`: the identifier is malformed, or the `parent` chain is circular or too deep.
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.
              *     - `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.
-             *     - `property_shadows_field`: a field is named like one every item has.
-             *     - `inheritance_violation`: a field's shape differs from the same field above or below it.
+             *     - `property_shadows_field`: a field has the name of one every item has.
+             *     - `inheritance_violation`: a field's shape differs in a parent or subtype.
              */
             400: {
                 headers: {
@@ -10106,7 +10082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -10125,7 +10101,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you lack `schema.write` and the change needs it, including adding a field some item already holds a value under. `details.changes` lists what needs it.
+             * @description - `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.
              *     - `core_type_immutable`: Marfa ships this type.
              *     - `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).
              */
@@ -16247,7 +16223,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the stale types in one page: `next_cursor` is always `null`. A type removed since the server started stays listed until it restarts. */
+            /** @description Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16416,7 +16392,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_found`: no platform type has this identifier.
-             *     - `not_found`: another request already deleted the type.
+             *     - `not_found`: the type was deleted after the server started.
              */
             404: {
                 headers: {
@@ -16432,7 +16408,7 @@ export interface operations {
                     "application/json": components["schemas"]["NotFoundOrTypeNotFoundRefusal"];
                 };
             };
-            /** @description `conflict`: the build still ships the type, items still carry it, or another type inherits from it (`details.child_types` lists them). */
+            /** @description `conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them). */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

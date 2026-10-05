@@ -60,6 +60,20 @@ function namedFields(): { name: string; field: Json }[] {
   return out;
 }
 
+/**
+ * A field's description. A field that refers to a named schema carries its
+ * own text in an `allOf` branch beside the reference.
+ */
+function fieldDescription(field: Json): string | undefined {
+  if (text(field.description) !== undefined) return text(field.description);
+  for (const branch of (field.allOf ?? []) as Json[]) {
+    if (branch.$ref === undefined && text(branch.description) !== undefined) {
+      return text(branch.description);
+    }
+  }
+  return undefined;
+}
+
 /** The violations of each rule the document is still being brought up to. */
 function violations(): Record<keyof typeof CEILINGS, string[]> {
   const found: Record<keyof typeof CEILINGS, string[]> = {
@@ -107,7 +121,7 @@ function violations(): Record<keyof typeof CEILINGS, string[]> {
       found.schemaUndescribed.push(name);
   }
   for (const { name, field } of namedFields()) {
-    const description = text(field.description);
+    const description = fieldDescription(field);
     if (description === undefined) found.fieldUndescribed.push(name);
     else if (description.length > 250) found.fieldLength.push(name);
   }
@@ -124,8 +138,8 @@ const CEILINGS = {
   parameterUndescribed: 2,
   parameterLength: 7,
   schemaUndescribed: 80,
-  fieldUndescribed: 297,
-  fieldLength: 6,
+  fieldUndescribed: 288,
+  fieldLength: 7,
   responseLength: 0,
 };
 

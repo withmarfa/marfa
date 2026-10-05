@@ -169,12 +169,12 @@
           },
           "edge_type": {
             "type": "string",
-            "description": "The identifier of the edge's edge type, such as `parent-of`."
+            "description": "The identifier of the edge type, such as `parent-of`."
           },
           "properties": {
             "type": "object",
             "additionalProperties": {},
-            "description": "The edge's properties, as its edge type declares them."
+            "description": "The edge's properties, by name."
           },
           "created_at": {
             "type": "string",
@@ -486,7 +486,7 @@
                 "$ref": "#/components/schemas/MergeStrategy"
               },
               {
-                "description": "The strategy for a field `fields` doesn't name."
+                "description": "The strategy for a field `fields` doesn't name. Leave it out for `last_writer_wins`."
               }
             ]
           }
@@ -2078,14 +2078,14 @@
             "items": {
               "type": "string"
             },
-            "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`."
+            "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes."
           },
           "target_type_constraints": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The types an edge's target item can have."
+            "description": "The types an edge's target item can have, in the same form as `source_type_constraints`."
           },
           "cascade_on_delete": {
             "type": "string",
@@ -2101,7 +2101,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePropertyDefinition"
             },
-            "description": "The properties an edge of the type can carry, by name."
+            "description": "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it."
           },
           "reverse_name": {
             "type": "string",
@@ -2117,7 +2117,7 @@
           },
           "shipped": {
             "type": "boolean",
-            "description": "Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`."
+            "description": "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`."
           }
         },
         "required": [
@@ -2137,7 +2137,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "description": "One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail."
+            "description": "The property's type: one of the field types a type's `fields` take, except `thumbnail`."
           },
           "description": {
             "type": "string",
@@ -2145,18 +2145,18 @@
           },
           "required": {
             "type": "boolean",
-            "description": "`true` if every edge of the type must have the property."
+            "description": "`true` if every edge of the type should have the property."
           },
           "enum_values": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The values an `enum` property allows."
+            "description": "The values an `enum` property takes."
           },
           "items_type": {
             "type": "string",
-            "description": "One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail."
+            "description": "The type of each element of an `array` property. It can't be `thumbnail`."
           },
           "format": {
             "type": "string",
@@ -2332,7 +2332,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/EdgePropertyDefinition"
             },
-            "description": "The properties an edge of the type can carry, by name. Leave it out for none."
+            "description": "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it. Leave it out for none."
           },
           "reverse_name": {
             "type": "string",
@@ -2367,7 +2367,7 @@
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every edge type in one page."
           }
         },
         "required": [
@@ -2459,7 +2459,7 @@
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every type in one page."
           }
         },
         "required": [
@@ -2498,7 +2498,7 @@
             "items": {
               "$ref": "#/components/schemas/TypeRole"
             },
-            "description": "The structural roles the type plays, its parents' included."
+            "description": "The structural roles the type plays, including those it inherits."
           },
           "fields": {
             "type": "object",
@@ -2516,7 +2516,7 @@
           },
           "link_field": {
             "type": "string",
-            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash."
+            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
             "$ref": "#/components/schemas/VersionPolicy"
@@ -2565,7 +2565,7 @@
               "object",
               "thumbnail"
             ],
-            "description": "The field's type. A `thumbnail` holds a small image of at most 16 KiB, sent as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, and never under `title`, `body`, `description` or `name`."
+            "description": "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`."
           },
           "description": {
             "type": "string",
@@ -2597,7 +2597,7 @@
               "bcp47",
               "iso3166"
             ],
-            "description": "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, or its `items_type` on an array. `bcp47` and `iso3166` stay as `format`."
+            "description": "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`."
           },
           "searchable": {
             "type": "boolean",
@@ -2645,7 +2645,7 @@
           },
           "weekly_snapshot_days": {
             "type": "number",
-            "description": "How many days back Marfa keeps one version per week, after the daily window. Older versions are deleted."
+            "description": "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest."
           },
           "max_versions": {
             "type": "number",
@@ -2867,15 +2867,15 @@
           "version": {
             "type": "integer",
             "minimum": 0,
-            "description": "A number for you to track changes to the type. Marfa never changes it. Leave it out and it's 0."
+            "description": "A number for you to track changes to the type. Marfa never changes it. Leave it out for 0."
           },
           "parent": {
             "type": "string",
-            "description": "The identifier of the type this one inherits from. You need write on it, unless Marfa ships it. Leave it out for a type with no parent."
+            "description": "The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent."
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier."
+            "description": "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier."
           },
           "description": {
             "type": "string",
@@ -2886,7 +2886,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The structural roles the type plays: container. An edge type's `role:<name>` constraint matches types by role."
+            "description": "The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role."
           },
           "required": {
             "type": "array",
@@ -2914,7 +2914,7 @@
           },
           "link_field": {
             "type": "string",
-            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash."
+            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
             "$ref": "#/components/schemas/VersionPolicy"
@@ -2940,44 +2940,6 @@
         ],
         "additionalProperties": {},
         "description": "A type to register."
-      },
-      "InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "inheritance_violation",
-                  "invalid_schema",
-                  "property_shadows_field",
-                  "validation_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
       },
       "CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal": {
         "type": "object",
@@ -3064,15 +3026,15 @@
           "version": {
             "type": "integer",
             "minimum": 0,
-            "description": "A number for you to track changes to the type. Marfa never changes it. Leave it out and it's 0."
+            "description": "A number for you to track changes to the type. Marfa never changes it. Leave it out for 0."
           },
           "parent": {
             "type": "string",
-            "description": "The identifier of the type this one inherits from. You need write on it, unless Marfa ships it. Leave it out for a type with no parent."
+            "description": "The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent."
           },
           "label": {
             "type": "string",
-            "description": "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier."
+            "description": "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier."
           },
           "description": {
             "type": "string",
@@ -3083,7 +3045,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The structural roles the type plays: container. An edge type's `role:<name>` constraint matches types by role."
+            "description": "The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role."
           },
           "required": {
             "type": "array",
@@ -3111,7 +3073,7 @@
           },
           "link_field": {
             "type": "string",
-            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. One item of the type holds a value, in any state. A subtype names its own link. The name has no double quote or backslash."
+            "description": "The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `\"` or `\\`."
           },
           "version_policy": {
             "$ref": "#/components/schemas/VersionPolicy"
@@ -5256,7 +5218,7 @@
               "string",
               "null"
             ],
-            "description": "Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page."
+            "description": "Always `null`: Marfa returns every stale type in one page."
           }
         },
         "required": [
@@ -14478,7 +14440,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: a query parameter is unknown or invalid, or `edge_type` names more than 10 edge types.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14785,7 +14747,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: `edge_type` names more than 10 edge types.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: a query parameter is unknown or invalid, or `edge_type` names more than 10 edge types.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15083,7 +15045,7 @@
             }
           },
           "400": {
-            "description": "`validation_error`: `edge_type` names more than 10 edge types.",
+            "description": "- `validation_error`: a query parameter is unknown or invalid, `edge_type` names more than 10 edge types, or `cursor` came from the other order.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15143,7 +15105,7 @@
             }
           },
           "403": {
-            "description": "`type_not_permitted`: your credential reaches no type.",
+            "description": "- `type_not_permitted`: your credential reaches no type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15308,7 +15270,7 @@
                   "properties": {
                     "type": "object",
                     "additionalProperties": {},
-                    "description": "The edge's properties, as the edge type declares them. Leave it out for none."
+                    "description": "The edge's properties. Leave it out for none."
                   }
                 },
                 "required": [
@@ -15403,7 +15365,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as properties the edge type doesn't allow.\n- `edge_constraint_violation`: the edge breaks its edge type's rules, such as its cardinality or type constraints.\n- `edge_cycle`: the edge would close a cycle.",
+            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`: a field is invalid, such as an `in-folder` edge's `path`.\n- `edge_constraint_violation`: the edge exists (`details.constraint` is `duplicate`) or breaks a rule of its edge type.\n- `edge_cycle`: the edge would close a cycle.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15466,7 +15428,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you don't have write on the edge type.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+            "description": "- `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15529,7 +15491,7 @@
             }
           },
           "409": {
-            "description": "`id_reused`: `id` belongs to a different edge. `details.differs` says whether `source_id`, `target_id` or `edge_type` differs. If you can't read that edge, only `details.existing_id` is set.",
+            "description": "`id_reused`: `id` belongs to a different edge. `details.differs` lists which of `source_id`, `target_id` and `edge_type` differ. If you can't read that edge, only `details.existing_id` is set.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15835,7 +15797,7 @@
             }
           },
           "403": {
-            "description": "`type_not_permitted`: your credential reaches no type.",
+            "description": "- `type_not_permitted`: your credential reaches no type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16043,11 +16005,11 @@
                   },
                   "source_id": {
                     "type": "string",
-                    "description": "The ID of the source item to move the edge to. It works only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`), and replaces the edge the target held. Send it or `target_id`, not both."
+                    "description": "The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time."
                   },
                   "target_id": {
                     "type": "string",
-                    "description": "The ID of the target item to move the edge to. It works only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`), and replaces the edge the source held. Send it or `source_id`, not both."
+                    "description": "The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time."
                   },
                   "version": {
                     "type": "integer",
@@ -16157,7 +16119,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or on the new source's type, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the source item's type, or the new source's, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16187,7 +16149,7 @@
             }
           },
           "404": {
-            "description": "- `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.\n- `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.\n- `edge_type_not_found`: the edge's type is no longer registered.",
+            "description": "- `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.\n- `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.\n- `edge_type_not_found`: you move an end of an edge whose edge type is no longer registered.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16513,7 +16475,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type.\n\nBoth name the missing grant in `details.grant`.",
+            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16848,7 +16810,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+            "description": "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16908,7 +16870,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: you don't have write on an entry's source item type, or your credential reaches no type.\n- `edge_permission_denied`: you don't have write on an entry's edge type.\n- `bulk_atomic_rollback`: one of these under `atomic`.",
+            "description": "- `type_not_permitted`: your credential reaches no type.\n- `bulk_atomic_rollback`: with `atomic` true, you don't have write on an entry's source item type or edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17144,7 +17106,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `id` or `reverse_name` isn't a valid edge type identifier, `written_at` is `target` with no `reverse_name`, or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
+            "description": "- `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17234,7 +17196,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: `id` is the name of an edge type Marfa ships, or `id` or `reverse_name` is already the ID or reverse name of another edge type.",
+            "description": "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17363,7 +17325,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns every edge type in one page: `next_cursor` is always `null`. `shipped` tells the two kinds apart.",
+            "description": "Returns every edge type. `shipped` tells the two kinds apart.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17881,7 +17843,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns every type in one page: `next_cursor` is always `null`. A type lists only its own fields, so resolve the rest through `parent`.",
+            "description": "Returns every type. A type lists only its own fields, so resolve the rest through `parent`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18130,7 +18092,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: the body has no `fields`.\n- `validation_error`: `id` is malformed, or `parent` isn't a registered type.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field of the type.\n- `property_shadows_field`: a field is named like one every item has, such as `title`.\n- `inheritance_violation`: the type changes the shape of an inherited field.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has, such as `title`.\n- `inheritance_violation`: the type changes an inherited field's shape.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18667,11 +18629,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: the identifier is malformed, or the `parent` chain is circular or too deep.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: a field's shape differs from the same field above or below it.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a circular or too deep chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -18727,7 +18689,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `schema.write` and the change needs it, including adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
+            "description": "- `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -31259,7 +31221,7 @@
         "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Operator key only.",
         "responses": {
           "200": {
-            "description": "Returns the stale types in one page: `next_cursor` is always `null`. A type removed since the server started stays listed until it restarts.",
+            "description": "Returns the stale types. A type deleted since the server started stays listed, with `removable: true`, until it restarts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31600,7 +31562,7 @@
             }
           },
           "404": {
-            "description": "- `type_not_found`: no platform type has this identifier.\n- `not_found`: another request already deleted the type.",
+            "description": "- `type_not_found`: no platform type has this identifier.\n- `not_found`: the type was deleted after the server started.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31630,7 +31592,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: the build still ships the type, items still carry it, or another type inherits from it (`details.child_types` lists them).",
+            "description": "`conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them).",
             "content": {
               "application/json": {
                 "schema": {

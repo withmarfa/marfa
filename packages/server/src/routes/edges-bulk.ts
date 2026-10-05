@@ -33,7 +33,13 @@ import {
   isValidId,
   generateId,
 } from "@withmarfa/shared";
-import { BulkResponseSchema, type BulkSkipReason } from "./_schemas.js";
+import {
+  BulkAtomicSchema,
+  BulkEnableFanoutSchema,
+  BulkResponseSchema,
+  edgeTripleFields,
+  type BulkSkipReason,
+} from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -81,11 +87,7 @@ const BulkEdgeInputItemSchema = z
       .describe(
         "A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one.",
       ),
-    source_id: z.string().describe("The ID of the item the edge starts from."),
-    target_id: z.string().describe("The ID of the item the edge points to."),
-    edge_type: z
-      .string()
-      .describe("The identifier of the edge type, such as `parent-of`."),
+    ...edgeTripleFields,
     properties: z
       .record(z.string(), z.unknown())
       .optional()
@@ -137,18 +139,8 @@ const edgesBulkRoute = createRoute({
               .describe(
                 "`upsert` (the default) merges an entry's properties into the edge it matches. `create_only` skips it, reporting `skipped` with reason `duplicate_edge`.",
               ),
-            atomic: z
-              .boolean()
-              .optional()
-              .describe(
-                "Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written.",
-              ),
-            enable_fanout: z
-              .boolean()
-              .optional()
-              .describe(
-                "Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way.",
-              ),
+            atomic: BulkAtomicSchema,
+            enable_fanout: BulkEnableFanoutSchema,
           }),
         },
       },
@@ -173,7 +165,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+        "- `validation_error`: the body is malformed, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry is missing `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
     },
     401: {
       content: {
@@ -195,7 +187,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "- `type_not_permitted`: you don't have write on an entry's source item type, or your credential reaches no type.\n- `edge_permission_denied`: you don't have write on an entry's edge type.\n- `bulk_atomic_rollback`: one of these under `atomic`.",
+        "- `type_not_permitted`: your credential reaches no type.\n- `bulk_atomic_rollback`: with `atomic` true, you don't have write on an entry's source item type or edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.",
     },
     404: {
       content: {
@@ -608,7 +600,7 @@ export function edgesBulkRoutes(storage: Storage) {
       for (const [i, raw] of rawEdges.entries()) {
         // Each entry's edge and its event commit together: inside the page's
         // transaction when it is atomic, in one of its own otherwise. Both
-        // outcomes are announced, an upsert replacing an edge's properties
+        // outcomes are announced, an upsert merging into an edge's properties
         // being an edit a subscriber cannot tell from one made through
         // `PATCH /edges/{id}`.
         const entry = async () => {

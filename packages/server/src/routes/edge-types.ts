@@ -1,6 +1,6 @@
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
-import { pageOf } from "./_schemas.js";
+import { wholeListOf } from "./_schemas.js";
 import {
   ErrorCode,
   MarfaError,
@@ -64,7 +64,7 @@ const EdgePropertyTypeSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "One of the field types a type's `fields` take, except `thumbnail`: an edge carries no thumbnail.",
+    "The property's type: one of the field types a type's `fields` take, except `thumbnail`.",
   );
 
 /** Declared so the format that stands for a thumbnail on a type's field is
@@ -88,16 +88,40 @@ const EdgePropertyDefinitionSchema = z
     required: z
       .boolean()
       .optional()
-      .describe("`true` if every edge of the type must have the property."),
+      .describe("`true` if every edge of the type should have the property."),
     enum_values: z
       .array(z.string())
       .optional()
-      .describe("The values an `enum` property allows."),
-    items_type: EdgePropertyTypeSchema.optional(),
+      .describe("The values an `enum` property takes."),
+    items_type: EdgePropertyTypeSchema.optional().describe(
+      "The type of each element of an `array` property. It can't be `thumbnail`.",
+    ),
     format: EdgePropertyFormatSchema.optional(),
   })
   .describe("One property an edge of an edge type can carry.")
   .openapi("EdgePropertyDefinition");
+
+// The texts the request and the answer share. The request adds what leaving
+// a field out does.
+const LABEL = "A name for people to read.";
+const DESCRIPTION = "What the edge type is for.";
+const CardinalitySchema = z
+  .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
+  .describe(
+    "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.",
+  );
+const SOURCE_CONSTRAINTS =
+  "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes.";
+const TARGET_CONSTRAINTS =
+  "The types an edge's target item can have, in the same form as `source_type_constraints`.";
+const CASCADE =
+  "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.";
+const PROPERTY_SCHEMA =
+  "The properties an edge of the type can carry, by name, for clients to read. Marfa doesn't check edges against it.";
+const REVERSE_NAME =
+  "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.";
+const WRITTEN_AT =
+  "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.";
 
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
@@ -108,48 +132,36 @@ export const EdgeTypeRequestSchema = z
       .string()
       .min(1)
       .describe("The identifier of the edge type, such as `acme.list-member`."),
-    label: z.string().optional().describe("A name for people to read."),
-    description: z.string().optional().describe("What the edge type is for."),
-    cardinality: z
-      .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
-      .describe(
-        "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.",
-      ),
+    label: z.string().optional().describe(LABEL),
+    description: z.string().optional().describe(DESCRIPTION),
+    cardinality: CardinalitySchema,
     source_type_constraints: z
       .array(TypeConstraintSchema)
       .optional()
-      .describe(
-        "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type.",
-      ),
+      .describe(`${SOURCE_CONSTRAINTS} Leave it out to allow any type.`),
     target_type_constraints: z
       .array(TypeConstraintSchema)
       .optional()
-      .describe(
-        "The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type.",
-      ),
+      .describe(`${TARGET_CONSTRAINTS} Leave it out to allow any type.`),
     cascade_on_delete: z
       .enum(["cascade", "orphan", "block"])
       .optional()
-      .describe(
-        "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists. Leave it out for `orphan`.",
-      ),
+      .describe(`${CASCADE} Leave it out for \`orphan\`.`),
     property_schema: z
       .record(z.string(), EdgePropertyDefinitionSchema)
       .optional()
-      .describe(
-        "The properties an edge of the type can carry, by name. Leave it out for none.",
-      ),
+      .describe(`${PROPERTY_SCHEMA} Leave it out for none.`),
     reverse_name: z
       .string()
       .optional()
       .describe(
-        "The name the edge goes by when read from its target, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name.",
+        `${REVERSE_NAME} No other edge type can use it as an ID or reverse name.`,
       ),
     written_at: z
       .enum(["source", "target"])
       .optional()
       .describe(
-        "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `target` needs a `reverse_name`. Leave it out for `source`.",
+        `${WRITTEN_AT} \`target\` needs a \`reverse_name\`. Leave it out for \`source\`.`,
       ),
   })
   .describe("An edge type to register.")
@@ -158,44 +170,21 @@ export const EdgeTypeRequestSchema = z
 const EdgeTypeResponseSchema = z
   .object({
     id: z.string().describe("Unique identifier for the edge type."),
-    label: z.string().optional().describe("A name for people to read."),
-    description: z.string().optional().describe("What the edge type is for."),
-    cardinality: z
-      .enum(["one-to-one", "one-to-many", "many-to-one", "many-to-many"])
-      .describe(
-        "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.",
-      ),
-    source_type_constraints: z
-      .array(z.string())
-      .describe(
-        "The types an edge's source item can have: `*`, a type identifier or `role:<name>`.",
-      ),
-    target_type_constraints: z
-      .array(z.string())
-      .describe("The types an edge's target item can have."),
-    cascade_on_delete: z
-      .enum(["cascade", "orphan", "block"])
-      .describe(
-        "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.",
-      ),
+    label: z.string().optional().describe(LABEL),
+    description: z.string().optional().describe(DESCRIPTION),
+    cardinality: CardinalitySchema,
+    source_type_constraints: z.array(z.string()).describe(SOURCE_CONSTRAINTS),
+    target_type_constraints: z.array(z.string()).describe(TARGET_CONSTRAINTS),
+    cascade_on_delete: z.enum(["cascade", "orphan", "block"]).describe(CASCADE),
     property_schema: z
       .record(z.string(), EdgePropertyDefinitionSchema)
-      .describe("The properties an edge of the type can carry, by name."),
-    reverse_name: z
-      .string()
-      .optional()
-      .describe(
-        "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.",
-      ),
-    written_at: z
-      .enum(["source", "target"])
-      .describe(
-        "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.",
-      ),
+      .describe(PROPERTY_SCHEMA),
+    reverse_name: z.string().optional().describe(REVERSE_NAME),
+    written_at: z.enum(["source", "target"]).describe(WRITTEN_AT),
     shipped: z
       .boolean()
       .describe(
-        "Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`.",
+        "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`.",
       ),
   })
   .describe(
@@ -339,7 +328,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `id` or `reverse_name` isn't a valid edge type identifier, `written_at` is `target` with no `reverse_name`, or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
+        "- `validation_error`: a field is invalid, such as an `id` or `reverse_name` that isn't a valid edge type identifier, a `role:` constraint naming no role, or `written_at: target` with no `reverse_name`; or the body names `extends`.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type.",
     },
     403: {
       content: {
@@ -360,7 +349,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: `id` is the name of an edge type Marfa ships, or `id` or `reverse_name` is already the ID or reverse name of another edge type.",
+        "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`.",
     },
   },
 });
@@ -378,11 +367,15 @@ const listEdgeTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: pageOf(EdgeTypeResponseSchema, "EdgeTypePage"),
+          schema: wholeListOf(
+            EdgeTypeResponseSchema,
+            "EdgeTypePage",
+            "edge type",
+          ),
         },
       },
       description:
-        "Returns every edge type in one page: `next_cursor` is always `null`. `shipped` tells the two kinds apart.",
+        "Returns every edge type. `shipped` tells the two kinds apart.",
     },
   },
 });

@@ -113,17 +113,23 @@ export function resolveStateFilter(raw: string | undefined): {
   return { state: raw as ItemState | undefined, all_states: false };
 }
 
+/** The three fields that name an edge, worded once for every door that
+ *  takes or returns them. */
+export const edgeTripleFields = {
+  source_id: z.string().describe("The ID of the item the edge starts from."),
+  target_id: z.string().describe("The ID of the item the edge points to."),
+  edge_type: z
+    .string()
+    .describe("The identifier of the edge type, such as `parent-of`."),
+};
+
 export const EdgeSchema = z
   .object({
     id: z.string().describe("Unique identifier for the edge."),
-    source_id: z.string().describe("The ID of the item the edge starts from."),
-    target_id: z.string().describe("The ID of the item the edge points to."),
-    edge_type: z
-      .string()
-      .describe("The identifier of the edge's edge type, such as `parent-of`."),
+    ...edgeTripleFields,
     properties: z
       .record(z.string(), z.unknown())
-      .describe("The edge's properties, as its edge type declares them."),
+      .describe("The edge's properties, by name."),
     created_at: z.string().describe("When the edge was created, in UTC."),
     updated_at: z.string().describe("When the edge last changed, in UTC."),
     version: z
@@ -298,7 +304,7 @@ export const MergePolicySchema = z
       .optional()
       .describe("The strategy for each field the policy names."),
     default: MergeStrategyEnum.optional().describe(
-      "The strategy for a field `fields` doesn't name.",
+      "The strategy for a field `fields` doesn't name. Leave it out for `last_writer_wins`.",
     ),
   })
   .describe(
@@ -395,6 +401,22 @@ export const BulkCountsSchema = z
     errored: z.number().int(),
   })
   .openapi("BulkCounts");
+
+/** `atomic` on both bulk doors. */
+export const BulkAtomicSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    "Whether one failed entry rolls back the whole batch. Defaults to `true`. With `false`, that entry is `errored` and the rest are written.",
+  );
+
+/** `enable_fanout` on both bulk doors. */
+export const BulkEnableFanoutSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    "Whether each write also calls outbound webhooks. Defaults to `false`. Marfa logs the events either way.",
+  );
 
 /** What a bulk page did, on either bulk door. */
 export const BulkResponseSchema = z
