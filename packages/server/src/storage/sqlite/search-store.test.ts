@@ -3,13 +3,13 @@ import { snippetHtml } from "./search-store.js";
 
 describe("snippetHtml", () => {
   it("escapes the text and turns the match markers into tags", () => {
-    expect(snippetHtml(`<b>numbat</b> & "q" 'p'`)).toBe(
+    expect(snippetHtml(`<b>\uE000numbat\uE001</b> & "q" 'p'`)).toBe(
       "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;",
     );
   });
 
   it("makes only well-formed marks from markers the text holds itself", () => {
-    expect(snippetHtml("a b c d")).toBe(
+    expect(snippetHtml("\uE001a \uE000\uE000b\uE001\uE001 c \uE000d")).toBe(
       "a <mark>b</mark> c <mark>d</mark>",
     );
   });
