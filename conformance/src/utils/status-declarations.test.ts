@@ -290,7 +290,7 @@ describe("the status checker", () => {
       documentRefusing({ 200: [], 413: ["request_too_large"] }),
     );
     expect(report.staleCodes).toEqual([
-      "housekeeping_job_running",
+      "background_job_running",
       "idempotency_key_in_flight",
       "rate_limited",
       "write_contention",

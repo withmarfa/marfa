@@ -22,7 +22,7 @@ import {
   __resetEventLogForTests,
 } from "../pubsub.js";
 import { setBusyBudgetMs } from "../storage/sqlite/connection.js";
-import { finishPendingCopyDeletions } from "../housekeeping/blob-delete.js";
+import { finishPendingCopyDeletions } from "../background-jobs/blob-delete.js";
 import { MAX_ARCHIVE_TEXT_BYTES } from "./admin-archive-read.js";
 
 let ctx: TestContext;

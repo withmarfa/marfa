@@ -30,7 +30,7 @@ import type {
   TypeSchema,
 } from "@withmarfa/shared";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
-import type { HousekeepingReport } from "../housekeeping/scheduler.js";
+import type { BackgroundJobReport } from "../background-jobs/scheduler.js";
 import type { ConflictMode } from "./conflict.js";
 import type { ReadableSources, SourceFilterSettings } from "./filter-sql.js";
 
@@ -994,7 +994,7 @@ export interface VersionStore {
   deleteByIds(ids: string[]): Promise<number>;
   /**
    * Pages over every version snapshot's parsed properties, instance-wide.
-   * Exists for the `blob-orphans` housekeeping job: a hash referenced only
+   * Exists for the `blob-orphans` background job: a hash referenced only
    * by history is
    * still referenced, because deleting it would strip the bytes out from
    * under a version read. Cursor is the version row id.
@@ -2744,7 +2744,7 @@ export interface BulkActionJobStore {
   /**
    * GC: drop terminal rows whose `finished_at` is older than
    * `expireBeforeIso`. Returns the number of rows deleted. Called by the
-   * `bulk-action-gc` housekeeping job at its own cadence.
+   * `bulk-action-gc` background job at its own cadence.
    */
   gcExpired(expireBeforeIso: string): Promise<number>;
 }
@@ -2798,27 +2798,27 @@ export interface EnrichmentStore {
   delete(itemId: string): Promise<void>;
 }
 
-export type HousekeepingOutcome = "ok" | "error";
+export type BackgroundJobOutcome = "ok" | "error";
 
-/** One housekeeping job as the table holds it: its schedule and its last run. */
-export interface HousekeepingRow {
+/** One background job as the table holds it: its schedule and its last run. */
+export interface BackgroundJobRow {
   name: string;
   interval_ms: number;
   next_run_at: string;
   running_since: string | null;
   last_started_at: string | null;
   last_finished_at: string | null;
-  last_outcome: HousekeepingOutcome | null;
+  last_outcome: BackgroundJobOutcome | null;
   last_error: string | null;
   /** What the last run reported, as it was given. */
-  last_result: HousekeepingReport | null;
+  last_result: BackgroundJobReport | null;
 }
 
-export interface HousekeepingFinish {
+export interface BackgroundJobFinish {
   finishedAt: string;
-  outcome: HousekeepingOutcome;
+  outcome: BackgroundJobOutcome;
   error: string | null;
-  result: HousekeepingReport | null;
+  result: BackgroundJobReport | null;
   /** When the name is next due. A `next_run_at` already past the run's
    *  start (a wake during the run, or the schedule of a run started ahead
    *  of it) holds instead when it is the earlier of the two. */
@@ -2826,13 +2826,13 @@ export interface HousekeepingFinish {
 }
 
 /**
- * The polling table the scheduler runs the server's housekeeping from.
+ * The polling table the scheduler runs the server's background jobs from.
  * Every claim is one statement conditioned on `running_since IS NULL`,
  * which is what makes a name exclusive to one run at a time.
  */
-export interface HousekeepingStore {
+export interface BackgroundJobStore {
   /**
-   * Write a housekeeping job's row at boot. A new name is inserted due at
+   * Write a background job's row at boot. A new name is inserted due at
    * `nextRunAt`; an existing one takes the interval and keeps its own
    * `next_run_at`, unless `nextRunAt` is earlier (an interval shortened by
    * configuration).
@@ -2846,15 +2846,15 @@ export interface HousekeepingStore {
   /** The names due at `now` and not running. */
   listDue(now: string): Promise<string[]>;
   /** Claim a name that is due and not running. `null` when it is neither. */
-  claimDue(name: string, now: string): Promise<HousekeepingRow | null>;
+  claimDue(name: string, now: string): Promise<BackgroundJobRow | null>;
   /** Claim a name whether or not it is due. `null` when it is running or
    *  unknown. */
-  claim(name: string, now: string): Promise<HousekeepingRow | null>;
-  finish(name: string, outcome: HousekeepingFinish): Promise<void>;
+  claim(name: string, now: string): Promise<BackgroundJobRow | null>;
+  finish(name: string, outcome: BackgroundJobFinish): Promise<void>;
   /** Make a name due now. False when there is no such row. */
   wake(name: string, now: string): Promise<boolean>;
-  list(): Promise<HousekeepingRow[]>;
-  get(name: string): Promise<HousekeepingRow | null>;
+  list(): Promise<BackgroundJobRow[]>;
+  get(name: string): Promise<BackgroundJobRow | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -3154,7 +3154,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   eventLog: EventLogStore;
   /** Optional sweep store for expired better-auth session rows. Absent on
    *  test contexts that don't wire better-auth (the `auth-session-cleanup`
-   *  housekeeping job is registered only when it is present). */
+   *  background job is registered only when it is present). */
   authSessions?: AuthSessionStore;
   /** The owner behind the sign-in surface. Absent, like `authSessions`, on
    *  a storage that wires no better-auth tables. */
@@ -3180,8 +3180,8 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  consumer. */
   enrichment: EnrichmentStore;
   /** The server's own periodic jobs. The scheduler is the only writer; the
-   *  housekeeping doors read it through the scheduler. */
-  housekeeping: HousekeepingStore;
+   *  background job doors read it through the scheduler. */
+  backgroundJobs: BackgroundJobStore;
   /** The registrations behind `/connectors`, and the runs they report. */
   connectors: ConnectorStore;
   connectorState: ConnectorStateStore;

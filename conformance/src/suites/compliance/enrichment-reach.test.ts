@@ -18,7 +18,7 @@ let operator: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("enrichment-reach", {
     MARFA_ENRICHMENT_ENABLED: "true",
-    // Driven through the housekeeping door rather than the scheduler.
+    // Driven through the background job door rather than the scheduler.
     MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   owner = new MarfaClient({
@@ -36,7 +36,7 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function sweep(): Promise<void> {
-  const run = await operator.runHousekeeping("enrichment-sweep");
+  const run = await operator.runBackgroundJob("enrichment-sweep");
   expect(run.status).toBe(200);
   expect(run.data.outcome, run.data.error ?? "").toBe("ok");
 }

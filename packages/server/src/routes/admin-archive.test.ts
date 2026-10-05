@@ -15,7 +15,7 @@ import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS, generateId, getTypeSchema } from "@withmarfa/shared";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
-import { purgeBlob } from "../housekeeping/blob-delete.js";
+import { purgeBlob } from "../background-jobs/blob-delete.js";
 
 let ctx: TestContext;
 

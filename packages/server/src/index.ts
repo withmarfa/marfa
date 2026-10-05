@@ -20,8 +20,8 @@ import {
 } from "./storage/sqlite/refused-database.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
-import { Housekeeping } from "./housekeeping/scheduler.js";
-import { registerHousekeepingJobs } from "./housekeeping/registrations.js";
+import { BackgroundJobs } from "./background-jobs/scheduler.js";
+import { registerBackgroundJobs } from "./background-jobs/registrations.js";
 import { initEventLog } from "./pubsub.js";
 import {
   log,
@@ -65,10 +65,10 @@ async function main() {
   });
   initEventLog(storage.eventLog);
 
-  const housekeeping = new Housekeeping(storage.housekeeping, {
-    pollIntervalMs: config.housekeepingPollIntervalMs ?? 1_000,
+  const backgroundJobs = new BackgroundJobs(storage.backgroundJobs, {
+    pollIntervalMs: config.backgroundJobPollIntervalMs ?? 1_000,
   });
-  registerHousekeepingJobs(housekeeping, storage, blobs, config);
+  registerBackgroundJobs(backgroundJobs, storage, blobs, config);
 
   const bulkActionWorker = new BulkActionWorker({
     storage,
@@ -140,10 +140,10 @@ async function main() {
   // door answerable on an instance whose database has since gone.
   const instanceId = await ensureInstanceId(storage.settings);
 
-  const app = createApp(storage, blobs, housekeeping, config, instanceId);
-  await housekeeping.start();
-  await housekeeping.runNow("webhook-schedule");
-  log("info", "Housekeeping started", { names: housekeeping.names() });
+  const app = createApp(storage, blobs, backgroundJobs, config, instanceId);
+  await backgroundJobs.start();
+  await backgroundJobs.runNow("webhook-schedule");
+  log("info", "Background jobs started", { names: backgroundJobs.names() });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
@@ -157,7 +157,7 @@ async function main() {
     shuttingDown = true;
     void shutdownInOrder({
       bulkActionWorker,
-      housekeeping,
+      backgroundJobs,
       streams: { endAll: endOpenStreams },
       server,
       storage,

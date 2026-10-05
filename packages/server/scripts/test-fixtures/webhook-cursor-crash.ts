@@ -5,9 +5,9 @@ import { createSqliteStorage } from "../../src/storage/sqlite/index.js";
 import { createBlobLayer } from "../../src/storage/blob-layer.js";
 import { ensureInstanceId } from "../../src/storage/instance-id.js";
 import { createApp } from "../../src/app.js";
-import { Housekeeping } from "../../src/housekeeping/scheduler.js";
+import { BackgroundJobs } from "../../src/background-jobs/scheduler.js";
 import { initEventLog } from "../../src/pubsub.js";
-import { registerHousekeepingJobs } from "../../src/housekeeping/registrations.js";
+import { registerBackgroundJobs } from "../../src/background-jobs/registrations.js";
 
 process.once(
   "message",
@@ -19,13 +19,13 @@ process.once(
         blobPath: join(message.dir, "blobs"),
       };
       const blobs = await createBlobLayer(storage, config);
-      const housekeeping = new Housekeeping(storage.housekeeping, {
+      const backgroundJobs = new BackgroundJobs(storage.backgroundJobs, {
         pollIntervalMs: message.automatic ? 1_000 : 3_600_000,
       });
       const app = createApp(
         storage,
         blobs,
-        housekeeping,
+        backgroundJobs,
         config,
         await ensureInstanceId(storage.settings),
       );
@@ -41,12 +41,12 @@ process.once(
         }
         return list(after, limit, context);
       };
-      registerHousekeepingJobs(housekeeping, storage, blobs, {
+      registerBackgroundJobs(backgroundJobs, storage, blobs, {
         ...config,
         webhookAllowPrivateAddresses: true,
       });
-      await housekeeping.start();
-      await housekeeping.runNow("webhook-schedule");
+      await backgroundJobs.start();
+      await backgroundJobs.runNow("webhook-schedule");
       serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info) => {
         process.send?.({
           kind: "ready",
@@ -60,8 +60,8 @@ process.once(
         }
         if (command.kind === "pass") {
           void (async () => {
-            const scheduled = await housekeeping.runNow("webhook-schedule");
-            await housekeeping.runNow("webhook-poll");
+            const scheduled = await backgroundJobs.runNow("webhook-schedule");
+            await backgroundJobs.runNow("webhook-poll");
             process.send?.({ kind: "passed", scheduled });
           })();
         }

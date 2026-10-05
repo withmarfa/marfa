@@ -7,7 +7,7 @@
 # this file.
 #
 # The blob folder is not here: the server's own `blob-replicate`
-# housekeeping job gives the object store every blob, and `deploy/README.md`
+# background job gives the object store every blob, and `deploy/README.md`
 # says how the two halves relate.
 
 # A snapshot an hour, so a restore reads at most an hour of changes after

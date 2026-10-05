@@ -10,7 +10,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 
 /**
  * The retention sweeps. Each is a class with one `runOnce()` that does a
- * sweep and answers a count; the housekeeping scheduler owns the cadence,
+ * sweep and answers a count; the background job scheduler owns the cadence,
  * records the outcome and classifies a failure, so nothing here keeps a
  * timer or logs a run. A sweep that found something to do says so at
  * `info`; one that found nothing is silent.
@@ -19,7 +19,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Optional instance-config wiring shared by the retention housekeeping
+ * Optional instance-config wiring shared by the retention background
  * jobs. When provided, a run resolves the effective retention from the
  * instance configuration (`InstanceConfig`'s override field, falling back
  * to the instance default) and runs one sweep with it.
@@ -43,13 +43,13 @@ export interface RetentionOverride {
  * Hard-deletes trashed items that entered the bin longer ago than the
  * configured retention window. Idempotent.
  *
- * If `retentionDays <= 0`, the housekeeping job is a no-op: the operator
+ * If `retentionDays <= 0`, the background job is a no-op: the operator
  * can leave the deployment running with no trash purge by setting the env
  * var to 0. The default at the config layer is 60.
  *
  * When `override` is supplied, a `runOnce()` honors the
  * `trash_retention_days` override from the instance configuration. When
- * `override` is omitted the housekeeping job sweeps at the instance default.
+ * `override` is omitted the background job sweeps at the instance default.
  *
  * **This sweep announces nothing, and neither does `RevokedGrantPurger`.**
  * Every other path that removes a row publishes `item.purged`, and every
@@ -143,7 +143,7 @@ export class TrashPurger {
  * row and the audit row that recorded the revocation are the same fact written twice,
  * so keeping them for different lengths of time would let the two disagree
  * about whether a revocation is still visible. Ninety days, matching
- * `AUDIT_RETENTION_DAYS`, and `0` switches the housekeeping job off as it
+ * `AUDIT_RETENTION_DAYS`, and `0` switches the background job off as it
  * does for the others.
  *
  * The store predicate asks `kind = 'app'`: an application grant, not any
@@ -357,7 +357,7 @@ export class RateLimitWindowCleaner {
  * instance-wide sweep like `AuthSessionCleaner` and
  * `RateLimitWindowCleaner`, with no configurable override.
  *
- * `retentionDays <= 0` switches the housekeeping job off: the operator can
+ * `retentionDays <= 0` switches the background job off: the operator can
  * leave the deployment running with no DCR reaper by setting the env var to 0.
  */
 export class DcrClientCleaner {
@@ -446,7 +446,7 @@ export class RevokedKeyReaper {
 // Retention-override helpers
 // ---------------------------------------------------------------------------
 
-/** The retention a housekeeping job runs at: the instance configuration's
+/** The retention a background job runs at: the instance configuration's
  *  override for its field when one is set, the instance default otherwise. */
 async function effectiveRetention(
   override: RetentionOverride,
@@ -477,11 +477,11 @@ async function runSweepToCutoff(opts: {
 }
 
 /**
- * Cleanup runner for the audit and event-log housekeeping jobs, which
- * `housekeeping/registrations.ts` registers as closures rather than as a
+ * Cleanup runner for the audit and event-log background jobs, which
+ * `background-jobs/registrations.ts` registers as closures rather than as a
  * purger class of their own. Returns the number of rows deleted this run.
  *
- * The retention reaches `sweep` in whatever unit the housekeeping job keeps
+ * The retention reaches `sweep` in whatever unit the background job keeps
  * it in, days for the audit log and hours for the event log, because
  * nothing here converts it and the store on the other side takes the same
  * unit it was configured with.

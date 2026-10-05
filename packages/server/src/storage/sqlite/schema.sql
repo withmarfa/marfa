@@ -485,7 +485,7 @@ CREATE TABLE IF NOT EXISTS `extension_blob_references` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_extension_blob_references_item` ON `extension_blob_references` (`item_id`);
-CREATE TABLE IF NOT EXISTS `housekeeping` (
+CREATE TABLE IF NOT EXISTS `background_jobs` (
 	`name` text PRIMARY KEY NOT NULL,
 	`interval_ms` integer NOT NULL,
 	`next_run_at` text NOT NULL,

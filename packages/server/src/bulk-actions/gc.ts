@@ -1,6 +1,6 @@
 /**
  * Sweeps terminal `bulk_action_jobs` rows past a retention window measured
- * against `finished_at`. The housekeeping scheduler owns the cadence.
+ * against `finished_at`. The background job scheduler owns the cadence.
  */
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";

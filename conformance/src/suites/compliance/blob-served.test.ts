@@ -36,7 +36,7 @@ function bootEnv(name: "MARFA_API_URL" | "S3_ENDPOINT"): string {
  *  own scheduler holds answers 409, and is asked for again. */
 async function replicateToZero(): Promise<void> {
   for (let i = 0; i < 50; i++) {
-    const res = await operator.runHousekeeping("blob-replicate");
+    const res = await operator.runBackgroundJob("blob-replicate");
     if (res.status === 409) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       continue;

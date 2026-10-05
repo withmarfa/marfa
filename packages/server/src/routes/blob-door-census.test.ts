@@ -83,14 +83,14 @@ async function errorCode(res: Response): Promise<string | undefined> {
 }
 
 /**
- * Every module outside `storage/` and `housekeeping/` that names a type
+ * Every module outside `storage/` and `background-jobs/` that names a type
  * giving hold of a store's bytes, with what it does with them. A
  * byte-serving door outside `/blobs` is invisible to the route walk below,
  * so it is caught here instead: a new holder fails until it is named.
  *
  * What this sees is a module naming one of `BYTE_TYPES`; a module reaching
  * bytes without naming any of them, through a value typed elsewhere, is
- * not seen. `storage/` is the layer itself and `housekeeping/` holds the
+ * not seen. `storage/` is the layer itself and `background-jobs/` holds the
  * jobs that act on every blob for no row and no credential.
  */
 const BYTE_TYPES =
@@ -117,7 +117,7 @@ function blobLayerHolders(): string[] {
     for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
       const rel = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (rel === "storage" || rel === "housekeeping") continue;
+        if (rel === "storage" || rel === "background-jobs") continue;
         walk(rel);
       } else if (
         entry.name.endsWith(".ts") &&

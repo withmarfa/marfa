@@ -46,7 +46,7 @@ import {
   requireAuth,
 } from "../middleware/auth.js";
 import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
-import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
+import { finishCopyDeletion } from "../background-jobs/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";

@@ -707,7 +707,7 @@ export interface paths {
         };
         /**
          * List orphaned blobs
-         * @description The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.
+         * @description The orphan report: every registered blob the last run of the `blob-orphans` background job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.
          */
         get: operations["listBlobOrphans"];
         put?: never;
@@ -818,7 +818,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/housekeeping": {
+    "/background-jobs": {
         parameters: {
             query?: never;
             header?: never;
@@ -826,10 +826,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List housekeeping jobs
-         * @description Every housekeeping job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.
+         * List background jobs
+         * @description Returns every background job Marfa runs on itself: its interval, when it's next due, whether a run holds it, and what its last run did. One turned off by configuration isn't listed, unless `/config` can turn it back on. Operator key only.
          */
-        get: operations["listHousekeeping"];
+        get: operations["listBackgroundJobs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -838,7 +838,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/housekeeping/{name}/run": {
+    "/background-jobs/{name}/run": {
         parameters: {
             query?: never;
             header?: never;
@@ -848,10 +848,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a housekeeping job
-         * @description Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. Operator key only.
+         * Run a background job
+         * @description Runs a background job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Operator key only.
          */
-        post: operations["runHousekeeping"];
+        post: operations["runBackgroundJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2960,44 +2960,44 @@ export interface components {
                 };
             };
         };
-        HousekeepingJobPage: {
-            data: components["schemas"]["HousekeepingJob"][];
+        BackgroundJobPage: {
+            data: components["schemas"]["BackgroundJob"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        HousekeepingJob: {
+        BackgroundJob: {
             name: string;
             interval_ms: number;
             next_run_at: string;
             running_since: string | null;
             last_started_at: string | null;
             last_finished_at: string | null;
-            last_outcome: components["schemas"]["HousekeepingOutcome"] | null;
+            last_outcome: components["schemas"]["BackgroundJobOutcome"] | null;
             last_error: string | null;
-            last_result: components["schemas"]["HousekeepingReport"] | null;
+            last_result: components["schemas"]["BackgroundJobReport"] | null;
         };
         /** @enum {string} */
-        HousekeepingOutcome: "ok" | "error";
-        HousekeepingReport: {
+        BackgroundJobOutcome: "ok" | "error";
+        BackgroundJobReport: {
             [key: string]: number | boolean | string | null;
         };
-        HousekeepingRun: {
+        BackgroundJobRun: {
             name: string;
             started_at: string;
             finished_at: string;
-            outcome: components["schemas"]["HousekeepingOutcome"];
-            result: components["schemas"]["HousekeepingReport"] | null;
+            outcome: components["schemas"]["BackgroundJobOutcome"];
+            result: components["schemas"]["BackgroundJobReport"] | null;
             error: string | null;
         };
         /** @description An error response. */
-        HousekeepingJobNotFoundRefusal: {
+        BackgroundJobNotFoundRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "housekeeping_job_not_found";
+                code: "background_job_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3007,14 +3007,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        HousekeepingJobRunningRefusal: {
+        BackgroundJobRunningRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "housekeeping_job_running";
+                code: "background_job_running";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -11352,7 +11352,7 @@ export interface operations {
             };
         };
     };
-    listHousekeeping: {
+    listBackgroundJobs: {
         parameters: {
             query?: never;
             header?: never;
@@ -11361,7 +11361,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The housekeeping jobs */
+            /** @description Returns every background job, in one page. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11372,7 +11372,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HousekeepingJobPage"];
+                    "application/json": components["schemas"]["BackgroundJobPage"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -11405,7 +11405,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11453,19 +11453,19 @@ export interface operations {
             };
         };
     };
-    runHousekeeping: {
+    runBackgroundJob: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description The housekeeping job's name, as `GET /housekeeping` lists it. */
+                /** @description The background job's name, as `GET /background-jobs` lists it. */
                 name: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The run */
+            /** @description Returns the run. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11476,10 +11476,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HousekeepingRun"];
+                    "application/json": components["schemas"]["BackgroundJobRun"];
                 };
             };
-            /** @description Not a housekeeping job name */
+            /** @description - `validation_error`: `name` isn't lowercase letters, digits and hyphens starting with a letter, or a query parameter is unknown. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11509,7 +11509,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Operator key required */
+            /** @description - `forbidden`: your key isn't an operator key. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11524,7 +11524,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No such housekeeping job on this instance */
+            /** @description - `background_job_not_found`: this instance runs no background job with this name. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11536,10 +11536,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HousekeepingJobNotFoundRefusal"];
+                    "application/json": components["schemas"]["BackgroundJobNotFoundRefusal"];
                 };
             };
-            /** @description A run holds the housekeeping job */
+            /** @description - `background_job_running`: the background job is already running. Try again when the run finishes. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11551,7 +11551,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HousekeepingJobRunningRefusal"];
+                    "application/json": components["schemas"]["BackgroundJobRunningRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */

@@ -278,7 +278,7 @@ export interface BlobOrphanRow {
   reported_at: string;
 }
 
-export interface HousekeepingJobRow {
+export interface BackgroundJobRow {
   name: string;
   interval_ms: number;
   next_run_at: string;
@@ -290,7 +290,7 @@ export interface HousekeepingJobRow {
   last_result: unknown;
 }
 
-export interface HousekeepingRun {
+export interface BackgroundJobRun {
   name: string;
   started_at: string;
   finished_at: string;

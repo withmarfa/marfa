@@ -5,7 +5,7 @@ import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Readable } from "node:stream";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import { BlobOrphanReporter } from "../background-jobs/blob-orphans.js";
 import type { BlobStore } from "../storage/blob-store.js";
 
 let ctx: TestContext;
@@ -682,7 +682,7 @@ describe("POST /blobs wakes replication", () => {
     const woken = await createTestContext();
     try {
       let runs = 0;
-      woken.housekeeping.register({
+      woken.backgroundJobs.register({
         name: "blob-replicate",
         intervalMs: 3_600_000,
         firstRunDelayMs: 3_600_000,
@@ -691,10 +691,10 @@ describe("POST /blobs wakes replication", () => {
           return Promise.resolve(null);
         },
       });
-      await woken.housekeeping.start();
+      await woken.backgroundJobs.start();
       // Not due for an hour: a poll runs nothing.
-      await woken.housekeeping.poll();
-      await woken.housekeeping.settle();
+      await woken.backgroundJobs.poll();
+      await woken.backgroundJobs.settle();
       expect(runs).toBe(0);
       const res = await woken.app.request("/blobs", {
         method: "POST",
@@ -705,10 +705,10 @@ describe("POST /blobs wakes replication", () => {
         body: new TextEncoder().encode("wakes the copier"),
       });
       expect(res.status).toBe(201);
-      await woken.housekeeping.poll();
-      await woken.housekeeping.settle();
+      await woken.backgroundJobs.poll();
+      await woken.backgroundJobs.settle();
       expect(runs).toBe(1);
-      await woken.housekeeping.stop();
+      await woken.backgroundJobs.stop();
     } finally {
       await woken.cleanup();
     }

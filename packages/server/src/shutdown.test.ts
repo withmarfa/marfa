@@ -25,12 +25,16 @@ const BOUNDS: ShutdownBounds = {
 /** Fakes that record what was called, in order, and can be held open. */
 function parts(
   hold: {
-    housekeeping?: boolean;
+    backgroundJobs?: boolean;
     bulkActions?: boolean;
     server?: boolean;
     storage?: boolean;
   } = {},
-  delays: { housekeeping?: number; bulkActions?: number; server?: number } = {},
+  delays: {
+    backgroundJobs?: number;
+    bulkActions?: number;
+    server?: number;
+  } = {},
 ) {
   const events: string[] = [];
   const settleAfter = (ms: number, then: () => void) =>
@@ -50,12 +54,12 @@ function parts(
         });
       },
     },
-    housekeeping: {
+    backgroundJobs: {
       stop: () => {
-        events.push("housekeeping.stop");
-        if (hold.housekeeping) return new Promise<void>(() => undefined);
-        return settleAfter(delays.housekeeping ?? 10, () => {
-          events.push("housekeeping.stopped");
+        events.push("backgroundJobs.stop");
+        if (hold.backgroundJobs) return new Promise<void>(() => undefined);
+        return settleAfter(delays.backgroundJobs ?? 10, () => {
+          events.push("backgroundJobs.stopped");
         });
       },
     },
@@ -107,7 +111,7 @@ describe("shutdownInOrder", () => {
 
     expect(events.slice(0, 5)).toEqual([
       "bulk-actions.stop",
-      "housekeeping.stop",
+      "backgroundJobs.stop",
       "streams.end",
       "server.close",
       "server.closeIdleConnections",
@@ -115,14 +119,14 @@ describe("shutdownInOrder", () => {
     const at = (event: string) => events.indexOf(event);
     expect(at("storage.close")).toBeGreaterThan(at("server.closed"));
     expect(at("storage.close")).toBeGreaterThan(at("bulk-actions.stopped"));
-    expect(at("storage.close")).toBeGreaterThan(at("housekeeping.stopped"));
+    expect(at("storage.close")).toBeGreaterThan(at("backgroundJobs.stopped"));
     expect(events.at(-1)).toBe("telemetry.flush");
     vi.restoreAllMocks();
   });
 
-  it("waits for the bulk action in flight, not only for the housekeeping runs, before it closes the storage", async () => {
+  it("waits for the bulk action in flight, not only for the background job runs, before it closes the storage", async () => {
     quiet();
-    const { events, fakes } = parts({}, { bulkActions: 25, housekeeping: 1 });
+    const { events, fakes } = parts({}, { bulkActions: 25, backgroundJobs: 1 });
 
     await shutdownInOrder(fakes, { ...BOUNDS, inFlightWorkTimeoutMs: 200 });
 
@@ -137,7 +141,7 @@ describe("shutdownInOrder", () => {
     quiet();
     const { fakes } = parts(
       {},
-      { server: 60, housekeeping: 60, bulkActions: 60 },
+      { server: 60, backgroundJobs: 60, bulkActions: 60 },
     );
 
     const started = Date.now();
@@ -153,9 +157,9 @@ describe("shutdownInOrder", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps exit code 0 when housekeeping or the bulk worker outlives its bound, and still closes the storage", async () => {
+  it("keeps exit code 0 when backgroundJobs or the bulk worker outlives its bound, and still closes the storage", async () => {
     quiet();
-    for (const hold of [{ housekeeping: true }, { bulkActions: true }]) {
+    for (const hold of [{ backgroundJobs: true }, { bulkActions: true }]) {
       const { events, fakes } = parts(hold);
       expect(await shutdownInOrder(fakes, BOUNDS)).toBe(0);
       expect(events).toContain("storage.close");

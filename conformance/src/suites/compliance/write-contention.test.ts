@@ -19,7 +19,7 @@ import {
  * **The lock is held from outside the process, deliberately.** Firing
  * concurrent writes at the server does not reach it: the client
  * serializes its own calls, so two of this process's transactions do not
- * overlap. What does reach it in ordinary running is the housekeeping
+ * overlap. What does reach it in ordinary running is the background job
  * scheduler's transaction interleaving with the request path, and that
  * is a race a fixture would have to win rather than arrange. A second
  * connection sitting in `BEGIN IMMEDIATE` on the same file holds exactly
@@ -286,10 +286,10 @@ describe("contention on the write lock", () => {
     }
   }, 120_000);
 
-  it("refuses a housekeeping run, which writes outside a request's transaction", async () => {
+  it("refuses a background job run, which writes outside a request's transaction", async () => {
     // The path the error handler's `cause` walk exists for. A request's
     // writes go through the transaction the driver opens directly, and
-    // the refusal reaches the handler unwrapped; a housekeeping run
+    // the refusal reaches the handler unwrapped; a background job run
     // writes outside that context, so Drizzle wraps every statement and
     // the server's own code arrives as the `cause` of something else.
     // Without the walk this door answers `500` while every other one
@@ -300,12 +300,15 @@ describe("contention on the write lock", () => {
     });
     const lock = await HeldLock.take(impatient!.sqlitePath);
     try {
-      const run = await operator.rawRequest("/housekeeping/trash-purge/run", {
-        method: "POST",
-      });
+      const run = await operator.rawRequest(
+        "/background-jobs/trash-purge/run",
+        {
+          method: "POST",
+        },
+      );
       expect(
         run.status,
-        `a contended housekeeping run answered ${String(run.status)}`,
+        `a contended background job run answered ${String(run.status)}`,
       ).toBe(503);
       expect(run.error?.error.code).toBe("write_contention");
     } finally {
@@ -313,9 +316,12 @@ describe("contention on the write lock", () => {
     }
 
     // The witness: released, the same run is served.
-    const served = await operator.rawRequest("/housekeeping/trash-purge/run", {
-      method: "POST",
-    });
+    const served = await operator.rawRequest(
+      "/background-jobs/trash-purge/run",
+      {
+        method: "POST",
+      },
+    );
     expect(served.ok, JSON.stringify(served.error)).toBe(true);
   }, 120_000);
 

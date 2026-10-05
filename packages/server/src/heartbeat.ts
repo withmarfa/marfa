@@ -1,7 +1,7 @@
 import { log } from "./middleware/logger.js";
 
 /**
- * Opt-in liveness heartbeat. GETs an operator-set URL on the housekeeping
+ * Opt-in liveness heartbeat. GETs an operator-set URL on the background job
  * cadence so a watcher running somewhere else can raise the alarm when the
  * pings stop. The principle: a system cannot report its own death, so the
  * thing that notices has to live outside the instance. Deliberately dumb —

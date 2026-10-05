@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import * as tar from "tar-stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BulkActionWorker } from "../bulk-actions/worker.js";
-import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import { BlobOrphanReporter } from "../background-jobs/blob-orphans.js";
 import { GrantInactivityRetirer } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";

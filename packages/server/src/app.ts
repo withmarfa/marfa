@@ -39,12 +39,12 @@ import { searchRoutes } from "./routes/search.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
-import { housekeepingRoutes } from "./routes/housekeeping.js";
+import { backgroundJobRoutes } from "./routes/background-jobs.js";
 import { connectorRoutes } from "./routes/connectors.js";
 import { connectorStateRoutes } from "./routes/connector-state.js";
 import { inboundRoutes } from "./routes/inbound.js";
 import { folderRoutes } from "./routes/folders.js";
-import type { Housekeeping } from "./housekeeping/scheduler.js";
+import type { BackgroundJobs } from "./background-jobs/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
@@ -92,10 +92,10 @@ import {
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
-  /** The scheduler the housekeeping doors list and drive. Registered and
-   *  started by the caller; the app only reads it and runs a housekeeping
+  /** The scheduler the background job doors list and drive. Registered and
+   *  started by the caller; the app only reads it and runs a background
    *  job on demand. */
-  housekeeping: Housekeeping,
+  backgroundJobs: BackgroundJobs,
   config: AppConfig,
   /**
    * The name this instance answers to, resolved by the caller before the
@@ -632,8 +632,8 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
-  app.route("/blobs", blobRoutes(storage, blobs, housekeeping, config));
-  app.route("/housekeeping", housekeepingRoutes(housekeeping));
+  app.route("/blobs", blobRoutes(storage, blobs, backgroundJobs, config));
+  app.route("/background-jobs", backgroundJobRoutes(backgroundJobs));
   app.route("/connectors", connectorRoutes(storage));
   app.route("/connectors", connectorStateRoutes(storage, config));
   app.route("/folders", folderRoutes(storage));

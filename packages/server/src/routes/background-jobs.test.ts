@@ -11,7 +11,7 @@ let slowStarts = 0;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  ctx.housekeeping.register({
+  ctx.backgroundJobs.register({
     name: "counter",
     intervalMs: 3_600_000,
     firstRunDelayMs: 3_600_000,
@@ -20,19 +20,19 @@ beforeAll(async () => {
       return Promise.resolve({ runs });
     },
   });
-  ctx.housekeeping.register({
+  ctx.backgroundJobs.register({
     name: "silent",
     intervalMs: 3_600_000,
     firstRunDelayMs: 3_600_000,
     run: () => Promise.resolve(null),
   });
-  ctx.housekeeping.register({
+  ctx.backgroundJobs.register({
     name: "faulty",
     intervalMs: 3_600_000,
     firstRunDelayMs: 3_600_000,
     run: () => Promise.reject(new Error("the sweep broke")),
   });
-  ctx.housekeeping.register({
+  ctx.backgroundJobs.register({
     name: "slow",
     intervalMs: 3_600_000,
     firstRunDelayMs: 3_600_000,
@@ -44,18 +44,18 @@ beforeAll(async () => {
         };
       }),
   });
-  await ctx.housekeeping.start();
+  await ctx.backgroundJobs.start();
 });
 
 afterAll(async () => {
   releaseSlow?.();
-  await ctx.housekeeping.stop();
+  await ctx.backgroundJobs.stop();
   await ctx.cleanup();
 });
 
-describe("GET /housekeeping", () => {
+describe("GET /background-jobs", () => {
   it("lists every registration with its schedule and last run to the operator key", async () => {
-    const res = await request(ctx.app, "GET", "/housekeeping", {
+    const res = await request(ctx.app, "GET", "/background-jobs", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
@@ -80,12 +80,14 @@ describe("GET /housekeeping", () => {
     });
     expect(fresh).toHaveProperty("next_run_at");
     // The witness for the nulls: a name that has run carries its run.
-    const ran = await request(ctx.app, "POST", "/housekeeping/silent/run", {
+    const ran = await request(ctx.app, "POST", "/background-jobs/silent/run", {
       key: ctx.operatorKey,
     });
     expect(ran.status).toBe(200);
     const after = (await (
-      await request(ctx.app, "GET", "/housekeeping", { key: ctx.operatorKey })
+      await request(ctx.app, "GET", "/background-jobs", {
+        key: ctx.operatorKey,
+      })
     ).json()) as { data: Record<string, unknown>[] };
     expect(after.data.find((row) => row.name === "silent")).toMatchObject({
       running_since: null,
@@ -99,11 +101,11 @@ describe("GET /housekeeping", () => {
   });
 
   it("refuses a working key where the operator key is answered", async () => {
-    const operator = await request(ctx.app, "GET", "/housekeeping", {
+    const operator = await request(ctx.app, "GET", "/background-jobs", {
       key: ctx.operatorKey,
     });
     expect(operator.status).toBe(200);
-    const res = await request(ctx.app, "GET", "/housekeeping", {
+    const res = await request(ctx.app, "GET", "/background-jobs", {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(403);
@@ -112,10 +114,10 @@ describe("GET /housekeeping", () => {
   });
 });
 
-describe("POST /housekeeping/:name/run", () => {
+describe("POST /background-jobs/:name/run", () => {
   it("runs the name now and answers the run, which the listing then records", async () => {
     const before = runs;
-    const res = await request(ctx.app, "POST", "/housekeeping/counter/run", {
+    const res = await request(ctx.app, "POST", "/background-jobs/counter/run", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
@@ -130,7 +132,7 @@ describe("POST /housekeeping/:name/run", () => {
     expect(typeof body.started_at).toBe("string");
     expect(typeof body.finished_at).toBe("string");
 
-    const listed = await request(ctx.app, "GET", "/housekeeping", {
+    const listed = await request(ctx.app, "GET", "/background-jobs", {
       key: ctx.operatorKey,
     });
     const { data } = (await listed.json()) as {
@@ -146,7 +148,7 @@ describe("POST /housekeeping/:name/run", () => {
   });
 
   it("answers a run that reported nothing with a null result, present in the body", async () => {
-    const res = await request(ctx.app, "POST", "/housekeeping/silent/run", {
+    const res = await request(ctx.app, "POST", "/background-jobs/silent/run", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
@@ -156,7 +158,7 @@ describe("POST /housekeeping/:name/run", () => {
   });
 
   it("answers a failed run as the run's outcome, not the door's", async () => {
-    const res = await request(ctx.app, "POST", "/housekeeping/faulty/run", {
+    const res = await request(ctx.app, "POST", "/background-jobs/faulty/run", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
@@ -169,27 +171,37 @@ describe("POST /housekeeping/:name/run", () => {
   });
 
   it("answers 404 for a name the instance does not run, where a known one runs", async () => {
-    const known = await request(ctx.app, "POST", "/housekeeping/counter/run", {
-      key: ctx.operatorKey,
-    });
+    const known = await request(
+      ctx.app,
+      "POST",
+      "/background-jobs/counter/run",
+      {
+        key: ctx.operatorKey,
+      },
+    );
     expect(known.status).toBe(200);
-    const res = await request(ctx.app, "POST", "/housekeeping/nothing/run", {
+    const res = await request(ctx.app, "POST", "/background-jobs/nothing/run", {
       key: ctx.operatorKey,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("housekeeping_job_not_found");
+    expect(body.error.code).toBe("background_job_not_found");
   });
 
   it("answers 400 for a name outside the grammar, where a name inside it runs", async () => {
-    const inside = await request(ctx.app, "POST", "/housekeeping/counter/run", {
-      key: ctx.operatorKey,
-    });
+    const inside = await request(
+      ctx.app,
+      "POST",
+      "/background-jobs/counter/run",
+      {
+        key: ctx.operatorKey,
+      },
+    );
     expect(inside.status).toBe(200);
     const res = await request(
       ctx.app,
       "POST",
-      "/housekeeping/Not%20A%20Job/run",
+      "/background-jobs/Not%20A%20Job/run",
       {
         key: ctx.operatorKey,
       },
@@ -216,20 +228,20 @@ describe("POST /housekeeping/:name/run", () => {
 
   it("answers 409 while a run holds the name, and runs it again once released", async () => {
     const seen = slowStarts;
-    const first = request(ctx.app, "POST", "/housekeeping/slow/run", {
+    const first = request(ctx.app, "POST", "/background-jobs/slow/run", {
       key: ctx.operatorKey,
     });
     const release = await slowRunStarted(seen);
-    const second = await request(ctx.app, "POST", "/housekeeping/slow/run", {
+    const second = await request(ctx.app, "POST", "/background-jobs/slow/run", {
       key: ctx.operatorKey,
     });
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("housekeeping_job_running");
+    expect(body.error.code).toBe("background_job_running");
 
     release();
     expect((await first).status).toBe(200);
-    const again = request(ctx.app, "POST", "/housekeeping/slow/run", {
+    const again = request(ctx.app, "POST", "/background-jobs/slow/run", {
       key: ctx.operatorKey,
     });
     (await slowRunStarted(seen + 1))();
@@ -240,11 +252,11 @@ describe("POST /housekeeping/:name/run", () => {
     const operator = await request(
       ctx.app,
       "POST",
-      "/housekeeping/counter/run",
+      "/background-jobs/counter/run",
       { key: ctx.operatorKey },
     );
     expect(operator.status).toBe(200);
-    const res = await request(ctx.app, "POST", "/housekeeping/counter/run", {
+    const res = await request(ctx.app, "POST", "/background-jobs/counter/run", {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(403);

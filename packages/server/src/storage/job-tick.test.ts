@@ -60,7 +60,7 @@ describe("logJobTickFailure", () => {
   it("stands a canceled run down at info", () => {
     const captured = captureLog();
     logJobTickFailure(
-      "Housekeeping revoked-key-reap",
+      "Background job revoked-key-reap",
       dbError("CLIENT_CLOSED"),
       true,
     );
@@ -69,14 +69,14 @@ describe("logJobTickFailure", () => {
     expect(captured.lines).toHaveLength(1);
     expect(captured.lines[0]?.level).toBe("info");
     expect(captured.lines[0]?.message).toBe(
-      "Housekeeping revoked-key-reap stood down",
+      "Background job revoked-key-reap stood down",
     );
   });
 
   it("keeps error for a connection failure while the job is still running", () => {
     const captured = captureLog();
     logJobTickFailure(
-      "Housekeeping revoked-key-reap",
+      "Background job revoked-key-reap",
       dbError("CLIENT_CLOSED"),
       false,
     );
@@ -84,7 +84,7 @@ describe("logJobTickFailure", () => {
 
     expect(captured.lines[0]?.level).toBe("error");
     expect(captured.lines[0]?.message).toBe(
-      "Housekeeping revoked-key-reap error",
+      "Background job revoked-key-reap error",
     );
   });
 
@@ -93,7 +93,7 @@ describe("logJobTickFailure", () => {
     // broken statement is broken whenever it runs.
     const captured = captureLog();
     logJobTickFailure(
-      "Housekeeping revoked-key-reap",
+      "Background job revoked-key-reap",
       dbError("SQLITE_ERROR"),
       true,
     );
