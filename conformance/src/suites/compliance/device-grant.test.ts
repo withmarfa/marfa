@@ -3,6 +3,7 @@ import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   startDeviceFlow,
+  type DeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
@@ -30,15 +31,19 @@ function waitOut(seconds: number): Promise<void> {
 }
 
 describe("the device authorization grant", () => {
-  it("answers a poll by the code's state: pending, then a token, then invalid_grant once it is spent", async () => {
-    const flow = await startDeviceFlow(server!, ["core.note:read"]);
+  // One code, taken through its states in order: each test leaves it where
+  // the next one starts.
+  let flow: DeviceFlow;
 
-    // Nobody has decided yet.
+  it("answers authorization_pending to a poll of a code nobody has decided", async () => {
+    flow = await startDeviceFlow(server!, ["core.note:read"]);
     const pending = await flow.poll();
     expect(pending.status).toBe(400);
     expect(pending.body.error).toBe("authorization_pending");
     expect(pending.body.access_token).toBeUndefined();
+  });
 
+  it("answers the first poll after the approval, an interval after the last, with an access token for the approved scopes", async () => {
     await flow.approve();
     await waitOut(flow.interval);
     const approved = await flow.poll();
@@ -46,10 +51,12 @@ describe("the device authorization grant", () => {
     expect(approved.body.access_token).toBeTruthy();
     expect(approved.body.token_type?.toLowerCase()).toBe("bearer");
     expect(approved.body.scope).toBe("core.note:read");
+  });
 
-    // The witness for the refusal below: the same code was answered with a
-    // token a poll ago, so it is the exchange that spent it.
-    await waitOut(flow.interval);
+  it("answers invalid_grant to a poll of a code a token was already issued for", async () => {
+    // The witness: the previous test had this code answered with a token, so
+    // it is that exchange that spent it. No wait: a spent code is refused
+    // whatever the time since the last poll.
     const reused = await flow.poll();
     expect(reused.status).toBe(400);
     expect(reused.body.error).toBe("invalid_grant");

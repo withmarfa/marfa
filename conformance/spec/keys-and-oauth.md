@@ -49,11 +49,11 @@
 25. A registration is a `web` client unless `application_type` says `native`. A web client's redirect URI must be https and on a host that is not the loopback, so `http://127.0.0.1` and `https://127.0.0.1` alike are refused `400 invalid_redirect_uri`; a native client may use `http` on the loopback. `compliance/oauth.test.ts › registers a web client, whose redirect URI must be https and off the loopback`, `› registers a native client dynamically and issues a client_id`.
 26. An unparseable redirect URI answers `400` with an RFC 7591 error object rather than the envelope, which the document declares as the shape this one door answers. `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
 27. The token endpoint refuses a request with no proof of the client with `400 invalid_request`, and an unsupported grant type with `400 unsupported_grant_type`. `compliance/oauth.test.ts › refuses a token request with no proof of the client`, `› refuses a grant type it does not support`.
-28. The server SHALL answer a poll of `POST /auth/oauth2/token` that names a device code by the code's state: `400 authorization_pending` before a person approves it, `200` with an access token for the scopes the person approved on the first poll after the approval, and `400 invalid_grant` on every poll after that exchange.
+28. WHEN a client polls `POST /auth/oauth2/token` with a device code nobody has approved or denied, at least the code's interval after its previous poll and before the code expires, the server SHALL answer `400 authorization_pending`.
 
-    Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on. An answer that stayed pending after approval would leave the device waiting forever, and one that gave a second token for the same code would let a code anyone has seen mint again. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (31).
+    Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on, and a device told nothing of the person's choice cannot tell waiting from failure. A poll sooner than the interval, an expired code and a denied code have their own answers, `slow_down`, `expired_token` and `access_denied`, which no statement here holds. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (31).
 
-    Tests: `compliance/device-grant.test.ts › answers a poll by the code's state: pending, then a token, then invalid_grant once it is spent`.
+    Tests: `compliance/device-grant.test.ts › answers authorization_pending to a poll of a code nobody has decided`.
 
 ## The owner
 
@@ -255,8 +255,20 @@
 
 ## Keys an app made
 
-70. The server SHALL carry `oauth_client_id` on a key answer when, and only when, the key was minted with a signed-in app's access token, and SHALL name there the `client_id` the app registered.
+70. The server SHALL include `oauth_client_id`, naming the `client_id` the app registered, in the answer of `POST /keys`, `GET /keys`, `GET /keys/current` and `PATCH /keys/{id}` for a key minted with a signed-in app's access token, and SHALL omit the field, rather than answer `null`, from those answers for every other key, a key that an app-made key minted included.
 
-    Reason: a client that must not run on an app's key tells one by this field, and a server that stopped sending it would make every app's key pass as an ordinary one. The field is left out, not `null`, on every other key: one a person or the operator key minted, and one that a key an app made went on to mint, which no app's token minted. It is on the mint, the listing, `GET /keys/current` and the update.
+    Reason: a client that must not run on an app's key tells one by this field, and a server that stopped sending it would make every app's key pass as an ordinary one. A key an app made mints keys with its own credential, not with the app's access token, so a key it mints is not an app's. `GET /keys/current` answers the key bearing the request, so it carries the field when an app-made key reads itself; an app's access token is not a key and is refused there (35).
 
     Tests: `compliance/key-oauth-client.test.ts › names the client an app minted the key through, on every door that answers a key`, `› is absent from a key no app minted, on every door that answers a key`.
+
+71. WHEN a client polls `POST /auth/oauth2/token` with a device code a person has approved, at least the code's interval after its previous poll and before the code expires, and the grant the approval made still stands, the server SHALL answer `200` with an access token for the scopes the person approved.
+
+    Reason: the token is what the device was waiting for, and one for a scope the person did not tick would widen the grant past what they approved. A grant withdrawn after the approval is refused `invalid_grant` instead, which no fixture here reaches.
+
+    Tests: `compliance/device-grant.test.ts › answers the first poll after the approval, an interval after the last, with an access token for the approved scopes`.
+
+72. WHEN a client polls `POST /auth/oauth2/token` with a device code that an earlier poll exchanged for an access token, the server SHALL answer `400 invalid_grant`.
+
+    Reason: a code that minted a second token would let anyone who has seen the code mint again. The refusal comes whatever the time since the previous poll.
+
+    Tests: `compliance/device-grant.test.ts › answers invalid_grant to a poll of a code a token was already issued for`.
