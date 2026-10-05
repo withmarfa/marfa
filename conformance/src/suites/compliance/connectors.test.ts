@@ -371,6 +371,51 @@ describe("heartbeats and runs", () => {
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
+  it("stores a run's times in UTC and compares them as instants", async () => {
+    const mine = await register(client, `${ctx.runId} run times`);
+    const offset = await client.reportConnectorRun(mine.data.id, {
+      outcome: "succeeded",
+      started_at: "2026-10-05T18:00:00+02:00",
+      finished_at: "2026-10-05T18:30:00.5-05:00",
+    });
+    expect(offset.status).toBe(201);
+    expect(offset.data.started_at).toBe("2026-10-05T16:00:00.000Z");
+    expect(offset.data.finished_at).toBe("2026-10-05T23:30:00.500Z");
+    const bare = await client.reportConnectorRun(mine.data.id, {
+      outcome: "succeeded",
+      started_at: "2026-10-05T18:00",
+      finished_at: "2026-10-06",
+    });
+    expect(bare.status).toBe(201);
+    expect(bare.data.started_at).toBe("2026-10-05T18:00:00.000Z");
+    expect(bare.data.finished_at).toBe("2026-10-06T00:00:00.000Z");
+    // 19:00 at +02:00 is before 18:00Z, though the text sorts after it.
+    const ordered = await client.reportConnectorRun(mine.data.id, {
+      outcome: "succeeded",
+      started_at: "2026-10-05T19:00:00+02:00",
+      finished_at: "2026-10-05T18:00:00Z",
+    });
+    expect(ordered.status).toBe(201);
+    const inverted = await client.reportConnectorRun(mine.data.id, {
+      outcome: "succeeded",
+      started_at: "2026-10-05T18:00:00Z",
+      finished_at: "2026-10-05T19:00:00+02:00",
+    });
+    expect(inverted.status).toBe(400);
+    expect(inverted.error?.error.code).toBe("validation_error");
+    const listed = (await client.listConnectorRuns(mine.data.id)).data.data;
+    expect(listed).toHaveLength(3);
+    for (const run of listed) {
+      expect(run.started_at).toMatch(ISO);
+      expect(run.finished_at).toMatch(ISO);
+    }
+    expect(listed.map((r) => r.started_at).sort()).toEqual([
+      "2026-10-05T16:00:00.000Z",
+      "2026-10-05T17:00:00.000Z",
+      "2026-10-05T18:00:00.000Z",
+    ]);
+  });
+
   it("records a run from the connector's key and refuses an outcome it does not know", async () => {
     const mine = await register(client, `${ctx.runId} runs`);
     const startedAt = new Date(Date.now() - 5_000).toISOString();

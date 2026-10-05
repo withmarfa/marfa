@@ -4031,11 +4031,11 @@
           },
           "started_at": {
             "type": "string",
-            "description": "When the run started, as the connector reported it."
+            "description": "When the run started, in UTC."
           },
           "finished_at": {
             "type": "string",
-            "description": "When the run finished, as the connector reported it."
+            "description": "When the run finished, in UTC."
           },
           "summary": {
             "type": [
@@ -25301,11 +25301,11 @@
                   },
                   "started_at": {
                     "type": "string",
-                    "description": "When the run started, as an ISO 8601 time. Marfa stores it as you send it."
+                    "description": "When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC."
                   },
                   "finished_at": {
                     "type": "string",
-                    "description": "When the run finished, as an ISO 8601 time. It can't be before `started_at`."
+                    "description": "When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`."
                   },
                   "summary": {
                     "type": "string",

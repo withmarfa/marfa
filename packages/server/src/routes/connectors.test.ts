@@ -572,6 +572,66 @@ describe("POST /connectors/{id}/runs and GET /connectors/{id}/runs", () => {
     expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
   });
 
+  it("stores a run's times in UTC, whatever offset the connector sent, and refuses a time it cannot read", async () => {
+    const mine = await register(ctx.workingKey, "run times");
+    const path = `/connectors/${mine.connector.id}/runs`;
+    const report = (started_at: string, finished_at: string) =>
+      request(ctx.app, "POST", path, {
+        key: ctx.workingKey,
+        body: { outcome: "succeeded", started_at, finished_at },
+      });
+
+    const offset = await report(
+      "2026-10-05T18:00:00+02:00",
+      "2026-10-05T18:30:00.5-05:00",
+    );
+    expect(offset.status).toBe(201);
+    expect(await json<ConnectorRun>(offset)).toMatchObject({
+      started_at: "2026-10-05T16:00:00.000Z",
+      finished_at: "2026-10-05T23:30:00.500Z",
+    });
+
+    // A time with no zone is read as UTC, and a date or a month is its first
+    // instant, as for `occurred_at`.
+    const bare = await report("2026-10-05T18:00", "2026-10-06");
+    expect(bare.status).toBe(201);
+    expect(await json<ConnectorRun>(bare)).toMatchObject({
+      started_at: "2026-10-05T18:00:00.000Z",
+      finished_at: "2026-10-06T00:00:00.000Z",
+    });
+
+    // The order is checked on the instants, not on the spellings: 19:00 at
+    // +02:00 is before 18:00Z.
+    const ordered = await report(
+      "2026-10-05T19:00:00+02:00",
+      "2026-10-05T18:00:00Z",
+    );
+    expect(ordered.status).toBe(201);
+    const inverted = await report(
+      "2026-10-05T18:00:00Z",
+      "2026-10-05T19:00:00+02:00",
+    );
+    expect(inverted.status).toBe(400);
+
+    for (const bad of ["yesterday", "2026-13-01T00:00:00Z", "2026-02-30"]) {
+      const refused = await report(bad, "2026-10-05T18:00:00Z");
+      expect(refused.status, bad).toBe(400);
+      expect(
+        (await json<{ error: { code: string } }>(refused)).error.code,
+      ).toBe("validation_error");
+    }
+
+    const listed = await json<{ data: ConnectorRun[] }>(
+      await request(ctx.app, "GET", path, { key: ctx.operatorKey }),
+    );
+    expect(listed.data).toHaveLength(3);
+    for (const run of listed.data) {
+      expect(run.started_at).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
+      expect(run.finished_at).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
+    }
+    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  });
+
   it("keeps each connector's runs to itself", async () => {
     const a = await register(ctx.workingKey, "a");
     const b = await register(otherKey, "b");
