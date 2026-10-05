@@ -509,6 +509,105 @@ describe("bulk", () => {
     );
   });
 
+  it("create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing", async () => {
+    const seeded = await client.createItem(
+      createNote({ source: ctx.source, source_id: `by-id-${ctx.runId}` }),
+    );
+    expect(seeded.ok).toBe(true);
+    const live = seeded.data.item;
+    trackItem(ctx, live.id);
+    const binned = await client.createItem(createNote({ source: ctx.source }));
+    expect(binned.ok).toBe(true);
+    trackItem(ctx, binned.data.item.id);
+    expect((await client.deleteItem(binned.data.item.id)).ok).toBe(true);
+
+    const result = await client.bulkItems({
+      mode: "create_only",
+      items: [
+        {
+          id: live.id,
+          type: "core.note",
+          properties: { title: "overwrites", body: "overwrites" },
+        },
+        {
+          id: binned.data.item.id,
+          type: "core.note",
+          properties: { title: "overwrites", body: "overwrites" },
+        },
+        // The natural key resolves a row first, so the id beside it is not
+        // asked about.
+        {
+          id: binned.data.item.id,
+          type: "core.note",
+          source: ctx.source,
+          source_id: `by-id-${ctx.runId}`,
+          properties: { title: "overwrites", body: "overwrites" },
+        },
+        // The witness: an id nothing holds is created, so the skips above are
+        // the id's and not a door that skips everything.
+        {
+          type: "core.note",
+          source: ctx.source,
+          properties: { title: "new", body: "new" },
+        },
+      ],
+    });
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    expect(result.data.counts).toMatchObject({
+      skipped: 3,
+      created: 1,
+      updated: 0,
+      errored: 0,
+    });
+    const [onLive, onBinned, onKey, onNew] = result.data.results;
+    expect(onLive).toMatchObject({
+      outcome: "skipped",
+      reason: "duplicate_id",
+      id: live.id,
+    });
+    expect(onBinned).toMatchObject({
+      outcome: "skipped",
+      reason: "duplicate_id",
+      id: binned.data.item.id,
+    });
+    expect(onKey).toMatchObject({
+      outcome: "skipped",
+      reason: "duplicate_source",
+      id: live.id,
+    });
+    // A reason belongs to a skip: the entry that was written carries none.
+    expect(onNew?.outcome).toBe("created");
+    expect(onNew).not.toHaveProperty("reason");
+    trackItem(ctx, onNew!.id!);
+
+    const kept = await client.getItem(live.id);
+    expect(kept.ok).toBe(true);
+    expect(kept.data.item.version).toBe(live.version);
+    expect(kept.data.item.properties).toEqual(live.properties);
+
+    // Neither an update nor an errored entry carries one.
+    const written = await client.bulkItems({
+      atomic: false,
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: `by-id-${ctx.runId}`,
+          properties: { title: "updated", body: "updated" },
+        },
+        { type: "no.such.type", properties: { title: "x" } },
+      ],
+    });
+    expect(written.ok, JSON.stringify(written.error)).toBe(true);
+    expect(written.data.results.map((entry) => entry.outcome)).toEqual([
+      "updated",
+      "errored",
+    ]);
+    for (const entry of written.data.results) {
+      expect(entry).not.toHaveProperty("reason");
+    }
+  });
+
   it("reads a natural key over trashed rows, as the single create does", async () => {
     const sourceId = `trashed-${ctx.runId}`;
     const created = await client.createItem({
