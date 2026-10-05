@@ -422,7 +422,7 @@ const createFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Create a folder",
   description:
-    "Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. This is the only endpoint that writes a `system.folder`.",
+    "Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. The item endpoints can't write one.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: {

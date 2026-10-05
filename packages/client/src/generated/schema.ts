@@ -1177,7 +1177,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder
-         * @description Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. This is the only endpoint that writes a `system.folder`.
+         * @description Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. The item endpoints can't write one.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -2915,7 +2915,7 @@ export interface components {
             policy: string;
             /** @description When the instance first attached the store, in UTC. */
             attached_at: string;
-            /** @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. A detached store stays listed, because the location log still describes it. */
+            /** @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. */
             detached_at: string | null;
         };
         /** @description An error response. */
@@ -10581,7 +10581,7 @@ export interface operations {
                     "application/json": {
                         /** @description The blob's hash: `sha256:` and 64 hexadecimal characters. */
                         hash: string;
-                        /** @description The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes. */
+                        /** @description The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes, without parameters such as `charset`. */
                         mime_type: string;
                         /** @description The blob's size in bytes. */
                         size_bytes: number;
@@ -10902,7 +10902,7 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
-            /** @description Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range` it returns the whole blob. */
+            /** @description Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range`, it returns the whole blob with `200`. */
             206: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11296,7 +11296,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns `ok: true`. The location log no longer lists the copy. */
+            /** @description Returns `ok: true`. The store no longer holds the copy, and the location log no longer lists it. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

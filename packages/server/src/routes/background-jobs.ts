@@ -3,7 +3,11 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { operatorOnly } from "../middleware/auth.js";
 import type { BackgroundJobs } from "../background-jobs/scheduler.js";
-import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  createOpenAPIRouter,
+  makeErrorResponseSchema,
+  OPERATOR_ONLY_RESPONSE,
+} from "../openapi.js";
 import { nullableRef, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -66,14 +70,7 @@ const operatorResponses = {
     },
     description: "Unauthorized",
   },
-  403: {
-    content: {
-      "application/json": {
-        schema: makeErrorResponseSchema(["forbidden"]),
-      },
-    },
-    description: "- `forbidden`: your key isn't an operator key.",
-  },
+  403: OPERATOR_ONLY_RESPONSE,
 };
 
 // ---------------------------------------------------------------------------

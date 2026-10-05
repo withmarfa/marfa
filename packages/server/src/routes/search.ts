@@ -21,10 +21,11 @@ import {
   ALL_STATES,
   ItemSchema,
   MetadataSchema,
-  NextCursorSchema,
+  pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
+import { listingNarrowingKeys } from "./items.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
@@ -96,17 +97,6 @@ const SearchResultSchema = z
       "A search result is an item that matches the query, with its metadata and how well it matches.",
   });
 
-const SearchResultPageSchema = z
-  .object({
-    data: z
-      .array(SearchResultSchema)
-      .describe("The results, best match first."),
-    next_cursor: NextCursorSchema,
-  })
-  .openapi("SearchResultPage", {
-    description: "One page of search results.",
-  });
-
 const searchRoute = createRoute({
   operationId: "searchItems",
   method: "get",
@@ -126,24 +116,14 @@ const searchRoute = createRoute({
         .describe(
           "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase.",
         ),
-      type: z
-        .string()
-        .describe(
-          "Only return items of this type or a subtype. A wildcard such as `core.*` matches every type under that prefix.",
-        )
-        .optional(),
+      type: listingNarrowingKeys.type,
       state: z
         .string()
         .describe(
           `Only return items in this lifecycle state. Without it, you get \`active\` items. \`${ALL_STATES}\` searches every state, but trashed items are never searchable.`,
         )
         .optional(),
-      tier: z
-        .enum(["library", "feed", "all"])
-        .describe(
-          "Only return items in this tier. Omit it or send `all` for both tiers.",
-        )
-        .optional(),
+      tier: listingNarrowingKeys.tier,
       /** The rule deciding whether `system` applies, and why, is in
        *  `_system-type-visibility.ts`, shared by every door that takes it. */
       include: z
@@ -152,13 +132,7 @@ const searchRoute = createRoute({
           "Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same.",
         )
         .optional(),
-      /** Comma-separated tag list. Items must have ALL specified tags. */
-      tags: z
-        .string()
-        .describe(
-          "Comma-separated tags. Only return items that carry all of them.",
-        )
-        .optional(),
+      tags: listingNarrowingKeys.tags,
       limit: pageLimit({ max: 100, default: 20 }),
       cursor: pageCursor(),
       filter: z
@@ -187,7 +161,10 @@ const searchRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: SearchResultPageSchema,
+          schema: pageOf(SearchResultSchema, "SearchResultPage", {
+            page: "One page of search results.",
+            data: "The results, best match first.",
+          }),
         },
       },
       description:

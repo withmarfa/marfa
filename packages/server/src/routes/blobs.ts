@@ -28,7 +28,7 @@ import {
   verifyBlobLink,
 } from "../storage/blob-link.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import { NextCursorSchema } from "./_schemas.js";
+import { wholeListOf } from "./_schemas.js";
 import { READ_REFUSED } from "./_item-refusals.js";
 import type { BackgroundJobs } from "../background-jobs/scheduler.js";
 import {
@@ -41,6 +41,7 @@ import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
   OkResponseSchema,
+  OPERATOR_ONLY_RESPONSE,
 } from "../openapi.js";
 import {
   requireBlobUpload,
@@ -60,7 +61,7 @@ const BlobUploadResponseSchema = z.object({
   mime_type: z
     .string()
     .describe(
-      "The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes.",
+      "The MIME type Marfa serves the blob with: the `Content-Type` of the first upload of these bytes, without parameters such as `charset`.",
     ),
   size_bytes: z.number().describe("The blob's size in bytes."),
 });
@@ -95,7 +96,7 @@ const BlobStoreSchema = z
       .string()
       .nullable()
       .describe(
-        "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. A detached store stays listed, because the location log still describes it.",
+        "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.",
       ),
   })
   .openapi("BlobStore", {
@@ -148,27 +149,6 @@ const BlobOrphanSchema = z
     description:
       "An orphan is a blob that nothing references, waiting to be purged.",
   });
-
-/**
- * A page that never continues: the stores, one blob's locations and the
- * orphan report are each answered whole.
- */
-function wholeListOf<T extends z.ZodType>(
-  row: T,
-  name: string,
-  noun: string,
-  extra: z.ZodRawShape = {},
-) {
-  return z
-    .object({
-      data: z.array(row).describe(`Every ${noun}.`),
-      next_cursor: NextCursorSchema.describe(
-        `Always \`null\`: Marfa returns every ${noun} in one page.`,
-      ),
-      ...extra,
-    })
-    .openapi(name, { description: `A page holding every ${noun}.` });
-}
 
 /** Who may read a blob: the rule each reading door states on its `hash`. */
 const READ_RULE =
@@ -265,15 +245,6 @@ const UNREADABLE_BLOB_RESPONSE = {
     "- `blob_not_found`: no blob has this hash, or nothing you can read references it.",
 };
 
-const OPERATOR_ONLY_RESPONSE = {
-  content: {
-    "application/json": {
-      schema: makeErrorResponseSchema(["forbidden"]),
-    },
-  },
-  description: "- `forbidden`: your key isn't an operator key.",
-};
-
 const INVALID_HASH_RESPONSE = {
   content: {
     "application/json": {
@@ -305,7 +276,7 @@ const bytesResponses = {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: RANGE_HEADERS,
     description:
-      "Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range` it returns the whole blob.",
+      "Returns the range you asked for. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range`, it returns the whole blob with `200`.",
   },
   404: {
     content: {
@@ -575,7 +546,7 @@ const deleteBlobLocationRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description:
-        "Returns `ok: true`. The location log no longer lists the copy.",
+        "Returns `ok: true`. The store no longer holds the copy, and the location log no longer lists it.",
     },
     400: INVALID_HASH_RESPONSE,
     ...unauthorized,
