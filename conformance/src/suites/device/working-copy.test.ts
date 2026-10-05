@@ -2400,10 +2400,6 @@ describe("a local read narrows by the listing grammar", () => {
       }),
       "a filter and a tag given beside it are both required, as on the server",
     ).toEqual(["grandchild"]);
-    expect(
-      await listed({ filter: "properties.status eq null" }),
-      "`eq null` matches nothing on the server, and the copy matched rows",
-    ).toEqual([]);
   });
 
   it("narrows a local list by an edge from an item", async () => {

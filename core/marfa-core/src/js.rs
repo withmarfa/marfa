@@ -1,11 +1,19 @@
-//! Numbers written as JavaScript writes them, because the server's stored
-//! text spells them that way.
+//! Text and numbers read and written as JavaScript does, because the server
+//! is JavaScript and its verdicts and stored text follow.
 
 use std::io;
 
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::ser::Formatter;
+
+/// A character JavaScript's `\s` matches and `String.prototype.trim` strips,
+/// which is where the server ends an edge reference's word and where it finds
+/// a tag blank. It is not Unicode's White_Space: that holds U+0085 and not
+/// U+FEFF.
+pub(crate) fn is_space(ch: char) -> bool {
+    (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
+}
 
 /// JavaScript's `String()` of a number: fixed notation from 1e-6 up to 1e21,
 /// exponent notation with an explicit sign outside it.

@@ -2232,6 +2232,15 @@ impl Folder {
                     .bind_held(file, item_id, bound, held_for)
                     .map(|()| false);
             }
+            // The tags are checked before the edit is queued, so a tag the
+            // server would refuse leaves no write of the file half queued.
+            if let Err(error) = crate::validation::tags(&changes.added) {
+                let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+                flagged.push(Flagged::of(&file.key, &held_for));
+                return self
+                    .bind_held(file, item_id, bound, held_for)
+                    .map(|()| false);
+            }
             // Tags and a state are writes of their own, and need no edit.
             if !unchanged || changes.r#type.is_some() || changes.tier.is_some() {
                 let read_at = untaken.or(match standing {
@@ -2415,8 +2424,12 @@ impl Folder {
 
 const LOCAL_ADMISSION_REFUSAL: &str = "refused: local item validation: ";
 
+/// What the copy refuses a write for before queueing it: a field the type
+/// does not take, a type it does not hold, and a tag or property name the
+/// server would refuse.
 fn local_admission_refusal(error: &CoreError) -> bool {
-    matches!(error, CoreError::Validation {code, ..} if code == "invalid_properties")
+    matches!(error, CoreError::Validation {code, ..}
+        if code == "invalid_properties" || code == "validation_error")
         || matches!(error, CoreError::UnknownType { .. })
 }
 

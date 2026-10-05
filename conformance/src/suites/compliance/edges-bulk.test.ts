@@ -140,6 +140,8 @@ describe("edges.bulk", () => {
     });
     expect(first.ok).toBe(true);
     expect(first.data.counts.created).toBe(1);
+    // A reason belongs to a skip: the entry that was written carries none.
+    expect(first.data.results[0]).not.toHaveProperty("reason");
 
     const second = await client.bulkEdges({
       edges: [

@@ -103,7 +103,7 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 
 60. When a JSON request body nests more than 64 levels, the server MUST refuse it with `400 validation_error` before writing anything. An array or object inside another counts as one level more, and a bracket inside a string does not count. This holds on every door that takes a JSON body except the inbound door, which stores what a sender posts as it arrived. SQLite's JSON functions stop at 1,000 levels, so a deeper body would otherwise fail inside the database as `500`. `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`. The server's own suite holds the same cases in process (`packages/server/src/routes/odd-input.test.ts`).
 61. When a `GET /search` query contains a NUL character, the server MUST refuse it with `400 validation_error`. `compliance/odd-input.test.ts › refuses a search query holding a NUL, and answers one without`.
-62. When a write carries a tag that is empty, contains only whitespace or exceeds 128 characters, the server MUST refuse it with `400 validation_error` before writing anything. This holds on every door a person or app writes a tag through; an archive restore writes tags as the archive recorded them. The bound keeps every tag the server holds nameable in the path that removes it. `compliance/odd-input.test.ts › refuses an empty, blank or over-long tag, and takes one of 128 characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`.
+62. When a write carries a tag that is empty, contains only whitespace or exceeds 128 UTF-16 code units, the server MUST refuse it with `400 validation_error` before writing anything. This holds on every door a person or app writes a tag through; an archive restore writes tags as the archive recorded them. The bound keeps every tag the server holds nameable in the path that removes it. `compliance/odd-input.test.ts › refuses an empty, blank or over-long tag, and takes one of 128 characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`.
 63. When a write names an item property with no characters, the server MUST refuse it with `400 validation_error` before writing anything. This holds on every door a person or app writes properties through; an archive restore writes properties as the archive recorded them. `compliance/odd-input.test.ts › refuses a property named with no characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`.
 
 64. When validating a string property, the server MUST measure its `maxLength` in UTF-16 code units.
@@ -111,3 +111,23 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
     Reason: the server and a working copy must give the same verdict for a string containing characters outside the Basic Multilingual Plane (`device.md` 57); such a character uses two UTF-16 code units.
 
     Tests: `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`; `packages/server/src/routes/items.test.ts › matches working-copy field validation at Unicode and format boundaries`.
+
+## The skip reason of a bulk entry
+
+65. WHEN a bulk entry is `skipped`, the server MUST report its `reason` as `duplicate_source`, `duplicate_id` or `trashed` on `POST /items/bulk`, and as `duplicate_edge` on `POST /edges/bulk`.
+
+    Reason: the document declares `reason` as a closed enumeration of these four values, so a generated client branches on it with every case known, and a value outside the list would be one no client was told to expect. `duplicate_source` and `trashed` are stated in 30, and `duplicate_edge` in `edges.md` 13.
+
+    Tests: `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed rows, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+
+66. WHEN a bulk entry is created, updated or errored, the server MUST NOT carry a `reason` on its result.
+
+    Reason: a reason says why a write did not happen, so one beside a written row would tell a client to branch on a case that is not there.
+
+    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+
+67. WHEN an entry of `POST /items/bulk` in `create_only` mode names an `id` that an existing item holds, in the bin or not, and its natural key resolves no row (5), the server MUST skip the entry with `reason: "duplicate_id"` naming that item's `id`, and MUST NOT write the item.
+
+    Reason: an id the caller minted is the caller's own, so its repeat is an acknowledgment and not a refusal; a repeat landing on a row since moved to the bin would otherwise fall through to a create the store refuses as a duplicate, and under the default `atomic` roll back every page that re-syncs it. A natural key that resolves a row decides first, and the entry is a `duplicate_source` (30).
+
+    Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`.

@@ -869,26 +869,34 @@ impl Core {
 
     pub fn add_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
         let payload = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
-        self.tag_write(id, WriteKind::AddTag, Some(tag), &payload, |tx| {
-            store::add_tags(tx, id, std::slice::from_ref(&tag.to_string()))
+        let tags = [tag.to_string()];
+        self.tag_write(id, WriteKind::AddTag, Some(tag), &tags, &payload, |tx| {
+            store::add_tags(tx, id, &tags)
         })
     }
 
+    /// A removal is not held to the bound on a tag's name: an archive restore
+    /// writes tags as recorded, so a row can hold one the bound refuses and
+    /// must still be able to shed it.
     pub fn remove_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
-        self.tag_write(id, WriteKind::RemoveTag, Some(tag), "{}", |tx| {
+        self.tag_write(id, WriteKind::RemoveTag, Some(tag), &[], "{}", |tx| {
             store::remove_tag(tx, id, tag)
         })
     }
 
+    /// `admitted` are the tags the write adds, each held to the server's
+    /// bound before anything is saved or queued.
     fn tag_write(
         &self,
         id: &str,
         kind: WriteKind,
         tag: Option<&str>,
+        admitted: &[String],
         payload: &str,
         apply: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<()>,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
+        validation::tags(admitted)?;
         let mut conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         if !store::item_held(&conn, id)? {
@@ -934,7 +942,7 @@ impl Core {
         } else {
             WriteKind::MergeMetadata
         };
-        self.tag_write(id, kind, None, &payload, |tx| {
+        self.tag_write(id, kind, None, &write.tags, &payload, |tx| {
             if replace {
                 store::replace_tags(tx, id, &write.tags)
             } else {
@@ -1006,6 +1014,7 @@ impl Core {
     }
 
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
+        refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unknown_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
@@ -1022,6 +1031,7 @@ impl Core {
         edit: &Edit,
         based: Based,
     ) -> Result<QueuedWrite> {
+        refuse_invalid_names(&[], &edit.properties)?;
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut edit = edit.clone();
@@ -1120,6 +1130,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_usable(&*self.conn()?)?;
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
+        refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unknown_type(&draft.r#type)?;
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             name_bytes(&mut draft.properties, hash, &mime_type);
@@ -1320,6 +1331,17 @@ impl Core {
     }
 }
 
+/// The names a write carries held to the server's bounds before anything is
+/// saved or queued, so the server's refusal is never the first anyone hears
+/// of an empty tag or an unnamed property.
+fn refuse_invalid_names(
+    tags: &[String],
+    properties: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    validation::tags(tags)?;
+    validation::property_names(properties)
+}
+
 /// An id is minted here, where the draft names none, so a queued row is
 /// readable locally before the server answers.
 fn queue_create(
@@ -1328,6 +1350,7 @@ fn queue_create(
     draft: &Draft,
     after: &[String],
 ) -> Result<QueuedWrite> {
+    refuse_invalid_names(&draft.tags, &draft.properties)?;
     if !catalog.known(&draft.r#type) {
         return Err(CoreError::UnknownType {
             message: format!("{} is not a type this copy holds", draft.r#type),
@@ -1449,6 +1472,7 @@ fn queue_update(
     after: &[String],
     based: Based,
 ) -> Result<QueuedWrite> {
+    refuse_invalid_names(&[], &edit.properties)?;
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
             code: "item_not_found".into(),
@@ -1692,6 +1716,7 @@ fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validation::MAX_TAG_LENGTH;
 
     fn server_held_item(core: &Core, type_id: &str, properties: Value) -> String {
         let id = uuid::Uuid::now_v7().to_string();
@@ -1831,6 +1856,166 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    /// What the server refuses as a tag, beside what it takes at the bound.
+    fn refused_tags() -> Vec<(String, &'static str)> {
+        vec![
+            (String::new(), "empty"),
+            ("   ".into(), "blank"),
+            ("\t\u{a0}\u{2003}\u{feff}".into(), "blank"),
+            ("a".repeat(MAX_TAG_LENGTH + 1), "at most"),
+            ("😀".repeat(MAX_TAG_LENGTH / 2 + 1), "at most"),
+        ]
+    }
+
+    fn accepted_tags() -> Vec<String> {
+        vec![
+            "a".repeat(MAX_TAG_LENGTH),
+            "😀".repeat(MAX_TAG_LENGTH / 2),
+            // JavaScript's trim does not strip it, so the server holds it.
+            "\u{85}".into(),
+            " padded ".into(),
+        ]
+    }
+
+    #[test]
+    fn a_tag_the_server_refuses_is_refused_before_the_copy_or_queue_changes() {
+        let core = held_copy();
+        for tag in accepted_tags() {
+            assert!(core.add_tag("row", &tag).is_ok(), "{tag:?} was refused");
+        }
+        let before = core.queue().unwrap();
+        let held = core.get("row").unwrap().unwrap();
+        let unchanged = |what: &str| {
+            assert_eq!(core.queue().unwrap(), before, "{what} queued a write");
+            assert_eq!(core.get("row").unwrap().unwrap(), held, "{what} saved");
+        };
+        for (tag, reason) in refused_tags() {
+            let named = format!("{tag:?}");
+            let failures = [
+                ("add_tag", core.add_tag("row", &tag).unwrap_err()),
+                (
+                    "merge",
+                    core.write_metadata(
+                        "row",
+                        &MetadataWrite {
+                            tags: vec!["fine".into(), tag.clone()],
+                        },
+                        false,
+                    )
+                    .unwrap_err(),
+                ),
+                (
+                    "replace",
+                    core.write_metadata(
+                        "row",
+                        &MetadataWrite {
+                            tags: vec![tag.clone()],
+                        },
+                        true,
+                    )
+                    .unwrap_err(),
+                ),
+                (
+                    "create",
+                    core.create_item(&Draft {
+                        r#type: "core.note".into(),
+                        tags: vec![tag.clone()],
+                        ..Default::default()
+                    })
+                    .unwrap_err(),
+                ),
+            ];
+            for (door, failure) in failures {
+                assert!(
+                    matches!(&failure, CoreError::Validation { code, message }
+                        if code == "validation_error" && message.contains(reason)),
+                    "{door} with {named}: {failure:?}"
+                );
+                unchanged(door);
+            }
+        }
+        // Replacing with no tags clears them, and a removal is not held to
+        // the bound: a row restored from an archive can hold a tag the bound
+        // refuses and must be able to shed it.
+        assert!(
+            core.write_metadata("row", &MetadataWrite { tags: vec![] }, true)
+                .is_ok()
+        );
+        store::add_tags(&core.conn().unwrap(), "row", &[String::new()]).unwrap();
+        assert!(core.remove_tag("row", "").is_ok());
+    }
+
+    #[test]
+    fn a_property_with_no_name_is_refused_before_the_copy_or_queue_changes() {
+        let core = held_copy();
+        let named = |name: &str| {
+            serde_json::json!({ "title": "t", name: 1 })
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        let edit = |name: &str, replace| Edit {
+            base_version: Some(3),
+            properties: named(name),
+            replace_properties: replace,
+            ..Default::default()
+        };
+        let draft = |name: &str| Draft {
+            r#type: "core.note".into(),
+            properties: named(name),
+            ..Default::default()
+        };
+        // The witness: the same writes with a name are taken.
+        assert!(core.create_item(&draft("named")).is_ok());
+        assert!(core.update_item("row", &edit("named", false)).is_ok());
+        assert!(
+            core.update_item_as_read("row", &edit("other", false))
+                .is_ok()
+        );
+        let before = core.queue().unwrap();
+        let held = core.get("row").unwrap().unwrap();
+        for failure in [
+            core.create_item(&draft("")).unwrap_err(),
+            core.update_item("row", &edit("", false)).unwrap_err(),
+            core.update_item("row", &edit("", true)).unwrap_err(),
+            core.update_item_as_read("row", &edit("", false))
+                .unwrap_err(),
+        ] {
+            assert!(
+                matches!(&failure, CoreError::Validation { code, message }
+                    if code == "validation_error" && message.contains("property name")),
+                "{failure:?}"
+            );
+            assert_eq!(core.queue().unwrap(), before);
+            assert_eq!(core.get("row").unwrap().unwrap(), held);
+        }
+    }
+
+    #[test]
+    fn a_file_added_with_a_tag_the_server_refuses_takes_in_no_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"bytes to hold").unwrap();
+        let hash = blob::name_of(b"bytes to hold");
+        let bad = ["".to_string()];
+        let failure = core
+            .add_file(&file, &Attachment::default(), &bad)
+            .unwrap_err();
+        assert!(
+            matches!(failure, CoreError::Validation { .. }),
+            "{failure:?}"
+        );
+        assert!(core.queue().unwrap().is_empty());
+        assert!(
+            !core.blob_held(&hash).unwrap(),
+            "a refused file left its bytes behind"
+        );
+        let good = ["a".repeat(MAX_TAG_LENGTH)];
+        assert!(core.add_file(&file, &Attachment::default(), &good).is_ok());
+        assert!(core.blob_held(&hash).unwrap());
     }
 
     #[test]
