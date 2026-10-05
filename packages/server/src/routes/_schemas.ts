@@ -132,10 +132,39 @@ export const EdgeSchema = z
  * its own name so each list's page is one component a generated client
  * names, and every page is the same two keys.
  */
-export function pageOf<T extends z.ZodType>(row: T, name: string) {
+export function pageOf<T extends z.ZodType>(
+  row: T,
+  name: string,
+  text?: { page: string; data: string },
+) {
   return z
-    .object({ data: z.array(row), next_cursor: NextCursorSchema })
-    .openapi(name);
+    .object({
+      data: text ? z.array(row).describe(text.data) : z.array(row),
+      next_cursor: NextCursorSchema,
+    })
+    .openapi(name, text ? { description: text.page } : {});
+}
+
+/**
+ * A page that never continues, answered whole, so its cursor says so rather
+ * than inviting a walk. `extra` carries a field the list answers beside its
+ * rows.
+ */
+export function wholeListOf<T extends z.ZodType>(
+  row: T,
+  name: string,
+  noun: string,
+  extra: z.ZodRawShape = {},
+) {
+  return z
+    .object({
+      data: z.array(row).describe(`Every ${noun}.`),
+      next_cursor: NextCursorSchema.describe(
+        `Always \`null\`: Marfa returns every ${noun} in one page.`,
+      ),
+      ...extra,
+    })
+    .openapi(name, { description: `A page holding every ${noun}.` });
 }
 
 /** The continuation every page carries: a cursor to the next page, `null`

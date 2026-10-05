@@ -56,52 +56,87 @@ const FolderSearchSchema = z
       .max(100)
       .optional()
       .describe(
-        "Type identifiers, each with its subtypes. Empty or absent holds every type the folder's key reads.",
+        "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`.",
       ),
     tier: TierEnum.optional().describe(
-      "The one tier the folder holds; absent is `library`.",
+      "The tier the folder holds. Absent means `library`.",
     ),
     state: z
       .array(z.enum(["active", "archived"]))
       .min(1)
       .optional()
-      .describe("The states the folder holds; absent is both."),
+      .describe("The states the folder holds. Absent means both."),
     filter: z
       .string()
       .optional()
-      .describe("An expression in the listing grammar's `filter`."),
+      .describe(
+        "A filter expression, as on `GET /items`, that narrows what the folder holds.",
+      ),
     beneath: z
       .string()
       .optional()
       .describe(
-        "An item id: that item and everything under it by `parent-of`.",
+        "An item ID. The folder holds that item and everything under it by `parent-of`, at any depth.",
       ),
   })
-  .openapi("FolderSearch");
+  .openapi("FolderSearch", {
+    description: "The search that decides which items a folder holds.",
+  });
 
 const FolderDefaultsSchema = z
   .strictObject({
-    type: z.string().optional(),
-    tier: TierEnum.optional(),
-    properties: WrittenPropertiesSchema.optional(),
-    tags: z.array(TagSchema).max(MAX_TAGS_PER_ITEM).optional(),
+    type: z
+      .string()
+      .optional()
+      .describe("The type a new file becomes if its frontmatter names none."),
+    tier: TierEnum.optional().describe(
+      "The tier a new file takes if its frontmatter names none.",
+    ),
+    properties: WrittenPropertiesSchema.optional().describe(
+      "Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property.",
+    ),
+    tags: z
+      .array(TagSchema)
+      .max(MAX_TAGS_PER_ITEM)
+      .optional()
+      .describe("Tags a new file takes if its frontmatter has no `tags` line."),
     edges: z
       .record(z.string(), z.array(z.string()).max(MAX_DEFAULT_EDGE_TARGETS))
       .optional()
       .describe(
-        `A map from edge type to the item ids a new file takes an edge with: at most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types, each with at most ${String(MAX_DEFAULT_EDGE_TARGETS)} ids. Each edge runs from the new file to the item named, except \`parent-of\`, which runs from the item named to the new file, making the new file its child.`,
+        `Edges a new file takes, as a map from edge type to item IDs: at most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types, ${String(MAX_DEFAULT_EDGE_TARGETS)} IDs each. An edge runs from the new file to the item, except \`parent-of\`, which makes the new file its child.`,
       ),
   })
-  .openapi("FolderDefaults");
+  .openapi("FolderDefaults", {
+    description:
+      "What a new file takes where its frontmatter leaves a blank. A change to a file already in the folder never takes them.",
+  });
 
 const PatternListSchema = z.array(z.string().min(1).max(1024)).max(1000);
 
 const RemovalThresholdSchema = z
   .strictObject({
-    files: z.number().int().min(0).optional(),
-    fraction: z.number().min(0).max(1).optional(),
+    files: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "A removal waits to be confirmed only if it takes more than this many files. Absent means 10.",
+      ),
+    fraction: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe(
+        "A removal waits to be confirmed only if it takes more than this fraction of the folder's files. Absent means 0.25.",
+      ),
   })
-  .openapi("FolderRemovalThreshold");
+  .openapi("FolderRemovalThreshold", {
+    description:
+      "How large a removal must be to wait for confirmation before it goes ahead.",
+  });
 
 const settingsShape = {
   search: FolderSearchSchema.describe("Which items the folder holds."),
@@ -109,18 +144,18 @@ const settingsShape = {
     "What a new file takes where its frontmatter leaves a blank.",
   ),
   include: PatternListSchema.describe(
-    "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name.",
+    "Gitignore patterns, relative to the folder's root, for the paths the folder takes. Empty or absent takes every path. A dot-led name is taken only if a pattern names it. Secrets and files a machine or editor writes for itself are never taken.",
   ),
   ignore: PatternListSchema.describe(
-    "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says.",
+    "Gitignore patterns, relative to the folder's root, for the paths the folder leaves alone. They win over `include`.",
   ),
   first_placement: z
     .record(z.string(), z.string().min(1).max(1024))
     .describe(
-      "A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears.",
+      "Where an item made elsewhere first appears in the folder: a map from type identifier to a directory relative to the folder's root. The most specific matching type wins.",
     ),
   removal_threshold: RemovalThresholdSchema.describe(
-    "A removal pauses when it is more than `files` files and more than `fraction` of the folder; absent members are 10 and 0.25.",
+    "A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files.",
   ),
 };
 
@@ -129,7 +164,7 @@ type Settings = {
 };
 
 const CreateFolderSchema = z.strictObject({
-  title: z.string().min(1).max(500),
+  title: z.string().min(1).max(500).describe("The folder's title."),
   search: settingsShape.search.optional(),
   defaults: settingsShape.defaults.optional(),
   include: settingsShape.include.optional(),
@@ -139,8 +174,19 @@ const CreateFolderSchema = z.strictObject({
 });
 
 const UpdateFolderSchema = z.strictObject({
-  version: z.number().int().min(0).describe("The version the caller read."),
-  title: z.string().min(1).max(500).optional(),
+  version: z
+    .number()
+    .int()
+    .min(0)
+    .describe(
+      "The version of the folder you read. If the folder has changed since, Marfa merges your change where nothing collides.",
+    ),
+  title: z
+    .string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("A new title for the folder."),
   search: settingsShape.search.optional(),
   defaults: settingsShape.defaults.optional(),
   include: settingsShape.include.optional(),
@@ -150,7 +196,7 @@ const UpdateFolderSchema = z.strictObject({
 });
 
 const IdParam = z.object({
-  id: z.string().describe("The folder's `system.folder` item id"),
+  id: z.string().describe("The ID of the folder."),
 });
 
 // ---------------------------------------------------------------------------
@@ -316,7 +362,7 @@ const notPermitted = {
       },
     },
     description:
-      "The credential's type map does not grant write on `system.folder`.",
+      "- `type_not_permitted`: you don't have write on `system.folder`.",
   },
 };
 
@@ -327,12 +373,15 @@ const notFound = {
         schema: makeErrorResponseSchema(["item_not_found"]),
       },
     },
-    description: "No `system.folder` has this id.",
+    description: "- `item_not_found`: no `system.folder` has this ID.",
   },
 };
 
-const SETTING_REFUSAL =
-  "A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it.";
+const SETTING_MALFORMED =
+  "a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it.";
+
+const SETTING_TYPE_UNKNOWN =
+  "- `unknown_type`: a setting names a type that isn't registered.";
 
 const createRefusal = {
   400: {
@@ -345,7 +394,7 @@ const createRefusal = {
         ]),
       },
     },
-    description: SETTING_REFUSAL,
+    description: `- \`validation_error\`: ${SETTING_MALFORMED}\n- \`missing_required_field\`: \`title\` is missing.\n${SETTING_TYPE_UNKNOWN}`,
   },
 };
 
@@ -362,7 +411,7 @@ const updateRefusal = {
         ]),
       },
     },
-    description: `${SETTING_REFUSAL} \`validation_error\` is also a query parameter, such as \`conflict\`, which this door does not take. \`invalid_id\`: the id is malformed. \`invalid_transition\`: the folder is revoked.`,
+    description: `- \`validation_error\`: a setting is malformed (\`details.errors[0].path\` names it), the body names no setting, or the query has a parameter such as \`conflict\`, which this endpoint doesn't take.\n- \`missing_required_field\`: \`version\` is missing.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is malformed.\n- \`invalid_transition\`: the folder is revoked.`,
   },
 };
 
@@ -373,7 +422,7 @@ const createFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Create a folder",
   description:
-    "Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map. Each setting is validated before the write.",
+    "Creates a folder: a `system.folder` item whose properties are the settings every machine bound to the folder shares. The item endpoints can't write one.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: {
@@ -384,7 +433,8 @@ const createFolderRoute = createRoute({
   responses: {
     201: {
       content: { "application/json": { schema: ItemWithMetadataSchema } },
-      description: "Folder created",
+      description:
+        "Returns the new folder, a `system.folder` item, and its metadata.",
     },
     ...createRefusal,
     ...unauthorized,
@@ -399,7 +449,7 @@ const updateFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Update a folder",
   description:
-    "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges.",
+    "Updates a folder's title and settings. Each one you send replaces the current value whole, and those you leave out stay as they are. Send the `version` you read.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: {
@@ -411,7 +461,7 @@ const updateFolderRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: ItemWithMetadataSchema } },
-      description: "Folder changed",
+      description: "Returns the updated folder and its metadata.",
     },
     ...updateRefusal,
     ...unauthorized,
@@ -424,7 +474,7 @@ const updateFolderRoute = createRoute({
         },
       },
       description:
-        "`version_conflict`: a setting this change names was changed since `version`. `conflicting_fields` names it. `ancestor_unavailable`: no snapshot of `version` is held.",
+        "- `version_conflict`: a setting you sent has changed since `version`. `conflicting_fields` names it.\n- `ancestor_unavailable`: Marfa holds no snapshot of `version` to merge from.",
     },
   },
 });
@@ -436,14 +486,14 @@ const revokeFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Revoke a folder",
   description:
-    "Moves the folder to `revoked`, its terminal state, stamps `revoked_at`, and publishes it as `item.state_changed`. Items placed in it keep their `in-folder` edges.",
+    "Revokes a folder: moves it to `revoked`, a terminal state, and sets `revoked_at`. The items placed in it keep their `in-folder` edges.",
   security: [{ bearerAuth: [] }],
   middleware: writesFolders,
   request: { params: IdParam },
   responses: {
     200: {
       content: { "application/json": { schema: ItemWithMetadataSchema } },
-      description: "Folder revoked",
+      description: "Returns the revoked folder and its metadata.",
     },
     400: {
       content: {

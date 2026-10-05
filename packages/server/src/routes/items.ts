@@ -405,9 +405,10 @@ const createItemRoute = createRoute({
 /**
  * The query keys that decide which items a listing answers, apart from how
  * it orders and pages them. The stats door takes the same keys, so a count
- * is asked with exactly the filters of the listing it sizes.
+ * is asked with exactly the filters of the listing it sizes; search takes
+ * the ones that mean the same there.
  */
-const listingNarrowingKeys = {
+export const listingNarrowingKeys = {
   type: z
     .string()
     .optional()
