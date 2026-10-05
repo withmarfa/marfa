@@ -84,7 +84,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("streamEvents", "events"),
     reached("listBlobStores", "blobs stores"),
     reached("listBlobLocations", "blobs locations"),
-    reached("deleteBlobLocation", "blobs delete"),
+    reached("deleteBlobLocation", "blobs delete-location"),
     reached("listBlobOrphans", "blobs orphans"),
     reached("listBackgroundJobs", "background-jobs list"),
     reached("runBackgroundJob", "background-jobs run"),

@@ -253,7 +253,7 @@
     }
   },
   "routes/connector-state.ts": {
-    "boundary": "Audited explicit state clear; existing connector contract exempts holds, checkpoint documents and agreements from audit; audit-atomicity.test.ts.",
+    "boundary": "Audited explicit state deletion; existing connector contract exempts holds, checkpoint documents and agreements from audit; audit-atomicity.test.ts.",
     "calls": {
       "ConnectorStateStore.clear": 1,
       "ConnectorStateStore.putState": 1,

@@ -91,7 +91,7 @@ const listDriftRoute = createRoute({
   },
 });
 
-const removeDriftedTypeRoute = createRoute({
+const deletePlatformTypeRoute = createRoute({
   operationId: "deletePlatformType",
   method: "delete",
   path: "/{id}",
@@ -195,7 +195,7 @@ export function platformTypeRoutes(storage: Storage) {
     return c.json({ data: types, next_cursor: null }, 200);
   });
 
-  router.openapi(removeDriftedTypeRoute, async (c) => {
+  router.openapi(deletePlatformTypeRoute, async (c) => {
     const { id } = c.req.valid("param");
 
     // Asked of this boot's derived set rather than of the row, and the

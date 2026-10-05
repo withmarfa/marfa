@@ -510,7 +510,7 @@ const invocations: Record<string, () => string[]> = {
   events: () => ["--for", "1"],
   "blobs stores": () => [],
   "blobs locations": () => [HASH],
-  "blobs delete": () => ["--store", "disk", HASH],
+  "blobs delete-location": () => ["--store", "disk", HASH],
   "blobs orphans": () => [],
   "background-jobs list": () => [],
   "background-jobs run": () => ["heartbeat"],

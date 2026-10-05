@@ -3,9 +3,8 @@
  *
  * A `"none"` entry subtracts, and a filter assembled from the granted
  * patterns alone has no way to express a subtraction. `"none"` is a public
- * input, not a hypothetical — it is the third arm of the `z.enum` on POST
- * /keys and POST /admin/keys/{id}/keys — so these shapes are mintable
- * today.
+ * input, not a hypothetical — it is the third arm of the `z.enum` on
+ * `POST /keys` — so these shapes are mintable today.
  *
  * **This file asserts the shape of the returned pair, not what it admits.**
  * Whether the filter and the point check agree about a concrete id is
