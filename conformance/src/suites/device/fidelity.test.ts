@@ -732,6 +732,10 @@ describe("the scripted answers match the server's", () => {
           "item.properties",
           "item.state",
           "metadata.tags",
+          "item.edges.derived-from.next_cursor",
+          "item.edges.derived-from.data.0.edge_type",
+          "item.edges.derived-from.data.0.properties",
+          "item.edges.derived-from.data.0.version",
         ],
         shape: [
           "item.id",
@@ -740,6 +744,11 @@ describe("the scripted answers match the server's", () => {
           "item.created_at",
           "item.updated_at",
           "metadata.item_id",
+          "item.edges.derived-from.data.0.id",
+          "item.edges.derived-from.data.0.source_id",
+          "item.edges.derived-from.data.0.target_id",
+          "item.edges.derived-from.data.0.created_at",
+          "item.edges.derived-from.data.0.updated_at",
         ],
       },
     );
