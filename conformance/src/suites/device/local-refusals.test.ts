@@ -246,33 +246,50 @@ describe("a device refuses a condition its copy cannot answer as the server does
 });
 
 describe("a device refuses a write only the server may make", () => {
-  it("refuses a local purge", async () => {
-    harness = await hydrated("purge");
-    // The control, and it is what makes the refusal below mean anything: a
-    // subcommand of the same group that does exist. Without it, refusing
-    // `items purge` would be satisfied by a binary with no `items` at all.
-    const offered = await harness.device.get("n1");
-    expect(
-      offered.ok,
-      `the device offers no \`items\` commands either, so the refusals below say nothing about purging in particular: ${JSON.stringify(offered)}`,
-    ).toBe(true);
+  it("queues no purge, and keeps the row, when the purge cannot be sent", async () => {
+    harness = await startHarness("purge");
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1", state: "trashed" } }] },
+    });
+    expect((await harness.device.hydrate(["core.note"], "library")).ok).toBe(
+      true,
+    );
+    // The witness: the row is held in the bin, and nothing is queued, before
+    // the purge.
+    const bin = await harness.device.list({ state: "trashed" });
+    expect(bin.ok && bin.value.map((row) => row.id)).toEqual(["n1"]);
+    const before = await harness.device.queue();
+    expect(before.ok && before.value).toEqual([]);
 
-    for (const command of [
-      ["items", "purge", "n1"],
-      ["purge", "n1"],
-    ]) {
-      const refused = await harness.device.attempt(command);
+    await harness.server.offline();
+    const refused = await harness.device.purgeItem("n1");
+    await harness.server.online();
+    expect(
+      refused.ok,
+      "a purge the server never received was answered as done",
+    ).toBe(false);
+    if (!refused.ok) {
       expect(
-        refused.ok,
-        `the device offers \`${command.join(" ")}\`, and purging is the server's on a credential holding it: a device that purges locally destroys rows nothing can bring back`,
-      ).toBe(false);
-      if (!refused.ok) {
-        expect(
-          refused.refusal.code,
-          `the device refused \`${command.join(" ")}\` for some other reason than not offering it: ${refused.refusal.raw}`,
-        ).toBe("usage");
-      }
+        refused.refusal.code,
+        `a purge that could not reach the server was refused for some other reason: ${refused.refusal.raw}`,
+      ).toBe("network");
     }
+    const kept = await harness.device.list({ state: "trashed" });
+    expect(
+      kept.ok && kept.value.map((row) => row.id),
+      "the copy let the row go though the server never purged it",
+    ).toEqual(["n1"]);
+    const after = await harness.device.queue();
+    expect(
+      after.ok && after.value,
+      "a purge the device could not send was held for later",
+    ).toEqual([]);
+
+    // A purge is an item's: the binary offers none outside `items`.
+    const bare = await harness.device.attempt(["purge", "n1"]);
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) expect(bare.refusal.code).toBe("usage");
   });
 
   it("refuses a write to a store bound to another server", async () => {

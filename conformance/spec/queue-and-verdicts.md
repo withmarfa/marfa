@@ -132,3 +132,17 @@ The list and the reason for each entry are in `device.md`; `device/fidelity.test
 55. When a folder gives way to another machine's placement (`folders.md` 19), the device MUST take the folder's own `in-folder` writes to that edge out of the queue, a create refused as a duplicate among them, without a caller's withdraw or discard.
     **Reason:** What is withdrawn is every write of the folder's to that `in-folder` edge not yet accepted: the create refused as a duplicate or the move refused as stale, and any later move of the same edge still queued behind it, whose path is lost with it. The refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled, since each writes the item's placement.
     **Tests:** `device/folders.test.ts › follows the placement another Mac made first, and leaves no refusal behind`, `› follows another Mac's move of the same file, giving its own way`.
+
+## A restore of a row the copy does not hold
+
+56. When a caller restores a row the copy does not hold, a device MUST queue the restore by the row's id.
+    **Reason:** A row read from the bin (`device.md` 83) is not held, and nor is one the slice never took, yet the person restoring it is restoring a row the server holds. Queued, the restore waits out a network as any write does and goes after a restart.
+    **Tests:** `device/bin-live.test.ts › restores a row read from the bin that the copy does not hold`.
+
+57. When a device queues a restore of a row the copy does not hold, the device MUST NOT enter the row on the restore alone.
+    **Reason:** A row entered before the answer would be one the copy holds no read of and cannot keep current, and a refusal would leave nothing to put it back to. The row enters as any row does: by the answer's read or its `item.restored` event where the slice or a pin takes it, or by an event or a hydration while the restore waits, with the restore laid over it (35).
+    **Tests:** `device/bin-live.test.ts › restores a row read from the bin that the copy does not hold`.
+
+58. When a restore of a row the copy does not hold already waits, the device MUST refuse another restore of it `invalid`, queueing nothing.
+    **Reason:** The bin goes on listing the row until the restore is answered, so a person can ask twice, and the second restore would come back a refusal for a row that was restored.
+    **Tests:** `device/bin-live.test.ts › restores a row read from the bin that the copy does not hold`.

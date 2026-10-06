@@ -102,6 +102,25 @@ pub struct Item {
 }
 
 impl Item {
+    /// A row as the server answers it, with the tags its metadata carries.
+    pub(crate) fn from_wire(item: WireItem, tags: Vec<String>) -> Result<Item, CoreError> {
+        Ok(Item {
+            state: item.state.parse()?,
+            tier: Tier::parse_wire(item.tier.as_deref())?,
+            id: item.id,
+            r#type: item.r#type,
+            properties: item.properties,
+            version: item.version,
+            schema_version: item.schema_version,
+            source: item.source,
+            source_id: item.source_id,
+            occurred_at: item.occurred_at,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+            tags,
+        })
+    }
+
     pub(crate) fn as_wire(&self) -> WireItem {
         WireItem {
             id: self.id.clone(),
@@ -987,6 +1006,16 @@ impl QueuedWrite {
             })
             .unwrap_or_default()
     }
+}
+
+/// A page of the server's bin, read online and never held in the copy. Each
+/// row's `updated_at` stands for when it went to the bin: the server answers
+/// no time of its own for that, and a write to the row in the bin moves it
+/// too.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BinPage {
+    pub items: Vec<(Item, Shown)>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

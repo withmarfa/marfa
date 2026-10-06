@@ -283,6 +283,15 @@ export function scriptHydration(
         inState.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
       );
     }
+    // A pin that a read by id answers 404 asks the bin for the row this way.
+    const byId = /^id eq "([^"]*)"$/.exec(filter);
+    if (byId !== null) {
+      return itemsPage(
+        inState
+          .filter((row) => row.item.id === byId[1])
+          .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+      );
+    }
     const contains = containsFilter(filter);
     if ("kind" in contains) return contains;
     const standIn = options.lookup?.(contains.text);

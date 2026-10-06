@@ -539,6 +539,34 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["items", "delete", id]);
   }
 
+  async purgeItem(
+    id: string,
+    version?: number,
+  ): Promise<Outcome<{ id: string; purged: boolean }>> {
+    return this.json<{ id: string; purged: boolean }>([
+      "items",
+      "purge",
+      ...this.server(),
+      ...(version === undefined ? [] : ["--version", String(version)]),
+      id,
+    ]);
+  }
+
+  async bin(
+    options: { type?: string; cursor?: string; limit?: number } = {},
+  ): Promise<Outcome<{ data: Item[]; next_cursor: string | null }>> {
+    return this.json<{ data: Item[]; next_cursor: string | null }>([
+      "items",
+      "bin",
+      ...this.server(),
+      ...(options.type === undefined ? [] : ["--type", options.type]),
+      ...(options.cursor === undefined ? [] : ["--cursor", options.cursor]),
+      ...(options.limit === undefined
+        ? []
+        : ["--limit", String(options.limit)]),
+    ]);
+  }
+
   async restoreItem(id: string): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>(["items", "restore", id]);
   }

@@ -51,8 +51,8 @@ pub use folder::{
 pub use folder_settings::FolderRow;
 pub use lock::Handle;
 pub use model::{
-    Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,
-    Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
+    Added, Attached, Attachment, BinPage, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft,
+    EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
     SearchHit, Shown, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
     Verdict, WriteKind,
@@ -326,7 +326,8 @@ impl Core {
         hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)
     }
 
-    /// Refused where neither the server nor the copy holds `id`. Answers
+    /// Refused where neither the server nor the copy holds `id`, and
+    /// `NotFound` with `trashed` where the server holds it in the bin. Answers
     /// whether it was pinned already.
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
@@ -371,6 +372,11 @@ impl Core {
         }
         match held.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))? {
             true => Ok(!added),
+            // A read by id answers a row in the bin as one that is gone.
+            false if context.http(http).trashed_item(id)?.is_some() => Err(CoreError::NotFound {
+                code: "trashed".into(),
+                message: format!("{id} is in the bin; restore it to pin it"),
+            }),
             false => Err(CoreError::NotFound {
                 code: "not_found".into(),
                 message: format!("the server holds no item {id} to pin"),
@@ -812,13 +818,131 @@ impl Core {
         Ok(queued)
     }
 
+    /// Destroys a row in the bin on the server at once, and takes it, its
+    /// edges and its pin out of the copy once the server accepts it
+    /// (`device.md` 75 to 82). Never queued. Sent at `version`, the version
+    /// the caller was shown, or else the version the copy holds; refused,
+    /// before anything is sent, `NotFound` with `not_held` for a row the copy
+    /// does not hold where no version is named, `Validation` with
+    /// `invalid_transition` for one the copy shows outside the bin, and
+    /// `Invalid` while a write to it waits; then `NoServer` for a copy with
+    /// no server. The root confirms the copy's instance first, which expires
+    /// the copy where another answers. Otherwise it is refused with what the
+    /// server or the network answered, the copy and the queue as they were:
+    /// `version_conflict` for a row that moved since it was read. A
+    /// `Network` failure after the request went out may follow a purge the
+    /// server made, which its `item.purged` event then shows.
+    pub fn purge_item(&self, id: &str, version: Option<i64>) -> Result<()> {
+        self.lock.refuse_unless_writer()?;
+        let (held, waiting) = {
+            let conn = self.conn()?;
+            store::refuse_unless_usable(&conn)?;
+            (
+                store::items_by_ids(&conn, &[id.to_string()])?.pop(),
+                store::waiting_writes_for_item(&conn, id)?,
+            )
+        };
+        if let Some(held) = &held
+            && held.state != ItemState::Trashed
+        {
+            return Err(CoreError::Validation {
+                code: "invalid_transition".into(),
+                message: format!(
+                    "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
+                    held.state.as_str()
+                ),
+            });
+        }
+        if !waiting.is_empty() {
+            return Err(CoreError::Invalid(format!(
+                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; drain, withdraw or discard them before purging it",
+                waiting.len()
+            )));
+        }
+        let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {
+            return Err(CoreError::NotFound {
+                code: "not_held".into(),
+                message: format!(
+                    "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
+                ),
+            });
+        };
+        let http = self.http()?;
+        catch_up::refuse_another_instance(self, http)?;
+        http.purge_item(id, version)?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        store::purge_item(&tx, id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Not a purge: the row stays in the copy, trashed.
     pub fn delete_item(&self, id: &str) -> Result<QueuedWrite> {
         self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
     }
 
+    /// A row the copy does not hold, such as one read from the bin, is
+    /// restored by id: queued, shown nowhere until the server answers, and
+    /// held once the answer's read or its `item.restored` event brings it
+    /// where the slice takes it (`queue-and-verdicts.md` 56 to 58).
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
-        self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}")
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        // Looked at and queued under one lock, so a row a held stream brings
+        // in meanwhile is restored as a held row is.
+        let tx = conn.transaction()?;
+        if !store::items_by_ids(&tx, &[id.to_string()])?.is_empty() {
+            drop(tx);
+            drop(conn);
+            return self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}");
+        }
+        if store::waiting_writes_for_item(&tx, id)?
+            .iter()
+            .any(|row| row.kind == WriteKind::RestoreItem)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a restore of {id} already waits to be sent"
+            )));
+        }
+        let queued = store::enqueue(
+            &tx,
+            &store::NewWrite {
+                kind: WriteKind::RestoreItem,
+                item_id: Some(id),
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: "{}",
+                depends_on: &[],
+            },
+        )?;
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// A page of the server's bin, newest change first, read online and held
+    /// nowhere in the copy (`device.md` 83 and 84). Refused with what was met
+    /// where the server cannot be read, and `NoServer` for a copy with none.
+    pub fn bin(&self, r#type: Option<&str>, cursor: Option<&str>, limit: u32) -> Result<BinPage> {
+        let page = self
+            .http()?
+            .bin_page(r#type, None, cursor, limit.clamp(1, 100))?;
+        let catalog = catalog::Catalog::load(&*self.conn()?)?;
+        let mut items = Vec::with_capacity(page.data.len());
+        for row in page.data {
+            let item = Item::from_wire(row.item, row.metadata.tags)?;
+            let shown = catalog.shown(&item);
+            items.push((item, shown));
+        }
+        Ok(BinPage {
+            items,
+            next_cursor: page.next_cursor,
+        })
     }
 
     /// `revoked` is refused: only the server can reach it.
@@ -3522,6 +3646,7 @@ mod tests {
             ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
             ("restore_item", reader.restore_item("x").unwrap_err()),
+            ("purge_item", reader.purge_item("x", None).unwrap_err()),
             (
                 "transition_item",
                 reader
@@ -3664,7 +3789,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            37,
+            38,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

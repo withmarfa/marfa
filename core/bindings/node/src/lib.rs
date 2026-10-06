@@ -1823,7 +1823,9 @@ impl MarfaCore {
         )
     }
 
-    /// Takes an item out of the bin locally and queues the restore.
+    /// Takes an item out of the bin and queues the restore: locally where the
+    /// copy holds it, and by id where it does not, the item arriving once the
+    /// server answers where the slice takes it.
     #[napi]
     pub fn restore_item(&self, env: Env, id: String) -> Result<QueuedWrite> {
         queued(
