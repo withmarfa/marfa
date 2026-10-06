@@ -156,6 +156,14 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Tests:** `device/name-bounds-live.test.ts › refuses a property with no name on create and edit, and takes one with a name`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`. Core `tests::a_property_with_no_name_is_refused_before_the_copy_or_queue_changes`.
 
+## Property order
+
+62. WHEN a device writes a row to its copy, the device MUST hold the row's properties in the order the server answers them where the server still holds the row at the version the copy holds when the write arrives (`items.md` 46), but for a create naming a natural key, whose answer may land on a row the server already holds (`queue-and-verdicts.md` 39).
+
+**Reason:** an app shows an item as a document in its properties' order, and a copy that showed one order until the server answered and another after would move a person's fields under them as the queue drained. A write another device's reaches first is merged by the server (`versions.md`), in an order no device can know beforehand, and the answer then gives the copy the server's order. So a create of a new row holds the declared fields first, in the order the copy's catalog lists the type's fields, and the rest in the order written; a merging edit keeps each property where the row holds it and adds the rest after them; a whole edit based on the version the copy holds keeps the order it sends, laid back over a refilled copy or moved onto an answer ahead of it (`queue-and-verdicts.md` 45) as when it was made, and one said to be read earlier is held as a merge (`queue-and-verdicts.md` 43); and a property named by an array index comes first, in numeric order, as the server's JavaScript orders it.
+
+**Tests:** `device/property-order-live.test.ts › shows a create in the order the server answers it, before the answer and after`, `› shows an edit in the order the server answers it, before the answer and after`, `› keeps a whole edit's order through a hydration and onto an answer ahead of it`. Core `catalog::tests::a_create_is_held_in_the_order_the_server_answers_it`, `js::tests::an_object_holds_array_index_names_first_as_javascript_does`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.

@@ -38,8 +38,9 @@ import {
   typeFilterTerms,
   typeSubtreeToSql,
 } from "@withmarfa/shared";
-import { resolveMergePolicy } from "../policy.js";
+import { resolveMergePolicy, resolveTypeSchema } from "../policy.js";
 import {
+  inAnswerOrder,
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../merge-properties.js";
@@ -652,7 +653,14 @@ export class SqliteItemStore implements ItemStore {
         errors: validation.errors,
       });
     }
-    const properties = validation.data;
+    const properties = inAnswerOrder(
+      Object.keys(
+        resolveTypeSchema(input.type, (typeId) => getTypeSchema(typeId))
+          ?.fields ?? {},
+      ),
+      validation.data,
+      input.properties,
+    );
 
     const now = new Date().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;

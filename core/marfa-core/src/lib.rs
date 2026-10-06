@@ -1433,8 +1433,11 @@ fn queue_create(
         current.is_some() || draft.source_id.is_none(),
     )?;
     // Sent with the slice's tier: left out, the server takes the key's
-    // default, and a row shown at one tier would come back at another.
+    // default, and a row shown at one tier would come back at another. Held
+    // and sent in the order the server answers, so the copy shows one order
+    // before the answer and after it.
     let mut draft = draft.clone();
+    draft.properties = catalog.in_answer_order(&draft.r#type, &draft.properties);
     if draft.tier.is_none() {
         draft.tier = Some(match store::slice(tx)? {
             Some((_, tier)) => tier,

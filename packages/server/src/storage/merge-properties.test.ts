@@ -6,6 +6,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import {
+  inAnswerOrder,
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "./merge-properties.js";
@@ -87,5 +88,37 @@ describe("a replace", () => {
         "replace",
       ),
     ).toEqual(current);
+  });
+});
+
+describe("inAnswerOrder", () => {
+  it("puts the declared fields first, in their order, then the rest as sent", () => {
+    const sent = JSON.parse(
+      '{"links":["l"],"beta":"b","__proto__":"p","alpha":"a","zz":1}',
+    ) as Record<string, unknown>;
+    // Validation answers a field every type takes first, as here.
+    const validated = JSON.parse(
+      '{"links":["l"],"alpha":"a","beta":"b","__proto__":"p","zz":1}',
+    ) as Record<string, unknown>;
+    const ordered = inAnswerOrder(["alpha", "beta", "gamma"], validated, sent);
+    expect(Object.keys(ordered)).toEqual([
+      "alpha",
+      "beta",
+      "links",
+      "__proto__",
+      "zz",
+    ]);
+    expect(Object.getPrototypeOf(ordered)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(ordered, "__proto__")?.value).toBe(
+      "p",
+    );
+  });
+
+  it("keeps a property validation added that the write did not send", () => {
+    expect(
+      Object.keys(
+        inAnswerOrder(["alpha"], { kept: 1, alpha: 2 }, { alpha: 2 }),
+      ),
+    ).toEqual(["alpha", "kept"]);
   });
 });
