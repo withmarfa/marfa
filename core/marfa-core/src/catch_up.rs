@@ -1549,6 +1549,76 @@ mod tests {
     }
 
     #[test]
+    fn a_conflicted_copy_answers_its_original_and_is_answered_by_it_after_a_reopen() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let row = |id: &str, tags: &[&str]| {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&item_payload("item.created", id, NOTE, 1)).unwrap();
+            value["metadata"]["tags"] = serde_json::json!(tags);
+            value.to_string()
+        };
+        let link = |id: &str, source: &str| {
+            format!(
+                r#"{{"event_type":"edge.created","edge":{{"id":"{id}","source_id":"{source}","target_id":"original","edge_type":"derived-from","properties":{{}},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}}}"#
+            )
+        };
+        // The copy does not hold the original. A row made from it and not
+        // tagged a conflicted copy, a promoted one, is the witness that the
+        // tag is asked.
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("14"),
+                    event(
+                        "11",
+                        "item.created",
+                        &row("copy", &[crate::CONFLICTED_COPY_TAG]),
+                    ),
+                    event("12", "edge.created", &link("e1", "copy")),
+                    event("13", "item.created", &row("promoted", &[])),
+                    event("14", "edge.created", &link("e2", "promoted")),
+                    stream_live(Some("14")),
+                ],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            )],
+        );
+        let (dir, core) = hydrated(&server);
+        assert_eq!(core.catch_up().unwrap().applied, 4);
+        assert!(core.get("original").unwrap().is_none());
+        let answers = |core: &Core| {
+            (
+                core.original_of_conflicted_copy("copy").unwrap(),
+                core.original_of_conflicted_copy("promoted").unwrap(),
+                core.conflicted_copies_of("original")
+                    .unwrap()
+                    .into_iter()
+                    .map(|item| item.id)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let expected = (Some("original".to_string()), None, vec!["copy".to_string()]);
+        assert_eq!(answers(&core), expected);
+        assert_eq!(
+            core.edges_to("original").unwrap().len(),
+            2,
+            "the promoted row's link was not held, so its absence above proves nothing"
+        );
+        drop(core);
+        let reopened = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        assert_eq!(
+            answers(&reopened),
+            expected,
+            "a reopened store lost a conflicted copy's link to its original"
+        );
+    }
+
+    #[test]
     fn a_change_to_an_edge_names_the_edge() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);

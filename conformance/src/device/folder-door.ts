@@ -2,6 +2,7 @@ import { v7 as uuidv7 } from "uuid";
 import {
   answers,
   refusal,
+  wireEdge,
   wireItem,
   type ConflictSnapshotBody,
 } from "./marfa-answers.js";
@@ -33,6 +34,8 @@ export interface DoorRow {
   tier?: "library" | "feed";
   /** `archived`, where a transition moved it there. */
   state?: string;
+  /** A conflicted copy's `derived-from` edge to its original (`versions.md` 22). */
+  derivedFrom?: { id: string; target: string };
 }
 
 /** The tag the server gives the sibling a keep-both resolution writes. */
@@ -368,6 +371,7 @@ export class FolderDoor {
           type: before.type,
           version: 1,
           tags: [...new Set([...(before.tags ?? []), CONFLICTED_COPY_TAG])],
+          derivedFrom: { id: uuidv7(), target: id },
         });
       }
     }
@@ -483,6 +487,23 @@ export class FolderDoor {
       source_id: row.source_id,
       ...(row.state === undefined ? {} : { state: row.state }),
       ...(row.trashed === true ? { state: "trashed" } : {}),
+      ...(row.derivedFrom === undefined
+        ? {}
+        : {
+            edges: {
+              "derived-from": {
+                data: [
+                  wireEdge({
+                    id: row.derivedFrom.id,
+                    source_id: id,
+                    target_id: row.derivedFrom.target,
+                    edge_type: "derived-from",
+                  }),
+                ],
+                next_cursor: null,
+              },
+            },
+          }),
     });
   }
 }

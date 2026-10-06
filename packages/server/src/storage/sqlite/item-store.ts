@@ -92,6 +92,7 @@ import {
   attachResolution,
   conflictedSiblingIdFor,
   conflictedSiblingProperties,
+  CONFLICTED_COPY_EDGE,
   CONFLICTED_COPY_TAG,
   detectConflict,
   planAutoMerge,
@@ -237,6 +238,13 @@ function linkRequired(type: string): boolean {
  * so it stays where the original was found; only those a second holder may
  * take, the writer could make, not to the bin, and none that cascade outbound
  * or block a delete, so discarding it touches nothing else.
+ *
+ * It is linked to the original by a `derived-from` edge, whatever the writer's
+ * edge grants: the link is the resolution's, as a cascade is the delete's, and
+ * without it nothing finds the copy from the original or the original from the
+ * copy once the verdict naming it is gone. None of the original's own
+ * `derived-from` edges is copied, so the copy's one edge of that type names
+ * its original.
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
@@ -314,11 +322,26 @@ async function insertConflictedSibling(
     .onConflictDoNothing()
     .run();
 
-  // Copied without the edge checker. The sibling is new, holds no edge, and has
-  // the row's type, so a copy satisfies every type constraint the original
-  // did, takes only one of a type at an end that holds one, and cannot close a
-  // cycle: a cycle through the sibling would need one through the row already.
-  const copied: Edge[] = [];
+  // Written without the edge checker, as the copies below are: `derived-from`
+  // takes any type at either end, and the sibling is new, so the link closes
+  // no cycle.
+  const derivedFrom = {
+    id: generateId(),
+    source_id: siblingId,
+    target_id: row.id,
+    edge_type: CONFLICTED_COPY_EDGE,
+    properties: "{}",
+    created_at: now,
+    updated_at: now,
+    version: 1,
+  };
+  await tx.insert(edges).values(derivedFrom).run();
+  const copied: Edge[] = [{ ...derivedFrom, properties: {} }];
+  // Copied without the edge checker. The sibling is new, holds no edge but its
+  // link, and has the row's type, so a copy satisfies every type constraint
+  // the original did, takes only one of a type at an end that holds one, and
+  // cannot close a cycle: a cycle through the sibling would need one through
+  // the row already.
   const touching = await tx
     .select()
     .from(edges)
@@ -341,6 +364,7 @@ async function insertConflictedSibling(
       ? schema.written_at === "source"
       : schema.written_at === "target";
     if (!own) continue;
+    if (outbound && edge.edge_type === CONFLICTED_COPY_EDGE) continue;
     if (schema.cascade_on_delete === "block") continue;
     if (outbound && schema.cascade_on_delete === "cascade") continue;
     const sourceType = outbound ? row.type : other.type;

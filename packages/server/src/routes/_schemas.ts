@@ -364,7 +364,7 @@ export const ItemReadWithMetadataSchema = ItemWithMetadataSchema.extend({
 export const MergeStrategyEnum = z
   .enum(["last_writer_wins", "keep_both_copies"])
   .describe(
-    "How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`.",
+    "How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`, with a `derived-from` edge to the original.",
   )
   .openapi("MergeStrategy");
 

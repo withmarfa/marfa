@@ -1533,6 +1533,24 @@ impl Core {
             .collect())
     }
 
+    /// The ID of the item a conflicted copy was made from, or `nil` where
+    /// `id` is not a held conflicted copy outside the bin.
+    pub fn original_of_conflicted_copy(&self, id: String) -> Result<Option<String>, MarfaError> {
+        Ok(self.inner.original_of_conflicted_copy(&id)?)
+    }
+
+    /// The held conflicted copies made from `id` that are outside the bin,
+    /// oldest link first.
+    pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
+        let mut copies = Vec::new();
+        for copy in self.inner.conflicted_copies_of(&id)? {
+            if let Some((held, shown)) = self.inner.get_shown(&copy.id)? {
+                copies.push(item(held, shown));
+            }
+        }
+        Ok(copies)
+    }
+
     pub fn search(
         &self,
         query: String,

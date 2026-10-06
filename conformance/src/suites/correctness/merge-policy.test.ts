@@ -53,10 +53,13 @@ async function resolveConflictKeepBoth(
     for (const field of keepBothFields) {
       siblingProps[field] = laterPatch[field];
     }
+    // One create carries the copy, its tag and its link to the original, as
+    // the server's own resolution writes them in one transaction.
     const sib = await laterClient.createItem({
       type: itemType,
       properties: siblingProps,
       tags: ["conflicted-copy"],
+      edges: { "derived-from": [itemId] },
     });
     expect(
       sib.ok,
@@ -175,6 +178,14 @@ describe("core.note — body keep-both, title last-writer-wins", () => {
     expect(sib.data.metadata.tags).toContain("conflicted-copy");
     expect(sib.data.item.type).toBe("core.note");
     expect(sib.data.item.properties.body).toBe("Body from B");
+    const link = await client.listItemEdges(siblingId!, {
+      edge_type: "derived-from",
+    });
+    expect(link.ok).toBe(true);
+    expect(
+      link.data.data.map((edge) => edge.target_id),
+      "the copy a client resolved does not name its original, as the server's copy does",
+    ).toEqual([id]);
     expect(sib.data.item.properties.title).toBe("Title from A");
 
     // Keep-both leaves A's body on the original; title is last-writer-wins, so

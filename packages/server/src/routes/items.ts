@@ -228,7 +228,7 @@ const UpdatedItemSchema = ItemWithMetadataSchema.extend({
     })
     .optional()
     .describe(
-      "What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values.",
+      "What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values, which has a `derived-from` edge to this item.",
     ),
 });
 
@@ -881,7 +881,7 @@ const updateItemRoute = createRoute({
         "application/json": { schema: UpdatedItemSchema },
       },
       description:
-        "Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`.",
+        "Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`, with a `derived-from` edge to this item.",
     },
     400: {
       content: {

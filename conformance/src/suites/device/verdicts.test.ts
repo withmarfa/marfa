@@ -2,8 +2,10 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   answers,
   copyItemEvent,
+  edgeEvent,
   refusal,
   copyReplay,
+  wireEdge,
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { DrainReport } from "../../device/protocol.js";
@@ -486,6 +488,162 @@ function bodyOf(answer: ReturnType<typeof answers.created>): unknown {
   if (answer.kind !== "json") throw new Error("a json answer has a body");
   return answer.body;
 }
+
+describe("a conflicted copy names its original", () => {
+  const SIBLING = "01a00000-0000-7000-8000-0000000000bb";
+  const LINK = "01a00000-0000-7000-8000-0000000000ec";
+  const link = (original: string) =>
+    wireEdge({
+      id: LINK,
+      source_id: SIBLING,
+      target_id: original,
+      edge_type: "derived-from",
+    });
+
+  /** Reads the copy's link from both ends, in the store as `device` opens it. */
+  async function expectLinked(
+    device: Harness["device"],
+    original: string,
+    when: string,
+  ): Promise<void> {
+    const from = await device.edgesFrom(SIBLING);
+    expect(from.ok, JSON.stringify(from)).toBe(true);
+    if (!from.ok) return;
+    expect(
+      from.value.map((edge) => `${edge.edge_type} ${edge.target_id}`),
+      `${when}: the copy holds the conflicted copy and not its link to the original, so an app cannot show the two together`,
+    ).toEqual([`derived-from ${original}`]);
+    const to = await device.edgesTo(original);
+    expect(to.ok, JSON.stringify(to)).toBe(true);
+    if (!to.ok) return;
+    expect(
+      to.value.map((edge) => edge.source_id),
+      `${when}: the original does not answer the copy made from it`,
+    ).toEqual([SIBLING]);
+  }
+
+  it("holds the link with the sibling after the verdict's catch-up, and after the store is reopened", async () => {
+    harness = await startHarness("verdicts-conflicted-link");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "1", rows: held() });
+    // The server logs the sibling, then its link to the original, then the
+    // original's update, all from the one transaction.
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("4", [
+        copyItemEvent(
+          "2",
+          "item.created",
+          wireItem({
+            id: SIBLING,
+            properties: { title: "edited", body: "edited" },
+          }),
+          { tags: ["conflicted-copy"] },
+        ),
+        edgeEvent("3", "edge.created", link(HELD.id)),
+        copyItemEvent(
+          "4",
+          "item.updated",
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const report = await updateAndDrain(
+      harness,
+      [
+        answers.resolved(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+          { body: "keep_both_copies" },
+          SIBLING,
+        ),
+      ],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: 5,
+            properties: { title: "held", body: "the server's" },
+          }),
+        ),
+      ],
+    );
+    expect(report.verdicts[0]?.conflicted_copy_id).toBe(SIBLING);
+    // The witness: before the catch-up the copy holds no link, so the one
+    // after it came with the sibling's events.
+    const before = await device.edgesTo(HELD.id);
+    expect(before.ok && before.value).toEqual([]);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    await expectLinked(device, HELD.id, "after the catch-up");
+    await expectLinked(device.reopen(), HELD.id, "after a reopen");
+  });
+
+  it("holds the link a catch-up brings where the copy does not hold the original", async () => {
+    harness = await startHarness("verdicts-conflicted-link-unheld");
+    const { server, device } = harness;
+    const unheld = "01a00000-0000-7000-8000-0000000000ef";
+    scriptHydration(server, { head: "1", rows: {} });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("3", [
+        copyItemEvent(
+          "2",
+          "item.created",
+          wireItem({ id: SIBLING, properties: { title: "t", body: "lost" } }),
+          { tags: ["conflicted-copy"] },
+        ),
+        edgeEvent("3", "edge.created", link(unheld)),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    const original = await device.get(unheld);
+    expect(original.ok).toBe(false);
+    await expectLinked(device, unheld, "after the catch-up");
+    await expectLinked(device.reopen(), unheld, "after a reopen");
+  });
+
+  it("holds the link a hydration reads with the sibling, where the copy does not hold the original", async () => {
+    harness = await startHarness("verdicts-conflicted-link-hydrated");
+    const { server, device } = harness;
+    const unheld = "01a00000-0000-7000-8000-0000000000ef";
+    scriptHydration(server, {
+      head: "1",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: SIBLING,
+              properties: { title: "t", body: "lost" },
+              edges: {
+                "derived-from": { data: [link(unheld)], next_cursor: null },
+              },
+            },
+            tags: ["conflicted-copy"],
+          },
+        ],
+      },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const original = await device.get(unheld);
+    expect(original.ok).toBe(false);
+    await expectLinked(device, unheld, "after the hydration");
+    await expectLinked(device.reopen(), unheld, "after a reopen");
+  });
+});
 
 describe("the server did not take the write", () => {
   it("refused: carries the server's code and is not sent again", async () => {
