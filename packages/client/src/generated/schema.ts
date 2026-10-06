@@ -3087,7 +3087,7 @@ export interface components {
         Occurrence: {
             /** @description When the occurrence starts, in UTC. */
             starts_at: string;
-            /** @description When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end. */
+            /** @description When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end. */
             ends_at?: string;
             item: components["schemas"]["Item"] & unknown;
             /** @description The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur. */

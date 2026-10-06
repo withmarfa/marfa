@@ -17,15 +17,11 @@
 import {
   isEventDuration,
   isEventTimeZone,
-  RecurrenceRuleError,
   wholeDaySpan,
 } from "@withmarfa/shared";
 
 /** A whole day: no time, so no instant of its own. */
 const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** A date with no time, whole or partial: the day or period it names. */
-const DATE_ONLY = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 
 /** A time with no zone named: no trailing `Z`, no `±HH:MM` offset. */
 const NAIVE_DATETIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
@@ -104,7 +100,7 @@ function wholeDayValue(value: unknown): string | undefined {
   const normalized = normalizeInstant(value);
   if (normalized === null) return undefined;
   const raw = (value as string).trim();
-  return DATE_ONLY.test(raw) ? normalized.slice(0, 10) : normalized;
+  return BARE_DATE.test(raw) ? normalized.slice(0, 10) : normalized;
 }
 
 /**
@@ -136,9 +132,8 @@ function wholeDayColumnValues(
       ends_at: new Date(span.endMs).toISOString(),
     };
   } catch (err) {
-    // A row stored before its zone or length was refused, or a day past the
-    // range a Date holds, has no span rather than a failed write.
-    if (err instanceof RecurrenceRuleError || err instanceof RangeError) {
+    // A day past the range a Date holds has no span rather than a failed write.
+    if (err instanceof RangeError) {
       return { starts_at: null, ends_at: null };
     }
     throw err;

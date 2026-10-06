@@ -440,7 +440,7 @@ interface WindowSeed {
   starts_at: string;
   ends_at?: string;
   /** The span the window is matched against, as the normalized columns
-   *  derive it: the stated end, else `duration`, else a whole day. */
+   *  derive it. */
   span: { start: string | null; end: string | null };
 }
 
@@ -751,7 +751,7 @@ const OccurrenceSchema = z
       .string()
       .optional()
       .describe(
-        "When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.",
+        "When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.",
       ),
     item: ItemSchema.describe(
       "The event: the series for an occurrence computed from its rule, otherwise the occurrence's own item.",
@@ -1452,6 +1452,7 @@ export function occurrenceRoutes(
         // matches would trade a redundant field for the only signal a
         // caller has that this is a stored replacement rather than a
         // computed occurrence.
+
         // A whole-day item is shown at the span a whole-day series places
         // each occurrence by, so a day reads the same single or repeating.
         const wholeDay =

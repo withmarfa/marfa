@@ -3775,7 +3775,7 @@
           },
           "ends_at": {
             "type": "string",
-            "description": "When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end."
+            "description": "When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end."
           },
           "item": {
             "allOf": [

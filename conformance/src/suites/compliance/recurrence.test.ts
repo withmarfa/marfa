@@ -258,8 +258,8 @@ describe("a whole-day event, single or repeating", () => {
       expect(
         await span(id, "2046-01-14T12:00:00Z", "2046-01-17T00:00:00Z"),
       ).toEqual(midnights);
-      // Both edges sit on the zone's midnights: a UTC-midnight reading holds
-      // the event in neither window.
+      // Both windows touch the day only at the zone's midnights: a UTC-midnight
+      // reading leaves the event out of the first and puts it in the second.
       expect(
         await span(id, "2046-01-14T22:30:00Z", "2046-01-14T23:30:00Z"),
       ).toEqual(midnights);
