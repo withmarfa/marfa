@@ -10,6 +10,10 @@ use crate::store;
 use crate::wire::WireEdgeType;
 
 const TITLE_PROPERTY: &str = "title";
+
+/// Fields the server takes on every type, optional, which no read of a type
+/// lists (`items.md` 68).
+const EVERY_TYPE_TAKES: [&str; 2] = ["attachments", "links"];
 const BODY_PROPERTY: &str = "body";
 
 struct Entry {
@@ -510,7 +514,11 @@ impl Catalog {
         properties
             .iter()
             .filter(|(name, value)| {
-                !value.is_null() || self.definition(type_id, name).is_none_or(Self::required)
+                !value.is_null()
+                    || match self.definition(type_id, name) {
+                        Some(definition) => Self::required(definition),
+                        None => !EVERY_TYPE_TAKES.contains(&name.as_str()),
+                    }
             })
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect()
@@ -1083,9 +1091,9 @@ mod tests {
             serde_json::json!([]),
         );
         let catalog = Catalog::load(&conn).unwrap();
-        let sent: Map<String, Value> = serde_json::from_value(
-            serde_json::json!({ "title": null, "body": null, "extra": null }),
-        )
+        let sent: Map<String, Value> = serde_json::from_value(serde_json::json!({
+            "title": null, "body": null, "links": null, "attachments": null, "extra": null
+        }))
         .unwrap();
         assert_eq!(
             catalog

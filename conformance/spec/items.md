@@ -134,8 +134,8 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 
 ## A null in a create
 
-68. IF a create carries a null for a field its type declares and does not require, THEN the server MUST make the row without that field.
+68. IF a create carries a null for a field its type declares and does not require, or for `attachments` or `links`, which every type takes, THEN the server MUST make the row without that field.
 
-    Reason: a null on an optional field means the field is unset, as it does under a merge (22), so no null is stored for it. A null on a property the type does not declare is held as the value it is.
+    Reason: a null on an optional field means the field is unset, as it does under a merge (22), so no null is stored for it. In a create that makes a new row, a null on a property the type does not declare is held as the value it is; a create whose natural key resolves a row is a merge (5), which drops it (22).
 
     Tests: `compliance/validation.test.ts › leaves out a create's null on a declared optional field, and keeps one on an undeclared property`.

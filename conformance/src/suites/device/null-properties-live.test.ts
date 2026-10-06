@@ -13,7 +13,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * What a null in a write does on the copy, held to what the server does with
- * it (`queue-and-verdicts.md` 59 and 60), before the drain and after.
+ * it (`queue-and-verdicts.md` 2 and 59), before the drain and after.
  */
 
 let client: MarfaClient;
@@ -106,7 +106,13 @@ it("leaves out a create's null on a declared optional field, as the server does"
     value(
       await device.create({
         type: "core.note",
-        properties: { body: "b", title: null, courier: null },
+        properties: {
+          body: "b",
+          title: null,
+          links: null,
+          attachments: null,
+          courier: null,
+        },
       }),
     ).item_id ?? "";
   trackItem(ctx, id);

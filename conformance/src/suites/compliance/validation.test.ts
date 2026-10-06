@@ -361,7 +361,13 @@ describe("type identifier validation", () => {
     const r = await client.createItem({
       type: "core.note",
       source: ctx.source,
-      properties: { body: "b", title: null, courier: null },
+      properties: {
+        body: "b",
+        title: null,
+        links: null,
+        attachments: null,
+        courier: null,
+      },
     });
     expect(r.ok, JSON.stringify(r.error)).toBe(true);
     trackItem(ctx, r.data.item.id);
