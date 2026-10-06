@@ -164,6 +164,8 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
                     }
                 });
             }
+            // A template's empty date names no time.
+            OCCURRED_AT_FIELD if value.is_null() => {}
             OCCURRED_AT_FIELD => {
                 read.lines.occurred_at = Some(
                     value
@@ -468,6 +470,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_blank_occurred_at_line_names_no_time() {
+        let read = read(
+            &front(json!({ "occurred_at": null, "status": "open" })),
+            &edge_types(),
+        )
+        .unwrap();
+        assert_eq!(read.lines.occurred_at, None);
+        assert_eq!(read.properties.keys().collect::<Vec<_>>(), ["status"]);
+    }
+
     fn item(occurred_at: &str, created_at: &str) -> Item {
         Item {
             id: "item".into(),
@@ -503,7 +516,7 @@ mod tests {
             json!({ "occurred_at": "10000-01-01" }),
             json!({ "occurred_at": 20261006 }),
             json!({ "occurred_at": ["2026-10-06"] }),
-            json!({ "occurred_at": null }),
+            json!({ "occurred_at": "" }),
             json!({ "type": 3 }),
             json!({ "type": " " }),
             json!({ "tier": "attic" }),

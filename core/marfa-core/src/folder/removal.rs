@@ -94,20 +94,26 @@ impl Folder {
         };
         let mut put_back = 0;
         for path in &disk {
-            let conn = self.core.conn()?;
-            state::journal_clear(&conn, path)?;
-            let Some(bound) = state::bound_at(&conn, path)? else {
-                continue;
+            let (bound, held) = {
+                let conn = self.core.conn()?;
+                state::journal_clear(&conn, path)?;
+                let Some(bound) = state::bound_at(&conn, path)? else {
+                    continue;
+                };
+                // No pull writes back an item the search's states no longer hold, so
+                // bound it would be journaled again.
+                let held = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))?
+                    .pop()
+                    .is_some_and(|item| settings.holds_state(item.state));
+                (bound, held)
             };
-            // No pull writes back an item the search's states no longer hold, so
-            // bound it would be journaled again.
-            let held = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))?
-                .pop()
-                .is_some_and(|item| settings.holds_state(item.state));
             if !held {
-                state::unbind(&conn, path)?;
+                // The file leaves for good, so its placement ends before its binding.
+                self.end_placement(&bound.item_id, path)?;
+                state::unbind(&*self.core.conn()?, path)?;
                 continue;
             }
+            let conn = self.core.conn()?;
             state::bind(
                 &conn,
                 &state::Bound {

@@ -8035,7 +8035,6 @@ describe("what frontmatter says", () => {
         ["Month.md", "occurred_at: 2026-13-45"],
         ["Number.md", "occurred_at: 20261006"],
         ["List.md", "occurred_at: [2026-10-06]"],
-        ["Empty.md", "occurred_at:"],
       ]) {
         put(harness, name!, `---\ntitle: ${name}\n${line}\n---\nbody\n`);
       }
@@ -8050,14 +8049,37 @@ describe("what frontmatter says", () => {
       expect(
         pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
       ).toEqual(
-        ["Empty.md", "List.md", "Month.md", "Number.md", "Words.md"].map(
-          (name) => [name, "unreadable"],
-        ),
+        ["List.md", "Month.md", "Number.md", "Words.md"].map((name) => [
+          name,
+          "unreadable",
+        ]),
       );
       expect(
         [...createdBy(harness).keys()],
         "a file whose occurred_at is no time was sent, as an item with a bad property or with the wrong time",
       ).toEqual(["Fine"]);
+    });
+
+    it("takes a blank line as no time, and leaves it blank", async () => {
+      harness = await folderHarness("folder-occurred-at-blank");
+      scriptFolderWrites(harness);
+      put(harness, "Blank.md", "---\ntitle: Blank\noccurred_at:\n---\nb\n");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged,
+        "a template's empty date was flagged unreadable",
+      ).toEqual([]);
+      const [sent] = sentCreates(harness);
+      expect((sent?.properties as Record<string, unknown>).title).toBe("Blank");
+      expect("occurred_at" in (sent ?? {})).toBe(false);
+      expect(
+        (sent?.properties as Record<string, unknown>).occurred_at,
+        "a blank line was sent as a property",
+      ).toBeUndefined();
+      expect(read(harness, "Blank.md")).toContain("occurred_at:\n");
+      expect(sentUpdates(harness)).toEqual([]);
     });
 
     it("writes the line for an item whose time is its own, and none for one never set", async () => {
@@ -15177,7 +15199,7 @@ describe("what a pull does with a file whose item stops matching", () => {
    *  `going.md` once its pull and push have run. */
   async function placedDeparture(
     label: string,
-    options: { filter?: string; tags?: string[] } = {},
+    options: { filter?: string; tags?: string[]; state?: string[] } = {},
   ): Promise<EdgeDoor> {
     const edges = new EdgeDoor();
     harness = await folderHarness(label, {
@@ -15185,6 +15207,7 @@ describe("what a pull does with a file whose item stops matching", () => {
         search: {
           types: ["core.note"],
           ...(options.filter === undefined ? {} : { filter: options.filter }),
+          ...(options.state === undefined ? {} : { state: options.state }),
         },
       },
       rows: { "core.note": [{ item: departed, tags: options.tags }] },
@@ -15197,6 +15220,13 @@ describe("what a pull does with a file whose item stops matching", () => {
       "the fixture's folder did not place the item it wrote a file for",
     ).toEqual(new Map([[departed.id, "going.md"]]));
     return edges;
+  }
+
+  function deletesOfItem(harness: FolderHarness, id: string): number {
+    return harness.server.requests.filter(
+      (request) =>
+        request.method === "DELETE" && request.pathname === `/items/${id}`,
+    ).length;
   }
 
   function trashedAt(edges: EdgeDoor): void {
@@ -15320,10 +15350,21 @@ describe("what a pull does with a file whose item stops matching", () => {
     const edges = await placedDeparture("folder-refused-end");
     edges.deleting = () => answers.edgePermissionDenied("in-folder");
     trashedAt(edges);
+    const reports = [];
     for (let push = 0; push < 2; push += 1) {
       const pushed = await harness!.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (pushed.ok) reports.push(pushed.value);
     }
+    expect(
+      reports.map((report) =>
+        report.drain.verdicts
+          .filter((entry) => entry.kind === "delete_edge")
+          .map((entry) => entry.verdict),
+      ),
+      "the refusal of the end of a placement was not reported once, or was reported again",
+    ).toEqual([["refused"], []]);
+    expect(reports[0]?.pull?.ended).toBe(1);
     const queued = await harness!.folder.device().queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
@@ -15332,6 +15373,77 @@ describe("what a pull does with a file whose item stops matching", () => {
       "a refused end was queued again at every push",
     ).toHaveLength(1);
     expect(edges.placements(harness!.settings.id).size).toBe(1);
+  });
+
+  it("ends a folder's placement of an item that leaves by state, and places it again when it returns", async () => {
+    const edges = await placedDeparture("folder-state-placement", {
+      state: ["active"],
+    });
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.state_changed",
+        wireItem({ ...departed, state: "archived" }),
+      ),
+    );
+    const left = await harness!.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    if (!left.ok) return;
+    expect(left.value.pull).toMatchObject({ removed: 1, ended: 1 });
+    expect(edges.placements(harness!.settings.id)).toEqual(new Map());
+
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.state_changed",
+        wireItem(departed),
+      ),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+    expect(existsSync(join(harness!.dir, "going.md"))).toBe(true);
+    expect(edges.placements(harness!.settings.id)).toEqual(
+      new Map([[departed.id, "going.md"]]),
+    );
+  });
+
+  it("keeps the file and the placement where ending the placement fails, and ends it at the next push", async () => {
+    const edges = await placedDeparture("folder-end-fails");
+    trashedAt(edges);
+    const failed = await withFault("end-placement-fails", () =>
+      harness!.folder.push(),
+    );
+    expect(failed.ok, "the injected failure did not fail the push").toBe(false);
+    expect(
+      existsSync(join(harness!.dir, "going.md")),
+      "the file went though its placement was not ended, so nothing would end it",
+    ).toBe(true);
+    expect(edges.placements(harness!.settings.id).size).toBe(1);
+
+    const retried = await harness!.folder.push();
+    expect(retried.ok, JSON.stringify(retried)).toBe(true);
+    if (!retried.ok) return;
+    expect(retried.value.pull).toMatchObject({ removed: 1, ended: 1 });
+    expect(existsSync(join(harness!.dir, "going.md"))).toBe(false);
+    expect(edges.placements(harness!.settings.id)).toEqual(new Map());
+  });
+
+  it("keeps the binding of a deleted file where ending its placement fails, and ends it at the next push", async () => {
+    const edges = await placedDeparture("folder-delete-end-fails");
+    rmSync(join(harness!.dir, "going.md"));
+    expect((await harness!.folder.push()).ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const failed = await withFault("end-placement-fails", () =>
+      harness!.folder.push(),
+    );
+    expect(failed.ok).toBe(false);
+    expect(edges.placements(harness!.settings.id).size).toBe(1);
+    const retried = await harness!.folder.push();
+    expect(retried.ok, JSON.stringify(retried)).toBe(true);
+    expect(
+      edges.placements(harness!.settings.id),
+      "a placement whose end failed once was never ended",
+    ).toEqual(new Map());
+    expect(deletesOfItem(harness!, departed.id)).toBe(1);
   });
 
   it("removes the file of an item that leaves by state", async () => {
@@ -15877,6 +15989,43 @@ describe("what a pull does with a file whose item is purged", () => {
       ],
     });
   }
+
+  it("sends nothing to end the placement of a purged item, which the purge took with it", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-purged-placement", {
+      rows: { "core.note": [{ item: purged }] },
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(edges.placements(harness.settings.id).size).toBe(1);
+    // The server removes an item's edges with it (`edges.md` 17).
+    for (const [id, edge] of [...edges.edges]) {
+      if (edge.source_id === purged.id) edges.edges.delete(id);
+    }
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "item.purged",
+        wireItem({ ...purged, state: "trashed" }),
+      ),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.pull).toMatchObject({
+      removed: 1,
+      purged: 1,
+      ended: 0,
+    });
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "DELETE" && request.pathname.startsWith("/edges/"),
+      ),
+      "a delete was sent for a placement the purge had taken",
+    ).toEqual([]);
+  });
 
   it("removes a purged item's file where its bytes are the folder's own, and says so", async () => {
     harness = await purge("folder-purged");
@@ -19762,6 +19911,16 @@ describe("large removals, status and size", () => {
       "restore counted as put back a file no pull will write, since the search no longer holds its item's state",
     ).toBe(2);
     expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+    // The file that left for good took its placement with it, and the two put
+    // back kept theirs.
+    const placing = await harness.folder.device().queue();
+    expect(
+      placing.ok &&
+        placing.value
+          .filter((row) => row.kind === "delete_edge")
+          .map((row) => row.item_id),
+      "restore let a file go without ending its item's placement",
+    ).toEqual([rows[0]!.item.id]);
 
     await grace();
     const later = await harness.folder.scan();

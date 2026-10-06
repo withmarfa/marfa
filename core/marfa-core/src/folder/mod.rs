@@ -1979,13 +1979,13 @@ impl Folder {
         } else {
             Missing::Gone
         };
+        // Before the binding goes, so a failure leaves it for the next pass.
+        if leaves {
+            self.end_placement(item_id, path)?;
+        }
         let conn = self.core.conn()?;
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
-        drop(conn);
-        if leaves {
-            self.end_placement(item_id)?;
-        }
         Ok(missing)
     }
 
@@ -3834,10 +3834,14 @@ impl Folder {
         if !removed {
             return Ok(LetGo::Inapplicable);
         }
+        drop(conn);
+        // After the removal, which may be refused, and before the binding
+        // goes, so a failure leaves the binding for the scan to settle.
+        let ended = self.end_placement(item_id, &bound.path)?;
+        let conn = self.core.conn()?;
         state::unbind(&conn, &bound.path)?;
         state::journal_clear(&conn, &bound.path)?;
-        drop(conn);
-        report.ended += self.end_placement(item_id)?;
+        report.ended += ended;
         report.let_go += 1;
         Ok(LetGo::Removed)
     }
@@ -3952,6 +3956,9 @@ impl Folder {
         row: &state::Bound,
         context: &mut crate::read_view::Context,
     ) -> Result<Option<usize>> {
+        // First: a failure leaves the file and its binding, and the next pass
+        // finds no placement left to end and takes the file away.
+        let ended = self.end_placement(&row.item_id, &row.path)?;
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
@@ -3969,8 +3976,7 @@ impl Folder {
         }
         context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
         state::journal_clear(&conn, &row.path)?;
-        drop(conn);
-        self.end_placement(&row.item_id).map(Some)
+        Ok(Some(ended))
     }
 
     fn deleted_as_agreed(
@@ -4123,12 +4129,19 @@ impl Folder {
             .collect();
         let (names, typed, recorded) = lines;
         let mut front = fields::lines_of(item);
-        // A file that already says when the item happened goes on saying it.
-        if typed.is_some_and(|document| document.front.contains_key(fields::OCCURRED_AT_FIELD)) {
-            front.insert(
-                fields::OCCURRED_AT_FIELD.into(),
-                Value::String(item.occurred_at.clone()),
-            );
+        // A file that already says when the item happened goes on saying it,
+        // and a blank line stays blank where there is no time to show.
+        match typed.and_then(|document| document.front.get(fields::OCCURRED_AT_FIELD)) {
+            Some(Value::Null) if !front.contains_key(fields::OCCURRED_AT_FIELD) => {
+                front.insert(fields::OCCURRED_AT_FIELD.into(), Value::Null);
+            }
+            Some(_) => {
+                front.insert(
+                    fields::OCCURRED_AT_FIELD.into(),
+                    Value::String(item.occurred_at.clone()),
+                );
+            }
+            None => {}
         }
         for (field, value) in &item.properties {
             if field != body_field && !fields::reserved(field, edge_types) {
