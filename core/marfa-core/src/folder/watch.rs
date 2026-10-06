@@ -223,8 +223,7 @@ impl Folder {
                 last_full = Some(Instant::now());
             }
             match self.pass(full, &mut telling, tell) {
-                // The follow is hydrating the copy; a later pass finds it whole.
-                Err(WatchError::Core(CoreError::HydrationIncomplete)) => {}
+                Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
                 // The follow kept changing the copy under the pull; the next
                 // pass reads it again.
                 Err(WatchError::Core(error)) if super::copy_changed(&error) => {
@@ -632,6 +631,16 @@ fn dot_led(root: &Path, path: &Path) -> bool {
     relative
         .components()
         .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+/// The follow hydrates a copy that is part way through a hydration or has
+/// expired, and a pass that meets either finds the copy whole a pass later.
+/// A drain refuses both before it sends anything.
+fn hydrated_by_the_follow(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::HydrationIncomplete | CoreError::CopyExpired { .. }
+    )
 }
 
 #[cfg(test)]
@@ -1050,6 +1059,19 @@ mod tests {
             Some(CoreError::Unauthorized { message, .. }) if message == "the server refused the credential"
         ));
         assert_eq!(credential_refused(&drained()), None);
+    }
+
+    #[test]
+    fn a_pass_waits_out_the_hydration_the_follow_runs() {
+        assert!(hydrated_by_the_follow(&CoreError::HydrationIncomplete));
+        assert!(hydrated_by_the_follow(&CoreError::CopyExpired {
+            reason: "catchup_too_old".into()
+        }));
+        assert!(!hydrated_by_the_follow(&CoreError::NoCursor));
+        assert!(!hydrated_by_the_follow(&CoreError::Unauthorized {
+            code: "unauthorized".into(),
+            message: "ended".into()
+        }));
     }
 
     #[test]

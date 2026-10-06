@@ -99,7 +99,9 @@ pub(crate) fn narrow_by_type(
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
-    let Some(declared) = declared.filter(|declared| *declared != "*") else {
+    // An empty filter is no filter, as `?type=` is on the server.
+    let Some(declared) = declared.filter(|declared| !declared.is_empty() && *declared != "*")
+    else {
         return Ok(());
     };
     if !crate::hydrate::type_pattern(declared)? {

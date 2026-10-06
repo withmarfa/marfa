@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
@@ -59,6 +60,8 @@ pub struct Http {
     renew: Arc<OnceLock<Renew>>,
     /// Held while a renewal runs, so two calls refused at once renew once.
     renewing: Arc<Mutex<()>>,
+    /// Raised by `let_go`: no renewal starts after it.
+    let_go: Arc<AtomicBool>,
     view: Option<String>,
 }
 
@@ -301,8 +304,31 @@ impl Http {
             authorization: Arc::new(RwLock::new(format!("Bearer {key}"))),
             renew: Arc::new(OnceLock::new()),
             renewing: Arc::new(Mutex::new(())),
+            let_go: Arc::new(AtomicBool::new(false)),
             view: None,
         })
+    }
+
+    /// This transport for a read its caller may stop waiting on, which
+    /// `let_go` then lets go of without a credential half renewed.
+    pub(crate) fn to_let_go(&self) -> Self {
+        Self {
+            let_go: Arc::new(AtomicBool::new(false)),
+            ..self.clone()
+        }
+    }
+
+    /// Starts no renewal after this, and returns once a renewal already
+    /// under way has finished: a refresh token is spent when the server
+    /// answers it, so a process that ended between that answer and keeping
+    /// the new one would be signed out.
+    pub(crate) fn let_go(&self) {
+        self.let_go.store(true, Ordering::SeqCst);
+        drop(
+            self.renewing
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
     }
 
     pub(crate) fn for_view(&self, fence: &str) -> Self {
@@ -350,6 +376,9 @@ impl Http {
             .renewing
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.let_go.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
         let current = self.authorization();
         if current != sent {
             return Ok(Some(current));

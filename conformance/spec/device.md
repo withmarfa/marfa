@@ -134,7 +134,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 ## Stopping a long call
 
-58. **A hydration, a catch-up and a drain can be stopped, and each ends soon after.** The binary's stop is Ctrl-C, and a binding takes a stop of its own. A stopped call ends with `canceled`, the exit code of a call that did not finish, and leaves the store consistent. A stopped hydration leaves a copy that refuses reads, as one interrupted by a failure does (4), and a queue as it was. A stopped catch-up keeps the cursor of the last event it applied. A stopped drain sends no write after the stop: the write in flight is answered and recorded, and every write behind it stays queued and unsent for the next drain. A call that was not stopped ends as it always did, so the stop is the only thing that ended these. **A second Ctrl-C ends the process at once**, with status 130, for a call that has not reached a place to stop, such as one waiting on a server that never answers. `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`, `› ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
+58. **A hydration, a catch-up and a drain can be stopped, and each ends soon after.** The binary's stop is Ctrl-C, and a binding takes a stop of its own. A stopped call ends with `canceled`, the exit code of a call that did not finish, and leaves the store consistent. A stopped hydration leaves a copy that refuses reads, as one interrupted by a failure does (4), and a queue as it was. A stopped catch-up keeps the cursor of the last event it applied. A stopped drain sends no write after the stop: the write in flight is answered and recorded, and every write behind it stays queued and unsent for the next drain. A call that was not stopped ends as it always did, so the stop is the only thing that ended these. **A second Ctrl-C ends the process at once**, with status 130, for a call that has not reached a place to stop, such as one waiting past its first request on a server that never answers (106). `device/stop.test.ts › ends it between pages, leaving a copy that refuses reads and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it before the next write is sent, leaving that write queued and unsent`, `› ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
 
 59. When a stop is raised before an in-flight network read returns, a hydration, a catch-up or a drain MUST end with `canceled` after settling any in-flight drain answer (58).
 
@@ -416,7 +416,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 ## Before a first hydration
 
-102. WHEN a caller drains a working copy that has not completed a hydration, the device MUST refuse the drain before anything is read or sent and leave the queue as it was: `no_cursor` where no hydration has completed, `hydration_incomplete` where one is in progress or was interrupted, and `copy_expired` where the cursor has gone.
+102. WHEN a caller drains a working copy that does not hold the read view of a completed hydration, the device MUST refuse the drain before anything is read or sent and leave the queue as it was: `hydration_incomplete` where a hydration is in progress or was interrupted, `no_cursor` where none has otherwise completed, and `copy_expired` where the cursor of a completed one has gone.
 
 **Reason:** each answer is read back under the read view a hydration gives the copy (`queue-and-verdicts.md` 12), so a copy without one would send its first write, fail to settle the answer, and fail the same way at every later drain with the rest of the queue unsent. The refusal comes before the server is asked, so it is the same offline. A copy saves before it has reached a server (56), and its first drain follows its first hydration.
 
@@ -428,9 +428,15 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Tests:** `device/save-before-sync-live.test.ts › reads the server's catalog before its first hydration, leaving the copy's own as it was`.
 
+104. WHERE a working copy names no server, the device MUST refuse a read of the server's catalog (103) `no_server`.
+
+**Reason:** the read has nothing to ask, and an answer from the copy's own catalog would pass the shipped and declared types off as the server's.
+
+**Tests:** Core `refusal_tests::a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog`.
+
 ## Type names in a local read
 
-104. WHEN a local list or search names a `type` outside the server's type pattern grammar (`types.md` 1), the device MUST refuse it `validation` with the code `validation_error`, as the server refuses a malformed `type` filter.
+105. WHEN a local list or search names a `type` outside the server's type pattern grammar (`types.md` 1), the device MUST refuse it `validation` with the code `validation_error`, as the server refuses a malformed `type` filter.
 
 **Reason:** a local read that answered an empty list would say the type holds nothing where the server says the name is no type at all, so a mistyped name would go unnoticed offline and fail only online. A local read holds the rest of the listing grammar to the server's in the same way (36).
 
@@ -438,11 +444,11 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 ## Stopping a call that waits on its server
 
-105. WHEN a stop is raised while the first request of a hydration, a catch-up or a drain still waits on the server, connecting to it among the rest, the device MUST end the call with `canceled` at once and leave the copy and the queue as they were.
+106. WHEN a stop is raised while the first request of a hydration, a catch-up, a drain or a read of the server's catalog (103) still waits on the server, including while it is still connecting, the device MUST end the call with `canceled` at once and leave the copy and the queue as they were.
 
-**Reason:** a server that cannot be reached can hold a connection attempt for 10 seconds and a request for far longer, and an app that closes a copy or cancels a sync would wait that long for nothing (58). The request left behind is only ever a read: the head read, the catalog read, or the root a drain asks before it sends (2). A write already sent is settled before the call ends (59).
+**Reason:** a server that cannot be reached can hold a connection attempt for 10 seconds and a request for far longer, and an app that closes a copy or cancels a sync would wait that long for nothing (58). The request left behind is only ever a read: the head read, the catalog read, or the root a drain asks before it sends (2). A write already sent is settled before the call ends (59). A credential renewal the read started is finished before the call ends, and none starts after it: a refresh token is spent once the server answers it, so a process that ended before keeping the new one would be signed out.
 
-**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`. Core `stop_tests::a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server`.
+**Tests:** `device/stop.test.ts › ends a hydration at once on Ctrl-C, while its head read still waits`, `› ends a drain at once on Ctrl-C, while it still asks which instance the server is`. Core `stop_tests::a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server`, `stop_tests::a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after`.
 
 ## What the real server cannot be made to produce
 

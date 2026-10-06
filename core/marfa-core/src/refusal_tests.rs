@@ -159,6 +159,7 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
         )
     };
     assert_eq!(listed("core.note").unwrap().len(), 1);
+    assert_eq!(listed("").unwrap().len(), 1);
     assert_eq!(listed("core.*").unwrap().len(), 1);
     for malformed in ["core", "Core.note", "keys.thing"] {
         assert!(
@@ -180,4 +181,11 @@ fn a_type_name_is_held_to_the_servers_grammar_before_anything_is_read() {
             Err(CoreError::Validation { .. })
         ));
     }
+}
+
+#[test]
+fn a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog() {
+    let core = Core::open_in_memory(None).unwrap();
+    assert_eq!(core.server_catalog(), Err(CoreError::NoServer));
+    assert!(core.item_types().is_ok());
 }

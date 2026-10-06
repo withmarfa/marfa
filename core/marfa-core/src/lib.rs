@@ -1633,8 +1633,7 @@ impl Core {
 
     /// Ended with `Canceled` as soon as `stop` is raised.
     pub fn server_catalog_until(&self, stop: &AtomicBool) -> Result<ServerCatalog> {
-        let asked = self.http()?.clone();
-        let listed = catch_up::read_unless_stopped(stop, move || asked.catalog())?;
+        let listed = catch_up::read_unless_stopped(stop, self.http()?, http::Http::catalog)?;
         catalog::served(&listed)
     }
 

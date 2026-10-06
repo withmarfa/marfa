@@ -380,13 +380,8 @@ fn register_declared(
     Ok((catalog, registered, refused, taken))
 }
 
-/// The shape the server's type patterns take: two or more lowercase dotted
-/// segments, each a letter then letters, digits, hyphens and underscores, at
-/// most 128 characters, or a root of one or more such segments under `.*`.
-/// The server's rules for each root go further, and a name that passes here
-/// and breaks them is one the catalog does not hold.
 /// What a type is, said where a name is refused for breaking the grammar.
-pub(crate) const GRAMMAR: &str = "a type is two or more lowercase dotted segments of letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
+pub(crate) const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
 
 /// The server's type pattern grammar (`types.md` 1): a type identifier, or a
 /// namespace under `.*`. The bare `*` is no pattern here; each caller says
@@ -662,9 +657,8 @@ pub(crate) fn fetch_overflow(
 fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
-        let asked = http.clone();
-        let reader = crate::catch_up::read_unless_stopped(stop, move || {
-            asked.open_events(None, HEAD_READ_TIMEOUT)
+        let reader = crate::catch_up::read_unless_stopped(stop, http, |http| {
+            http.open_events(None, HEAD_READ_TIMEOUT)
         })?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {

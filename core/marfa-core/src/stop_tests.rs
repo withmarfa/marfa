@@ -355,3 +355,48 @@ fn a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server() {
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].verdict, None);
 }
+
+#[test]
+fn a_stopped_read_finishes_a_renewal_under_way_and_starts_none_after() {
+    use std::sync::atomic::AtomicUsize;
+    let server = Scripted::start();
+    server.on("/", vec![scripted::refusal(401, "unauthorized")]);
+    let http = crate::http::Http::new(&server.url(), "k").unwrap();
+    let (started, kept) = (
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (renewing, renewed) = (started.clone(), kept.clone());
+    http.renew_with(Box::new(move |_| {
+        renewing.fetch_add(1, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(400));
+        renewed.store(true, Ordering::SeqCst);
+        // Refused, as a spent refresh token is, so the read asks again and
+        // would renew again were it let.
+        Err(CoreError::Unauthorized {
+            code: "invalid_grant".into(),
+            message: "spent".into(),
+        })
+    }));
+    let stop = AtomicBool::new(false);
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while started.load(Ordering::SeqCst) == 0 {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+        crate::catch_up::read_unless_stopped(&stop, &http, crate::http::Http::instance_id)
+    });
+    assert_eq!(result, Err(CoreError::Canceled));
+    assert!(
+        kept.load(Ordering::SeqCst),
+        "the call ended while a renewal it started was still under way"
+    );
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "a renewal began after the stop"
+    );
+}

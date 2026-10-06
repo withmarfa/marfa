@@ -366,8 +366,7 @@ pub(crate) fn replay_build(
     stop: &AtomicBool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
-    let asked = http.clone();
-    let catalog = read_unless_stopped(stop, move || asked.catalog())?;
+    let catalog = read_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let (mut catalog, _) = adopt(core, context, &catalog)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
@@ -546,8 +545,7 @@ pub(crate) fn refuse_another_instance_until(
         }
         read_view::generation(&conn)?
     };
-    let asked = http.clone();
-    let served = read_unless_stopped(stop, move || asked.instance_id())?;
+    let served = read_unless_stopped(stop, http, Http::instance_id)?;
     same_instance(core, &served, generation)
 }
 
@@ -555,18 +553,25 @@ pub(crate) fn refuse_another_instance_until(
 /// `stop` is raised, so a call stopped while its first request waits on a
 /// server that does not answer, one still being connected to among them,
 /// ends then rather than when the request gives up. Only for a read: the
-/// request may still reach the server after the call has ended.
+/// request may still reach the server after the call has ended. A credential
+/// renewal the read started is finished first, and none starts after.
 pub(crate) fn read_unless_stopped<T: Send + 'static>(
     stop: &AtomicBool,
-    read: impl FnOnce() -> Result<T> + Send + 'static,
+    http: &Http,
+    read: impl FnOnce(&Http) -> Result<T> + Send + 'static,
 ) -> Result<T> {
     refuse_if_stopped(stop)?;
+    let asked = http.to_let_go();
+    let reading = asked.clone();
     let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
     thread::spawn(move || {
-        let _ = sender.send(read());
+        let _ = sender.send(read(&reading));
     });
     loop {
-        refuse_if_stopped(stop)?;
+        if stop.load(Ordering::Relaxed) {
+            asked.let_go();
+            return Err(CoreError::Canceled);
+        }
         match answer.recv_timeout(PACE.stop_poll) {
             Ok(read) => return read,
             Err(RecvTimeoutError::Timeout) => continue,
