@@ -440,7 +440,7 @@ interface WindowSeed {
   starts_at: string;
   ends_at?: string;
   /** The span the window is matched against, as the normalized columns
-   *  derive it: the stated end, else `duration`, else a whole day. */
+   *  derive it. */
   span: { start: string | null; end: string | null };
 }
 
@@ -751,7 +751,7 @@ const OccurrenceSchema = z
       .string()
       .optional()
       .describe(
-        "When the occurrence ends, in UTC. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.",
+        "When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.",
       ),
     item: ItemSchema.describe(
       "The event: the series for an occurrence computed from its rule, otherwise the occurrence's own item.",
@@ -892,7 +892,7 @@ const occurrencesRoute = createRoute({
       from: z
         .string()
         .describe(
-          "Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. An event's end is its `ends_at`, else its start plus `duration`, else, for a whole-day event, the next day.",
+          "Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. Its end is `ends_at`, else its start plus `duration`. A whole-day event fills whole days in its `timezone`, or in UTC if it has none.",
         ),
       to: z
         .string()
@@ -1452,12 +1452,24 @@ export function occurrenceRoutes(
         // matches would trade a redundant field for the only signal a
         // caller has that this is a stored replacement rather than a
         // computed occurrence.
-        const shownEndsAt = stringProp(shown, "ends_at");
+
+        // A whole-day item is shown at the span a whole-day series places
+        // each occurrence by, so a day reads the same single or repeating.
+        const wholeDay =
+          shown.properties.all_day === true
+            ? instantColumnValues(shown.properties)
+            : undefined;
+        const shownEndsAt =
+          wholeDay !== undefined
+            ? (wholeDay.ends_at ?? undefined)
+            : stringProp(shown, "ends_at");
         results.push({
-          starts_at: toInstantString(
-            stringProp(shown, "starts_at"),
-            occurrence.starts_at,
-          ),
+          starts_at:
+            wholeDay?.starts_at ??
+            toInstantString(
+              stringProp(shown, "starts_at"),
+              occurrence.starts_at,
+            ),
           ...(shownEndsAt !== undefined
             ? { ends_at: toInstantString(shownEndsAt, shownEndsAt) }
             : {}),

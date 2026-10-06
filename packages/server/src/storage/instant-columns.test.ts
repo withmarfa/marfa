@@ -151,4 +151,99 @@ describe("instantColumnValues", () => {
       "2026-08-01T00:30:00.000Z",
     ]);
   });
+
+  describe("a whole-day row", () => {
+    const berlin = { all_day: true, timezone: "Europe/Berlin" };
+
+    it("occupies its day from local midnight to local midnight", () => {
+      expect(
+        instantColumnValues({ ...berlin, starts_at: "2026-03-29" }),
+      ).toEqual({
+        starts_at: "2026-03-28T23:00:00.000Z",
+        ends_at: "2026-03-29T22:00:00.000Z",
+      });
+      expect(
+        instantColumnValues({
+          all_day: true,
+          timezone: "America/Los_Angeles",
+          starts_at: "2026-01-15",
+        }),
+      ).toEqual({
+        starts_at: "2026-01-15T08:00:00.000Z",
+        ends_at: "2026-01-16T08:00:00.000Z",
+      });
+    });
+
+    it("occupies its day in UTC when it names no zone", () => {
+      expect(
+        instantColumnValues({ all_day: true, starts_at: "2026-05-05" }),
+      ).toEqual({
+        starts_at: "2026-05-05T00:00:00.000Z",
+        ends_at: "2026-05-06T00:00:00.000Z",
+      });
+    });
+
+    it("ends at the local midnight of its stated end day", () => {
+      expect(
+        instantColumnValues({
+          ...berlin,
+          starts_at: "2026-01-10",
+          ends_at: "2026-01-13",
+        }),
+      ).toEqual({
+        starts_at: "2026-01-09T23:00:00.000Z",
+        ends_at: "2026-01-12T23:00:00.000Z",
+      });
+    });
+
+    it("takes the day an instant start falls on in its zone", () => {
+      expect(
+        instantColumnValues({
+          ...berlin,
+          starts_at: "2026-01-09T23:30:00Z",
+        }).starts_at,
+      ).toBe("2026-01-09T23:00:00.000Z");
+      expect(
+        instantColumnValues({
+          ...berlin,
+          starts_at: "2026-01-09T22:30:00Z",
+        }).starts_at,
+      ).toBe("2026-01-08T23:00:00.000Z");
+    });
+
+    it("rounds a stated duration up to whole days", () => {
+      expect(
+        instantColumnValues({
+          ...berlin,
+          starts_at: "2026-01-10",
+          duration: 90_000,
+        }).ends_at,
+      ).toBe("2026-01-11T23:00:00.000Z");
+    });
+
+    it("is placed in UTC by a zone the database does not resolve, and has no span with no start", () => {
+      expect(
+        instantColumnValues({
+          all_day: true,
+          timezone: "Not/AZone",
+          starts_at: "2026-05-05",
+        }).starts_at,
+      ).toBe("2026-05-05T00:00:00.000Z");
+      expect(
+        instantColumnValues({ all_day: true, timezone: "Europe/Berlin" }),
+      ).toEqual({
+        starts_at: null,
+        ends_at: null,
+      });
+    });
+
+    it("leaves a timed row alone, whatever its zone", () => {
+      expect(
+        instantColumnValues({
+          timezone: "Europe/Berlin",
+          starts_at: "2026-01-10",
+        }).starts_at,
+      ).toBe("2026-01-10T00:00:00.000Z");
+    });
+  });
 });
