@@ -18081,6 +18081,71 @@ describe("folders on one Mac", () => {
     );
   });
 
+  it("leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace", async () => {
+    const brief = {
+      id: "01a00000-0000-7000-8000-0000000023e3",
+      properties: { title: "Brief", body: "the brief\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "placement-let-go-fails",
+      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: brief, tags: ["a"] }] },
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    edges.events.push(
+      copyItemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(brief),
+        { tags: ["b"] },
+      ),
+    );
+    expect((await b.folder.push()).ok).toBe(true);
+
+    // The file is let go, and ending the placement fails after it.
+    const failed = await withFault("end-placement-fails", () =>
+      a.folder.push(),
+    );
+    expect(failed.ok, "the injected failure did not fail the push").toBe(false);
+    expect(existsSync(join(a.dir, "Brief.md"))).toBe(false);
+    expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
+
+    // Inside the grace the scan finds the file missing and sends nothing.
+    const writes = () =>
+      a.server.requests.filter(
+        (request) =>
+          request.method !== "GET" &&
+          (request.pathname.startsWith("/edges/") ||
+            request.pathname === `/items/${brief.id}`),
+      ).length;
+    const before = writes();
+    const early = await a.folder.push();
+    expect(early.ok, JSON.stringify(early)).toBe(true);
+    if (!early.ok) return;
+    expect([early.value.scan.missing, early.value.scan.moved_away]).toEqual([
+      1, 0,
+    ]);
+    expect(writes(), "a write went out inside the grace").toBe(before);
+    expect(edges.placements(a.settings.id).has(brief.id)).toBe(true);
+
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(
+      swept.value.drain.verdicts.filter(
+        (entry) => entry.kind === "delete_edge",
+      ),
+    ).toMatchObject([{ verdict: "accepted" }]);
+    expect(edges.placements(a.settings.id).has(brief.id)).toBe(false);
+    expect(existsSync(join(a.dir, "Brief.md"))).toBe(false);
+    expect(deletesOf(a.server, brief.id)).toBe(0);
+    expect(edges.placements(b.settings.id).get(brief.id)).toBe("Brief.md");
+  });
+
   it("keeps a folder's placement of an item it holds when its file is moved to a folder that does not", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023f1",
