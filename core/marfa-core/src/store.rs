@@ -1849,8 +1849,14 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
     Ok(blocked)
 }
 
+/// A pinned row's purge is remembered, even past a later pin of the gone
+/// row, so whatever pinned it can tell a purge from a row it can no longer
+/// read; `forget_purged` lets it go.
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let unpinned = unpin(conn, id)?;
+    if unpinned {
+        meta_set(conn, &purged_key(id), "true")?;
+    }
     let removed = remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
     Ok(removed || unpinned)
 }
@@ -1944,6 +1950,18 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
         return Ok(false);
     }
     forget_edge(conn, id)
+}
+
+fn purged_key(id: &str) -> String {
+    format!("purged_pin/{id}")
+}
+
+pub fn purged(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &purged_key(id))?.is_some())
+}
+
+pub fn forget_purged(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &purged_key(id))
 }
 
 /// Whether it was not pinned already.
@@ -3172,6 +3190,29 @@ mod tests {
 
     use super::testing::*;
     use super::*;
+
+    #[test]
+    fn a_pinned_rows_purge_is_remembered_until_it_is_let_go() {
+        let conn = testing::conn();
+        for id in ["pinned", "unpinned"] {
+            put_server_item(
+                &conn,
+                &testing::note(id, id, "", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &Default::default(),
+            )
+            .unwrap();
+        }
+        pin(&conn, "pinned").unwrap();
+        assert!(purge_item(&conn, "pinned").unwrap());
+        assert!(purge_item(&conn, "unpinned").unwrap());
+        assert!(purged(&conn, "pinned").unwrap());
+        assert!(!purged(&conn, "unpinned").unwrap());
+        pin(&conn, "pinned").unwrap();
+        assert!(purged(&conn, "pinned").unwrap(), "a later pin of the gone row");
+        forget_purged(&conn, "pinned").unwrap();
+        assert!(!purged(&conn, "pinned").unwrap());
+    }
 
     #[test]
     fn a_copy_without_read_view_proof_is_unreadable() {

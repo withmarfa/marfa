@@ -15407,6 +15407,208 @@ describe("what a pull does with a file whose item stops matching", () => {
   });
 });
 
+describe("what a pull does with a file whose item is purged", () => {
+  const purged = {
+    id: "01a00000-0000-7000-8000-0000000000d2",
+    properties: { title: "going", body: "body\n" },
+  };
+
+  /** A folder holding one item, and a stream that purges it. */
+  async function purge(label: string): Promise<FolderHarness> {
+    return folderHarness(label, {
+      rows: { "core.note": [{ item: purged }] },
+      events: [
+        copyReplay("2", [
+          copyItemEvent(
+            "2",
+            "item.purged",
+            wireItem({ ...purged, state: "trashed" }),
+          ),
+        ]),
+      ],
+    });
+  }
+
+  it("removes a purged item's file where its bytes are the folder's own, and says so", async () => {
+    harness = await purge("folder-purged");
+    scriptFolderWrites(harness);
+    const first = await harness.folder.pull();
+    expect(first.ok && first.value.written).toBe(1);
+    const caught = await harness.folder.device().catchUp();
+    expect(
+      caught.ok ? caught.value.applied : 0,
+      `the purge was not applied, so nothing below is about a purge: ${JSON.stringify(caught)}`,
+    ).toBe(1);
+
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.lost).toBe(0);
+    const second = await harness.folder.pull();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    if (!second.ok) return;
+    expect(
+      [second.value.removed, second.value.purged],
+      "the purged item's file stayed, bound to an item that is gone, for good",
+    ).toEqual([1, 1]);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.files).toEqual([]);
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    expect(
+      queued.ok && queued.value.filter((row) => row.kind === "delete_item"),
+      "the purged item's removed file was sent as a delete",
+    ).toEqual([]);
+  });
+
+  it("says in words that a purged item's file was removed", async () => {
+    harness = await purge("folder-purged-words");
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const text = await harness.folder.pullText();
+    expect(text.ok, JSON.stringify(text)).toBe(true);
+    expect(text.ok && text.value).toContain(
+      "1 file(s) of items purged removed",
+    );
+    expect(text.ok && text.value).not.toContain("trashed or out of the search");
+  });
+
+  it("keeps a purged item's file the person changed since the folder wrote it, and says so", async () => {
+    harness = await purge("folder-purged-edited");
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    writeFileSync(
+      join(harness.dir, "going.md"),
+      read(harness, "going.md") + "an edit the person made\n",
+    );
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.kept,
+      "the pull took away a file the person had changed, and their edit with it",
+    ).toBe(1);
+    expect([pulled.value.removed, pulled.value.purged]).toEqual([0, 0]);
+    expect(read(harness, "going.md")).toContain("an edit the person made");
+  });
+
+  it("writes no file for a row purged while the pull writes it, and reads the copy again", async () => {
+    harness = await purge("folder-purged-mid-pull");
+    scriptFolderWrites(harness);
+    const pulled = await withFault(`purge-during-pull=${purged.id}`, () =>
+      harness.folder.pull(),
+    );
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(pulled.value.written).toBe(0);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.files).toEqual([]);
+    const pinned = await harness.folder.device().status();
+    expect(pinned.ok && pinned.value.pinned).not.toContain(purged.id);
+  });
+
+  it("places nothing for a row purged before its placement is queued, and takes its file away at the next pull", async () => {
+    harness = await purge("folder-purged-before-placement");
+    scriptFolderWrites(harness);
+    const pulled = await withFault(`purge-before-placement=${purged.id}`, () =>
+      harness.folder.pull(),
+    );
+    expect(
+      pulled.ok,
+      `a placement of a row gone from the copy ended the pull: ${JSON.stringify(pulled)}`,
+    ).toBe(true);
+    if (!pulled.ok) return;
+    expect(pulled.value.placed).toBe(0);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.kind === "create_edge"),
+      "a placement was queued from a row the copy no longer holds",
+    ).toEqual([]);
+    // The file landed before the purge, and goes once the pull is run again.
+    const next = await harness.folder.pull();
+    expect(next.ok, JSON.stringify(next)).toBe(true);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.files).toEqual([]);
+  });
+
+  it("lets go of a refused placement once its item is purged", async () => {
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(404, "item_not_found", "Item not found")
+        : undefined;
+    harness = await purge("folder-purged-refused-placement");
+    scriptFolderWrites(harness, { edges });
+    // Pulled without the catch-up, so the placement is refused before the
+    // purge reaches the copy.
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.drain.verdicts.some(
+        (verdict) => verdict.verdict === "refused",
+      ),
+      `the placement was not refused, so nothing below is about a refusal: ${JSON.stringify(pushed.value.drain)}`,
+    ).toBe(true);
+    expect(pushed.value.pull?.purged).toBe(1);
+    expect(
+      pushed.value.pull?.unplaced,
+      "a refused placement of an item that is gone was reported for good",
+    ).toBe(0);
+  });
+
+  it("pulls again where the copy changes under the pull", async () => {
+    harness = await purge("folder-copy-changed-once");
+    scriptFolderWrites(harness);
+    const pulled = await withFault("copy-changes-during-pull=once", () =>
+      harness.folder.pull(),
+    );
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(pulled.ok && pulled.value.written).toBe(1);
+  });
+
+  it("goes on watching where the copy keeps changing under its pull, and says so once", async () => {
+    // No purge in the stream: the pull has a file to write at every pass.
+    harness = await folderHarness("folder-copy-changing-watch", {
+      rows: { "core.note": [{ item: purged }] },
+    });
+    scriptFolderWrites(harness);
+    // The witness: a one-off pull meeting the same change says so and fails.
+    const pulled = await withFault("copy-changes-during-pull=always", () =>
+      harness.folder.pull(),
+    );
+    expect(pulled.ok).toBe(false);
+    if (pulled.ok) return;
+    expect(pulled.refusal.raw).toContain("local_copy_changed");
+
+    process.env.MARFA_TEST_FAULT = "copy-changes-during-pull=always";
+    const watch = harness.folder.watchText();
+    delete process.env.MARFA_TEST_FAULT;
+    try {
+      await vi.waitFor(
+        () => {
+          expect(watch.stderr).toContain("the copy changed under the pull");
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      expect(watch.running(), watch.stderr).toBe(true);
+      expect(
+        watch.stderr.split("the copy changed under the pull").length - 1,
+        watch.stderr,
+      ).toBe(1);
+    } finally {
+      await watch.stop();
+    }
+  });
+});
+
 describe("a file that is not a document", () => {
   const photo = Buffer.from([
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,

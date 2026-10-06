@@ -245,8 +245,10 @@ pub enum FolderEvent {
     Watching { dir: String },
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed { message: String },
-    /// A hydration failed, and is tried again after `wait_ms`. Told once for
-    /// each run of failures.
+    /// A hydration failed, and is tried again after `wait_ms`; or a pull met
+    /// the copy changing under it, with the error `StreamIncomplete` and the
+    /// reason `local_copy_changed`, and the next pass pulls again. Told once
+    /// for each run of failures.
     Retrying { error: MarfaError, wait_ms: u64 },
     /// The server cannot be reached; writes wait. Told when it changes.
     Unreachable { reason: String },

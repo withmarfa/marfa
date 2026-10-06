@@ -535,9 +535,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     }
     let departed: Vec<String> = [
         (
-            report.removed,
+            report.removed - report.purged,
             "file(s) of items trashed or out of the search's states removed",
         ),
+        (report.purged, "file(s) of items purged removed"),
         (report.kept, "kept with the person's changes"),
         (
             report.unmatched,

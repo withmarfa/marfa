@@ -698,6 +698,25 @@ impl Folder {
     }
 }
 
+/// A copy changing faster than a pull can read it is told rather than
+/// pulled from for good.
+const PULL_ATTEMPTS: usize = 3;
+
+/// Bound under the lock a catch-up applies an event under: a row purged or
+/// gone from the slice since the pull read it is not given a file, and the
+/// pull reads again.
+fn refuse_unless_held(conn: &rusqlite::Connection, item_id: &str) -> Result<()> {
+    if crate::store::item_held(conn, item_id)? {
+        Ok(())
+    } else {
+        Err(crate::read_view::Context::changed())
+    }
+}
+
+pub fn copy_changed(error: &CoreError) -> bool {
+    matches!(error, CoreError::StreamIncomplete { reason } if reason == "local_copy_changed")
+}
+
 /// Held whole, since their other ends may lie outside the slice.
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = edge_types.written_at_targets();
@@ -1297,9 +1316,16 @@ impl Folder {
                     item_id,
                     bound: Some(bound),
                 }) if self.core.get(&item_id)?.is_none() => {
-                    // The server has answered these bytes already.
+                    // The server has answered these bytes already; the file of
+                    // an item purged or in the bin, of the folder's own bytes,
+                    // is the pull's to take away (35).
                     if bound.path == file.key && bound.content_hash == file.hash {
-                        report.lost += 1;
+                        let pulls = bound.written_hash.as_deref() == Some(file.hash.as_str()) && {
+                            let conn = self.core.conn()?;
+                            crate::store::purged(&conn, &item_id)?
+                                || crate::store::item_held(&conn, &item_id)?
+                        };
+                        report.lost += usize::from(!pulls);
                         continue;
                     }
                     self.unbind_if_still(&bound)?;
@@ -2827,9 +2853,17 @@ impl Folder {
 impl Folder {
     /// Each file is bound before its bytes land, so the scan never reads it
     /// back.
+    /// Read again from the start where the copy changed under it, a
+    /// catch-up applying a purge say, since what it read is then stale.
     pub fn pull(&self) -> Result<PullReport> {
         self.refuse_while_waiting()?;
-        self.pull_as(None)
+        let mut attempts = 1;
+        loop {
+            match self.pull_as(None) {
+                Err(error) if copy_changed(&error) && attempts < PULL_ATTEMPTS => attempts += 1,
+                pulled => return pulled,
+            }
+        }
     }
 
     /// With `planning`, stops where each file's path is chosen and counts the
@@ -3211,6 +3245,12 @@ impl Folder {
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
     ) -> Result<PlacementWrite> {
+        if let Some(how) = fault::named("copy-changes-during-pull") {
+            static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if how != "once" || !ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                crate::read_view::pins_changed(&*self.core.conn()?)?;
+            }
+        }
         rendering.context.borrow().check(&*self.core.conn()?)?;
         let Placing {
             item,
@@ -3390,6 +3430,7 @@ impl Folder {
         }
         if rebound {
             let conn = self.core.conn()?;
+            refuse_unless_held(&conn, &item.id)?;
             rendering.bind(
                 &conn,
                 &state::Bound {
@@ -3481,8 +3522,13 @@ impl Folder {
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses, or a write that fails part way, leaves the old
         // file, and every other, as it was.
+        let conn = self.core.conn()?;
+        if fault::named("purge-during-pull").as_deref() == Some(item.id.as_str()) {
+            crate::store::purge_item(&conn, &item.id)?;
+        }
+        refuse_unless_held(&conn, &item.id)?;
         rendering.bind(
-            &*self.core.conn()?,
+            &conn,
             &state::Bound {
                 writes: state::Writes {
                     landing: Some(state::Landing {
@@ -3493,6 +3539,7 @@ impl Folder {
                 ..binding(None)
             },
         )?;
+        drop(conn);
         if fault::named("move-folder-before-write").is_some() {
             let _ = std::fs::rename(
                 &self.root,
@@ -3790,8 +3837,16 @@ impl Folder {
         state::set_paused(&*self.core.conn()?, state::Removal::Pull, &[])?;
         for row in going {
             context.check(&*self.core.conn()?)?;
+            let purged = crate::store::purged(&*self.core.conn()?, &row.item_id)?;
             if self.take_away(&row, &mut context)? {
                 report.removed += 1;
+                if purged {
+                    report.purged += 1;
+                    let conn = self.core.conn()?;
+                    if state::bound_to_item(&conn, &row.item_id)?.is_none() {
+                        crate::store::forget_purged(&conn, &row.item_id)?;
+                    }
+                }
             } else {
                 report.kept += 1;
             }
@@ -3814,12 +3869,14 @@ impl Folder {
             let conn = self.core.conn()?;
             crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
         };
-        // A row the copy lost is the scan's to report.
-        let Some(item) = held else {
-            return Ok(Departing::No);
-        };
-        if settings.holds_state(item.state) {
-            return Ok(Departing::No);
+        // A purged row's file goes as a trashed one's does; a row the copy
+        // lost otherwise is the scan's to report.
+        match held {
+            None if !crate::store::purged(&*self.core.conn()?, &row.item_id)? => {
+                return Ok(Departing::No);
+            }
+            Some(item) if settings.holds_state(item.state) => return Ok(Departing::No),
+            _ => {}
         }
         Ok(match std::fs::read(self.root.join(&row.path)) {
             Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
@@ -4494,6 +4551,8 @@ pub struct PullReport {
     pub unplaced: usize,
     pub placed: usize,
     pub removed: usize,
+    /// Of `removed`, the files of items purged.
+    pub purged: usize,
     pub kept: usize,
     pub paused: usize,
     pub unmatched: usize,

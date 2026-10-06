@@ -60,6 +60,12 @@ fn tell(
             eprintln!("watch error: {error}");
             Ok(())
         }
+        WatchEvent::Retrying { error, wait } if marfa_core::folder::copy_changed(&error) => {
+            eprintln!(
+                "the copy changed under the pull as the server's changes arrived; the next pass, in {wait:?}, pulls again"
+            );
+            Ok(())
+        }
         WatchEvent::Retrying { error, wait } => {
             eprintln!(
                 "could not hydrate ({error}); trying again in {wait:?}, and after each failure \
@@ -218,14 +224,25 @@ fn passed(
                 .into_iter()
                 .flatten()
                 .collect::<String>(),
-                if pulled.unmatched > 0 {
-                    format!(
-                        ", {} whose item the search no longer matches",
-                        pulled.unmatched
-                    )
-                } else {
-                    String::new()
-                },
+                [
+                    (pulled.unmatched > 0).then(|| {
+                        format!(
+                            ", {} whose item the search no longer matches",
+                            pulled.unmatched
+                        )
+                    }),
+                    (pulled.removed > pulled.purged).then(|| {
+                        format!(
+                            ", {} removed whose item was trashed or left by state",
+                            pulled.removed - pulled.purged
+                        )
+                    }),
+                    (pulled.purged > 0)
+                        .then(|| format!(", {} removed whose item was purged", pulled.purged)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<String>(),
                 [
                     (drained.rebased > 0).then(|| folders::rebased_line(drained.rebased)),
                     (drained.gave_way > 0).then(|| folders::gave_way_line(drained.gave_way)),
