@@ -115,6 +115,19 @@ impl Folder {
         {
             return Ok(false);
         }
+        if super::fault::named("purge-before-placement").as_deref() == Some(item_id) {
+            store::purge_item(&*self.core.conn()?, item_id)?;
+        }
+        let placed = self.queue_placement(item_id, path);
+        // A row purged since the pass read it can no longer be placed, and
+        // its file is the next pull's to take away.
+        match placed {
+            Err(_) if !crate::store::item_held(&*self.core.conn()?, item_id)? => Ok(false),
+            placed => placed,
+        }
+    }
+
+    fn queue_placement(&self, item_id: &str, path: &str) -> Result<bool> {
         let mut properties = Map::new();
         properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));
         match self.placement(item_id)? {
@@ -155,7 +168,9 @@ impl Folder {
         let before = refused.placements.len();
         let mut kept = Withheld::new();
         for (item, held) in std::mem::take(&mut refused.placements) {
-            if self.placement_at(&item)? == held.at {
+            // A purged item has no file left to place.
+            if store::item_held(&*self.core.conn()?, &item)? && self.placement_at(&item)? == held.at
+            {
                 kept.insert(item, held);
             }
         }

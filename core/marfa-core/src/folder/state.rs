@@ -236,11 +236,13 @@ pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
 }
 
 /// A binding lets its pin go unless a line still holds the row, which then
-/// holds the pin as its own.
+/// holds the pin as its own. The purge remembered for the row goes with its
+/// last binding, a line's hold or not.
 pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
     if bound_to_item(conn, item_id)?.is_some() {
         return Ok(());
     }
+    crate::store::forget_purged(conn, item_id)?;
     match crate::store::meta_get(conn, &format!("{EDGE_END}{item_id}"))? {
         Some(_) => crate::store::meta_set(conn, &format!("{EDGE_END}{item_id}"), MADE),
         None => crate::store::unpin(conn, item_id).map(|_| ()),

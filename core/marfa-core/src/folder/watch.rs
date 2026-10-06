@@ -40,8 +40,9 @@ pub enum WatchEvent {
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed(String),
     /// A hydration failed and is tried again after `wait`, which doubles
-    /// after each failure up to `RETRY_MOST`. Told once for each run of
-    /// failures.
+    /// after each failure up to `RETRY_MOST`, or a pull met a copy changing
+    /// under it and the next pass, after `wait`, pulls again. Told once for
+    /// each run of failures.
     Retrying { error: CoreError, wait: Duration },
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
@@ -224,8 +225,17 @@ impl Folder {
             match self.pass(full, &mut telling, tell) {
                 // The follow is hydrating the copy; a later pass finds it whole.
                 Err(WatchError::Core(CoreError::HydrationIncomplete)) => {}
+                // The follow kept changing the copy under the pull; the next
+                // pass reads it again.
+                Err(WatchError::Core(error)) if super::copy_changed(&error) => {
+                    if let Some(event) = telling.unsettled(&error) {
+                        tell(event).map_err(WatchError::Told)?;
+                    }
+                    continue;
+                }
                 other => other?,
             }
+            telling.settled();
             gate.passed(Instant::now());
             lists = self.settings().and_then(|settings| settings.lists()).ok();
         }
@@ -410,6 +420,7 @@ impl Gate {
 struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
+    unsettled: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -458,6 +469,18 @@ impl Standing {
 }
 
 impl Telling {
+    /// Told once for each run of passes the copy changed under.
+    fn unsettled(&mut self, error: &CoreError) -> Option<WatchEvent> {
+        (!std::mem::replace(&mut self.unsettled, true)).then(|| WatchEvent::Retrying {
+            error: error.clone(),
+            wait: TICK,
+        })
+    }
+
+    fn settled(&mut self) {
+        self.unsettled = false;
+    }
+
     fn reach(&mut self, lost: Option<String>) -> Option<WatchEvent> {
         match lost {
             Some(reason) if !self.unreachable => {
@@ -951,6 +974,19 @@ mod tests {
             telling.standing.as_ref().unwrap().embeds.is_empty(),
             "a full pass finds every embed itself, so carries none"
         );
+    }
+
+    #[test]
+    fn a_copy_changing_under_the_pull_is_told_once_for_each_run() {
+        let mut telling = Telling::default();
+        let changed = crate::read_view::Context::changed();
+        assert!(matches!(
+            telling.unsettled(&changed),
+            Some(WatchEvent::Retrying { .. })
+        ));
+        assert!(telling.unsettled(&changed).is_none());
+        telling.settled();
+        assert!(telling.unsettled(&changed).is_some(), "a new run is told");
     }
 
     #[test]

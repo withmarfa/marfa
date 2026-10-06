@@ -1025,9 +1025,11 @@ export interface PullReport {
    *  settings change, or the item's placement moves on (`folders.md` 19). */
   unplaced: number;
   outside: number;
-  /** Files of items trashed or out of the search's states, taken away
-   *  (`folders.md` 35). */
+  /** Files of items trashed, purged or out of the search's states, taken
+   *  away (`folders.md` 35). */
   removed: number;
+  /** Of `removed`, the files of items purged (`folders.md` 35). */
+  purged: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
   /** Files whose item the search no longer matches otherwise, left where
