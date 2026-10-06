@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
 import { requireBinary } from "./harness.js";
@@ -37,6 +37,10 @@ const RECIPE = {
 };
 
 describe("a copy no server has been named for", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("saves a note against the types Marfa ships, shows it to a read, and queues it", async () => {
     const device = await offline("save-no-server");
     expect(value(await device.status()).hydration).toBe("never");
@@ -188,6 +192,9 @@ describe("a copy no server has been named for", () => {
   });
 
   it("refuses a read of the server's catalog with no_server, answering no types from its own", async () => {
+    // A run that names a server through the environment would answer the read.
+    vi.stubEnv("MARFA_API_URL", "");
+    vi.stubEnv("MARFA_API_KEY", "");
     const device = await offline("save-no-server-catalog");
     for (const [kind, read] of [
       ["item types", () => device.servedItemTypes()],
