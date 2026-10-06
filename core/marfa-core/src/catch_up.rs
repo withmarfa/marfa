@@ -553,17 +553,27 @@ pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
+    told_unreachable: bool,
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<FollowReport> {
-    follow_paced(core, http, stop, on_change, &PACE, &mut |wait| {
-        wait_unless_stopped(stop, wait, PACE.stop_poll);
-    })
+    follow_paced(
+        core,
+        http,
+        stop,
+        told_unreachable,
+        on_change,
+        &PACE,
+        &mut |wait| {
+            wait_unless_stopped(stop, wait, PACE.stop_poll);
+        },
+    )
 }
 
 fn follow_paced(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
+    told_unreachable: bool,
     on_change: &mut dyn FnMut(&Change),
     pace: &Pace,
     pause: &mut dyn FnMut(Duration),
@@ -581,8 +591,9 @@ fn follow_paced(
         // since made its thumbnail.
         let mut refreshed = HashSet::new();
         // Unknown until the first stream is asked for, so a follow that never
-        // reaches the server says so, and one that does says nothing.
-        let mut reachable: Option<bool> = None;
+        // reaches the server says so, and one that does says nothing, unless
+        // its caller was last told the server could not be reached.
+        let mut reachable: Option<bool> = told_unreachable.then_some(false);
         while !stop.load(Ordering::Relaxed) {
             let (slice, cursor) = start(core)?;
             report.cursor = cursor.clone();
@@ -1087,6 +1098,16 @@ mod tests {
         core: &Arc<Core>,
         pace: Pace,
         stop_on_wait: Option<usize>,
+        on_change: impl FnMut(&Change) + Send + 'static,
+    ) -> Run {
+        follow_told(core, pace, stop_on_wait, false, on_change)
+    }
+
+    fn follow_told(
+        core: &Arc<Core>,
+        pace: Pace,
+        stop_on_wait: Option<usize>,
+        told_unreachable: bool,
         mut on_change: impl FnMut(&Change) + Send + 'static,
     ) -> Run {
         let (_, changes) = mpsc::channel();
@@ -1103,7 +1124,15 @@ mod tests {
                     flag.store(true, Ordering::Relaxed);
                 }
             };
-            let result = follow_paced(&core, http, &flag, &mut on_change, &pace, &mut pause);
+            let result = follow_paced(
+                &core,
+                http,
+                &flag,
+                told_unreachable,
+                &mut on_change,
+                &pace,
+                &mut pause,
+            );
             let _ = ended.send(result);
         });
         Run {
@@ -1112,6 +1141,30 @@ mod tests {
             done,
             waits,
         }
+    }
+
+    #[test]
+    fn a_follow_told_the_server_was_unreachable_says_once_it_is_reached() {
+        let events = |told| {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on("/events", vec![stream(vec![connected()], Then::End)]);
+            let (_dir, core) = hydrated(&server);
+            let (sent, heard) = mpsc::channel();
+            let run = follow_told(&core, QUICK, Some(2), told, move |change| {
+                let _ = sent.send(change.event.clone());
+            });
+            run.ended().unwrap();
+            heard.try_iter().collect::<Vec<_>>()
+        };
+        // The witness: a follow told nothing says nothing of a server it has
+        // at once.
+        assert_eq!(events(false), Vec::<String>::new());
+        assert_eq!(
+            events(true),
+            [SERVER_REACHABLE],
+            "a follow started after the server was told unreachable did not say it came back, once"
+        );
     }
 
     #[test]
@@ -1240,7 +1293,7 @@ mod tests {
         let (ended, done) = mpsc::channel();
         let (core, flag) = (Arc::clone(core), Arc::clone(&stop));
         thread::spawn(move || {
-            let _ = ended.send(core.follow(&flag, |_| {}));
+            let _ = ended.send(core.follow(&flag, false, |_| {}));
         });
         (stop, done)
     }
@@ -1685,7 +1738,9 @@ mod tests {
             vec![stream(vec![connected(), created("n1", "11")], held())],
         );
         let (_dir, core) = hydrated(&server);
-        let ended = core.follow(&AtomicBool::new(false), |_| panic!("a listener fault"));
+        let ended = core.follow(&AtomicBool::new(false), false, |_| {
+            panic!("a listener fault")
+        });
         match ended {
             Err(CoreError::Invalid(said)) => assert!(
                 said.contains("a fault in the core: a listener fault"),
@@ -1822,7 +1877,7 @@ mod tests {
         }
         assert_eq!(core.catch_up(), Err(CoreError::HydrationIncomplete));
         assert_eq!(
-            core.follow(&AtomicBool::new(false), |_| {}),
+            core.follow(&AtomicBool::new(false), false, |_| {}),
             Err(CoreError::HydrationIncomplete)
         );
         assert!(server.seen("/types").is_empty());

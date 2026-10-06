@@ -1371,13 +1371,20 @@ impl Core {
 
     /// Holds the event stream open on a thread of its own and applies each
     /// event as it arrives, telling `listener` of each change.
-    pub fn follow(self: Arc<Self>, listener: Arc<dyn ChangeListener>) -> Arc<Subscription> {
+    /// `told_unreachable` says the app was last told `server.unreachable` by
+    /// a follow before this one, so this one tells `server.reachable` when it
+    /// has its first stream.
+    pub fn follow(
+        self: Arc<Self>,
+        told_unreachable: bool,
+        listener: Arc<dyn ChangeListener>,
+    ) -> Arc<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
-            let ended = self
-                .inner
-                .follow(&flag, |change| listener.changed(change.into()));
+            let ended = self.inner.follow(&flag, told_unreachable, |change| {
+                listener.changed(change.into())
+            });
             // Let go of the store before saying so: a listener that opens it
             // again on being told must find the writer's role free.
             drop(self);
@@ -2705,7 +2712,7 @@ mod tests {
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
-        let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
+        let subscription = Arc::clone(&core).follow(false, Arc::new(Told(told)));
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while server.streams.load(Ordering::SeqCst) == 0 {
             assert!(
@@ -2732,7 +2739,7 @@ mod tests {
             .unwrap();
         let reader = Core::open_reader(path).unwrap();
         let (told, ended) = std::sync::mpsc::channel();
-        let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
+        let subscription = Arc::clone(&core).follow(false, Arc::new(Told(told)));
         server.expire.store(true, Ordering::SeqCst);
         let error = ended
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -2778,7 +2785,7 @@ mod tests {
         core.hydrate(vec!["core.note".into()], Tier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
-        let subscription = Arc::clone(&core).follow(Arc::new(Reopens { path, handle }));
+        let subscription = Arc::clone(&core).follow(false, Arc::new(Reopens { path, handle }));
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while server.streams.load(Ordering::SeqCst) == 0 {
             assert!(

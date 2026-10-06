@@ -654,7 +654,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
             let mut unwritten: Option<CliError> = None;
-            let report = core.follow(stop, |change| {
+            let report = core.follow(stop, false, |change| {
                 if unwritten.is_some() {
                     return;
                 }
