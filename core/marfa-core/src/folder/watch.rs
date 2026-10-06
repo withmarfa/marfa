@@ -298,6 +298,9 @@ fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Res
     let mut retry = RETRY_FIRST;
     // Told once for each run of failures, as the reachability is.
     let mut said = false;
+    // Carried into the next follow, which otherwise says nothing of a server
+    // it has at once, and the watch would go on telling it unreachable.
+    let mut unreachable = false;
     while !ended.load(Ordering::SeqCst) {
         let followed = folder.resume_until(ended).and_then(|hydrated| {
             retry = RETRY_FIRST;
@@ -305,15 +308,19 @@ fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Res
             if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
             }
-            folder.core().follow(ended, false, |change| {
+            folder.core().follow(ended, unreachable, |change| {
                 let _ = wakes.send(match change.event.as_str() {
                     crate::SERVER_UNREACHABLE => {
+                        unreachable = true;
                         Wake::Reach(Some(change.reason.as_ref().map_or_else(
                             || "the event stream could not be opened".into(),
                             ToString::to_string,
                         )))
                     }
-                    crate::SERVER_REACHABLE => Wake::Reach(None),
+                    crate::SERVER_REACHABLE => {
+                        unreachable = false;
+                        Wake::Reach(None)
+                    }
                     _ => Wake::Server,
                 });
             })
