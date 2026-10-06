@@ -406,9 +406,13 @@ impl Core {
 
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
+    /// `told_unreachable` says the caller was last told `server.unreachable`
+    /// by a follow before this one, so this one says `server.reachable` when
+    /// it has its first stream (`device.md` 40).
     pub fn follow(
         &self,
         stop: &AtomicBool,
+        told_unreachable: bool,
         mut on_change: impl FnMut(&Change),
     ) -> Result<FollowReport> {
         self.lock.refuse_unless_writer()?;
@@ -418,7 +422,7 @@ impl Core {
         // unwound past here would end the thread silently, and a caller
         // waiting to be told would wait for good.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            catch_up::follow(self, http, stop, &mut on_change)
+            catch_up::follow(self, http, stop, told_unreachable, &mut on_change)
         }))
         .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
     }
@@ -3464,7 +3468,7 @@ mod tests {
             (
                 "follow",
                 reader
-                    .follow(&std::sync::atomic::AtomicBool::new(true), |_| {})
+                    .follow(&std::sync::atomic::AtomicBool::new(true), false, |_| {})
                     .unwrap_err(),
             ),
         ];
@@ -3765,7 +3769,7 @@ mod tests {
         }
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
-            let following = scope.spawn(|| core.follow(&stop, |_| {}));
+            let following = scope.spawn(|| core.follow(&stop, false, |_| {}));
             std::thread::sleep(Duration::from_millis(300));
             let second = core.catch_up();
             let hydrating = core.hydrate(&["core.note".into()], Tier::Library);
@@ -3810,7 +3814,7 @@ mod tests {
             let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], Tier::Library));
             server.wait_for("/events", 1, Duration::from_secs(5));
             let caught = core.catch_up();
-            let followed = core.follow(&AtomicBool::new(false), |_| {});
+            let followed = core.follow(&AtomicBool::new(false), false, |_| {});
             for (what, refused) in [("catch-up", caught.err()), ("follow", followed.err())] {
                 assert!(
                     matches!(&refused, Some(CoreError::Invalid(message)) if message.contains("already")),

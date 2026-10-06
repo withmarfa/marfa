@@ -384,7 +384,7 @@ mod tests {
         );
         let stop = std::sync::atomic::AtomicBool::new(false);
         let mut changed = 0;
-        let result = core.follow(&stop, |change| {
+        let result = core.follow(&stop, false, |change| {
             if change.event != "item.updated" {
                 return;
             }

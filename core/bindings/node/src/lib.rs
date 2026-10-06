@@ -1446,7 +1446,7 @@ impl MarfaCore {
         let flag = Arc::clone(&stop);
         let core = Arc::clone(&self.inner);
         std::thread::spawn(move || {
-            let result = core.follow(&flag, |change| {
+            let result = core.follow(&flag, false, |change| {
                 tell.call(
                     Told::Change(Change {
                         event: change.event.clone(),

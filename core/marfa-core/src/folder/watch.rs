@@ -305,7 +305,7 @@ fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Res
             if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
             }
-            folder.core().follow(ended, |change| {
+            folder.core().follow(ended, false, |change| {
                 let _ = wakes.send(match change.event.as_str() {
                     crate::SERVER_UNREACHABLE => {
                         Wake::Reach(Some(change.reason.as_ref().map_or_else(
