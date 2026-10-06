@@ -28,7 +28,8 @@ pub struct SyncReport {
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
     /// an edit of the settings file, scans, drains, catches up, pulls, and
-    /// drains again where the pull queued the placement of a file it wrote.
+    /// drains again where the pull queued the placement of a file it wrote, or
+    /// the end of one.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
@@ -58,7 +59,9 @@ impl Folder {
             Err(error) => return Err(error),
         };
         if sends_again(catch_up.is_ok(), &drain.report)
-            && pull.as_ref().is_some_and(|pulled| pulled.placed > 0)
+            && pull
+                .as_ref()
+                .is_some_and(|pulled| pulled.placed + pulled.ended > 0)
         {
             drain.absorb(self.drain()?);
         }

@@ -70,7 +70,7 @@ impl Folder {
             if matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) && self.take_away(&row, &mut context)?
+            ) && self.take_away(&row, &mut context)?.is_some()
             {
                 confirmed.removed += 1;
             }

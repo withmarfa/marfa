@@ -556,6 +556,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.let_go,
             "file(s) removed whose item another folder on this machine holds, with nothing trashed",
         ),
+        (
+            report.ended,
+            "placement(s) ended, for files that left the folder for good",
+        ),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)

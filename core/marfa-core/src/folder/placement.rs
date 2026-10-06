@@ -127,6 +127,28 @@ impl Folder {
         }
     }
 
+    /// Ends this folder's placement of an item whose file has left the
+    /// folder for good, so the server stops listing the folder as placing an
+    /// item it no longer shows. A restored item is placed again, as a new one
+    /// is. Answers how many placements it ended.
+    pub(super) fn end_placement(&self, item_id: &str) -> Result<usize> {
+        let mut ended = 0;
+        for edge in self
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
+        {
+            match self.core.delete_edge(&edge.id) {
+                Ok(_) => ended += 1,
+                // Gone from the copy since it was listed, by another machine's end.
+                Err(CoreError::NotFound { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(ended)
+    }
+
     fn queue_placement(&self, item_id: &str, path: &str) -> Result<bool> {
         let mut properties = Map::new();
         properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));

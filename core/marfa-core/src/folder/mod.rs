@@ -1956,13 +1956,19 @@ impl Folder {
         };
         // An item already in the bin is where the delete would put it, and the
         // server refuses a second delete `404`.
+        let mut leaves = true;
         let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
+            let holds = self.holds(item_id, settings, members);
             let look = match &bound {
-                Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
+                Some(bound) => peers.moved_to(bound, holds),
                 None => Look::Nowhere,
             };
             match look {
-                Look::Moved => Missing::Moved,
+                // A folder that still holds the item writes its file again.
+                Look::Moved => {
+                    leaves = !holds;
+                    Missing::Moved
+                }
                 // Held as a delete is while offline, until it can be told.
                 Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
                 Look::Nowhere => {
@@ -1976,6 +1982,10 @@ impl Folder {
         let conn = self.core.conn()?;
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
+        drop(conn);
+        if leaves {
+            self.end_placement(item_id)?;
+        }
         Ok(missing)
     }
 
@@ -3826,6 +3836,8 @@ impl Folder {
         }
         state::unbind(&conn, &bound.path)?;
         state::journal_clear(&conn, &bound.path)?;
+        drop(conn);
+        report.ended += self.end_placement(item_id)?;
         report.let_go += 1;
         Ok(LetGo::Removed)
     }
@@ -3882,9 +3894,10 @@ impl Folder {
         for row in going {
             context.check(&*self.core.conn()?)?;
             let purged = crate::store::purged(&*self.core.conn()?, &row.item_id)?;
-            if self.take_away(&row, &mut context)? {
+            if let Some(ended) = self.take_away(&row, &mut context)? {
                 report.removed += 1;
                 report.purged += usize::from(purged);
+                report.ended += ended;
             } else {
                 report.kept += 1;
             }
@@ -3930,14 +3943,15 @@ impl Folder {
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
-    /// nothing now. Answers `false`, and keeps the file bound, where it
+    /// nothing now. Answers `None`, and keeps the file bound, where it
     /// changed since it was found to be the folder's own: the person's edit
-    /// is theirs.
+    /// is theirs. Otherwise answers how many placements it ended with the
+    /// file.
     fn take_away(
         &self,
         row: &state::Bound,
         context: &mut crate::read_view::Context,
-    ) -> Result<bool> {
+    ) -> Result<Option<usize>> {
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
@@ -3950,12 +3964,13 @@ impl Folder {
                 })?
                 && path.exists()
             {
-                return Ok(false);
+                return Ok(None);
             }
         }
         context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
         state::journal_clear(&conn, &row.path)?;
-        Ok(true)
+        drop(conn);
+        self.end_placement(&row.item_id).map(Some)
     }
 
     fn deleted_as_agreed(
@@ -4603,6 +4618,8 @@ pub struct PullReport {
     pub unsuited: usize,
     pub unplaced: usize,
     pub placed: usize,
+    /// Placements the pull ended, for the files it took away or let go.
+    pub ended: usize,
     pub removed: usize,
     /// Of `removed`, the files of items purged.
     pub purged: usize,
@@ -4636,6 +4653,7 @@ impl PullReport {
         self.moved += other.moved;
         self.revived += other.revived;
         self.placed += other.placed;
+        self.ended += other.ended;
         self.removed += other.removed;
         self.purged += other.purged;
         self.taken += other.taken;

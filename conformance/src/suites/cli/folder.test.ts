@@ -859,6 +859,22 @@ describe("a folder round trip", () => {
     };
   }
 
+  /** The folders an item is placed in, by path. */
+  async function placedIn(item: string): Promise<Record<string, string>> {
+    const page = await c.cli.json<{
+      data: Array<{
+        target_id: string;
+        edge_type: string;
+        properties: { path?: string };
+      }>;
+    }>(["items", "edges", item]);
+    return Object.fromEntries(
+      page.data
+        .filter((edge) => edge.edge_type === "in-folder")
+        .map((edge) => [edge.target_id, String(edge.properties.path)]),
+    );
+  }
+
   /** One sync of a folder: it scans, drains, catches up, pulls and drains again. */
   async function sync(folder: string): Promise<PushReport> {
     return c.cli.json<PushReport>(["folders", "push", folder]);
@@ -950,4 +966,103 @@ describe("a folder round trip", () => {
       "occurred_at: 2026-10-07 # the day\n",
     );
   });
+
+  it("ends a folder's placement of an item put in the bin, and places it again on restore", async () => {
+    const bin = await follow("placed-bin", { types: ["core.note"] });
+    const title = unique("placed-bin");
+    writeFileSync(
+      join(bin.folder, "kept.md"),
+      `---\ntitle: '${title}'\n---\nBody\n`,
+    );
+    await sync(bin.folder);
+    const id = /^marfa_id: (.+)$/m
+      .exec(readFileSync(join(bin.folder, "kept.md"), "utf8"))![1]!
+      .trim();
+    trackItem(c.ctx, id);
+    expect(await placedIn(id)).toEqual({ [bin.id]: "kept.md" });
+
+    await c.cli.json(["items", "delete", id]);
+    const trashed = await sync(bin.folder);
+    expect(existsSync(join(bin.folder, "kept.md"))).toBe(false);
+    expect(
+      await placedIn(id),
+      "the server went on listing the folder as placing an item in the bin",
+    ).toEqual({});
+    expect(trashed.pull).toMatchObject({ removed: 1, ended: 1 });
+
+    // The item comes back as a new one does: by its title, not at the path
+    // it had.
+    await c.cli.json(["items", "restore", id]);
+    await sync(bin.folder);
+    expect(existsSync(join(bin.folder, `${title}.md`))).toBe(true);
+    expect(await placedIn(id)).toEqual({ [bin.id]: `${title}.md` });
+  });
+
+  it("ends a folder's placement of an item whose file another folder took in, and no sooner", async () => {
+    // The registry of a Mac of its own: the folders other scenarios made have
+    // no directory left, and a folder it cannot read holds a missing file as
+    // possibly moved there (`folders.md` 43).
+    const shared = process.env.MARFA_FOLDER_REGISTRY;
+    process.env.MARFA_FOLDER_REGISTRY = join(dir, "registry", "folders.json");
+    try {
+      await takenIn();
+    } finally {
+      if (shared === undefined) delete process.env.MARFA_FOLDER_REGISTRY;
+      else process.env.MARFA_FOLDER_REGISTRY = shared;
+    }
+  });
+
+  async function takenIn(): Promise<void> {
+    const one = await follow("placed-one", {
+      types: ["core.note"],
+      filter: 'tags contains "one"',
+    });
+    const two = await follow("placed-two", {
+      types: ["core.note"],
+      filter: 'tags contains "two"',
+    });
+    const made = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("travels"), body: "b\n" }),
+      "--tag",
+      "one",
+    ]);
+    const id = made.item.id;
+    trackItem(c.ctx, id);
+    const name = `${made.item.properties.title}.md`;
+    await sync(one.folder);
+    await sync(two.folder);
+    expect(await placedIn(id)).toEqual({ [one.id]: name });
+
+    await c.cli.json(["items", "untag", id, "one"]);
+    await c.cli.json(["items", "tag", id, "two"]);
+    await sync(one.folder);
+    expect(
+      await placedIn(id),
+      "the placement ended while the file still sat in the folder",
+    ).toEqual({ [one.id]: name });
+    const took = await sync(two.folder);
+    expect(took.pull).toMatchObject({ taken: 1 });
+    expect(existsSync(join(one.folder, name))).toBe(false);
+
+    // The folder it left finds the file gone from its directory, and moved.
+    await sync(one.folder);
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await c.cli.json<{ scan: { moved_away: number } }>([
+      "folders",
+      "push",
+      one.folder,
+    ]);
+    expect(swept.scan.moved_away).toBe(1);
+    expect(
+      await placedIn(id),
+      "the folder went on placing an item whose file another folder took in",
+    ).toEqual({ [two.id]: name });
+    const item = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+    expect(item.item.state).toBe("active");
+  }
 });
