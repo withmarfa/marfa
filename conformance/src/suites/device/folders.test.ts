@@ -7960,6 +7960,294 @@ describe("what frontmatter says", () => {
     );
   });
 
+  describe("an occurred_at line", () => {
+    /** The creates a push sent, by title. */
+    function createdBy(
+      harness: FolderHarness,
+    ): Map<string, Record<string, unknown>> {
+      return new Map(
+        sentCreates(harness).map((sent) => [
+          String((sent.properties as Record<string, unknown>).title),
+          sent,
+        ]),
+      );
+    }
+
+    it("sets a new item's own time, from a date or from a date and time", async () => {
+      harness = await folderHarness("folder-occurred-at-create");
+      scriptFolderWrites(harness);
+      put(
+        harness,
+        "Day.md",
+        "---\noccurred_at: 2026-10-06 # the day\n---\nd\n",
+      );
+      put(
+        harness,
+        "Moment.md",
+        "---\noccurred_at: 2026-10-06T09:30:00+01:00\n---\nm\n",
+      );
+      put(
+        harness,
+        "Quoted.md",
+        '---\noccurred_at: "2026-10-06T09:30:00"\n---\nq\n',
+      );
+      put(harness, "Plain.md", "---\ntitle: Plain\n---\np\n");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const created = createdBy(harness);
+      expect(
+        created.get("Day")?.occurred_at,
+        "a date line did not set the item's own time",
+      ).toBe("2026-10-06T00:00:00.000Z");
+      expect(created.get("Moment")?.occurred_at).toBe(
+        "2026-10-06T08:30:00.000Z",
+      );
+      expect(
+        created.get("Quoted")?.occurred_at,
+        "a date and time with no offset is read as UTC",
+      ).toBe("2026-10-06T09:30:00.000Z");
+      expect(
+        "occurred_at" in (created.get("Plain") ?? {}),
+        "a file with no line gave the item a time of its own",
+      ).toBe(false);
+      for (const sent of created.values()) {
+        expect(
+          (sent.properties as Record<string, unknown>).occurred_at,
+          "the line was also sent as a property, which no type declares",
+        ).toBeUndefined();
+      }
+      // Read back as the text the person wrote, comment and all, and none
+      // written into the file that carried none.
+      expect(read(harness, "Day.md")).toContain(
+        "occurred_at: 2026-10-06 # the day\n",
+      );
+      expect(read(harness, "Moment.md")).toContain(
+        "occurred_at: 2026-10-06T09:30:00+01:00\n",
+      );
+      expect(read(harness, "Plain.md")).not.toContain("occurred_at");
+    });
+
+    it("flags a line that is no time, and sends nothing for the file", async () => {
+      harness = await folderHarness("folder-occurred-at-unreadable");
+      scriptFolderWrites(harness);
+      for (const [name, line] of [
+        ["Words.md", "occurred_at: yesterday"],
+        ["Month.md", "occurred_at: 2026-13-45"],
+        ["Number.md", "occurred_at: 20261006"],
+        ["List.md", "occurred_at: [2026-10-06]"],
+        ["Empty.md", "occurred_at:"],
+      ]) {
+        put(harness, name!, `---\ntitle: ${name}\n${line}\n---\nbody\n`);
+      }
+      put(
+        harness,
+        "Fine.md",
+        "---\ntitle: Fine\noccurred_at: 2026-10-06\n---\nok\n",
+      );
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
+      ).toEqual(
+        ["Empty.md", "List.md", "Month.md", "Number.md", "Words.md"].map(
+          (name) => [name, "unreadable"],
+        ),
+      );
+      expect(
+        [...createdBy(harness).keys()],
+        "a file whose occurred_at is no time was sent, as an item with a bad property or with the wrong time",
+      ).toEqual(["Fine"]);
+    });
+
+    it("writes the line for an item whose time is its own, and none for one never set", async () => {
+      const set = {
+        id: "01a00000-0000-7000-8000-000000001801",
+        created_at: "2026-09-01T10:00:00.000Z",
+        occurred_at: "2026-10-06T00:00:00.000Z",
+        properties: { title: "Set", body: "s\n" },
+      };
+      const never = {
+        id: "01a00000-0000-7000-8000-000000001802",
+        created_at: "2026-09-01T10:00:00.000Z",
+        occurred_at: "2026-09-01T10:00:00.000Z",
+        properties: { title: "Never", body: "n\n" },
+      };
+      harness = await folderHarness("folder-occurred-at-pull", {
+        rows: { "core.note": [{ item: set }, { item: never }] },
+      });
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(
+        read(harness, "Set.md"),
+        "an item with a time of its own was written without it",
+      ).toContain('occurred_at: "2026-10-06T00:00:00.000Z"\n');
+      expect(
+        read(harness, "Never.md"),
+        "an item whose time was never set was given a line, which the next save would send back as a time of its own",
+      ).not.toContain("occurred_at");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        [sentUpdates(harness), sentCreates(harness)],
+        "a file the pull wrote was sent back as an edit",
+      ).toEqual([[], []]);
+    });
+
+    it("follows a time changed elsewhere, and keeps a line in another spelling of the same time", async () => {
+      const item = {
+        id: "01a00000-0000-7000-8000-000000001804",
+        created_at: "2026-09-01T10:00:00.000Z",
+        occurred_at: "2026-10-06T00:00:00.000Z",
+        properties: { title: "Moving", body: "m\n" },
+      };
+      harness = await folderHarness("folder-occurred-at-follows", {
+        rows: { "core.note": [{ item }] },
+        events: [
+          copyReplay("2", [
+            copyItemEvent(
+              "2",
+              "item.updated",
+              wireItem({
+                ...item,
+                version: 2,
+                occurred_at: "2026-10-09T12:00:00.000Z",
+              }),
+            ),
+          ]),
+        ],
+      });
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      // Typed in another spelling of the same time, then moved elsewhere.
+      writeFileSync(
+        join(harness.dir, "Moving.md"),
+        read(harness, "Moving.md").replace(
+          'occurred_at: "2026-10-06T00:00:00.000Z"',
+          "occurred_at: 2026-10-06 # when it happened",
+        ),
+      );
+      expect((await harness.folder.scan()).ok).toBe(true);
+      expect(sentUpdates(harness)).toEqual([]);
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(
+        read(harness, "Moving.md"),
+        "a time changed elsewhere was not written over the line",
+      ).toContain('occurred_at: "2026-10-09T12:00:00.000Z" # when it happened');
+      expect((await harness.folder.scan()).ok).toBe(true);
+      expect(
+        sentUpdates(harness),
+        "the pull's own write was sent back",
+      ).toEqual([]);
+    });
+
+    it("sends an edit of the line, and nothing for another spelling of the same time", async () => {
+      harness = await folderHarness("folder-occurred-at-edit");
+      scriptFolderWrites(harness);
+      put(
+        harness,
+        "Day.md",
+        "---\ntitle: Day\noccurred_at: 2026-10-06\n---\nd\n",
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(sentUpdates(harness)).toEqual([]);
+
+      // The same instant, written another way: a reformatting.
+      writeFileSync(
+        join(harness.dir, "Day.md"),
+        read(harness, "Day.md").replace(
+          "occurred_at: 2026-10-06",
+          "occurred_at: 2026-10-06T01:00:00+01:00",
+        ),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(
+        sentUpdates(harness),
+        "another spelling of the item's time was sent as an edit",
+      ).toEqual([]);
+
+      writeFileSync(
+        join(harness.dir, "Day.md"),
+        read(harness, "Day.md").replace(
+          "occurred_at: 2026-10-06T01:00:00+01:00",
+          "occurred_at: 2026-10-07",
+        ),
+      );
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [sent] = sentUpdates(harness);
+      expect(
+        sent?.body.occurred_at,
+        "an edit of the line did not move the item's time",
+      ).toBe("2026-10-07T00:00:00.000Z");
+      expect(
+        (sent?.body.properties as Record<string, unknown>).occurred_at,
+        "the edited line was sent as a property too",
+      ).toBeUndefined();
+      expect(read(harness, "Day.md")).toContain("occurred_at: 2026-10-07\n");
+
+      // A line taken out sets nothing and clears nothing: an item has no
+      // time to fall back to but the one it holds.
+      writeFileSync(
+        join(harness.dir, "Day.md"),
+        read(harness, "Day.md").replace("occurred_at: 2026-10-07\n", ""),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(
+        sentUpdates(harness).length,
+        "a line taken out was sent as an edit",
+      ).toBe(1);
+    });
+
+    it("sends no time from a file behind the item, and flags the line", async () => {
+      const item = {
+        id: "01a00000-0000-7000-8000-000000001803",
+        created_at: "2026-09-01T10:00:00.000Z",
+        occurred_at: "2026-10-06T00:00:00.000Z",
+        properties: { title: "Behind", body: "b\n" },
+      };
+      harness = await folderHarness("folder-occurred-at-behind", {
+        rows: { "core.note": [{ item }] },
+        events: [
+          copyReplay("2", [
+            copyItemEvent(
+              "2",
+              "item.updated",
+              wireItem({
+                ...item,
+                version: 2,
+                occurred_at: "2026-10-09T00:00:00.000Z",
+                properties: { title: "Behind", body: "b\nmore\n" },
+              }),
+            ),
+          ]),
+        ],
+      });
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const old = read(harness, "Behind.md");
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      // An old buffer, saved over the version another machine moved on.
+      writeFileSync(
+        join(harness.dir, "Behind.md"),
+        old.replace(
+          'occurred_at: "2026-10-06T00:00:00.000Z"',
+          "occurred_at: 2026-10-01",
+        ),
+      );
+      const scanned = await harness.folder.scan();
+      expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+      if (!scanned.ok) return;
+      expect(
+        scanned.value.flagged.map((file) => [file.path, file.flag]),
+        "an old buffer's time was sent, or went unsaid",
+      ).toEqual([["Behind.md", "behind"]]);
+      expect(scanned.value.flagged[0]?.reason).toContain("occurred_at");
+      expect(sentUpdates(harness)).toEqual([]);
+    });
+  });
+
   it("sends nothing for a save that only reformats the frontmatter", async () => {
     const id = "01a00000-0000-7000-8000-0000000014e1";
     harness = await folderHarness("folder-reformat", {

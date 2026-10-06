@@ -1938,6 +1938,9 @@ fn queue_update(
     if let Some(tier) = edit.tier {
         next.tier = Some(tier);
     }
+    if let Some(occurred_at) = &edit.occurred_at {
+        next.occurred_at = time::projected(occurred_at);
+    }
     // Required nulls remain invalid even where replace projection drops
     // them. Stale edits cannot prove the server's eventual merged result.
     catalog.validate_properties(&next.r#type, &edit.properties, false)?;

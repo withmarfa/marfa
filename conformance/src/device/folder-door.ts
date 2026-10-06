@@ -32,6 +32,10 @@ export interface DoorRow {
   /** The row's tags, which a read answers in its metadata. */
   tags?: string[];
   tier?: "library" | "feed";
+  /** The row's own time as the server stores it, UTC at millisecond
+   *  precision, where a write named one (`items.md` 6); unset, it is the
+   *  row's `created_at`. */
+  occurred_at?: string;
   /** `archived`, where a transition moved it there. */
   state?: string;
   /** A conflicted copy's `derived-from` edge to its original (`versions.md` 22). */
@@ -49,8 +53,22 @@ export interface DoorCreate {
   source?: string;
   source_id?: string;
   tier?: "library" | "feed";
+  occurred_at?: string;
   version?: number;
 }
+
+/**
+ * A time as the server stores it (`items.md` 6): a date, or a date and time
+ * with or without an offset, read as UTC where it names none, at millisecond
+ * precision.
+ */
+export function storedTime(sent: string): string {
+  const zoned = /(Z|[+-]\d\d:?\d\d)$/.test(sent) || !sent.includes("T");
+  return new Date(zoned ? sent : `${sent}Z`).toISOString();
+}
+
+/** What a row's `created_at` is where a write names its own time. */
+const CREATED_AT = "2026-09-18T00:00:00.000Z";
 
 /** What the door decided, beside the answer it gives. */
 export interface DoorDecision {
@@ -238,6 +256,9 @@ export class FolderDoor {
       source_id: sent.source_id ?? null,
       type: sent.type,
       ...(sent.tier === undefined ? {} : { tier: sent.tier }),
+      ...(sent.occurred_at === undefined
+        ? {}
+        : { occurred_at: storedTime(sent.occurred_at) }),
       version: 1,
     });
     return { answer: answers.created(this.wire(id)), minted: id };
@@ -264,6 +285,7 @@ export class FolderDoor {
       type?: string;
       retype?: boolean;
       tier?: "library" | "feed";
+      occurred_at?: string;
       version: number;
     },
     options: { resolve?: boolean } = {},
@@ -283,6 +305,9 @@ export class FolderDoor {
         ? { type: sent.type }
         : {}),
       ...(sent.tier === undefined ? {} : { tier: sent.tier }),
+      ...(sent.occurred_at === undefined
+        ? {}
+        : { occurred_at: storedTime(sent.occurred_at) }),
     };
     let applied: Record<string, unknown> = sentProperties;
     let cleared: string[] = replace
@@ -484,6 +509,9 @@ export class FolderDoor {
       properties: row.properties,
       ...(row.source === undefined ? {} : { source: row.source }),
       ...(row.tier === undefined ? {} : { tier: row.tier }),
+      ...(row.occurred_at === undefined
+        ? {}
+        : { occurred_at: row.occurred_at, created_at: CREATED_AT }),
       source_id: row.source_id,
       ...(row.state === undefined ? {} : { state: row.state }),
       ...(row.trashed === true ? { state: "trashed" } : {}),

@@ -935,6 +935,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         source_id: args.source_id,
                         r#type: args.type_,
                         tier: args.tier.map(Into::into),
+                        occurred_at: None,
                         replace_properties: args.replace,
                     };
                     let queued = if args.as_read {

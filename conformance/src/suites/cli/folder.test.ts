@@ -826,4 +826,128 @@ describe("a folder round trip", () => {
     const moved = await c.cli.json<ItemEnvelope>(["items", "get", landed.id]);
     expect(moved.item.version).toBe(before.item.version);
   });
+
+  /** A folder following a new `system.folder`, hydrated. */
+  async function follow(
+    name: string,
+    search: Record<string, unknown>,
+  ): Promise<{ folder: string; id: string; store: string }> {
+    const folder = join(dir, name);
+    mkdirSync(folder);
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique(name),
+      "--search",
+      JSON.stringify(search),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json([
+      "folders",
+      "add",
+      folder,
+      "--folder",
+      settings.item.id,
+      "--yes",
+    ]);
+    await c.cli.json(["folders", "hydrate", folder]);
+    return {
+      folder,
+      id: settings.item.id,
+      store: join(folder, ".marfa", "core.sqlite"),
+    };
+  }
+
+  /** One sync of a folder: it scans, drains, catches up, pulls and drains again. */
+  async function sync(folder: string): Promise<PushReport> {
+    return c.cli.json<PushReport>(["folders", "push", folder]);
+  }
+
+  it("sets an item's own time from a file's occurred_at line, and writes it back as typed", async () => {
+    const own = await follow("own-time", { types: ["core.note"] });
+    const title = unique("own-time");
+    writeFileSync(
+      join(own.folder, "day.md"),
+      `---\ntitle: '${title}'\noccurred_at: 2026-10-06 # the day\n---\nBody\n`,
+    );
+    writeFileSync(
+      join(own.folder, "bad.md"),
+      `---\ntitle: '${unique("bad-time")}'\noccurred_at: yesterday\n---\nBody\n`,
+    );
+    const pushed = await c.cli.json<
+      PushReport & { scan: { flagged: Array<{ path: string; flag: string }> } }
+    >(["folders", "push", own.folder]);
+    expect(pushed.scan.created, "the file with no time was sent").toBe(1);
+    expect(pushed.scan.flagged).toMatchObject([
+      { path: "bad.md", flag: "unreadable" },
+    ]);
+    const first = readFileSync(join(own.folder, "day.md"), "utf8");
+    const id = /^marfa_id: (.+)$/m.exec(first)![1]!.trim();
+    trackItem(c.ctx, id);
+    const landed = await c.cli.json<
+      ItemEnvelope & { item: { occurred_at: string } }
+    >(["items", "get", id]);
+    expect(landed.item.occurred_at).toBe("2026-10-06T00:00:00.000Z");
+    expect(landed.item.properties.occurred_at).toBeUndefined();
+    expect(first, "the line the person typed was rewritten").toContain(
+      "occurred_at: 2026-10-06 # the day\n",
+    );
+
+    // A time somebody else gave an item comes into its file as a line, and
+    // an item whose time was never set gets none.
+    const made = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("timed"), body: "b\n" }),
+      "--occurred-at",
+      "2026-10-05T10:00:00+01:00",
+    ]);
+    trackItem(c.ctx, made.item.id);
+    const plain = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("plain"), body: "b\n" }),
+    ]);
+    trackItem(c.ctx, plain.item.id);
+    await sync(own.folder);
+    const timed = readFileSync(
+      join(own.folder, `${made.item.properties.title}.md`),
+      "utf8",
+    );
+    expect(timed).toContain('occurred_at: "2026-10-05T09:00:00.000Z"\n');
+    expect(
+      readFileSync(
+        join(own.folder, `${plain.item.properties.title}.md`),
+        "utf8",
+      ),
+    ).not.toContain("occurred_at");
+    expect((await sync(own.folder)).scan.updated).toBe(0);
+
+    // An edit of the line is an edit of the item's time, and of nothing else.
+    writeFileSync(
+      join(own.folder, "day.md"),
+      readFileSync(join(own.folder, "day.md"), "utf8").replace(
+        "occurred_at: 2026-10-06",
+        "occurred_at: 2026-10-07",
+      ),
+    );
+    const edited = await sync(own.folder);
+    expect(edited.scan.updated).toBe(1);
+    const after = await c.cli.json<
+      ItemEnvelope & { item: { occurred_at: string } }
+    >(["items", "get", id]);
+    expect(after.item.occurred_at).toBe("2026-10-07T00:00:00.000Z");
+    expect(after.item.version).toBe(landed.item.version + 1);
+    expect(after.item.properties).toEqual(landed.item.properties);
+    expect(readFileSync(join(own.folder, "day.md"), "utf8")).toContain(
+      "occurred_at: 2026-10-07 # the day\n",
+    );
+  });
 });
