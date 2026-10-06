@@ -12,7 +12,7 @@ import {
 } from "../test-utils.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Housekeeping } from "./scheduler.js";
+import { DEFAULT_RUN_DEADLINE_MS, Housekeeping } from "./scheduler.js";
 import { registerHousekeepingJobs } from "./registrations.js";
 import { DiskBlobStore, type BlobStore } from "../storage/blob-store.js";
 
@@ -164,6 +164,38 @@ describe("the housekeeping registrations", () => {
     const { intervalOf: defaults } = await namesUnder({});
     expect(defaults("blob-replicate")).toBe(60_000);
     expect(defaults("blob-integrity")).toBe(3_600_000);
+  });
+
+  it("holds the quick jobs to a short deadline, the byte-bound ones to a long one, and the rest to the default", async () => {
+    const ctx = await createUnbootstrappedTestApp({
+      heartbeatUrl: "https://example.test/ping",
+    });
+    contexts.push(ctx);
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+      pollIntervalMs: 3_600_000,
+    });
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    expect(
+      Object.fromEntries(
+        [
+          "heartbeat",
+          "webhook-schedule",
+          "webhook-poll",
+          "version-thinning",
+          "blob-replicate",
+          "blob-integrity",
+          "trash-purge",
+        ].map((name) => [name, housekeeping.deadlineMs(name)]),
+      ),
+    ).toEqual({
+      heartbeat: 30_000,
+      "webhook-schedule": 60_000,
+      "webhook-poll": 120_000,
+      "version-thinning": 21_600_000,
+      "blob-replicate": 21_600_000,
+      "blob-integrity": 21_600_000,
+      "trash-purge": DEFAULT_RUN_DEADLINE_MS,
+    });
   });
 
   it("runs the revoked-grant purge and the revoked-key reap hourly", async () => {

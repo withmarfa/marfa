@@ -5,6 +5,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { Housekeeping } from "./scheduler.js";
+import type { HousekeepingJob } from "./scheduler.js";
 
 let ctx: TestContext | undefined;
 
@@ -69,7 +70,7 @@ async function names(): Promise<string[]> {
 
 describe("Housekeeping", () => {
   describe("register", () => {
-    it("refuses a bad name, a duplicate, a non-positive interval, and a late registration", async () => {
+    it("refuses a bad name, a duplicate, a non-positive interval or deadline, and a late registration", async () => {
       ctx = await createTestContext();
       const hk = scheduler(clock(T0).nowFn);
       const job = {
@@ -87,6 +88,9 @@ describe("Housekeeping", () => {
       expect(() => {
         hk.register({ name: "zero", ...job, intervalMs: 0 });
       }).toThrow(/positive interval/);
+      expect(() => {
+        hk.register({ name: "no-time", ...job, deadlineMs: 0 });
+      }).toThrow(/positive deadline/);
       await hk.start();
       expect(() => {
         hk.register({ name: "late", ...job });
@@ -818,6 +822,209 @@ describe("Housekeeping", () => {
         kind: "ran",
         run: { outcome: "error", error: "no", result: null },
       });
+      await hk.stop();
+    });
+  });
+
+  describe("deadline", () => {
+    /** A run that stays pending until the test settles it. */
+    function hangs() {
+      const settle: {
+        resolve: (report: { swept: number } | null) => void;
+        reject: (err: Error) => void;
+      } = { resolve: () => undefined, reject: () => undefined };
+      const run = () =>
+        new Promise<{ swept: number } | null>((resolve, reject) => {
+          settle.resolve = resolve;
+          settle.reject = reject;
+        });
+      return { settle, run };
+    }
+
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("ends a run that does not finish in time, records it as failed and frees the name", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      const stuck = hangs();
+      let runs = 0;
+      hk.register({
+        name: "hung",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 3_600_000,
+        deadlineMs: 20,
+        run: () => {
+          runs += 1;
+          return runs === 1 ? stuck.run() : Promise.resolve({ swept: 2 });
+        },
+      });
+      await hk.start();
+      const captured = captureLog();
+      const first = await hk.runNow("hung");
+      captured.restore();
+      expect(first).toMatchObject({
+        kind: "ran",
+        run: {
+          name: "hung",
+          outcome: "error",
+          result: null,
+        },
+      });
+      expect(first.kind === "ran" && first.run.error).toContain(
+        "did not finish within 20 ms",
+      );
+      expect(
+        captured.lines.some(
+          (line) =>
+            line.level === "error" &&
+            line.message === "Housekeeping hung error",
+        ),
+      ).toBe(true);
+      const row = await ctx.storage.housekeeping.get("hung");
+      expect(row?.running_since).toBeNull();
+      expect(row?.last_outcome).toBe("error");
+      // The name is free: the door does not refuse it.
+      expect(await hk.runNow("hung")).toMatchObject({
+        kind: "ran",
+        run: { outcome: "ok", result: { swept: 2 } },
+      });
+      await hk.stop();
+    });
+
+    it("ends a run the poll started, and the name is due again at its interval", async () => {
+      ctx = await createTestContext();
+      const c = clock(T0);
+      const hk = scheduler(c.nowFn);
+      hk.register({
+        name: "hung-poll",
+        intervalMs: 60_000,
+        firstRunDelayMs: 0,
+        deadlineMs: 20,
+        run: hangs().run,
+      });
+      await hk.start();
+      const captured = captureLog();
+      await hk.poll();
+      await hk.settle();
+      captured.restore();
+      const row = await ctx.storage.housekeeping.get("hung-poll");
+      expect(row?.running_since).toBeNull();
+      expect(row?.last_outcome).toBe("error");
+      expect(row?.last_error).toContain("did not finish within 20 ms");
+      expect(row?.next_run_at).toBe(new Date(T0 + 60_000).toISOString());
+      await hk.stop();
+    });
+
+    it("clears a run's deadline timer when the run finishes first", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      let fail = false;
+      hk.register({
+        name: "quick",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 3_600_000,
+        deadlineMs: 7_777_777,
+        run: () =>
+          fail ? Promise.reject(new Error("boom")) : Promise.resolve(null),
+      });
+      await hk.start();
+      const realSet = globalThis.setTimeout;
+      const deadlines: unknown[] = [];
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+        ...args: Parameters<typeof setTimeout>
+      ) => {
+        const handle = realSet(...args);
+        if (args[1] === 7_777_777) deadlines.push(handle);
+        return handle;
+      }) as typeof setTimeout);
+      const cleared = vi.spyOn(globalThis, "clearTimeout");
+      const captured = captureLog();
+      await hk.runNow("quick");
+      fail = true;
+      await hk.runNow("quick");
+      captured.restore();
+      expect(deadlines).toHaveLength(2);
+      for (const handle of deadlines) {
+        expect(cleared).toHaveBeenCalledWith(handle);
+      }
+      await hk.stop();
+    });
+
+    it("discards what an abandoned run settles with after its deadline, and does not touch the next run", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      const first = hangs();
+      const second = hangs();
+      let runs = 0;
+      const job: HousekeepingJob = {
+        name: "late",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 3_600_000,
+        deadlineMs: 20,
+        run: () => {
+          runs += 1;
+          // The scheduler reads the deadline as a run starts, so the next
+          // run is not itself ended while the test waits on a slow runner.
+          job.deadlineMs = 60_000;
+          return runs === 1 ? first.run() : second.run();
+        },
+      };
+      hk.register(job);
+      await hk.start();
+      const captured = captureLog();
+      expect(await hk.runNow("late")).toMatchObject({
+        run: { outcome: "error" },
+      });
+      // The next run holds the name; the abandoned one then settles.
+      const next = hk.runNow("late");
+      await pause(5);
+      const store = ctx.storage.housekeeping;
+      expect((await store.get("late"))?.running_since).not.toBeNull();
+      first.settle.resolve({ swept: 99 });
+      await pause(5);
+      const midRun = await store.get("late");
+      expect(midRun?.running_since).not.toBeNull();
+      expect(midRun?.last_outcome).toBe("error");
+      expect(midRun?.last_result).toBeNull();
+      expect(await hk.runNow("late")).toEqual({ kind: "running" });
+      second.settle.resolve({ swept: 1 });
+      expect(await next).toMatchObject({
+        run: { outcome: "ok", result: { swept: 1 } },
+      });
+      captured.restore();
+      expect((await store.get("late"))?.last_result).toEqual({ swept: 1 });
+      await hk.stop();
+    });
+
+    it("answers an abandoned run's later failure with a log line and no rejection", async () => {
+      ctx = await createTestContext();
+      const hk = scheduler(clock(T0).nowFn);
+      const stuck = hangs();
+      hk.register({
+        name: "late-fail",
+        intervalMs: 3_600_000,
+        firstRunDelayMs: 3_600_000,
+        deadlineMs: 20,
+        run: stuck.run,
+      });
+      await hk.start();
+      const captured = captureLog();
+      await hk.runNow("late-fail");
+      stuck.settle.reject(new Error("too late"));
+      await pause(5);
+      captured.restore();
+      expect(
+        captured.lines.some(
+          (line) =>
+            line.level === "warn" &&
+            line.message ===
+              "Housekeeping late-fail settled after its deadline",
+        ),
+      ).toBe(true);
+      expect(
+        (await ctx.storage.housekeeping.get("late-fail"))?.last_error,
+      ).toContain("did not finish within 20 ms");
       await hk.stop();
     });
   });
