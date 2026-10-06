@@ -50,8 +50,8 @@ pub use model::{
     Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,
     Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
-    SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType, Verdict,
-    WriteKind,
+    SearchHit, Shown, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
+    Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -479,6 +479,14 @@ impl Core {
                 )))
             }
         }
+    }
+
+    /// The title and body each item shows, read from the properties its
+    /// type's display hints name in the catalog the copy holds, from the copy
+    /// alone.
+    pub fn shown<'a>(&self, items: impl IntoIterator<Item = &'a Item>) -> Result<Vec<Shown>> {
+        let catalog = catalog::Catalog::load(&*self.conn()?)?;
+        Ok(items.into_iter().map(|item| catalog.shown(item)).collect())
     }
 
     pub fn edges_from(&self, id: &str) -> Result<Vec<Edge>> {

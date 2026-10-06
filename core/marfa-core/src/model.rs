@@ -119,12 +119,15 @@ impl Item {
             edges: None,
         }
     }
+}
 
-    pub fn title(&self, title_field: Option<&str>) -> Option<&str> {
-        self.properties
-            .get(title_field.unwrap_or("title"))
-            .and_then(Value::as_str)
-    }
+/// What an item shows as its title and its body: the text under the
+/// properties its type's display hints name, by the rule a folder names a
+/// file and writes its body by.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Shown {
+    pub title: Option<String>,
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

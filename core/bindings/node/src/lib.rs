@@ -1453,7 +1453,7 @@ impl MarfaCore {
                         item_id: change.item_id.clone(),
                         edge_id: change.edge_id.clone(),
                         cursor: change.cursor.clone(),
-                        reason: change.reason.clone(),
+                        reason: change.reason.as_ref().map(ToString::to_string),
                     }),
                     ThreadsafeFunctionCallMode::NonBlocking,
                 );

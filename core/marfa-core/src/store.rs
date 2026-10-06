@@ -3271,7 +3271,7 @@ mod tests {
         .unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
         assert_eq!(item.tags, vec!["a", "b"]);
-        assert_eq!(item.title(Some("title")), Some("Hello"));
+        assert_eq!(item.properties["title"], "Hello");
         assert_eq!(item.state, ItemState::Active);
         assert_eq!(item.tier, Some(Tier::Library));
 
@@ -3282,7 +3282,7 @@ mod tests {
             .clone();
         upsert_item(&conn, &renamed, None, &Indexing::default()).unwrap();
         let item = item_by_id(&conn, "n1").unwrap().unwrap();
-        assert_eq!(item.title(None), Some("Renamed"));
+        assert_eq!(item.properties["title"], "Renamed");
         assert_eq!(item.tags, vec!["a", "b"]);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
     }
@@ -3847,7 +3847,7 @@ mod tests {
 
         lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
-        assert_eq!(item.title(Some("title")), Some("edited"));
+        assert_eq!(item.properties["title"], "edited");
         assert_eq!(
             item.properties.get("body").and_then(Value::as_str),
             Some("server body"),

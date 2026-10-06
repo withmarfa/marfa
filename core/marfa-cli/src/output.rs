@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use marfa_core::{DrainReport, Item, QueuedWrite, SearchHit};
+use marfa_core::{DrainReport, Item, QueuedWrite, SearchHit, Shown};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -35,14 +35,15 @@ pub fn line_of<T: Serialize>(
     Ok(())
 }
 
-pub fn items(items: &[Item], json: bool) -> Result<(), CliError> {
+/// `shown` holds what each item shows, in the same order.
+pub fn items(items: &[Item], shown: &[Shown], json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(items)?)?;
         return Ok(());
     }
-    for item in items {
-        writeln!(out, "{}", line(item))?;
+    for (item, shown) in items.iter().zip(shown) {
+        writeln!(out, "{}", line(item, shown))?;
     }
     if items.is_empty() {
         eprintln!("(no items)");
@@ -50,12 +51,12 @@ pub fn items(items: &[Item], json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn item(item: &Item, json: bool) -> Result<(), CliError> {
+pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(item)?)?;
     } else {
-        writeln!(out, "{}", line(item))?;
+        writeln!(out, "{}", line(item, shown))?;
         writeln!(out, "{}", serde_json::to_string_pretty(&item.properties)?)?;
         if !item.tags.is_empty() {
             writeln!(out, "tags: {}", item.tags.join(", "))?;
@@ -164,14 +165,15 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn hits(hits: &[SearchHit], json: bool) -> Result<(), CliError> {
+/// `shown` holds what each hit's item shows, in the same order.
+pub fn hits(hits: &[SearchHit], shown: &[Shown], json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(hits)?)?;
         return Ok(());
     }
-    for hit in hits {
-        writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item))?;
+    for (hit, shown) in hits.iter().zip(shown) {
+        writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item, shown))?;
         if !hit.snippet.is_empty() {
             writeln!(
                 out,
@@ -199,11 +201,11 @@ fn snippet_text(html: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn line(item: &Item) -> String {
-    let title = item
-        .title(None)
-        .or_else(|| item.properties.get("name").and_then(Value::as_str))
-        .or_else(|| item.properties.get("body").and_then(Value::as_str))
+fn line(item: &Item, shown: &Shown) -> String {
+    let title = shown
+        .title
+        .as_deref()
+        .or(shown.body.as_deref())
         .unwrap_or("")
         .lines()
         .next()

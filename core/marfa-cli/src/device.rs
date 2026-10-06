@@ -670,7 +670,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         change.cursor,
                         change
                             .reason
-                            .as_deref()
+                            .as_ref()
                             .map(|reason| format!(": {reason}"))
                             .unwrap_or_default()
                     )
@@ -768,10 +768,11 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         field: args.sort.into(),
                         direction: args.direction.into(),
                     };
-                    output::items(&core.list(&filters, sort)?, json)
+                    let items = core.list(&filters, sort)?;
+                    output::items(&items, &core.shown(&items)?, json)
                 }
                 ItemsCommand::Get { id } => match core.get(&id)? {
-                    Some(item) => output::item(&item, json),
+                    Some(item) => output::item(&item, &core.shown([&item])?[0], json),
                     None => Err(CliError::NotHeld(id)),
                 },
                 ItemsCommand::Create(args) => {
@@ -901,7 +902,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 filter,
                 beneath,
             };
-            output::hits(&store.open(None)?.search(&query, &filters, limit)?, json)
+            let core = store.open(None)?;
+            let hits = core.search(&query, &filters, limit)?;
+            output::hits(&hits, &core.shown(hits.iter().map(|hit| &hit.item))?, json)
         }
         DeviceCommand::Edges { command } => {
             let core = store.open(None)?;

@@ -5,8 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::CoreError;
+use crate::model::{Item, Shown};
 use crate::store;
 use crate::wire::WireEdgeType;
+
+const TITLE_PROPERTY: &str = "title";
+const BODY_PROPERTY: &str = "body";
 
 struct Entry {
     parent: Option<String>,
@@ -581,6 +585,33 @@ impl Catalog {
         self.hints(type_id)?.body_field.as_deref()
     }
 
+    /// The property an item of the type is titled by: its hints' title field,
+    /// or `title` where they name none (`folders.md` 7).
+    pub fn title_property(&self, type_id: &str) -> &str {
+        self.title_field(type_id).unwrap_or(TITLE_PROPERTY)
+    }
+
+    /// The property an item of the type keeps its text in: its hints' body
+    /// field, or `body` where they name none (`folders.md` 7).
+    pub fn body_property(&self, type_id: &str) -> &str {
+        self.body_field(type_id).unwrap_or(BODY_PROPERTY)
+    }
+
+    /// The text an item holds under its type's title and body properties; a
+    /// value that is not a string shows as none.
+    pub fn shown(&self, item: &Item) -> Shown {
+        let text = |property: &str| {
+            item.properties
+                .get(property)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        Shown {
+            title: text(self.title_property(&item.r#type)),
+            body: text(self.body_property(&item.r#type)),
+        }
+    }
+
     fn hints(&self, type_id: &str) -> Option<&Entry> {
         let mut current = type_id;
         for _ in 0..MAX_PARENT_WALK {
@@ -848,6 +879,84 @@ mod tests {
         assert_eq!(
             (leaf.title_field, leaf.body_field.as_deref()),
             (None, Some("comment"))
+        );
+    }
+
+    #[test]
+    fn an_item_shows_the_title_and_body_its_types_hints_name() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.event", "fields": { "title": { "type": "string" },
+                                                   "description": { "type": "string" } },
+                  "display_hints": { "title_field": "title", "body_field": "description" } },
+                { "id": "acme.event.session", "parent": "acme.event",
+                  "fields": { "transcript": { "type": "string" } },
+                  "display_hints": { "title_field": "title", "body_field": "transcript" } },
+                { "id": "acme.event.call", "parent": "acme.event", "fields": {} },
+                { "id": "acme.event.memo", "parent": "acme.event",
+                  "fields": { "text": { "type": "string" } },
+                  "display_hints": { "body_field": "text" } },
+                { "id": "acme.person", "fields": { "name": { "type": "string" } },
+                  "display_hints": { "title_field": "name" } },
+                { "id": "acme.plain", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        let item = |r#type: &str, properties: serde_json::Value| Item {
+            id: "i".into(),
+            r#type: r#type.into(),
+            properties: serde_json::from_value(properties).unwrap(),
+            state: crate::model::ItemState::Active,
+            tier: None,
+            version: 1,
+            schema_version: 0,
+            source: "s".into(),
+            source_id: None,
+            occurred_at: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            tags: Vec::new(),
+        };
+        let shown = |r#type: &str, properties: serde_json::Value| {
+            let shown = catalog.shown(&item(r#type, properties));
+            (shown.title, shown.body)
+        };
+        let text = |value: &str| Some(value.to_string());
+        let every = serde_json::json!({
+            "title": "T", "body": "B", "description": "D", "transcript": "S",
+            "text": "X", "name": "N"
+        });
+        assert_eq!(shown("acme.event", every.clone()), (text("T"), text("D")));
+        assert_eq!(
+            shown("acme.event.session", every.clone()),
+            (text("T"), text("S")),
+            "a subtype's own body field lost to its parent's"
+        );
+        assert_eq!(
+            shown("acme.event.call", every.clone()),
+            (text("T"), text("D")),
+            "a subtype with no hints of its own did not take its parent's"
+        );
+        assert_eq!(
+            shown("acme.event.memo", every.clone()),
+            (text("T"), text("X")),
+            "a subtype naming only its body did not fall back to `title`"
+        );
+        assert_eq!(shown("acme.person", every.clone()), (text("N"), text("B")));
+        assert_eq!(shown("acme.plain", every.clone()), (text("T"), text("B")));
+        assert_eq!(
+            shown("acme.unheld", every),
+            (text("T"), text("B")),
+            "a type the catalog does not hold took no fallback"
+        );
+        assert_eq!(
+            shown(
+                "acme.person",
+                serde_json::json!({ "name": 3, "body": ["B"] })
+            ),
+            (None, None),
+            "a value that is not text was shown as text"
         );
     }
 

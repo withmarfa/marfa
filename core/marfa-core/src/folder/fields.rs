@@ -18,12 +18,6 @@ pub const TIER_FIELD: &str = "tier";
 pub const TAGS_FIELD: &str = "tags";
 pub const STATE_FIELD: &str = "state";
 
-/// The property a file's body is carried in where its type names none.
-pub const BODY_FIELD: &str = "body";
-
-/// The property a file's name is carried in where its type names none.
-pub const TITLE_FIELD: &str = "title";
-
 /// Whether a frontmatter line of this name is anything but a property: a
 /// line naming the item, its version, one of its own fields, or an edge.
 pub fn reserved(name: &str, edge_types: &EdgeTypes) -> bool {
@@ -218,11 +212,11 @@ pub fn lines_of(item: &Item) -> Map<String, Value> {
 }
 
 pub fn body_field<'a>(catalog: &'a Catalog, r#type: &str) -> &'a str {
-    catalog.body_field(r#type).unwrap_or(BODY_FIELD)
+    catalog.body_property(r#type)
 }
 
 pub fn title_field<'a>(catalog: &'a Catalog, r#type: &str) -> &'a str {
-    catalog.title_field(r#type).unwrap_or(TITLE_FIELD)
+    catalog.title_property(r#type)
 }
 
 /// A property a type declares under a name a file cannot carry as one.
