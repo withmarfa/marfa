@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use marfa_core::{
-    Core, CoreError, Hydration, ItemState, ListFilters, SearchFilters, Server, Sort, Tier,
+    Core, CoreError, Hydration, ItemState, ListFilters, SearchFilters, Server, SliceTier, Sort,
 };
 
 fn server() -> Server {
@@ -56,7 +56,10 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
         .unwrap()
         .with_catch_up_idle(Duration::from_secs(2));
     let report = core
-        .hydrate(&["core.note".into(), "core.file".into()], Tier::Library)
+        .hydrate(
+            &["core.note".into(), "core.file".into()],
+            SliceTier::Library,
+        )
         .unwrap();
     assert!(report.items >= 4, "{report:?}");
     assert!(!report.cursor.is_empty());
@@ -173,7 +176,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     assert!(quiet.reached_head, "{quiet:?}");
 
     let status = core.status().unwrap();
-    assert_eq!(status.slice_tier, Some(Tier::Library));
+    assert_eq!(status.slice_tier, Some(SliceTier::Library));
     assert_eq!(status.hydration, Hydration::Complete);
     assert_eq!(status.event_cursor.as_deref(), Some(quiet.cursor.as_str()));
 

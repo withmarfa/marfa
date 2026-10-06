@@ -17,6 +17,14 @@ impl Tier {
     }
 }
 
+/// The tiers a slice holds: one, or `all` for both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SliceTier {
+    Library,
+    Feed,
+    All,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ItemState {
     Active,
@@ -75,6 +83,16 @@ impl From<Tier> for marfa_core::Tier {
         match tier {
             Tier::Library => marfa_core::Tier::Library,
             Tier::Feed => marfa_core::Tier::Feed,
+        }
+    }
+}
+
+impl From<SliceTier> for marfa_core::SliceTier {
+    fn from(tier: SliceTier) -> Self {
+        match tier {
+            SliceTier::Library => marfa_core::SliceTier::Library,
+            SliceTier::Feed => marfa_core::SliceTier::Feed,
+            SliceTier::All => marfa_core::SliceTier::All,
         }
     }
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery, Registration};
-use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, UnregisteredType, WriteKind};
+use crate::model::{Draft, EdgeDraft, HydrateReport, SliceTier, UnregisteredType, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -18,7 +18,7 @@ pub(crate) fn hydrate(
     core: &Core,
     http: &Http,
     types: &[String],
-    tier: Tier,
+    tier: SliceTier,
     edge_types: &[String],
     every_type: bool,
     stop: &AtomicBool,
@@ -36,7 +36,7 @@ fn hydrate_inner(
     core: &Core,
     http: &Http,
     types: &[String],
-    tier: Tier,
+    tier: SliceTier,
     edge_types: &[String],
     every_type: bool,
     stop: &AtomicBool,
@@ -284,6 +284,14 @@ pub(crate) fn lay_queue_over(
                 };
                 if !store::item_held(conn, &id)? {
                     let mut wire = draft.wire(&id);
+                    // A keyed create sent with no tier lands on the row its
+                    // key names, at that row's tier.
+                    if draft.tier.is_none()
+                        && let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id)
+                        && let Some(held) = store::item_under_key(conn, source, source_id)?
+                    {
+                        wire.tier = held.tier.map(|tier| tier.as_str().into());
+                    }
                     if draft.occurred_at.is_none() {
                         wire.occurred_at.clone_from(&row.queued_at);
                         wire.created_at.clone_from(&row.queued_at);
@@ -396,10 +404,10 @@ pub(crate) fn type_pattern(name: &str) -> bool {
 
 /// A `system.*` type is listed at both tiers, as the slice takes it
 /// (`store::slice_takes`).
-fn listed_tier(declared: Option<&str>, tier: Tier) -> Option<Tier> {
+fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
     match declared {
-        Some(declared) if store::is_system(declared) => None,
-        _ => Some(tier),
+        Some(declared) if store::is_system(declared) => SliceTier::All,
+        _ => tier,
     }
 }
 
@@ -436,7 +444,7 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
 fn refuse_unreadable(
     http: &Http,
     types: &[String],
-    tier: Tier,
+    tier: SliceTier,
     catalog: &WireCatalog,
 ) -> Result<()> {
     let named: Vec<&str> = types
@@ -689,7 +697,7 @@ mod tests {
 
     use crate::scripted::{self, Scripted};
     use crate::stop_tests::copy;
-    use crate::{CoreError, Tier, store};
+    use crate::{CoreError, SliceTier, store};
 
     /// A credential that is not a key cannot read its own map, so the device
     /// cannot tell before listing whether it may read a type. The listing's
@@ -733,7 +741,7 @@ mod tests {
         let refused = core
             .hydrate_until(
                 &["core.note".into(), "core.bookmark".into()],
-                Tier::Library,
+                SliceTier::Library,
                 &[],
                 &AtomicBool::new(false),
             )
@@ -801,7 +809,7 @@ mod tests {
             let listed = server.seen("/items").len();
             let hydrated = core.hydrate_until(
                 &["core.note".into(), "core.entity".into()],
-                Tier::Library,
+                SliceTier::Library,
                 &[],
                 &AtomicBool::new(false),
             );
@@ -826,7 +834,7 @@ mod tests {
         );
         match core.hydrate_until(
             &["core.note".into(), "core.entity".into()],
-            Tier::Library,
+            SliceTier::Library,
             &[],
             &AtomicBool::new(false),
         ) {

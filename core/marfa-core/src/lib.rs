@@ -54,8 +54,8 @@ pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft,
     EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
-    SearchHit, Shown, Sort, SortDirection, SortField, Status, Thumbnail, Tier, UnregisteredType,
-    Verdict, WriteKind,
+    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
+    UnregisteredType, Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -283,7 +283,7 @@ impl Core {
     /// Refused while a catch-up or a follow runs on this handle: a follow
     /// left running across a hydration would apply events read against the
     /// old slice to the new copy. A caller stops its follow first.
-    pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
+    pub fn hydrate(&self, types: &[String], tier: SliceTier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
     }
 
@@ -293,7 +293,7 @@ impl Core {
     pub fn hydrate_until(
         &self,
         types: &[String],
-        tier: Tier,
+        tier: SliceTier,
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
@@ -307,7 +307,7 @@ impl Core {
     pub fn hydrate_with(
         &self,
         types: &[String],
-        tier: Tier,
+        tier: SliceTier,
         edge_types: &[String],
     ) -> Result<HydrateReport> {
         self.hydrate_until(types, tier, edge_types, &NEVER_STOPPED)
@@ -317,7 +317,7 @@ impl Core {
     pub(crate) fn hydrate_every_type_or(
         &self,
         types: &[String],
-        tier: Tier,
+        tier: SliceTier,
         edge_types: &[String],
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
@@ -1489,7 +1489,7 @@ impl Core {
             None => Vec::new(),
         };
         let slice_tier = match store::meta_get(&conn, store::META_SLICE_TIER)? {
-            Some(text) => Some(text.parse()?),
+            Some(text) => Some(store::slice_tier(&text)?),
             None => None,
         };
         let event_cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
@@ -1642,9 +1642,18 @@ fn queue_create(
         &draft.r#type,
         &catalog.created_properties(&draft.r#type, &draft.properties),
     );
-    if draft.tier.is_none() {
+    // A key naming a row the server answered sends no tier, since the server
+    // leaves that row's tier as it stands (`items.md` 7) and one sent would
+    // move it. A key naming a create still waiting sends that create's tier:
+    // if the create is refused, this one makes the row, and left out the
+    // tier would be the credential's default.
+    let keyed_tier = target.as_ref().and_then(|held| held.tier);
+    if draft.tier.is_none() && unresolved {
+        draft.tier = keyed_tier;
+    }
+    if draft.tier.is_none() && (unresolved || keyed_tier.is_none()) {
         draft.tier = Some(match store::slice(tx)? {
-            Some((_, tier)) => tier,
+            Some((_, tier)) => tier.create_tier(),
             // Nothing has named a tier yet, so the copy saves at the one an
             // app is reading unless it says otherwise.
             None if store::never_synced(tx)? => Tier::Library,
@@ -1652,12 +1661,14 @@ fn queue_create(
         });
     }
     let draft = &draft;
+    let shown_tier = draft.tier.or(keyed_tier);
     let id = draft
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
-    let row = draft.wire(&id);
+    let mut row = draft.wire(&id);
+    row.tier = shown_tier.map(|tier| tier.as_str().into());
     store::upsert_item(
         tx,
         &row,
@@ -1667,7 +1678,7 @@ fn queue_create(
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
     let declared = store::slice(tx)?.is_some_and(|(types, tier)| {
-        store::slice_takes(catalog, &types, tier, &row.r#type, draft.tier)
+        store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier)
     });
     if !declared {
         store::pin(tx, &id)?;
@@ -2608,6 +2619,124 @@ mod tests {
     }
 
     #[test]
+    fn a_keyed_create_naming_no_tier_leaves_the_held_rows_tier_and_sends_none() {
+        for slice in ["all", "feed"] {
+            let core = held_copy();
+            {
+                let conn = core.conn().unwrap();
+                store::meta_set(&conn, store::META_SLICE_TIER, slice).unwrap();
+                let mut inbox =
+                    store::testing::note("inbox", "server", "body", "2026-01-01T00:00:00Z");
+                inbox.tier = Some("feed".into());
+                inbox.source = "reader".into();
+                inbox.source_id = Some("article-1".into());
+                store::put_server_item(&conn, &inbox, Some(&[]), &catalog::Indexing::default())
+                    .unwrap();
+            }
+            let keyed = |source_id: &str| Draft {
+                r#type: "core.note".into(),
+                properties: properties(serde_json::json!({ "title": "Synced", "body": "again" })),
+                source: Some("reader".into()),
+                source_id: Some(source_id.into()),
+                ..Default::default()
+            };
+            let resynced = core.create_item(&keyed("article-1")).unwrap();
+            // The witness: a key naming no held row is sent the slice's tier.
+            let fresh = core.create_item(&keyed("article-2")).unwrap();
+            // A key naming a create still waiting is sent that create's tier,
+            // which it lands at whether or not the first is refused.
+            let again = core.create_item(&keyed("article-2")).unwrap();
+            let shown = |write: &QueuedWrite| {
+                core.get(write.item_id.as_deref().unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .tier
+            };
+            assert_eq!(shown(&resynced), Some(Tier::Feed), "{slice}");
+            let conn = core.conn().unwrap();
+            let sent = |write: &QueuedWrite| {
+                serde_json::from_str::<Value>(&store::payload_of(&conn, &write.id).unwrap())
+                    .unwrap()
+                    .get("tier")
+                    .cloned()
+            };
+            assert_eq!(
+                sent(&resynced),
+                None,
+                "a resync from a slice at {slice} moved the row"
+            );
+            let slice_tier: SliceTier = slice.parse().unwrap();
+            assert_eq!(
+                sent(&fresh),
+                Some(Value::String(slice_tier.create_tier().as_str().into())),
+                "{slice}"
+            );
+            assert_eq!(sent(&again), sent(&fresh), "{slice}");
+            assert!(!store::pinned(&conn, resynced.item_id.as_deref().unwrap()).unwrap());
+
+            // Laid back over a copy hydrated again, the re-save shows the tier
+            // of the row its key names.
+            let resynced_id = resynced.item_id.clone().unwrap();
+            store::clear_slice(&conn).unwrap();
+            let mut inbox = store::testing::note("inbox", "server", "body", "2026-01-01T00:00:00Z");
+            inbox.tier = Some("feed".into());
+            inbox.source = "reader".into();
+            inbox.source_id = Some("article-1".into());
+            store::put_server_item(&conn, &inbox, Some(&[]), &catalog::Indexing::default())
+                .unwrap();
+            assert!(!store::item_held(&conn, &resynced_id).unwrap());
+            let catalog = catalog::Catalog::load(&conn).unwrap();
+            hydrate::lay_queue_over(&conn, &catalog, &[]).unwrap();
+            assert_eq!(
+                store::items_by_ids(&conn, std::slice::from_ref(&resynced_id))
+                    .unwrap()
+                    .pop()
+                    .and_then(|item| item.tier),
+                Some(Tier::Feed),
+                "{slice}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_create_naming_no_tier_takes_the_slices_and_library_in_a_slice_of_both() {
+        for (slice, named, sent, pinned) in [
+            ("all", None, Tier::Library, false),
+            ("all", Some(Tier::Feed), Tier::Feed, false),
+            ("feed", None, Tier::Feed, false),
+            ("library", None, Tier::Library, false),
+            // The witness that a create the slice does not hold is told apart.
+            ("library", Some(Tier::Feed), Tier::Feed, true),
+        ] {
+            let core = held_copy();
+            store::meta_set(&core.conn().unwrap(), store::META_SLICE_TIER, slice).unwrap();
+            let queued = core
+                .create_item(&Draft {
+                    r#type: "core.note".into(),
+                    properties: properties(serde_json::json!({ "title": "Inbox" })),
+                    tier: named,
+                    ..Default::default()
+                })
+                .unwrap();
+            let id = queued.item_id.clone().unwrap();
+            assert_eq!(
+                core.get(&id).unwrap().unwrap().tier,
+                Some(sent),
+                "shown from a slice at {slice}"
+            );
+            let conn = core.conn().unwrap();
+            let body: Value =
+                serde_json::from_str(&store::payload_of(&conn, &queued.id).unwrap()).unwrap();
+            assert_eq!(body["tier"], sent.as_str(), "sent from a slice at {slice}");
+            assert_eq!(
+                store::pinned(&conn, &id).unwrap(),
+                pinned,
+                "pinned from a slice at {slice}"
+            );
+        }
+    }
+
+    #[test]
     fn a_copy_that_has_never_reached_a_server_saves_against_the_types_marfa_ships() {
         let core = Core::open_in_memory(None).unwrap();
         let note = core
@@ -3286,18 +3415,18 @@ mod tests {
     fn server_calls_need_a_server_and_catch_up_needs_a_cursor() {
         let offline = Core::open_in_memory(None).unwrap();
         assert_eq!(
-            offline.hydrate(&["core.note".into()], Tier::Library),
+            offline.hydrate(&["core.note".into()], SliceTier::Library),
             Err(CoreError::NoServer)
         );
         assert_eq!(offline.catch_up(), Err(CoreError::NoServer));
         let fresh = Core::open_in_memory(unreachable_server("http://127.0.0.1:9")).unwrap();
         assert_eq!(fresh.catch_up(), Err(CoreError::NoCursor));
         assert!(matches!(
-            fresh.hydrate(&[], Tier::Library),
+            fresh.hydrate(&[], SliceTier::Library),
             Err(CoreError::Invalid(_))
         ));
         assert!(matches!(
-            fresh.hydrate(&["*".into()], Tier::Library),
+            fresh.hydrate(&["*".into()], SliceTier::Library),
             Err(CoreError::Invalid(_))
         ));
     }
@@ -3728,19 +3857,23 @@ mod tests {
             (
                 "hydrate",
                 reader
-                    .hydrate(&["core.note".into()], Tier::Library)
+                    .hydrate(&["core.note".into()], SliceTier::Library)
                     .unwrap_err(),
             ),
             (
                 "hydrate_with",
                 reader
-                    .hydrate_with(&["core.note".into()], Tier::Library, &["parent-of".into()])
+                    .hydrate_with(
+                        &["core.note".into()],
+                        SliceTier::Library,
+                        &["parent-of".into()],
+                    )
                     .unwrap_err(),
             ),
             (
                 "hydrate_every_type_or",
                 reader
-                    .hydrate_every_type_or(&[], Tier::Library, &[], &NEVER_STOPPED)
+                    .hydrate_every_type_or(&[], SliceTier::Library, &[], &NEVER_STOPPED)
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),
@@ -3755,7 +3888,7 @@ mod tests {
                 reader
                     .hydrate_until(
                         &["core.note".into()],
-                        Tier::Library,
+                        SliceTier::Library,
                         &[],
                         &std::sync::atomic::AtomicBool::new(false),
                     )
@@ -4077,7 +4210,7 @@ mod tests {
             let following = scope.spawn(|| core.follow(&stop, false, |_| {}));
             std::thread::sleep(Duration::from_millis(300));
             let second = core.catch_up();
-            let hydrating = core.hydrate(&["core.note".into()], Tier::Library);
+            let hydrating = core.hydrate(&["core.note".into()], SliceTier::Library);
             stop.store(true, Ordering::Relaxed);
             let report = following.join().unwrap().unwrap();
             assert!(
@@ -4116,7 +4249,7 @@ mod tests {
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
         }
         std::thread::scope(|scope| {
-            let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], Tier::Library));
+            let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], SliceTier::Library));
             server.wait_for("/events", 1, Duration::from_secs(5));
             let caught = core.catch_up();
             let followed = core.follow(&AtomicBool::new(false), false, |_| {});

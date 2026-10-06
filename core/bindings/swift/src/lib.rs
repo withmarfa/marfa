@@ -15,6 +15,14 @@ pub enum Tier {
     Feed,
 }
 
+/// The tiers a slice holds: one, or `All` for both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SliceTier {
+    Library,
+    Feed,
+    All,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ItemState {
     Active,
@@ -160,7 +168,7 @@ pub struct SearchHit {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct HydrateReport {
     pub types: Vec<String>,
-    pub tier: Tier,
+    pub tier: SliceTier,
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
@@ -243,7 +251,7 @@ pub struct Status {
     /// The instance the copy was hydrated from.
     pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
-    pub slice_tier: Option<Tier>,
+    pub slice_tier: Option<SliceTier>,
     pub slice_edge_types: Vec<String>,
     pub pinned: Vec<String>,
     pub event_cursor: Option<String>,
@@ -1018,6 +1026,26 @@ impl From<marfa_core::Tier> for Tier {
     }
 }
 
+impl From<SliceTier> for marfa_core::SliceTier {
+    fn from(tier: SliceTier) -> Self {
+        match tier {
+            SliceTier::Library => marfa_core::SliceTier::Library,
+            SliceTier::Feed => marfa_core::SliceTier::Feed,
+            SliceTier::All => marfa_core::SliceTier::All,
+        }
+    }
+}
+
+impl From<marfa_core::SliceTier> for SliceTier {
+    fn from(tier: marfa_core::SliceTier) -> Self {
+        match tier {
+            marfa_core::SliceTier::Library => SliceTier::Library,
+            marfa_core::SliceTier::Feed => SliceTier::Feed,
+            marfa_core::SliceTier::All => SliceTier::All,
+        }
+    }
+}
+
 impl From<ItemState> for marfa_core::ItemState {
     fn from(state: ItemState) -> Self {
         match state {
@@ -1427,7 +1455,7 @@ impl Core {
     pub fn hydrate(
         &self,
         types: Vec<String>,
-        tier: Tier,
+        tier: SliceTier,
         stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
         self.hydrate_with(types, tier, Vec::new(), stop)
@@ -1438,7 +1466,7 @@ impl Core {
     pub fn hydrate_with(
         &self,
         types: Vec<String>,
-        tier: Tier,
+        tier: SliceTier,
         edge_types: Vec<String>,
         stop: Option<Arc<Stop>>,
     ) -> Result<HydrateReport, MarfaError> {
@@ -2581,13 +2609,17 @@ mod tests {
             matches!(error, MarfaError::Canceled { .. })
         };
         assert!(canceled(
-            core.hydrate(vec!["core.note".into()], Tier::Library, raised())
+            core.hydrate(vec!["core.note".into()], SliceTier::Library, raised())
                 .unwrap_err()
         ));
         assert!(canceled(core.drain(raised()).unwrap_err()));
         // The witness: given none, the same calls run to their end.
-        core.hydrate(vec!["core.note".into()], Tier::Library, Some(Stop::new()))
-            .unwrap();
+        core.hydrate(
+            vec!["core.note".into()],
+            SliceTier::Library,
+            Some(Stop::new()),
+        )
+        .unwrap();
         assert!(canceled(core.catch_up(raised()).unwrap_err()));
         core.catch_up(None).unwrap();
         core.drain(None).unwrap();
@@ -2764,7 +2796,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library, None)
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(false, Arc::new(Told(told)));
@@ -2790,7 +2822,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library, None)
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let reader = Core::open_reader(path).unwrap();
         let (told, ended) = std::sync::mpsc::channel();
@@ -2837,7 +2869,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library, None)
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(false, Arc::new(Reopens { path, handle }));
@@ -2874,7 +2906,7 @@ mod tests {
         let path = dir.path().join("core.sqlite").display().to_string();
         let writer = Core::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
         writer
-            .hydrate(vec!["core.note".into()], Tier::Library, None)
+            .hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let reader = Core::open_reader(path).unwrap();
         assert!(matches!(reader.held_handle(), Handle::Reader));

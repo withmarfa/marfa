@@ -26,6 +26,7 @@ import {
   type Refusal,
   type SearchFilters,
   type SearchHit,
+  type SliceTier,
   type Status,
   type Tier,
 } from "./protocol.js";
@@ -162,7 +163,7 @@ export class CliDevice implements DeviceUnderTest {
 
   async hydrate(
     types: string[],
-    tier: Tier,
+    tier: SliceTier,
     options: { edgeTypes?: string[] } = {},
   ): Promise<Outcome<HydrateReport>> {
     return this.json<HydrateReport>([

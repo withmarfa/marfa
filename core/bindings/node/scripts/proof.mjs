@@ -1,6 +1,6 @@
 // @ts-check
 import { readFileSync, writeFileSync } from "node:fs";
-import { MarfaCore, Tier, WriteKind } from "../index.js";
+import { MarfaCore, SliceTier, Tier, WriteKind } from "../index.js";
 
 const { MARFA_API_URL: url, MARFA_API_KEY: key, MARFA_DB: path } = process.env;
 if (!url || !key || !path) {
@@ -50,7 +50,7 @@ function printQueue(core) {
 
 const core = MarfaCore.open(path, url, key);
 if (phase === "hydrate") {
-  const hydrated = await core.hydrate(["core.note"], Tier.Feed);
+  const hydrated = await core.hydrate(["core.note"], SliceTier.Feed);
   console.log(
     `hydrated ${hydrated.items} item(s) at feed; cursor ${hydrated.cursor}; handle ${core.heldHandle()}`,
   );
@@ -211,7 +211,7 @@ if (phase === "hydrate") {
   // "Held before" was written before binding-proof.sh made the property a
   // thumbnail, so its value is not an image.
   const copy = MarfaCore.open(`${path}.thumbnail`, url, key);
-  await copy.hydrate(["user.snapshot"], Tier.Library);
+  await copy.hydrate(["user.snapshot"], SliceTier.Library);
   const snapshots = copy.list({ type: "user.snapshot" });
   const image = snapshots.find((item) => title(item) === "With an image");
   const early = snapshots.find((item) => title(item) === "Held before");

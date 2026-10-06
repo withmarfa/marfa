@@ -9,7 +9,7 @@ use marfa_core::{
 use crate::error::{CliError, Exit};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
-use crate::values::{ItemState, SortDirection, SortField, Tier, properties};
+use crate::values::{ItemState, SliceTier, SortDirection, SortField, Tier, properties};
 
 #[derive(Debug, Args)]
 pub struct DeviceArgs {
@@ -34,14 +34,14 @@ pub struct DeviceArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
-    /// Replace the local copy with the declared types at one tier.
+    /// Replace the local copy with the declared types at one tier, or both.
     Hydrate {
         /// Comma-separated type identifiers, such as core.note,core.file.
         #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
         types: Vec<String>,
-        /// The tier to hold the slice at.
+        /// The tier to hold the slice at, or `all` for both.
         #[arg(long)]
-        tier: Tier,
+        tier: SliceTier,
         /// An edge type to hold whole: every edge of it the key reads,
         /// whichever ends the copy holds. Repeatable.
         #[arg(long = "edge-type", value_name = "TYPE")]
@@ -512,7 +512,9 @@ pub struct CreateArgs {
     /// A tag, repeatable. Each is queued as a write of its own.
     #[arg(long = "tag", value_name = "TAG")]
     pub tags: Vec<String>,
-    /// The tier to write it at; the default is the library.
+    /// The tier to write it at; the default is the tier of the held row its
+    /// natural key names, else the slice's tier, or the library from a slice
+    /// of both or before a first hydration.
     #[arg(long)]
     pub tier: Option<Tier>,
     /// The source to stamp it with.

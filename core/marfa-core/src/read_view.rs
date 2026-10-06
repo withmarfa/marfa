@@ -587,7 +587,7 @@ mod tests {
             ],
         );
         assert!(matches!(
-            core.hydrate(&["core.note".into()], crate::Tier::Library),
+            core.hydrate(&["core.note".into()], crate::SliceTier::Library),
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert!(!store::hydrated(&core.conn().unwrap()).unwrap());
@@ -605,7 +605,7 @@ mod tests {
             ],
         );
         let report = core
-            .hydrate(&["core.note".into()], crate::Tier::Library)
+            .hydrate(&["core.note".into()], crate::SliceTier::Library)
             .unwrap();
         assert_eq!(report.cursor, "11");
         assert!(store::hydrated(&core.conn().unwrap()).unwrap());
@@ -657,7 +657,7 @@ mod tests {
         let types = ["core.note".to_string()];
         std::thread::scope(|scope| {
             let hydrating =
-                scope.spawn(|| core.hydrate_until(&types, crate::Tier::Library, &[], &stop));
+                scope.spawn(|| core.hydrate_until(&types, crate::SliceTier::Library, &[], &stop));
             server.wait_for("/items", 1, std::time::Duration::from_secs(5));
             stop.store(true, Ordering::Relaxed);
             assert!(matches!(
@@ -674,7 +674,12 @@ mod tests {
         assert!(matches!(core.get("x"), Err(CoreError::HydrationIncomplete)));
         // The witness: the same copy hydrates whole when it is not stopped.
         let report = core
-            .hydrate_until(&types, crate::Tier::Library, &[], &AtomicBool::new(false))
+            .hydrate_until(
+                &types,
+                crate::SliceTier::Library,
+                &[],
+                &AtomicBool::new(false),
+            )
             .unwrap();
         assert_eq!(report.pages, 1);
         assert!(store::hydrated(&core.conn().unwrap()).unwrap());
@@ -700,8 +705,13 @@ mod tests {
             .unwrap();
         let types = ["core.note".to_string()];
         assert_eq!(
-            core.hydrate_until(&types, crate::Tier::Library, &[], &AtomicBool::new(true))
-                .unwrap_err(),
+            core.hydrate_until(
+                &types,
+                crate::SliceTier::Library,
+                &[],
+                &AtomicBool::new(true)
+            )
+            .unwrap_err(),
             CoreError::Canceled
         );
         assert_eq!(server.asked(), 0, "a stopped hydration went to the server");
@@ -746,7 +756,7 @@ mod tests {
             .unwrap();
         server.on("/types", vec![refusal(503, "unavailable")]);
         let failed = core
-            .hydrate(&["core.note".into()], crate::Tier::Library)
+            .hydrate(&["core.note".into()], crate::SliceTier::Library)
             .unwrap_err();
         assert!(failed.is_environmental(), "{failed:?}");
         assert!(!store::hydrated(&core.conn().unwrap()).unwrap());
@@ -880,7 +890,7 @@ mod tests {
         );
         server.on("/types", vec![refusal(503, "unavailable")]);
         assert!(
-            core.hydrate(&["core.note".into()], crate::Tier::Library)
+            core.hydrate(&["core.note".into()], crate::SliceTier::Library)
                 .unwrap_err()
                 .is_environmental()
         );

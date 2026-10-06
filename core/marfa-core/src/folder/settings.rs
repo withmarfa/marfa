@@ -294,7 +294,7 @@ impl Settings {
                 "it holds no slice yet; hydrate it with the types the folder holds".into(),
             ));
         };
-        if tier != self.tier() {
+        if !tier.takes(Some(self.tier())) {
             return Err(unanswerable(format!(
                 "the folder holds the {} tier and this copy holds the {} tier",
                 self.tier().as_str(),
@@ -307,7 +307,7 @@ impl Settings {
             .filter(|id| {
                 !crate::store::is_system(id)
                     && self.holds_type(catalog, id)
-                    && !crate::store::slice_takes(catalog, &types, tier, id, Some(tier))
+                    && !crate::store::slice_takes(catalog, &types, tier, id, Some(self.tier()))
             })
             .collect();
         // A subtype goes with its parent, so only the parent is named.

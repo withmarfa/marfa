@@ -417,6 +417,21 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_of_both_tiers_answers_a_folder_of_either_with_that_tier_alone() {
+        let core = copy(None, &["core.note", FOLDER_TYPE], "all", &[]);
+        put(&core, "shelved", "core.note", "active", "library", &[]);
+        put(&core, "inbox", "core.note", "active", "feed", &[]);
+        for (tier, held) in [("library", "shelved"), ("feed", "inbox")] {
+            folder(
+                &core,
+                "active",
+                json!({ "title": tier, "search": { "types": ["core.note"], "tier": tier } }),
+            );
+            assert_eq!(listed(&core).unwrap(), [held], "{tier}");
+        }
+    }
+
+    #[test]
     fn a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part() {
         let refused = |core: &Core, settings: Value| {
             folder(core, "active", settings);
@@ -486,7 +501,7 @@ mod tests {
         let catalog = catalog::Catalog::load(&core.conn().unwrap()).unwrap();
         let takes = |types: &[&str], tier: Tier, row_type: &str, row_tier: Tier| {
             let types: Vec<String> = types.iter().map(|named| named.to_string()).collect();
-            store::slice_takes(&catalog, &types, tier, row_type, Some(row_tier))
+            store::slice_takes(&catalog, &types, tier.into(), row_type, Some(row_tier))
         };
         assert!(takes(
             &[FOLDER_TYPE],

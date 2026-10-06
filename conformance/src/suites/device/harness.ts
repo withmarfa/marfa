@@ -273,10 +273,18 @@ export function scriptHydration(
     // hydration sends, so anything else narrows the same way the server's
     // listing does.
     const asked = request.query.get("state") ?? "active";
-    const inState =
+    // The tier is honored for the same reason: `all`, or none, is both.
+    const tier = request.query.get("tier");
+    const inState = (
       asked === "any"
         ? forType
-        : forType.filter((row) => (row.item.state ?? "active") === asked);
+        : forType.filter((row) => (row.item.state ?? "active") === asked)
+    ).filter(
+      (row) =>
+        tier === null ||
+        tier === "all" ||
+        (row.item.tier ?? "library") === tier,
+    );
     const filter = request.query.get("filter");
     if (filter === null) {
       return itemsPage(

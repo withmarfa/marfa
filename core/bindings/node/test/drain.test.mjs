@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MarfaCore, Tier, BlockedReason, GrantKind, GrantLevel } from "../index.js";
+import { MarfaCore, SliceTier, BlockedReason, GrantKind, GrantLevel } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 async function unclaiming(missingGrant = false) {
@@ -74,7 +74,7 @@ test("names a source its key does not claim", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   core.createItem({
     type: "core.note",
     properties: { title: "a" },
@@ -176,7 +176,7 @@ test("sends each write once however many drains run at once", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   for (let n = 0; n < 6; n += 1) {
     core.createItem({ type: "core.note", properties: { title: `note ${n}` } });
   }
@@ -265,7 +265,7 @@ test("reads a refusal into its parts, and keeps the refused body until it is dis
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   const created = core.createItem({
     type: "core.note",
     properties: { title: "the words a person wrote" },
@@ -299,7 +299,7 @@ test("reports a missing grant in both the drain and queued blocked verdict", asy
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   core.createItem({ type: "core.note", properties: { title: "kept" } });
   const report = await core.drain();
   const queued = core.queue();

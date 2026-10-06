@@ -3,7 +3,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::scripted::{self, Answer, Scripted, Then};
-use crate::{Core, CoreError, Result, Server, Tier, store};
+use crate::{Core, CoreError, Result, Server, SliceTier, store};
 
 const WAIT: Duration = Duration::from_secs(2);
 
@@ -92,7 +92,7 @@ fn stopped<T: Send + 'static>(
 }
 
 fn hydrate(core: &Core, stop: &AtomicBool) -> Result<crate::HydrateReport> {
-    core.hydrate_until(&["core.note".into()], Tier::Library, &[], stop)
+    core.hydrate_until(&["core.note".into()], SliceTier::Library, &[], stop)
 }
 
 #[test]

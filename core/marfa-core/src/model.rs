@@ -43,6 +43,76 @@ impl fmt::Display for Tier {
     }
 }
 
+/// The tiers a slice holds. An item is in exactly one `Tier`; a slice may
+/// hold both, so a row moved between them stays in the copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SliceTier {
+    Library,
+    Feed,
+    All,
+}
+
+impl SliceTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SliceTier::Library => "library",
+            SliceTier::Feed => "feed",
+            SliceTier::All => "all",
+        }
+    }
+
+    /// A row with no tier is taken by no slice.
+    pub fn takes(self, row: Option<Tier>) -> bool {
+        match (self, row) {
+            (_, None) => false,
+            (SliceTier::All, Some(_)) => true,
+            (one, Some(tier)) => one == SliceTier::from(tier),
+        }
+    }
+
+    /// The tier a create naming none is sent at. A slice of both sends
+    /// `library`, the tier the server gives a row nothing names one for
+    /// (`items.md` 7), since the create has to name one for the copy to show
+    /// it where the server will put it.
+    pub fn create_tier(self) -> Tier {
+        match self {
+            SliceTier::Library | SliceTier::All => Tier::Library,
+            SliceTier::Feed => Tier::Feed,
+        }
+    }
+}
+
+impl From<Tier> for SliceTier {
+    fn from(tier: Tier) -> Self {
+        match tier {
+            Tier::Library => SliceTier::Library,
+            Tier::Feed => SliceTier::Feed,
+        }
+    }
+}
+
+impl FromStr for SliceTier {
+    type Err = CoreError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "library" => Ok(SliceTier::Library),
+            "feed" => Ok(SliceTier::Feed),
+            "all" => Ok(SliceTier::All),
+            other => Err(CoreError::Invalid(format!(
+                "a slice's tier must be library, feed or all, not {other:?}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for SliceTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ItemState {
@@ -299,7 +369,7 @@ pub struct SearchHit {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HydrateReport {
     pub types: Vec<String>,
-    pub tier: Tier,
+    pub tier: SliceTier,
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
@@ -1025,7 +1095,7 @@ pub struct Status {
     /// it; `None` before a hydration that read one.
     pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
-    pub slice_tier: Option<Tier>,
+    pub slice_tier: Option<SliceTier>,
     pub slice_edge_types: Vec<String>,
     /// The rows held by id whatever the slice says of them.
     pub pinned: Vec<String>,
@@ -1222,6 +1292,24 @@ mod tests {
     use base64::Engine;
 
     use super::*;
+
+    #[test]
+    fn a_slice_of_both_tiers_takes_either_and_a_row_of_none_is_taken_by_no_slice() {
+        for (slice, library, feed) in [
+            (SliceTier::All, true, true),
+            (SliceTier::Library, true, false),
+            (SliceTier::Feed, false, true),
+        ] {
+            assert_eq!(slice.takes(Some(Tier::Library)), library, "{slice}");
+            assert_eq!(slice.takes(Some(Tier::Feed)), feed, "{slice}");
+            assert!(!slice.takes(None), "{slice}");
+            assert_eq!(slice.as_str().parse::<SliceTier>().unwrap(), slice);
+        }
+        assert_eq!(SliceTier::All.create_tier(), Tier::Library);
+        assert_eq!(SliceTier::Feed.create_tier(), Tier::Feed);
+        assert!("both".parse::<SliceTier>().is_err());
+        assert!("all".parse::<Tier>().is_err());
+    }
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     const JPEG: &[u8] = b"\xff\xd8\xff\xe0";

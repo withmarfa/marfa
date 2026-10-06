@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MarfaCore, Tier } from "../index.js";
+import { MarfaCore, SliceTier } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
@@ -123,7 +123,7 @@ async function opened(t) {
 
 test("holds an edge type whole and reports it", async (t) => {
   const core = await opened(t);
-  const report = await core.hydrateWith(["core.note"], Tier.Library, [
+  const report = await core.hydrateWith(["core.note"], SliceTier.Library, [
     "parent-of",
   ]);
   assert.deepEqual(report.edgeTypes, ["parent-of"]);
@@ -133,14 +133,14 @@ test("holds an edge type whole and reports it", async (t) => {
     ["beneath"],
   );
 
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   assert.deepEqual(core.status().sliceEdgeTypes, []);
   assert.deepEqual(core.edgesFrom("outer"), []);
 });
 
 test("reads every edge of one type the copy holds in one call", async (t) => {
   const core = await opened(t);
-  await core.hydrateWith(["core.note"], Tier.Library, ["parent-of"]);
+  await core.hydrateWith(["core.note"], SliceTier.Library, ["parent-of"]);
   core.createEdge({
     sourceId: "note",
     targetId: "inner",
@@ -161,7 +161,7 @@ test("reads every edge of one type the copy holds in one call", async (t) => {
 
 test("pins and unpins a row outside the slice, saying whether it was pinned", async (t) => {
   const core = await opened(t);
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(core.get("settings"), null);
 
   assert.deepEqual(await core.pin("settings"), {
@@ -183,7 +183,7 @@ test("pins and unpins a row outside the slice, saying whether it was pinned", as
 
 test("refuses a pin of a row neither the server nor the copy holds", async (t) => {
   const core = await opened(t);
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   await assert.rejects(core.pin("absent"), /no item absent/);
   // A refusal off the JavaScript thread carries its code and fields as a
   // thrown one does.

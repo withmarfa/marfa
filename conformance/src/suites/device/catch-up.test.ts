@@ -1595,6 +1595,69 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
+  describe("a slice of both tiers", () => {
+    const rows = {
+      "core.note": [
+        { item: { id: "triaged", tier: "feed" } },
+        { item: { id: "shelved", tier: "library" } },
+      ],
+    };
+    const moves = () => [
+      copyItemEvent(
+        "11",
+        "item.updated",
+        wireItem({ id: "triaged", tier: "library", version: 2 }),
+      ),
+      copyItemEvent(
+        "12",
+        "item.updated",
+        wireItem({ id: "shelved", tier: "feed", version: 2 }),
+      ),
+    ];
+    const tiers = async () => {
+      const held = await harness!.device.list();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      return held.ok
+        ? Object.fromEntries(held.value.map((item) => [item.id, item.tier]))
+        : {};
+    };
+
+    it("keeps a row that moves between its tiers on a catch-up", async () => {
+      harness = await startHarness("move-within-both-tiers");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", rows });
+      server.copyAnswer("GET", "/events", copyReplay("12", moves()));
+      expect((await device.hydrate(["core.note"], "all")).ok).toBe(true);
+      // The witness: each row was held at the tier it then moved from.
+      expect(await tiers()).toEqual({ triaged: "feed", shelved: "library" });
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      expect(caught.ok && caught.value.applied).toBe(2);
+      expect(
+        await tiers(),
+        "a row that moved between the two tiers the slice holds left the copy, or kept the tier it had",
+      ).toEqual({ triaged: "library", shelved: "feed" });
+    });
+
+    it("keeps a row that moves between its tiers on a held stream", async () => {
+      harness = await startHarness("follow-within-both-tiers");
+      const { server, device } = harness;
+      scriptHydration(server, { head: "10", rows });
+      server.copyAnswer("GET", "/events", copyHeldLog(moves()));
+      expect((await device.hydrate(["core.note"], "all")).ok).toBe(true);
+      expect(await tiers()).toEqual({ triaged: "feed", shelved: "library" });
+      const followed = await device.follow(3);
+      expect(followed.ok, JSON.stringify(followed)).toBe(true);
+      if (!followed.ok) return;
+      expect(followed.value.report.cursor).toBe("12");
+      expect(followed.value.changes.map((change) => change.item_id)).toEqual([
+        "triaged",
+        "shelved",
+      ]);
+      expect(await tiers()).toEqual({ triaged: "library", shelved: "feed" });
+    });
+  });
+
   it("adds a row entering the slice by retype, with its tags and its edges", async () => {
     harness = await startHarness("entering-by-retype");
     const { server, device } = harness;

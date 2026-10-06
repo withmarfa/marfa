@@ -173,6 +173,64 @@ describe("the working copy holds one slice", () => {
     ).not.toContain("feed-row");
   });
 
+  it("holds both tiers in a slice of both, hydrated again from one of them", async () => {
+    harness = await startHarness("slice-both-tiers");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id: "library-row", tier: "library" } },
+          { item: { id: "feed-row", tier: "feed" } },
+        ],
+      },
+    });
+    const held = async () => {
+      const listed = await device.list();
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      return listed.ok
+        ? listed.value.map((item) => [item.id, item.tier]).sort()
+        : [];
+    };
+
+    // The witness: a slice of one tier holds one, so the copy below holds
+    // both because it asked for both.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(await held()).toEqual([["library-row", "library"]]);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "Saved before the slice changed", body: "kept" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const created = queued.ok ? queued.value.item_id : null;
+
+    const asked = server.requests.length;
+    const both = await device.hydrate(["core.note"], "all");
+    expect(both.ok, JSON.stringify(both)).toBe(true);
+    expect(both.ok && both.value.tier).toBe("all");
+    expect(
+      server.requests
+        .slice(asked)
+        .filter((request) => request.pathname === "/items")
+        .map((request) => request.query.get("tier")),
+      "the hydration did not ask the listing for both tiers, once",
+    ).toEqual(["all"]);
+    expect(await held()).toEqual(
+      [
+        ["feed-row", "feed"],
+        ["library-row", "library"],
+        [created, "library"],
+      ].sort(),
+    );
+    const status = await device.status();
+    expect(status.ok && status.value.slice_tier).toBe("all");
+    const queue = await device.queue();
+    expect(
+      queue.ok ? queue.value.map((write) => write.item_id) : queue,
+      "the hydration at another tier did not keep the queue",
+    ).toEqual([created]);
+  });
+
   it("holds a named edge type whole, whichever end it holds", async () => {
     harness = await startHarness("edge-type-whole");
     const { server, device } = harness;

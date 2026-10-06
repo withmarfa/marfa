@@ -11,6 +11,9 @@
 
 export type Tier = "library" | "feed";
 
+/** The tiers a slice holds: one, or `all` for both (`device.md` 1). */
+export type SliceTier = Tier | "all";
+
 export interface Refusal {
   /** The adapter's reading of the device's refusal. `unclassified` when it could not read one. */
   code: string;
@@ -46,7 +49,7 @@ export interface Item {
 
 export interface HydrateReport {
   types: string[];
-  tier: Tier;
+  tier: SliceTier;
   /** The edge types held whole, every edge of each the key can read. */
   edge_types: string[];
   items: number;
@@ -93,7 +96,7 @@ export interface FollowReport {
 export interface Status {
   server_origin?: string | null;
   slice_types: string[];
-  slice_tier?: Tier | null;
+  slice_tier?: SliceTier | null;
   /** The edge types the slice holds whole. */
   slice_edge_types: string[];
   /** The rows held by id whatever the slice says of them. */
@@ -373,7 +376,7 @@ export interface DeviceUnderTest {
 
   hydrate(
     types: string[],
-    tier: Tier,
+    tier: SliceTier,
     options?: { edgeTypes?: string[] },
   ): Promise<Outcome<HydrateReport>>;
   /** Hold one row by id, whatever the slice says of it, read now. */
