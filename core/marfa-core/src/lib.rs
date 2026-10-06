@@ -3646,6 +3646,7 @@ mod tests {
             ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
             ("restore_item", reader.restore_item("x").unwrap_err()),
+            ("purge_item", reader.purge_item("x", None).unwrap_err()),
             (
                 "transition_item",
                 reader
@@ -3788,7 +3789,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            37,
+            38,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
