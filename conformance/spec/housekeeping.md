@@ -14,11 +14,11 @@ The periodic work the server does on itself, including the trash purge, version 
 
 A housekeeping job switched off by configuration is not listed and answers `404` the same way, while one whose retention `/config` can set is listed whatever the instance default. The referee's shared server boots with enrichment off and so cannot show that name listed under any setting; `packages/server/src/housekeeping/registrations.test.ts` proves each gate from both sides.
 
-A housekeeping job never overlaps itself: a run started while another holds the name answers `409 housekeeping_job_running` (`errors.md` 23). The `error` outcome is not a statement here, because no housekeeping job produces it on demand over the wire; the server's own suite produces it (`packages/server/src/routes/housekeeping.test.ts`).
+A housekeeping job never overlaps itself, except with a run given up on at its deadline: a run started while another holds the name answers `409 housekeeping_job_running` (`errors.md` 23). The `error` outcome is not a statement here, because no housekeeping job produces it on demand over the wire; the server's own suite produces it (`packages/server/src/routes/housekeeping.test.ts`).
 
 ## What is not observable over HTTP
 
-The schedule survives a restart, a run the last process never finished is cleared at the next boot with a log line, and runs are concurrent across names. A run that outlives its deadline is ended: it is recorded as an `error` outcome whose `error` says it did not finish in time, its name is freed so the next run is not answered `409 housekeeping_job_running`, and whatever the abandoned run later settles with is discarded. None of it is observable against a server the referee booted once, because no housekeeping job hangs on demand, so none is a statement here; the server's own suite proves each (`packages/server/src/housekeeping/scheduler.test.ts`).
+The schedule survives a restart, a run the last process never finished is cleared at the next boot with a log line, and runs are concurrent across names. A run that outlives its deadline is given up on, not cancelled: it is recorded as an `error` outcome whose `error` says it did not finish in time, its name is freed so the next run is not answered `409 housekeeping_job_running`, and whatever it later settles with is discarded. None of it is observable against a server the referee booted once, because no housekeeping job hangs on demand, so none is a statement here; the server's own suite proves each (`packages/server/src/housekeeping/scheduler.test.ts`).
 
 ## Retention ranges
 

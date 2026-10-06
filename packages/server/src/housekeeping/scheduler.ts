@@ -43,15 +43,15 @@ export interface HousekeepingJob {
    *  the document declare the shape instead of typing it unknown. A throw
    *  is recorded as the run's error. */
   run: () => Promise<HousekeepingReport | null>;
-  /** How long one run may take before it is ended and recorded as failed.
-   *  Defaults to `DEFAULT_RUN_DEADLINE_MS`. A run is not cancelled, because
-   *  a promise cannot be: its result is discarded and the name is freed. */
+  /** How long one run may take before it is given up on and recorded as
+   *  failed. Defaults to `DEFAULT_RUN_DEADLINE_MS`. A run is not cancelled,
+   *  because a promise cannot be: its result is discarded and the name is
+   *  freed, so it may still be running when the next run starts. */
   deadlineMs?: number;
 }
 
-/** Long enough for the slowest legitimate run, such as an integrity check
- *  over a large store, and short enough that a hung run is not a day's
- *  outage of its name. */
+/** Short enough that a hung run costs its name an hour, not a restart. A
+ *  job whose run can legitimately take longer sets its own. */
 export const DEFAULT_RUN_DEADLINE_MS = 3_600_000;
 
 export interface HousekeepingRun {
@@ -351,7 +351,7 @@ export class Housekeeping {
         expired = true;
         reject(
           new Error(
-            `The run did not finish within ${String(deadlineMs)} ms and was ended.`,
+            `The run did not finish within ${String(deadlineMs)} ms and was given up on.`,
           ),
         );
       }, deadlineMs);
@@ -368,6 +368,13 @@ export class Housekeeping {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** The deadline a run of `name` is held to. */
+  deadlineMs(name: string): number {
+    const job = this.jobs.get(name);
+    if (!job) throw new Error(`Housekeeping: no job named ${name}`);
+    return job.deadlineMs ?? DEFAULT_RUN_DEADLINE_MS;
   }
 
   /** Records earlier runs could not write. A pass writes them before it

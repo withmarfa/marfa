@@ -5,6 +5,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { Housekeeping } from "./scheduler.js";
+import type { HousekeepingJob } from "./scheduler.js";
 
 let ctx: TestContext | undefined;
 
@@ -883,7 +884,7 @@ describe("Housekeeping", () => {
       const row = await ctx.storage.housekeeping.get("hung");
       expect(row?.running_since).toBeNull();
       expect(row?.last_outcome).toBe("error");
-      // The name is free: neither the door nor the poll is refused.
+      // The name is free: the door does not refuse it.
       expect(await hk.runNow("hung")).toMatchObject({
         kind: "ran",
         run: { outcome: "ok", result: { swept: 2 } },
@@ -915,25 +916,38 @@ describe("Housekeeping", () => {
       await hk.stop();
     });
 
-    it("leaves a finished run's record alone when its deadline never fires", async () => {
+    it("clears a run's deadline timer when the run finishes first", async () => {
       ctx = await createTestContext();
       const hk = scheduler(clock(T0).nowFn);
+      let fail = false;
       hk.register({
         name: "quick",
         intervalMs: 3_600_000,
         firstRunDelayMs: 3_600_000,
-        deadlineMs: 20,
-        run: () => Promise.resolve({ swept: 1 }),
+        deadlineMs: 7_777_777,
+        run: () =>
+          fail ? Promise.reject(new Error("boom")) : Promise.resolve(null),
       });
       await hk.start();
-      expect(await hk.runNow("quick")).toMatchObject({
-        run: { outcome: "ok", result: { swept: 1 }, error: null },
-      });
-      // Past the deadline: a timer left behind would record a failure now.
-      await pause(40);
-      expect((await ctx.storage.housekeeping.get("quick"))?.last_outcome).toBe(
-        "ok",
-      );
+      const realSet = globalThis.setTimeout;
+      const deadlines: unknown[] = [];
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+        ...args: Parameters<typeof setTimeout>
+      ) => {
+        const handle = realSet(...args);
+        if (args[1] === 7_777_777) deadlines.push(handle);
+        return handle;
+      }) as typeof setTimeout);
+      const cleared = vi.spyOn(globalThis, "clearTimeout");
+      const captured = captureLog();
+      await hk.runNow("quick");
+      fail = true;
+      await hk.runNow("quick");
+      captured.restore();
+      expect(deadlines).toHaveLength(2);
+      for (const handle of deadlines) {
+        expect(cleared).toHaveBeenCalledWith(handle);
+      }
       await hk.stop();
     });
 
@@ -943,16 +957,20 @@ describe("Housekeeping", () => {
       const first = hangs();
       const second = hangs();
       let runs = 0;
-      hk.register({
+      const job: HousekeepingJob = {
         name: "late",
         intervalMs: 3_600_000,
         firstRunDelayMs: 3_600_000,
         deadlineMs: 20,
         run: () => {
           runs += 1;
+          // The scheduler reads the deadline as a run starts, so the next
+          // run is not itself ended while the test waits on a slow runner.
+          job.deadlineMs = 60_000;
           return runs === 1 ? first.run() : second.run();
         },
-      });
+      };
+      hk.register(job);
       await hk.start();
       const captured = captureLog();
       expect(await hk.runNow("late")).toMatchObject({

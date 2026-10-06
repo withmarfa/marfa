@@ -34,6 +34,14 @@ import { TesseractOcr } from "../enrichment/ocr.js";
 import { BulkActionJobGcSweeper } from "../bulk-actions/index.js";
 
 /**
+ * For the jobs bounded by bytes moved or rows read rather than by a few
+ * queries: a gigabyte over a slow link, or a thinning over every item, must
+ * not be given up on while it makes progress, because the next run would
+ * start the same work again beside it.
+ */
+const LONG_RUN_DEADLINE_MS = 6 * 3_600_000;
+
+/**
  * Every housekeeping job the server runs on itself, registered from one
  * place so the set is a function of the configuration and can be asserted
  * as one. One its configuration switches off is not registered, so it is
@@ -127,6 +135,7 @@ export function registerHousekeepingJobs(
   housekeeping.register({
     name: "webhook-schedule",
     intervalMs: 1_000,
+    deadlineMs: 60_000,
     firstRunDelayMs: 0,
     run: () => webhookScheduler.runOnce(),
   });
@@ -142,6 +151,7 @@ export function registerHousekeepingJobs(
   housekeeping.register({
     name: "webhook-poll",
     intervalMs: WEBHOOK_POLL_INTERVAL_MS,
+    deadlineMs: 120_000,
     firstRunDelayMs: 0,
     run: async () => {
       const report = await webhookPoller.runOnce();
@@ -161,6 +171,7 @@ export function registerHousekeepingJobs(
     housekeeping.register({
       name: "heartbeat",
       intervalMs: config.heartbeatIntervalMs ?? 60_000,
+      deadlineMs: 30_000,
       firstRunDelayMs: 0,
       run: () => heartbeat.runOnce(),
     });
@@ -175,6 +186,7 @@ export function registerHousekeepingJobs(
   housekeeping.register({
     name: "version-thinning",
     intervalMs: config.versionThinningIntervalMs,
+    deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 5_000,
     run: () => versionThinner.runOnce(),
   });
@@ -312,6 +324,7 @@ export function registerHousekeepingJobs(
   housekeeping.register({
     name: "blob-replicate",
     intervalMs: config.blobReplicateIntervalMs ?? 60_000,
+    deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 15_000,
     run: async () => {
       const result = await replicator.runOnce();
@@ -328,6 +341,7 @@ export function registerHousekeepingJobs(
   housekeeping.register({
     name: "blob-integrity",
     intervalMs: config.blobIntegrityIntervalMs ?? 3_600_000,
+    deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 60_000,
     run: async () => {
       const result = await integrity.runOnce();
