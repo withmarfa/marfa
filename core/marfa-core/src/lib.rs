@@ -373,7 +373,7 @@ impl Core {
         match held.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))? {
             true => Ok(!added),
             // A read by id answers a row in the bin as one that is gone.
-            false if http.trashed_item(id)?.is_some() => Err(CoreError::NotFound {
+            false if context.http(http).trashed_item(id)?.is_some() => Err(CoreError::NotFound {
                 code: "trashed".into(),
                 message: format!("{id} is in the bin; restore it to pin it"),
             }),

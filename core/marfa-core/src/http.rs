@@ -489,7 +489,11 @@ impl Http {
     /// answers `404` as it answers a row that is gone (`items.md` 19).
     pub fn trashed_item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         let filter = format!("id eq {}", serde_json::Value::String(id.to_string()));
-        Ok(self.bin_page(None, Some(&filter), None, 1)?.data.pop())
+        Ok(self
+            .bin_page(None, Some(&filter), None, 1)?
+            .data
+            .into_iter()
+            .find(|row| row.item.id == id && row.item.state == "trashed"))
     }
 
     pub fn item_edges_page(
