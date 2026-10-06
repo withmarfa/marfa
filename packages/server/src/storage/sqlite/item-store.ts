@@ -160,6 +160,16 @@ function isSourceDedupViolation(err: unknown): boolean {
   return false;
 }
 
+/** An application grant a person revoked: the row's own `status`, not its
+ *  lifecycle `state`, which the revoke leaves alone. */
+function isRevokedAppGrantRow(row: Item): boolean {
+  return (
+    row.type === "system.connection" &&
+    row.properties.kind === "app" &&
+    row.properties.status === "revoked"
+  );
+}
+
 /**
  * Compiles the caller's readable-type patterns into one predicate.
  *
@@ -178,16 +188,6 @@ function isSourceDedupViolation(err: unknown): boolean {
  * rather than everything. `undefined` out means "no predicate", so a caller
  * pushes the result only when it is present.
  */
-/** An application grant a person revoked: the row's own `status`, not its
- *  lifecycle `state`, which the revoke leaves alone. */
-function isRevokedAppGrantRow(row: Item): boolean {
-  return (
-    row.type === "system.connection" &&
-    row.properties.kind === "app" &&
-    row.properties.status === "revoked"
-  );
-}
-
 function typePatternClause(pattern: string): SQL {
   const { global, exact, descendantPattern } = typePatternToSql(pattern);
   if (global) return sql`1=1`;

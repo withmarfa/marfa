@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { itemWrites } from "./item-writes.js";
+import { writeItem } from "./item-write.js";
+import type { ApiKey } from "@withmarfa/shared";
 import {
   createTestContext,
   sweepRevokedGrantsBefore,
@@ -197,6 +199,50 @@ describe("TrashPurger.runOnce — behavioral", () => {
     );
     expect(await laterPurger.runOnce()).toBe(1);
     expect(await rowExists(itemId)).toBe(false);
+  });
+
+  it("leaves a row the purge refuses in the bin and purges the rows behind it", async () => {
+    // A live app grant in the bin is refused by the purge doors, and is
+    // the oldest row, so it is the first the sweep reaches.
+    const stuck = await itemWrites(ctx.storage).create({
+      type: "system.connection",
+      properties: {
+        kind: "app",
+        status: "active",
+        granted_at: "2019-01-01T00:00:00.000Z",
+        client_id: "stuck-in-the-bin",
+      },
+    });
+    const ancient = new Date(
+      FIXED_NOW.getTime() - 400 * MS_PER_DAY,
+    ).toISOString();
+    await (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun(
+      "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
+      [ancient, stuck.id],
+    );
+    const behind = id("ddd1");
+    await seedItemWithUpdatedAt({
+      id: behind,
+      state: "trashed",
+      tier: "library",
+      updatedAtIso: new Date(
+        FIXED_NOW.getTime() - 100 * MS_PER_DAY,
+      ).toISOString(),
+    });
+
+    const purged = await new TrashPurger(
+      ctx.storage,
+      60,
+      () => FIXED_NOW,
+    ).runOnce();
+
+    expect(purged).toBe(1);
+    expect(await rowExists(behind)).toBe(false);
+    expect(await rowExists(stuck.id)).toBe(true);
   });
 });
 
@@ -659,6 +705,30 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     const deleted = await sweepRevokedGrantsBefore(ctx.storage, CUTOFF);
     expect(deleted).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
+  });
+
+  it("is a purge no credential can ask for, though the sweep can", async () => {
+    const id = await seedRevokedGrant(OLD);
+    const keys = await ctx.storage.keys.list();
+    const key = keys.find((k) => !k.is_operator);
+    expect(key).toBeDefined();
+
+    await expect(
+      writeItem(
+        ctx.storage,
+        { kind: "credential", key: key as unknown as ApiKey },
+        { op: "purge", id, revokedGrant: true },
+      ),
+    ).rejects.toThrow(/Only revoked items can be purged/);
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
+
+    // The witness: the same write as the platform's own goes through.
+    await writeItem(
+      ctx.storage,
+      { kind: "platform" },
+      { op: "purge", id, revokedGrant: true },
+    );
+    expect(await ctx.storage.items.get(id)).toBeNull();
   });
 
   it("keeps one revoked inside the window", async () => {

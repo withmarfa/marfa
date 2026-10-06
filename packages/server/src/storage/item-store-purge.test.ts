@@ -123,7 +123,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
   });
 
-  it("purgeTrashedOlderThan removes FTS entries for purged trashed items", async () => {
+  it("the trash sweep removes FTS entries for purged trashed items", async () => {
     const itemId = id("aaa2");
     await itemWrites(ctx.storage).create({
       id: itemId,
@@ -151,7 +151,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
   });
 });
 
-describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
+describe("TrashPurger — edge cleanup", () => {
   it("drops edges on both sides of a purged item and leaves unrelated edges", async () => {
     const doomed = id("ccc1");
     const neighbor = id("ccc2");
@@ -309,7 +309,7 @@ describe("a purge through the item write — atomicity", () => {
  * a tag or extension write included, so a sweep reading it would restart
  * the retention clock on an edit made in the bin.
  */
-describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
+describe("TrashPurger — the clock it reads", () => {
   const CUTOFF = FIXED_NOW.toISOString();
   const LONG_AGO = new Date(
     FIXED_NOW.getTime() - 90 * MS_PER_DAY,
