@@ -220,7 +220,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     if (!found) {
       throw new MarfaError(
         ErrorCode.OWNER_NOT_FOUND,
-        "This instance has no owner yet; POST /owner creates one",
+        "This instance has no owner yet; `marfa owner create` or POST /owner creates one",
       );
     }
     return c.json(wire(found), 200);

@@ -164,6 +164,18 @@ pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     Ok(scopes.join(" "))
 }
 
+/// The page a person signs in on, at the issuer the server names. Read apart
+/// from `discover`, which refuses an issuer off the address the command was
+/// given: a server reached by one address may be configured for another, and
+/// the sign-in form trusts only its own.
+pub fn sign_in_page(remote: &Remote) -> Option<String> {
+    let value = remote
+        .json(&Request::get(&["auth", ".well-known", "oauth-authorization-server"]).public())
+        .ok()?;
+    let issuer = value.get("issuer")?.as_str()?;
+    Some(format!("{}/sign-in", issuer.trim_end_matches('/')))
+}
+
 pub fn register(discovery: &Discovery) -> Result<String, CliError> {
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
@@ -202,6 +214,8 @@ pub fn device_code(
 pub enum Poll {
     Pending,
     SlowDown,
+    /// The token door's own limiter answered; the code is still good.
+    RateLimited(Option<u64>),
     Token(TokenSet),
 }
 
@@ -216,6 +230,11 @@ pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result
         Ok(value) => Ok(Poll::Token(token_set(value)?)),
         Err(CliError::Refused { code, .. }) if code == "authorization_pending" => Ok(Poll::Pending),
         Err(CliError::Refused { code, .. }) if code == "slow_down" => Ok(Poll::SlowDown),
+        Err(CliError::Refused {
+            status: 429,
+            retry_after_seconds,
+            ..
+        }) => Ok(Poll::RateLimited(retry_after_seconds)),
         Err(error) => Err(error),
     }
 }
@@ -227,6 +246,7 @@ pub fn wait_for_decision(
 ) -> Result<TokenSet, CliError> {
     let deadline = now_seconds().saturating_add(code.expires_in);
     let mut interval = code.interval.max(1);
+    let mut pause = interval;
     loop {
         let remaining = deadline.saturating_sub(now_seconds());
         if remaining == 0 {
@@ -239,11 +259,16 @@ pub fn wait_for_decision(
                 details: None,
             });
         }
-        sleep(Duration::from_secs(interval.min(remaining)));
+        sleep(Duration::from_secs(pause.min(remaining)));
+        pause = interval;
         match poll(discovery, client_id, &code.device_code)? {
             Poll::Token(token) => return Ok(token),
             Poll::Pending => {}
-            Poll::SlowDown => interval = interval.saturating_add(5),
+            Poll::SlowDown => {
+                interval = interval.saturating_add(5);
+                pause = interval;
+            }
+            Poll::RateLimited(wait) => pause = interval.max(wait.unwrap_or(0)),
         }
     }
 }
@@ -638,6 +663,76 @@ mod tests {
         assert!(!is_stale(&Kept::Key {
             key: "marfa_k1_x".into()
         }));
+    }
+
+    fn waiting_discovery(origin: &str) -> Discovery {
+        serde_json::from_str(&document(origin, origin)).unwrap()
+    }
+
+    fn a_code(expires_in: u64) -> DeviceCode {
+        DeviceCode {
+            device_code: "dc".into(),
+            user_code: "ABCD1234".into(),
+            verification_uri: "http://door.invalid/auth/device".into(),
+            verification_uri_complete: None,
+            expires_in,
+            interval: 1,
+        }
+    }
+
+    #[test]
+    fn a_login_keeps_polling_through_the_token_doors_rate_limit() {
+        let limited = r#"{"error":{"code":"rate_limited","message":"Too many requests"}}"#;
+        let door = Door::open_at(|_| {
+            vec![
+                Answer::json("429 Too Many Requests", limited).with_header("Retry-After", "2"),
+                Answer::json("429 Too Many Requests", limited),
+                Answer::json(
+                    "200 OK",
+                    r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+                ),
+            ]
+        });
+        let discovery = waiting_discovery(&door.url);
+        let started = std::time::Instant::now();
+        let token = wait_for_decision(&discovery, "client", &a_code(600)).unwrap();
+        assert_eq!(token.access_token, "marfa_at_new");
+        assert!(
+            started.elapsed() >= Duration::from_secs(4),
+            "the wait the door named is kept before the next poll: 1 + 2 + 1 seconds"
+        );
+        assert_eq!(door.received().len(), 3);
+    }
+
+    #[test]
+    fn a_login_ends_on_a_refusal_that_is_not_a_wait() {
+        let denied = r#"{"error":{"code":"access_denied","message":"denied"}}"#;
+        let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", denied)]);
+        let discovery = waiting_discovery(&door.url);
+        match wait_for_decision(&discovery, "client", &a_code(600)) {
+            Err(CliError::Refused { code, .. }) => assert_eq!(code, "access_denied"),
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert_eq!(door.received().len(), 1);
+    }
+
+    #[test]
+    fn the_sign_in_page_is_the_one_at_the_issuer_the_server_names() {
+        let door = Door::open_at(|own| {
+            vec![Answer::json(
+                "200 OK",
+                &document(own, "http://localhost:8600"),
+            )]
+        });
+        let page = sign_in_page(&Remote::public_at(&door.url).unwrap());
+        assert_eq!(page.as_deref(), Some("http://localhost:8600/auth/sign-in"));
+        door.received();
+        let door = Door::open(vec![Answer::json(
+            "404 Not Found",
+            r#"{"error":{"code":"not_found","message":"no"}}"#,
+        )]);
+        assert_eq!(sign_in_page(&Remote::public_at(&door.url).unwrap()), None);
+        door.received();
     }
 
     #[test]

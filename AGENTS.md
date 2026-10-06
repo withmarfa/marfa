@@ -36,6 +36,8 @@ A version exists only as a git tag, created only when a release is called for, e
 
 `pnpm install`, `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev` (port 8600 unless `PORT` says otherwise); every setting is defined once, in the settings schema in `packages/server/src/config.ts`, and read nowhere else. The core's commands are in `core/README.md`.
 
+`core/scripts/server-up.sh` boots a throwaway server for the core's live tests and for trying the sign-in pages by hand. A boot, always on `127.0.0.1`, also creates an owner, whose throwaway email and password are in `core/scripts/test-owner.example.env` and are printed with the URL and keys as `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`.
+
 ## Secrets
 
 Software-consumed values live in Infisical, never in a file here. A local `.infisical.json`, which Git ignores, maps a checkout to its project; run anything that needs them under `aic-infisical-run -- <command>`. `.env.example` carries names, never values.

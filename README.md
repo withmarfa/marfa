@@ -40,7 +40,23 @@ cd packages/server
 pnpm dev    # http://localhost:8600
 ```
 
-[`CONTRIBUTING.md`](./CONTRIBUTING.md#making-the-first-key) shows how to make the first key and check the instance.
+A new instance has no key and no owner, and nobody can sign in until both exist. In a second terminal, make the first key:
+
+```bash
+cargo install --locked --path core/marfa-cli
+export MARFA_API_URL=http://localhost:8600
+marfa keys bootstrap    # paste the bootstrap secret from the server's log, then press Enter
+```
+
+The command prints the operator key. Use it to create the owner, then open the sign-in page:
+
+```bash
+read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
+marfa owner create --email owner@example.com      # asks for a password on the terminal
+unset MARFA_API_KEY
+```
+
+Sign in at <http://localhost:8600/auth/sign-in>. [`CONTRIBUTING.md`](./CONTRIBUTING.md#making-the-first-key) goes on to make a working key and check the instance.
 
 `.env.example` lists every setting the server reads; the settings schema in `packages/server/src/config.ts` defines each one's type, bounds and default, and the server refuses to start on a value outside them. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 

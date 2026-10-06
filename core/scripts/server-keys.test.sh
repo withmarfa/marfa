@@ -17,9 +17,28 @@ key = json.load(sys.stdin)
 assert key["is_operator"] == (sys.argv[1] == "operator"), "wrong key role"' "$2"
 }
 
+# The sign-in form trusts the issuer's own origin, which the discovery document
+# names and which need not be the address the server was booted on.
+check_owner() {
+  local body origin
+  origin="$(curl -fsS --max-time 10 "${MARFA_TEST_URL}/auth/.well-known/oauth-authorization-server" |
+    python3 -c 'import json,sys; from urllib.parse import urlparse
+issuer = urlparse(json.load(sys.stdin)["issuer"])
+print(f"{issuer.scheme}://{issuer.netloc}")')"
+  body="$(python3 -c 'import json,sys; print(json.dumps({"email": sys.argv[1], "password": sys.argv[2]}))' \
+    "${MARFA_TEST_OWNER_EMAIL}" "${MARFA_TEST_OWNER_PASSWORD}")"
+  curl -fsS --max-time 10 -X POST "${MARFA_TEST_URL}/auth/sign-in/email" \
+    -H 'Content-Type: application/json' \
+    -H "Origin: ${origin}" \
+    -d "${body}" |
+    python3 -c 'import json,sys
+answer = json.load(sys.stdin)
+assert answer.get("user", {}).get("email") == sys.argv[1], "the owner did not sign in"' "${MARFA_TEST_OWNER_EMAIL}"
+}
+
 up() {
   local env_text
-  unset MARFA_TEST_KEY MARFA_TEST_OPERATOR_KEY
+  unset MARFA_TEST_KEY MARFA_TEST_OPERATOR_KEY MARFA_TEST_OWNER_EMAIL MARFA_TEST_OWNER_PASSWORD
   env_text="$("${scripts}/server-up.sh")"
   eval "${env_text}"
   : "${MARFA_TEST_KEY:?working key was not exported}"
@@ -30,13 +49,17 @@ import os, stat, sys
 for path in sys.argv[1:]:
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600, "credential file is not private"
 PY
+  : "${MARFA_TEST_OWNER_EMAIL:?the test owner was not exported}"
+  : "${MARFA_TEST_OWNER_PASSWORD:?the test owner password was not exported}"
   check_key "${MARFA_TEST_KEY}" working
   check_key "${MARFA_TEST_OPERATOR_KEY}" operator
+  check_owner
 }
 
 up
 first_working="${MARFA_TEST_KEY}"
 first_operator="${MARFA_TEST_OPERATOR_KEY}"
+first_owner="${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}"
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
 chmod 644 "${MARFA_SERVER_KEEP}/boot.env"
 : >"${MARFA_SERVER_ENV}"
@@ -44,7 +67,8 @@ chmod 644 "${MARFA_SERVER_ENV}"
 up
 [[ "${MARFA_TEST_KEY}" == "${first_working}" ]]
 [[ "${MARFA_TEST_OPERATOR_KEY}" == "${first_operator}" ]]
-echo "Both key roles survive a kept-server restart."
+[[ "${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}" == "${first_owner}" ]]
+echo "Both key roles and the test owner survive a kept-server restart."
 
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
 python3 - "${MARFA_SERVER_KEEP}/boot.env" <<'PY'

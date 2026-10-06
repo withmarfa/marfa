@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 use clap::{Args, Subcommand};
 use serde_json::json;
 
+use crate::auth;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -42,14 +43,23 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 body["name"] = json!(name);
             }
             let created = remote.json(&Request::post(&["owner"]).json(body))?;
+            let page = auth::sign_in_page(remote);
             out.report(&created, || {
-                format!(
-                    "created the owner {} on {}",
+                created_line(
                     created.get("email").and_then(|v| v.as_str()).unwrap_or(""),
-                    remote.origin()
+                    remote.origin(),
+                    page.as_deref(),
                 )
             })
         }
+    }
+}
+
+fn created_line(email: &str, origin: &str, sign_in_page: Option<&str>) -> String {
+    let created = format!("created the owner {email} on {origin}");
+    match sign_in_page {
+        Some(page) => format!("{created}\nsign in at {page}"),
+        None => created,
     }
 }
 
@@ -71,4 +81,27 @@ fn read_password(from_stdin: bool) -> Result<String, CliError> {
         return Err(CliError::Invalid("the password is empty".into()));
     }
     Ok(password)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creating_the_owner_names_the_page_to_sign_in_at() {
+        assert_eq!(
+            created_line(
+                "owner@example.com",
+                "http://127.0.0.1:8600",
+                Some("http://localhost:8600/auth/sign-in")
+            ),
+            "created the owner owner@example.com on http://127.0.0.1:8600\nsign in at http://localhost:8600/auth/sign-in",
+            "the page is the issuer's, not the address the command was given"
+        );
+        assert_eq!(
+            created_line("owner@example.com", "http://127.0.0.1:8600", None),
+            "created the owner owner@example.com on http://127.0.0.1:8600",
+            "a server whose page cannot be read names none rather than a guess"
+        );
+    }
 }

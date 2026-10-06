@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
-#                                       # exports URL, working/operator keys and MARFA_SERVER_ENV
+#                                       # exports URL, working/operator keys, the test owner and MARFA_SERVER_ENV
 #   scripts/server-down.sh              # stops it, and removes a directory it made
 #
 # Assign, then eval: `eval "$(…)"` of a failed boot's empty output succeeds.
@@ -11,6 +11,10 @@
 # MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
 # secrets, data and keys; server-down.sh leaves it in place.
 # PORT: a free one by default.
+#
+# A boot also creates an owner, so sign-in and the owner's pages can be tried
+# by hand. Its throwaway email and password come from test-owner.example.env
+# and are printed as MARFA_TEST_OWNER_EMAIL and MARFA_TEST_OWNER_PASSWORD.
 set -euo pipefail
 umask 077
 
@@ -40,6 +44,8 @@ fi
 boot="${state}/boot.env"
 kept_key=""
 kept_operator=""
+owner_email=""
+owner_password=""
 if [[ -f "${boot}" ]]; then
   chmod 600 "${boot}"
   # shellcheck disable=SC1090
@@ -49,6 +55,8 @@ if [[ -f "${boot}" ]]; then
   API_KEY_SALT="${BOOT_KEY_SALT}"
   kept_key="${BOOT_KEY}"
   kept_operator="${BOOT_OPERATOR_KEY:-}"
+  owner_email="${BOOT_OWNER_EMAIL:-}"
+  owner_password="${BOOT_OWNER_PASSWORD:-}"
   if [[ -z "${kept_operator}" ]]; then
     echo "server-up: kept state has no operator key; use a fresh MARFA_SERVER_KEEP directory" >&2
     exit 1
@@ -96,6 +104,10 @@ write_env() {
     echo "export MARFA_TEST_URL='${url}'"
     echo "export MARFA_TEST_KEY='${1:-}'"
     echo "export MARFA_TEST_OPERATOR_KEY='${2:-}'"
+    if [[ -n "${owner_email}" ]]; then
+      echo "export MARFA_TEST_OWNER_EMAIL='${owner_email}'"
+      echo "export MARFA_TEST_OWNER_PASSWORD='${owner_password}'"
+    fi
     echo "export MARFA_SERVER_ENV='${env_file}'"
     echo "export MARFA_SERVER_PID='${pid}'"
     echo "export MARFA_SERVER_STATE='${state}'"
@@ -160,6 +172,16 @@ working="$(mint "${operator}" core-proof)"
 key="$(read_key <<<"${working}")"
 [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
+# shellcheck disable=SC1091
+source "$(dirname "$0")/test-owner.example.env"
+created="$(curl -sS --max-time 10 -X POST "${url}/owner" \
+  -H "Authorization: Bearer ${operator}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"${MARFA_TEST_OWNER_EMAIL}\",\"password\":\"${MARFA_TEST_OWNER_PASSWORD}\"}")"
+[[ "${created}" == *'"email"'* ]] || fail "the test owner could not be created: ${created}"
+owner_email="${MARFA_TEST_OWNER_EMAIL}"
+owner_password="${MARFA_TEST_OWNER_PASSWORD}"
+
 write_env "${key}" "${operator}"
 if [[ -n "${keep}" ]]; then
   {
@@ -168,6 +190,8 @@ if [[ -n "${keep}" ]]; then
     echo "BOOT_KEY_SALT='${API_KEY_SALT}'"
     echo "BOOT_KEY='${key}'"
     echo "BOOT_OPERATOR_KEY='${operator}'"
+    echo "BOOT_OWNER_EMAIL='${owner_email}'"
+    echo "BOOT_OWNER_PASSWORD='${owner_password}'"
   } >"${boot}"
 fi
 cat "${env_file}"

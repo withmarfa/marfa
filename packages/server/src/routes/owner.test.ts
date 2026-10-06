@@ -89,9 +89,9 @@ describe("GET /owner", () => {
       key: ctx.operatorKey,
     });
     expect(operator.status).toBe(404);
-    expect(((await operator.json()) as Envelope).error.code).toBe(
-      "owner_not_found",
-    );
+    const refusal = ((await operator.json()) as Envelope).error;
+    expect(refusal.code).toBe("owner_not_found");
+    expect(refusal.message).toContain("marfa owner create");
   });
 
   it("answers an account written around the door, because the first account is the owner", async () => {
