@@ -126,6 +126,13 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// Well past any fetch or copy of a blob's bytes still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
+/// The tag the server gives a conflicted copy (`versions.md` 13).
+pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
+
+/// The edge type linking a conflicted copy, its source, to the original
+/// (`versions.md` 22).
+pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
+
 impl Core {
     /// Creates the file when absent. A file bound to a different server is
     /// refused.
@@ -526,6 +533,45 @@ impl Core {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         store::edges_of_type(&conn, edge_type)
+    }
+
+    /// The id of the item a conflicted copy was made from: the target of its
+    /// `derived-from` edge, where `id` is a held row tagged `conflicted-copy`.
+    /// `None` for any other row, and for one the copy does not hold. The
+    /// original itself may be a row the copy does not hold.
+    pub fn original_of_conflicted_copy(&self, id: &str) -> Result<Option<String>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let Some(copy) = store::item_by_id(&conn, id)? else {
+            return Ok(None);
+        };
+        if !copy.tags.iter().any(|tag| tag == CONFLICTED_COPY_TAG) {
+            return Ok(None);
+        }
+        Ok(store::edges_from(&conn, id)?
+            .into_iter()
+            .find(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
+            .map(|edge| edge.target_id))
+    }
+
+    /// The held conflicted copies made from `id`, oldest link first: rows
+    /// tagged `conflicted-copy` whose `derived-from` edge names it. `id` need
+    /// not be a row the copy holds.
+    pub fn conflicted_copies_of(&self, id: &str) -> Result<Vec<Item>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let sources: Vec<String> = store::edges_to(&conn, id)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
+            .map(|edge| edge.source_id)
+            .collect();
+        Ok(store::items_by_ids(&conn, &sources)?
+            .into_iter()
+            .filter(|item| {
+                item.state != ItemState::Trashed
+                    && item.tags.iter().any(|tag| tag == CONFLICTED_COPY_TAG)
+            })
+            .collect())
     }
 
     /// Best match first.

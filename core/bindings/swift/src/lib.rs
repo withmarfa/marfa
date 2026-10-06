@@ -1533,6 +1533,22 @@ impl Core {
             .collect())
     }
 
+    /// The ID of the item a conflicted copy was made from, or `nil` where
+    /// `id` is not a held conflicted copy.
+    pub fn original_of_conflicted_copy(&self, id: String) -> Result<Option<String>, MarfaError> {
+        Ok(self.inner.original_of_conflicted_copy(&id)?)
+    }
+
+    /// The held conflicted copies made from `id`, oldest link first.
+    pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
+        Ok(self
+            .inner
+            .conflicted_copies_of(&id)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     pub fn search(
         &self,
         query: String,
