@@ -7,6 +7,7 @@ import {
   cleanup,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 
 /**
@@ -142,6 +143,75 @@ describe("a file item carries the size of the bytes it names", () => {
     expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
     expect(updated.data.results[0]?.outcome).toBe("updated");
     expect(await sizeOf(id)).toBe(second.size);
+  });
+});
+
+describe("a file item carries its size through a move and a merge", () => {
+  it("is set on a retype into a file type", async () => {
+    const blob = await upload(33);
+    const made = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        title: "to be a file",
+        body: "bytes",
+        blob_ref: blob.hash,
+        mime_type: "image/png",
+      },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    expect(made.data.item.properties.size_bytes).toBeUndefined();
+    const moved = await client.updateItem(made.data.item.id, {
+      version: made.data.item.version,
+      type: "core.file",
+      retype: true,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    expect(moved.data.item.properties.size_bytes).toBe(blob.size);
+  });
+
+  it("is set on a stale write and on the keep-both copy it makes", async () => {
+    const type = `fixture.${ctx.runId}.kept_file`;
+    const registered = await client.registerType({
+      id: type,
+      parent: "core.file",
+      fields: {},
+      merge_policy: {
+        fields: { blob_ref: "keep_both_copies" },
+        default: "last_writer_wins",
+      },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackType(ctx, type);
+    const base = await upload(1);
+    const theirs = await upload(50);
+    const mine = await upload(500);
+    const item = await file({ blob_ref: base.hash }, type);
+    await update(item, { blob_ref: theirs.hash });
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${item.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { blob_ref: mine.hash, size_bytes: 7 },
+        version: item.version,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    const now = await client.getItem(item.id);
+    expect(now.ok, JSON.stringify(now.error)).toBe(true);
+    const held = now.data.item.properties;
+    expect(held.size_bytes).toBe(
+      held.blob_ref === theirs.hash ? theirs.size : mine.size,
+    );
+    const copyId = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no conflicted copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    const copy = await client.getItem(String(copyId));
+    expect(copy.ok, JSON.stringify(copy.error)).toBe(true);
+    expect(copy.data.item.properties.blob_ref).toBe(mine.hash);
+    expect(copy.data.item.properties.size_bytes).toBe(mine.size);
   });
 });
 
