@@ -218,6 +218,11 @@ const FILE_FIELDS = {
     description:
       "Whether the file may be run as a program; absent means it may not",
   },
+  size_bytes: {
+    type: "integer",
+    description:
+      "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)",
+  },
 };
 
 /**
