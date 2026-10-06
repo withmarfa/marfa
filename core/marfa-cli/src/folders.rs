@@ -453,7 +453,7 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
             .map(|entry| format!("{}.{}", entry.r#type, entry.property))
             .collect();
         format!(
-            "no file can carry {}: a file reads type, tier, tags, state and edge names as the item's own",
+            "no file can carry {}: a file reads type, tier, tags, state, occurred_at and edge names as the item's own",
             named.join(", ")
         )
     })
