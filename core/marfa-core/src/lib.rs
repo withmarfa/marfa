@@ -433,10 +433,36 @@ impl Core {
         query::list(&conn, &catalog, filters, sort)
     }
 
+    /// `list`, each item with the title and body it shows (`Catalog::shown`),
+    /// all read under one snapshot of the catalog.
+    pub fn list_shown(&self, filters: &ListFilters, sort: Sort) -> Result<Vec<(Item, Shown)>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        Ok(query::list(&conn, &catalog, filters, sort)?
+            .into_iter()
+            .map(|item| {
+                let shown = catalog.shown(&item);
+                (item, shown)
+            })
+            .collect())
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<Item>> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         store::item_by_id(&conn, id)
+    }
+
+    /// `get`, with the title and body the item shows.
+    pub fn get_shown(&self, id: &str) -> Result<Option<(Item, Shown)>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let Some(item) = store::item_by_id(&conn, id)? else {
+            return Ok(None);
+        };
+        let shown = catalog::Catalog::load(&conn)?.shown(&item);
+        Ok(Some((item, shown)))
     }
 
     /// An item the copy does not hold is refused `NotFound`, never answered
@@ -481,14 +507,6 @@ impl Core {
         }
     }
 
-    /// The title and body each item shows, read from the properties its
-    /// type's display hints name in the catalog the copy holds, from the copy
-    /// alone.
-    pub fn shown<'a>(&self, items: impl IntoIterator<Item = &'a Item>) -> Result<Vec<Shown>> {
-        let catalog = catalog::Catalog::load(&*self.conn()?)?;
-        Ok(items.into_iter().map(|item| catalog.shown(item)).collect())
-    }
-
     pub fn edges_from(&self, id: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
@@ -519,6 +537,26 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         search::search(&conn, &catalog, query, filters, limit)
+    }
+
+    /// `search`, each hit's item with the title and body it shows, under one
+    /// snapshot of the catalog.
+    pub fn search_shown(
+        &self,
+        query: &str,
+        filters: &SearchFilters,
+        limit: usize,
+    ) -> Result<Vec<(SearchHit, Shown)>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        Ok(search::search(&conn, &catalog, query, filters, limit)?
+            .into_iter()
+            .map(|hit| {
+                let shown = catalog.shown(&hit.item);
+                (hit, shown)
+            })
+            .collect())
     }
 
     /// Answerable without a hydration, unlike the reads: a caller must be

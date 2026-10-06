@@ -1491,21 +1491,19 @@ impl Core {
     }
 
     pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Vec<Item>, MarfaError> {
-        let items = self.inner.list(&filters.into(), sort.into())?;
-        let shown = self.inner.shown(&items)?;
-        Ok(items
+        Ok(self
+            .inner
+            .list_shown(&filters.into(), sort.into())?
             .into_iter()
-            .zip(shown)
             .map(|(held, shown)| item(held, shown))
             .collect())
     }
 
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
-        let Some(held) = self.inner.get(&id)? else {
-            return Ok(None);
-        };
-        let shown = self.inner.shown([&held])?.pop().unwrap_or_default();
-        Ok(Some(item(held, shown)))
+        Ok(self
+            .inner
+            .get_shown(&id)?
+            .map(|(held, shown)| item(held, shown)))
     }
 
     pub fn edges_from(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
@@ -1541,11 +1539,10 @@ impl Core {
         filters: SearchFilters,
         limit: u32,
     ) -> Result<Vec<SearchHit>, MarfaError> {
-        let hits = self.inner.search(&query, &filters.into(), limit as usize)?;
-        let shown = self.inner.shown(hits.iter().map(|hit| &hit.item))?;
-        Ok(hits
+        Ok(self
+            .inner
+            .search_shown(&query, &filters.into(), limit as usize)?
             .into_iter()
-            .zip(shown)
             .map(|(hit, shown)| SearchHit {
                 item: item(hit.item, shown),
                 score: hit.score,
