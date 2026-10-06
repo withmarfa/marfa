@@ -43,7 +43,16 @@ export interface HousekeepingJob {
    *  the document declare the shape instead of typing it unknown. A throw
    *  is recorded as the run's error. */
   run: () => Promise<HousekeepingReport | null>;
+  /** How long one run may take before it is ended and recorded as failed.
+   *  Defaults to `DEFAULT_RUN_DEADLINE_MS`. A run is not cancelled, because
+   *  a promise cannot be: its result is discarded and the name is freed. */
+  deadlineMs?: number;
 }
+
+/** Long enough for the slowest legitimate run, such as an integrity check
+ *  over a large store, and short enough that a hung run is not a day's
+ *  outage of its name. */
+export const DEFAULT_RUN_DEADLINE_MS = 3_600_000;
 
 export interface HousekeepingRun {
   name: string;
@@ -118,6 +127,9 @@ export class Housekeeping {
     }
     if (!(job.intervalMs > 0)) {
       throw new Error(`Housekeeping: ${job.name} needs a positive interval`);
+    }
+    if (job.deadlineMs !== undefined && !(job.deadlineMs > 0)) {
+      throw new Error(`Housekeeping: ${job.name} needs a positive deadline`);
     }
     this.jobs.set(job.name, job);
   }
@@ -287,7 +299,7 @@ export class Housekeeping {
     let result: HousekeepingReport | null = null;
     let error: string | null = null;
     try {
-      result = (await job.run()) ?? null;
+      result = (await this.runWithinDeadline(job)) ?? null;
     } catch (err) {
       outcome = "error";
       error = errorMessage(err);
@@ -320,6 +332,42 @@ export class Housekeeping {
       result,
       error,
     };
+  }
+
+  /**
+   * Run the job and give up on it at its deadline. The deadline rejects, so
+   * the caller records a failure through the path any throw takes. The
+   * abandoned run may still settle; nothing it settles with is read, so it
+   * cannot write over the record of a later run or free that run's claim.
+   */
+  private async runWithinDeadline(
+    job: HousekeepingJob,
+  ): Promise<HousekeepingReport | null> {
+    const deadlineMs = job.deadlineMs ?? DEFAULT_RUN_DEADLINE_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired = false;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        reject(
+          new Error(
+            `The run did not finish within ${String(deadlineMs)} ms and was ended.`,
+          ),
+        );
+      }, deadlineMs);
+    });
+    try {
+      const run = job.run();
+      const noteLate = () => {
+        if (expired) {
+          log("warn", `Housekeeping ${job.name} settled after its deadline`);
+        }
+      };
+      run.then(noteLate, noteLate);
+      return await Promise.race([run, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Records earlier runs could not write. A pass writes them before it

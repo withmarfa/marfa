@@ -18,7 +18,7 @@ A housekeeping job never overlaps itself: a run started while another holds the 
 
 ## What is not observable over HTTP
 
-The schedule survives a restart, a run the last process never finished is cleared at the next boot with a log line, and runs are concurrent across names. None of it is observable against a server the referee booted once, so none is a statement here; the server's own suite proves each (`packages/server/src/housekeeping/scheduler.test.ts`).
+The schedule survives a restart, a run the last process never finished is cleared at the next boot with a log line, and runs are concurrent across names. A run that outlives its deadline is ended: it is recorded as an `error` outcome whose `error` says it did not finish in time, its name is freed so the next run is not answered `409 housekeeping_job_running`, and whatever the abandoned run later settles with is discarded. None of it is observable against a server the referee booted once, because no housekeeping job hangs on demand, so none is a statement here; the server's own suite proves each (`packages/server/src/housekeeping/scheduler.test.ts`).
 
 ## Retention ranges
 
