@@ -235,4 +235,131 @@ describe("type identifier validation", () => {
     expect(patched.ok).toBe(true);
     expect(Object.keys(patched.data.item.properties)).toEqual(declaredThenSent);
   });
+
+  it("puts no property ahead of the type's own that a read of the type does not list", async () => {
+    // `links` and `attachments` are validated on every type, and `GET
+    // /types/core.note` lists neither, so neither is a field the type
+    // declares: each takes its place among the rest, in the order sent.
+    const listed = await client.getType("core.note");
+    expect(listed.ok).toBe(true);
+    const declared = Object.keys(listed.data.fields);
+    expect(declared).not.toContain("links");
+    expect(declared).not.toContain("attachments");
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        courier: "sent first of the rest",
+        title: "declared second",
+        links: ["https://example.com/one"],
+        attachments: [],
+        body: "declared first",
+      },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const answered = ["body", "title", "courier", "links", "attachments"];
+    expect(Object.keys(r.data.item.properties)).toEqual(answered);
+    const read = await client.getItem(r.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(Object.keys(read.data.item.properties)).toEqual(answered);
+  });
+
+  it("keeps the order a whole edit behind the row finds, as a merge does", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "declared first", courier: "undeclared" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const moved = await client.updateItem(r.data.item.id, {
+      properties: { anchor: "added elsewhere" },
+      version: r.data.item.version,
+    });
+    expect(moved.ok).toBe(true);
+    expect(Object.keys(moved.data.item.properties)).toEqual([
+      "body",
+      "courier",
+      "anchor",
+    ]);
+    // Sent on the version before that write, it is merged: the properties
+    // the row holds keep their places, and the one it adds goes after them.
+    const behind = await client.updateItem(r.data.item.id, {
+      properties: { zz: "added here", courier: "changed here", body: "kept" },
+      properties_mode: "replace",
+      version: r.data.item.version,
+    });
+    expect(behind.ok, JSON.stringify(behind.error)).toBe(true);
+    expect(Object.keys(behind.data.item.properties)).toEqual([
+      "body",
+      "courier",
+      "anchor",
+      "zz",
+    ]);
+  });
+
+  it("puts a property named by an array index first, in numeric order", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        zz: "sent first",
+        body: "declared",
+        "10": "ten",
+        "2": "two",
+      },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    // `01` and `-1` are not array indices, so they keep the order sent.
+    const merged = await client.updateItem(r.data.item.id, {
+      properties: { "01": "padded", "7": "seven", "-1": "negative" },
+      version: r.data.item.version,
+    });
+    expect(merged.ok).toBe(true);
+    const order = ["2", "7", "10", "body", "zz", "01", "-1"];
+    expect(Object.keys(merged.data.item.properties)).toEqual(order);
+    const read = await client.getItem(r.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(Object.keys(read.data.item.properties)).toEqual(order);
+  });
+
+  it("keeps the order a merge finds and adds after it, and takes the order a whole edit sends", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { courier: "undeclared", body: "declared first" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    expect(Object.keys(r.data.item.properties)).toEqual(["body", "courier"]);
+
+    // A merge moves no key the row holds, so a declared field it adds goes
+    // after them, as an undeclared one does, in the order it was sent.
+    const merged = await client.updateItem(r.data.item.id, {
+      properties: { anchor: "added first", title: "declared, added second" },
+      version: r.data.item.version,
+    });
+    expect(merged.ok).toBe(true);
+    expect(Object.keys(merged.data.item.properties)).toEqual([
+      "body",
+      "courier",
+      "anchor",
+      "title",
+    ]);
+
+    // A whole edit is the row's properties as sent, in the order sent.
+    const replaced = await client.updateItem(r.data.item.id, {
+      properties: { anchor: "first", title: "second", body: "third" },
+      properties_mode: "replace",
+      version: merged.data.item.version,
+    });
+    expect(replaced.ok).toBe(true);
+    const sent = ["anchor", "title", "body"];
+    expect(Object.keys(replaced.data.item.properties)).toEqual(sent);
+    const read = await client.getItem(r.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(Object.keys(read.data.item.properties)).toEqual(sent);
+  });
 });

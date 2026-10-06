@@ -54,3 +54,29 @@ export function mergeUpdateProperties(
   }
   return { ...current, ...incoming };
 }
+
+/**
+ * A created item's properties in the order every read answers them
+ * (`items.md` 46): the fields the type declares, in the order its read lists
+ * them, then every other property in the order the write sent it.
+ *
+ * Validation answers the fields every type takes ahead of the type's own,
+ * which no read of the type lists, so the order is taken from the type and the
+ * write rather than from validation. Built by `Object.fromEntries`, which keeps
+ * a property named `__proto__` as a property.
+ */
+export function inAnswerOrder(
+  declared: readonly string[],
+  properties: Record<string, unknown>,
+  sent: Record<string, unknown>,
+): Record<string, unknown> {
+  const has = (key: string) =>
+    Object.prototype.hasOwnProperty.call(properties, key);
+  const order = [
+    ...declared.filter(has),
+    ...Object.keys(sent).filter((key) => has(key) && !declared.includes(key)),
+  ];
+  const placed = new Set(order);
+  order.push(...Object.keys(properties).filter((key) => !placed.has(key)));
+  return Object.fromEntries(order.map((key) => [key, properties[key]]));
+}

@@ -1625,7 +1625,7 @@ pub fn upsert_item(
             item.occurred_at,
             item.created_at,
             item.updated_at,
-            js::json(&Value::Object(item.properties.clone())),
+            js::json(&Value::Object(js::object_order(&item.properties))),
         ],
     )?;
     if let Some(tags) = tags {
@@ -1983,7 +1983,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
             edge.source_id,
             edge.target_id,
             edge.edge_type,
-            Value::Object(edge.properties.clone()).to_string(),
+            Value::Object(js::object_order(&edge.properties)).to_string(),
             edge.version,
             edge.created_at,
             edge.updated_at,
@@ -2650,6 +2650,11 @@ fn lay_write(
                 };
                 if let Some(read) = read {
                     lay_changes(&mut item.properties, properties, &read);
+                    // At the row's version the server takes it whole, in the
+                    // order it sends; behind it, the server merges.
+                    if row.base_version == Some(item.version) {
+                        item.properties = in_sent_order(&item.properties, properties);
+                    }
                 } else {
                     let projected = if properties.values().any(Value::is_null) {
                         crate::catalog::Catalog::load(conn)?.projected_properties(
@@ -2850,7 +2855,7 @@ pub fn move_edit(
                 // answer's with what the edit changed laid over.
                 let mut moved = onto.clone();
                 lay_changes(&mut moved, properties, &read);
-                *properties = moved;
+                *properties = in_sent_order(&moved, properties);
                 // Made against the answer now, so a later move reads its
                 // changes from there, not from what it first read.
                 record_read(conn, id, &serde_json::json!({ "properties": onto }))?;
@@ -2887,6 +2892,22 @@ fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &M
             row.insert(key.clone(), value.clone());
         }
     }
+}
+
+/// `row` with the properties `sent` names first, in the order sent, then the
+/// rest as the row holds them: the order the server answers a whole edit
+/// made at the row's version in (`items.md` 46).
+fn in_sent_order(row: &Map<String, Value>, sent: &Map<String, Value>) -> Map<String, Value> {
+    let mut ordered: Map<String, Value> = sent
+        .keys()
+        .filter_map(|key| row.get(key).map(|value| (key.clone(), value.clone())))
+        .collect();
+    for (key, value) in row {
+        if !ordered.contains_key(key) {
+            ordered.insert(key.clone(), value.clone());
+        }
+    }
+    ordered
 }
 
 pub fn replaces_properties(body: &Value) -> bool {

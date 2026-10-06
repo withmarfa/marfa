@@ -538,6 +538,45 @@ impl Catalog {
             .collect()
     }
 
+    /// A create's properties in the order the server answers them
+    /// (`items.md` 46): the fields the type declares, in the order a read of
+    /// the type lists them, its parent's before its own and a field declared
+    /// again keeping the place it first took, then the rest as given.
+    pub(crate) fn in_answer_order(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let mut chain = Vec::new();
+        let mut current = Some(type_id);
+        while let Some(at) = current {
+            let Some(entry) = self.entries.get(at) else {
+                break;
+            };
+            if chain.len() >= MAX_PARENT_WALK {
+                break;
+            }
+            chain.push(entry);
+            current = entry.parent.as_deref();
+        }
+        let mut ordered = Map::new();
+        for entry in chain.into_iter().rev() {
+            for name in &entry.fields {
+                if let Some(value) = properties.get(name)
+                    && !ordered.contains_key(name)
+                {
+                    ordered.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        for (name, value) in properties {
+            if !ordered.contains_key(name) {
+                ordered.insert(name.clone(), value.clone());
+            }
+        }
+        ordered
+    }
+
     /// `core.media.*` and `core.media` name the same subtree.
     pub fn root(declared: &str) -> &str {
         declared.strip_suffix(".*").unwrap_or(declared)
@@ -957,6 +996,44 @@ mod tests {
             ),
             (None, None),
             "a value that is not text was shown as text"
+        );
+    }
+
+    #[test]
+    fn a_create_is_held_in_the_order_the_server_answers_it() {
+        // The server answers this create `zeta, alpha, mid, beta, extra1,
+        // extra0`.
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.parent",
+                  "fields": { "zeta": { "type": "string" }, "alpha": { "type": "string" } } },
+                { "id": "acme.child", "parent": "acme.parent",
+                  "fields": { "mid": { "type": "string" }, "beta": { "type": "string" },
+                              "alpha": { "type": "string", "description": "again" } } }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        let sent: Map<String, Value> = serde_json::from_value(serde_json::json!({
+            "extra1": "x", "beta": "b", "alpha": "a", "extra0": "y", "zeta": "z", "mid": "m"
+        }))
+        .unwrap();
+        let keys = |type_id: &str| -> Vec<String> {
+            catalog
+                .in_answer_order(type_id, &sent)
+                .keys()
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            keys("acme.child"),
+            ["zeta", "alpha", "mid", "beta", "extra1", "extra0"],
+            "a create was held in another order than the server answers it"
+        );
+        assert_eq!(
+            keys("acme.unheld"),
+            ["extra1", "beta", "alpha", "extra0", "zeta", "mid"],
+            "a type the catalog does not hold moved a property"
         );
     }
 
