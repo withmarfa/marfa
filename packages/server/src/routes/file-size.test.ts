@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
+import { initEventLog } from "../pubsub.js";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -299,6 +300,58 @@ describe("a file item carries the size of the bytes it names", () => {
       expect(copy.properties.size_bytes).toBe(mine.size);
     } finally {
       unregisterTypeSchema("acme.kept_size_test");
+    }
+  });
+});
+
+describe("an archive restore", () => {
+  it("brings a file back with the size of the bytes it carries, and none where they did not lend", async () => {
+    const other = await mintWorkingKey(ctx, {
+      type_permissions: { "core.file": "write" },
+    });
+    const blob = await upload(ctx.workingKey, 91);
+    // Named before any row lends the bytes, so `other` could not read them.
+    const planted = await create(other, "core.file", {
+      blob_ref: blob.hash,
+    });
+    expect(planted.properties.size_bytes).toBeUndefined();
+    const lent = await create(ctx.workingKey, "core.file", {
+      blob_ref: blob.hash,
+    });
+    const exported = await request(
+      ctx.app,
+      "GET",
+      "/export?format=archive&type=core.file",
+      { key: ctx.workingKey },
+    );
+    expect(exported.status).toBe(200);
+    const archive = Buffer.from(await exported.arrayBuffer());
+    const target = await createTestContext();
+    try {
+      initEventLog(target.storage.eventLog);
+      const restored = await target.app.request("/restore", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${target.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
+      });
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      const sizeOn = async (id: string) =>
+        (
+          await json<{ item: Row }>(
+            await request(target.app, "GET", `/items/${id}`, {
+              key: target.workingKey,
+            }),
+            200,
+          )
+        ).item.properties.size_bytes;
+      expect(await sizeOn(lent.id)).toBe(blob.size);
+      expect(await sizeOn(planted.id)).toBeUndefined();
+    } finally {
+      initEventLog(ctx.storage.eventLog);
+      await target.cleanup();
     }
   });
 });
