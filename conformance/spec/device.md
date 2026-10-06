@@ -412,7 +412,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Reason:** an id the server could never have given a row names no row, as plainly as a `404` says so, and a refused create under it is then put back and can be discarded (`queue-and-verdicts.md` 12 and 47). Read as a failure, the read-back would stay owed, the row the create showed would stay in the copy, and a discard of the create would be refused while the read-back waited. A store an earlier build made can hold such a create.
 
-**Tests:** Core `refusal_tests::a_create_refused_for_its_id_is_put_back_and_can_be_discarded`.
+**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such row`. Core `refusal_tests::a_create_refused_for_its_id_is_put_back_and_can_be_discarded`.
 
 ## Before a first hydration
 
@@ -432,7 +432,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Reason:** the read has nothing to ask, and an answer from the copy's own catalog would pass the shipped and declared types off as the server's.
 
-**Tests:** Core `refusal_tests::a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog`.
+**Tests:** `device/save-before-sync.test.ts › refuses a read of the server's catalog with no_server, answering no types from its own`. Core `refusal_tests::a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog`.
 
 ## Type names in a local read
 

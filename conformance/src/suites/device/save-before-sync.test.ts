@@ -186,4 +186,22 @@ describe("a copy no server has been named for", () => {
     value(await device.declareTypes([RECIPE]));
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
+
+  it("refuses a read of the server's catalog with no_server, answering no types from its own", async () => {
+    const device = await offline("save-no-server-catalog");
+    for (const [kind, read] of [
+      ["item types", () => device.servedItemTypes()],
+      ["edge types", () => device.servedEdgeTypes()],
+    ] as const) {
+      const refused = await read();
+      expect(
+        refused.ok ? "answered" : refused.refusal.code,
+        `a read of the server's ${kind} with no server named was answered`,
+      ).toBe("no_server");
+    }
+    // The witness: the copy's own catalog is still read, from the copy alone.
+    expect(value(await device.itemTypes()).map((type) => type.id)).toContain(
+      "core.note",
+    );
+  });
 });
