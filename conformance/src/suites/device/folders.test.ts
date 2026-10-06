@@ -15199,7 +15199,11 @@ describe("what a pull does with a file whose item stops matching", () => {
    *  `going.md` once its pull and push have run. */
   async function placedDeparture(
     label: string,
-    options: { filter?: string; tags?: string[]; state?: string[] } = {},
+    options: {
+      filter?: string;
+      tags?: string[];
+      state?: Array<"active" | "archived">;
+    } = {},
   ): Promise<EdgeDoor> {
     const edges = new EdgeDoor();
     harness = await folderHarness(label, {
