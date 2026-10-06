@@ -51,18 +51,28 @@ impl Registry {
         if let Some(named) = std::env::var_os(REGISTRY_ENV).filter(|named| !named.is_empty()) {
             return Some(Registry::at(named));
         }
-        let home = PathBuf::from(std::env::var_os("HOME").filter(|home| !home.is_empty())?);
-        let base = if cfg!(target_os = "macos") {
-            home.join("Library")
-                .join("Application Support")
-                .join("Marfa")
-        } else {
-            match std::env::var_os("XDG_DATA_HOME").filter(|data| !data.is_empty()) {
-                Some(data) => PathBuf::from(data).join("marfa"),
-                None => home.join(".local").join("share").join("marfa"),
-            }
-        };
-        Some(Registry::at(base.join(FILE_NAME)))
+        Registry::unnamed()
+    }
+
+    #[cfg(not(test))]
+    fn unnamed() -> Option<Registry> {
+        Some(Registry::at(machine_path(Path::new(
+            &std::env::var_os("HOME").filter(|home| !home.is_empty())?,
+        ))))
+    }
+
+    /// A unit test run where nothing names a registry, as cargo run from
+    /// outside `core/` or an editor's test runner, would otherwise list its
+    /// folders in the machine's own.
+    #[cfg(test)]
+    fn unnamed() -> Option<Registry> {
+        static OWN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let dir = OWN.get_or_init(|| {
+            tempfile::tempdir()
+                .expect("a temporary directory for the tests' folder registry")
+                .keep()
+        });
+        Some(Registry::at(dir.join(FILE_NAME)))
     }
 
     pub fn path(&self) -> &Path {
@@ -206,6 +216,21 @@ impl Registry {
     }
 }
 
+/// The machine's own registry under `home`.
+fn machine_path(home: &Path) -> PathBuf {
+    let base = if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("Application Support")
+            .join("Marfa")
+    } else {
+        match std::env::var_os("XDG_DATA_HOME").filter(|data| !data.is_empty()) {
+            Some(data) => PathBuf::from(data).join("marfa"),
+            None => home.join(".local").join("share").join("marfa"),
+        }
+    };
+    base.join(FILE_NAME)
+}
+
 /// A directory as the registry names it: resolved as far as it exists, so
 /// two spellings of one directory are one folder, missing or not.
 pub fn resolved(dir: &Path) -> PathBuf {
@@ -239,6 +264,16 @@ mod tests {
         std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
         std::fs::write(dir.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
         dir
+    }
+
+    #[test]
+    fn a_unit_test_that_names_no_registry_never_reaches_the_machines_own() {
+        let home = std::env::var_os("HOME").unwrap_or_default();
+        let machine = machine_path(Path::new(&home));
+        assert_eq!(machine.file_name(), Some(FILE_NAME.as_ref()));
+        let unnamed = Registry::unnamed().unwrap();
+        assert_ne!(unnamed.path(), machine);
+        assert!(unnamed.path().starts_with(std::env::temp_dir()));
     }
 
     #[test]
