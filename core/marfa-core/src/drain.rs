@@ -523,6 +523,9 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     if crate::folder::waiting(&*core.conn()?)? {
         return Err(crate::error::CoreError::FirstSyncWaiting);
     }
+    // Each answer is read back under the copy's read view, so a copy without
+    // one would send a write and then fail to settle it, on every pass.
+    crate::catch_up::refuse_unless_current(&mut *core.conn()?)?;
     let result = drain_inner(core, stop);
     // A write's answer must be settled before honoring a stop raised during
     // its request, including when it is the last write in the queue.
@@ -559,7 +562,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         if confirmed {
             return Ok(true);
         }
-        let result = crate::catch_up::refuse_another_instance(core, http);
+        let result = crate::catch_up::refuse_another_instance_until(core, http, stop);
         crate::catch_up::refuse_if_stopped(stop)?;
         match result {
             Ok(()) => {
@@ -1822,6 +1825,7 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
         let held = match http.edge(&owed.id) {
             Ok(found) => found,
             Err(CoreError::Forbidden { .. }) => None,
+            Err(error) if names_no_row(&error) => None,
             Err(error) => return Err(context.failed(core, error)?),
         };
         return Ok(ReadBack::Edge {
@@ -1834,6 +1838,7 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
     let held = match http.item(&owed.id) {
         Ok(found) => found,
         Err(CoreError::Forbidden { .. }) => None,
+        Err(error) if names_no_row(&error) => None,
         Err(error) => return Err(context.failed(core, error)?),
     };
     Ok(ReadBack::Item {
@@ -1842,6 +1847,12 @@ fn read_owed(core: &Core, owed: &store::Owed) -> Result<ReadBack> {
         held: held.map(Box::new),
         before,
     })
+}
+
+/// The server refuses a read by an id it could never have given a row, which
+/// says the row is not there as plainly as a `404`.
+fn names_no_row(error: &CoreError) -> bool {
+    matches!(error, CoreError::Validation { code, .. } if code == "invalid_id")
 }
 
 pub(crate) fn check_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {

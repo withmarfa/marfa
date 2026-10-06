@@ -21,7 +21,7 @@ pub(crate) fn list(
         filters.r#type.as_deref(),
         &mut clauses,
         &mut values,
-    );
+    )?;
     match filters.state {
         Some(state) => {
             clauses.push("state = ?".into());
@@ -91,16 +91,25 @@ pub(crate) fn list_where(
 
 /// A declared type and its subtree, by name and by declared parent, the
 /// question `?type=` answers on the server. Shared by the list and the
-/// search, so the two cannot answer it differently.
+/// search, so the two cannot answer it differently. A name outside the
+/// server's type grammar is refused as the server refuses it.
 pub(crate) fn narrow_by_type(
     catalog: &Catalog,
     declared: Option<&str>,
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
-) {
-    let Some(declared) = declared.filter(|declared| *declared != "*") else {
-        return;
+) -> Result<()> {
+    // An empty filter is no filter, as `?type=` is on the server.
+    let Some(declared) = declared.filter(|declared| !declared.is_empty() && *declared != "*")
+    else {
+        return Ok(());
     };
+    if !crate::hydrate::type_pattern(declared)? {
+        return Err(crate::error::CoreError::Validation {
+            code: "validation_error".into(),
+            message: format!("Invalid type identifier: {declared}"),
+        });
+    }
     let root = Catalog::root(declared);
     let mut alternatives = vec![
         "items.type = ?".to_string(),
@@ -117,6 +126,7 @@ pub(crate) fn narrow_by_type(
         values.extend(extra.into_iter().map(Value::String));
     }
     clauses.push(format!("({})", alternatives.join(" OR ")));
+    Ok(())
 }
 
 pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values: &mut Vec<Value>) {

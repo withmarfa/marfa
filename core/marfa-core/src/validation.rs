@@ -47,6 +47,30 @@ pub(crate) fn property_names(properties: &Map<String, Value>) -> Result<(), Core
     )
 }
 
+/// An id a write names, as the server's `isValidId` takes one: a lowercase
+/// UUIDv7. The server refuses any other `400 invalid_id`, and then refuses a
+/// read of it the same way, so a copy that queued one could never read the
+/// row back to put itself right.
+pub(crate) fn id(field: &str, id: &str) -> Result<(), CoreError> {
+    let bytes = id.as_bytes();
+    let hex = |b: &u8| b.is_ascii_digit() || (b'a'..=b'f').contains(b);
+    let valid = bytes.len() == 36
+        && bytes.iter().enumerate().all(|(at, b)| match at {
+            8 | 13 | 18 | 23 => *b == b'-',
+            14 => *b == b'7',
+            19 => matches!(b, b'8' | b'9' | b'a' | b'b'),
+            _ => hex(b),
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(CoreError::Validation {
+            code: "invalid_id".into(),
+            message: format!("Invalid {field}: {id:?} is not a UUIDv7 in lowercase"),
+        })
+    }
+}
+
 fn refuse(errors: Vec<String>) -> Result<(), CoreError> {
     if errors.is_empty() {
         Ok(())
@@ -251,6 +275,32 @@ fn datetime(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_id_is_taken_as_the_server_takes_one() {
+        assert!(id("id", &uuid::Uuid::now_v7().to_string()).is_ok());
+        assert!(id("id", "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b").is_ok());
+        for refused in [
+            "",
+            "my-note-1",
+            "0199A9C4-7C1E-7D3A-9F2B-3C4D5E6F7A8B",
+            "0199a9c4-7c1e-4d3a-9f2b-3c4d5e6f7a8b",
+            "0199a9c4-7c1e-7d3a-cf2b-3c4d5e6f7a8b",
+            "0199a9c47c1e7d3a9f2b3c4d5e6f7a8b",
+            "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b ",
+            "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8g",
+        ] {
+            assert_eq!(
+                id("id", refused).map_err(|error| error.code().to_string()),
+                Err("validation".into()),
+                "{refused:?}"
+            );
+            assert!(matches!(
+                id("id", refused),
+                Err(CoreError::Validation { code, .. }) if code == "invalid_id"
+            ));
+        }
+    }
 
     #[test]
     fn field_formats_accept_the_servers_boundary_neighbours() {

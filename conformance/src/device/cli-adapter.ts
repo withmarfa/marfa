@@ -441,6 +441,14 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<EdgeType>(["edge-types", "get", id]);
   }
 
+  async servedItemTypes(): Promise<Outcome<ItemType[]>> {
+    return this.json<ItemType[]>(["types", "served"]);
+  }
+
+  async servedEdgeTypes(): Promise<Outcome<EdgeType[]>> {
+    return this.json<EdgeType[]>(["edge-types", "served"]);
+  }
+
   /**
    * A device command as a person at a terminal runs it, without `--json`,
    * for the lines the binary prints for a person rather than the document

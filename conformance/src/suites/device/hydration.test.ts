@@ -196,6 +196,8 @@ describe("what a hydration declares", () => {
 
     for (const [declared, refused] of [
       ["bookmark", "a name that is not a type identifier"],
+      ["app.notes", "an app name without exactly three segments"],
+      ["keys.thing", "a name under a reserved root"],
       ["acme.bookmark", "a well-formed type the server does not hold"],
     ] as const) {
       const before = asked();
@@ -207,7 +209,7 @@ describe("what a hydration declares", () => {
         hydrated.ok,
         `${refused} hydrated, so the device holds a slice of a type that does not exist and reports it as complete`,
       ).toBe(false);
-      if (declared === "bookmark") {
+      if (declared !== "acme.bookmark") {
         expect(
           asked(),
           "the device went to the server for a name it could refuse on its own",

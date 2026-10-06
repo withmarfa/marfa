@@ -260,6 +260,15 @@ pub struct EdgeType {
     pub shipped: bool,
 }
 
+/// A server's two catalogs as it lists them now.
+#[napi(object)]
+pub struct ServerCatalog {
+    /// By id.
+    pub item_types: Vec<ItemType>,
+    /// By id.
+    pub edge_types: Vec<EdgeType>,
+}
+
 fn type_field(field: marfa_core::TypeField) -> TypeField {
     TypeField {
         name: field.name,
@@ -1297,6 +1306,35 @@ pub struct Drain {
     failed: Option<marfa_core::CoreError>,
 }
 
+pub struct ReadServerCatalog {
+    core: Arc<marfa_core::Core>,
+    stop: Arc<AtomicBool>,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for ReadServerCatalog {
+    type Output = marfa_core::ServerCatalog;
+    type JsValue = ServerCatalog;
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .server_catalog_until(&self.stop)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, served: Self::Output) -> Result<Self::JsValue> {
+        Ok(ServerCatalog {
+            item_types: served.item_types.into_iter().map(item_type).collect(),
+            edge_types: served.edge_types.into_iter().map(edge_type).collect(),
+        })
+    }
+}
+
 pub struct PutBlob {
     core: Arc<marfa_core::Core>,
     path: String,
@@ -1780,6 +1818,18 @@ impl MarfaCore {
                 .edge_type(&id)
                 .map_err(|error| failure(env, error))?,
         ))
+    }
+
+    /// The server's item types and edge types, read from it now, so a caller
+    /// can choose a slice before a first hydration. Nothing in the copy
+    /// changes. `no_server` for a copy with no server.
+    #[napi]
+    pub fn server_catalog(&self, stop: Option<&Stop>) -> AsyncTask<ReadServerCatalog> {
+        AsyncTask::new(ReadServerCatalog {
+            core: Arc::clone(&self.inner),
+            failed: None,
+            stop: flag_of(stop),
+        })
     }
 
     /// Which handle this process holds: the one that may write, or a second

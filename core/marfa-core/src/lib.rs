@@ -19,6 +19,8 @@ mod names;
 mod query;
 mod read_view;
 #[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
 mod scripted;
 mod search;
 mod sse;
@@ -40,7 +42,7 @@ use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
-pub use catalog::{EdgeType, End, ItemType, TypeField};
+pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField};
 pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
@@ -1622,6 +1624,19 @@ impl Core {
         catalog::edge_type(&*self.conn()?, id)
     }
 
+    /// The server's item types and edge types, read from it now, so a caller
+    /// can choose a slice before a first hydration. Nothing in the copy
+    /// changes. Refused `NoServer` for a copy with no server.
+    pub fn server_catalog(&self) -> Result<ServerCatalog> {
+        self.server_catalog_until(&NEVER_STOPPED)
+    }
+
+    /// Ended with `Canceled` as soon as `stop` is raised.
+    pub fn server_catalog_until(&self, stop: &AtomicBool) -> Result<ServerCatalog> {
+        let listed = catch_up::read_unless_stopped(stop, self.http()?, http::Http::catalog)?;
+        catalog::served(&listed)
+    }
+
     fn http(&self) -> Result<&http::Http> {
         self.http.as_deref().ok_or(CoreError::NoServer)
     }
@@ -1701,6 +1716,9 @@ fn queue_create(
     after: &[String],
 ) -> Result<QueuedWrite> {
     refuse_invalid_names(&draft.tags, &draft.properties)?;
+    if let Some(id) = &draft.id {
+        validation::id("id", id)?;
+    }
     if !catalog.known(&draft.r#type) {
         return Err(CoreError::UnknownType {
             message: format!("{} is not a type this copy holds", draft.r#type),
@@ -2009,6 +2027,9 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
 /// reach the copy, so it would sit there as written for good. It waits on
 /// its ends' creates and on `after`.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
+    if let Some(id) = &draft.id {
+        validation::id("id", id)?;
+    }
     refuse_self_loop(&draft.source_id, &draft.target_id)?;
     if !store::takes_edge(
         tx,

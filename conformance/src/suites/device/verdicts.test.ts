@@ -738,6 +738,49 @@ describe("the server did not take the write", () => {
     ).toBe(2);
   });
 
+  it("refused: takes a read-back answered 400 invalid_id as the server holding no such row", async () => {
+    harness = await hydratedHarness("verdicts-refused-invalid-id", {
+      rows: held(),
+    });
+    const created = await harness.device.create({
+      type: "core.note",
+      properties: { title: "never lands", body: "never lands" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const id = created.value.item_id ?? "a";
+    const shown = await harness.device.get(id);
+    expect(
+      shown.ok,
+      "the fixture's create was not shown to a read before the drain, so a row gone after it proves nothing",
+    ).toBe(true);
+
+    scriptWrites(harness.server, {
+      create: [refusal(400, "invalid_id", "the id is not a UUIDv7")],
+      read: [refusal(400, "invalid_id", "the id is not a UUIDv7")],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.verdicts.map((verdict) => verdict.verdict)).toEqual([
+      "refused",
+    ]);
+
+    const gone = await harness.device.get(id);
+    expect(
+      gone.ok ? "held" : gone.refusal.code,
+      "the read-back refused for its id was read as a failure, so the row the create showed stays in the copy",
+    ).toBe("not_held");
+    const discarded = await harness.device.discard(created.value.id);
+    expect(discarded.ok).toBe(true);
+    if (discarded.ok)
+      expect(
+        discarded.value,
+        "a discard of the refused create was refused while its read-back stayed owed",
+      ).toBe(true);
+    expect(await harness.device.queue()).toMatchObject({ ok: true, value: [] });
+  });
+
   it("refused: keeps the row the copy holds where the read-back answers an older one", async () => {
     // The copy holds the row as a later write stamped it, which a follow on
     // the same core can bring between the read-back and its write. The

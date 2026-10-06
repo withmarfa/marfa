@@ -449,3 +449,74 @@ describe("stopping a call that cannot be stopped at once", () => {
     }
   });
 });
+
+describe("stopping a call whose first request is not answered", () => {
+  /** Holds `command` until `path` is asked, then sends one Ctrl-C. */
+  async function stoppedWhileAsking(
+    server: ScriptedServer,
+    device: Harness["device"],
+    command: string[],
+    path: string,
+  ): Promise<void> {
+    // A server that takes the connection and never answers, as one still
+    // being reached does.
+    server.answer("GET", path, { kind: "stall" });
+    const call = device.hold(command);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            server.requests.filter((request) => request.pathname === path)
+              .length,
+            call.stderr,
+          ).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      call.interrupt();
+      await vi.waitFor(
+        () => {
+          expect(
+            call.exitCode(),
+            `${command[0]} went on waiting on its request after one Ctrl-C`,
+          ).not.toBeNull();
+        },
+        { timeout: 2_000, interval: 25 },
+      );
+      expect(call.exitCode(), call.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(call.stderr).error.code).toBe("canceled");
+    } finally {
+      await call.stop();
+    }
+  }
+
+  it("ends a hydration at once on Ctrl-C, while its head read still waits", async () => {
+    harness = await startHarness("stop-unanswered-hydration");
+    const { server, device } = harness;
+    expect((await device.status()).ok).toBe(true);
+    await stoppedWhileAsking(
+      server,
+      device,
+      ["hydrate", "--types", "core.note", "--tier", "library"],
+      "/events",
+    );
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).toBe("never");
+  });
+
+  it("ends a drain at once on Ctrl-C, while it still asks which instance the server is", async () => {
+    harness = await hydratedHarness("stop-unanswered-drain", { head: "10" });
+    const { server, device } = harness;
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "kept", body: "kept" },
+        })
+      ).ok,
+    ).toBe(true);
+    await stoppedWhileAsking(server, device, ["drain"], "/");
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.map((row) => row.verdict)).toEqual([null]);
+  });
+});

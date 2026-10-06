@@ -251,7 +251,7 @@ impl Settings {
         if !types.is_empty() && !types.iter().any(|named| named == crate::store::EVERY_TYPE) {
             let mut alternatives = Vec::new();
             for named in types {
-                crate::query::narrow_by_type(catalog, Some(named), &mut alternatives, values);
+                crate::query::narrow_by_type(catalog, Some(named), &mut alternatives, values)?;
             }
             clauses.push(format!("({})", alternatives.join(" OR ")));
         }

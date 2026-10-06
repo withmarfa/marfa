@@ -423,6 +423,10 @@ export interface DeviceUnderTest {
   /** The edge types the copy holds, read from it alone. */
   edgeTypes(): Promise<Outcome<EdgeType[]>>;
   edgeType(id: string): Promise<Outcome<EdgeType>>;
+  /** The item types the server holds, read from it now; the copy is left as it is. */
+  servedItemTypes(): Promise<Outcome<ItemType[]>>;
+  /** The edge types the server holds, read from it now; the copy is left as it is. */
+  servedEdgeTypes(): Promise<Outcome<EdgeType[]>>;
 
   /** Write a new item into the working copy and queue it. */
   create(draft: Draft): Promise<Outcome<QueuedWrite>>;
