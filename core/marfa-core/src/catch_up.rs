@@ -117,8 +117,21 @@ pub struct Change {
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
-    /// Why the server cannot be reached, on `server.unreachable` alone.
-    pub reason: Option<String>,
+    /// Why the server cannot be reached, on `server.unreachable` alone:
+    /// the failure a stream could not be had for, written out as its
+    /// sentence.
+    #[serde(serialize_with = "sentence")]
+    pub reason: Option<CoreError>,
+}
+
+fn sentence<S: serde::Serializer>(
+    reason: &Option<CoreError>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match reason {
+        Some(error) => serializer.collect_str(error),
+        None => serializer.serialize_none(),
+    }
 }
 
 pub const SERVER_UNREACHABLE: &str = "server.unreachable";
@@ -595,7 +608,7 @@ fn follow_paced(
                             item_id: None,
                             edge_id: None,
                             cursor: report.cursor.clone(),
-                            reason: Some(error.to_string()),
+                            reason: Some(error.clone()),
                         });
                     }
                     pause(wait);

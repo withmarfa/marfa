@@ -307,12 +307,12 @@ fn follow(folder: &Folder, ended: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Res
             }
             folder.core().follow(ended, |change| {
                 let _ = wakes.send(match change.event.as_str() {
-                    crate::SERVER_UNREACHABLE => Wake::Reach(Some(
-                        change
-                            .reason
-                            .clone()
-                            .unwrap_or_else(|| "the event stream could not be opened".into()),
-                    )),
+                    crate::SERVER_UNREACHABLE => {
+                        Wake::Reach(Some(change.reason.as_ref().map_or_else(
+                            || "the event stream could not be opened".into(),
+                            ToString::to_string,
+                        )))
+                    }
                     crate::SERVER_REACHABLE => Wake::Reach(None),
                     _ => Wake::Server,
                 });

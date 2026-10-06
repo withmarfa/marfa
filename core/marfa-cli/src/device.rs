@@ -670,7 +670,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         change.cursor,
                         change
                             .reason
-                            .as_deref()
+                            .as_ref()
                             .map(|reason| format!(": {reason}"))
                             .unwrap_or_default()
                     )
@@ -768,10 +768,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         field: args.sort.into(),
                         direction: args.direction.into(),
                     };
-                    output::items(&core.list(&filters, sort)?, json)
+                    let (items, shown): (Vec<_>, Vec<_>) =
+                        core.list_shown(&filters, sort)?.into_iter().unzip();
+                    output::items(&items, &shown, json)
                 }
-                ItemsCommand::Get { id } => match core.get(&id)? {
-                    Some(item) => output::item(&item, json),
+                ItemsCommand::Get { id } => match core.get_shown(&id)? {
+                    Some((item, shown)) => output::item(&item, &shown, json),
                     None => Err(CliError::NotHeld(id)),
                 },
                 ItemsCommand::Create(args) => {
@@ -901,7 +903,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 filter,
                 beneath,
             };
-            output::hits(&store.open(None)?.search(&query, &filters, limit)?, json)
+            let core = store.open(None)?;
+            let (hits, shown): (Vec<_>, Vec<_>) =
+                core.search_shown(&query, &filters, limit)?.into_iter().unzip();
+            output::hits(&hits, &shown, json)
         }
         DeviceCommand::Edges { command } => {
             let core = store.open(None)?;

@@ -54,6 +54,14 @@ pub struct Item {
     pub created_at: String,
     pub updated_at: String,
     pub tags: Vec<String>,
+    /// The text under the property the type's display hints name as its
+    /// title, or `title` where they name none; none where that holds no
+    /// string.
+    pub title: Option<String>,
+    /// The text under the property the type's display hints name as its
+    /// body, or `body` where they name none; none where that holds no
+    /// string.
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -488,12 +496,37 @@ pub struct Edit {
     /// Whole field values, as one JSON object; a device never merges
     /// inside a field.
     pub properties_json: String,
+    /// The properties are the item's whole properties: one left out is
+    /// cleared. Otherwise each one given replaces its value and the rest stay.
+    #[uniffi(default = false)]
+    pub replace_properties: bool,
     /// Required: an update naming no version is refused before it is sent.
     #[uniffi(default = None)]
     pub base_version: Option<i64>,
     /// The natural key to move the row to.
     #[uniffi(default = None)]
     pub source_id: Option<String>,
+    /// The type to move the row to, sent as the server's retype. A type the
+    /// copy's catalog does not hold is refused `UnknownType` before anything
+    /// is queued; the type the row has already moves nothing.
+    #[uniffi(default = None)]
+    pub r#type: Option<String>,
+    /// The tier to move the row to; the tier it has already moves nothing.
+    #[uniffi(default = None)]
+    pub tier: Option<Tier>,
+}
+
+impl Edit {
+    fn core(self) -> Result<marfa_core::Edit, MarfaError> {
+        Ok(marfa_core::Edit {
+            properties: object(&self.properties_json)?,
+            base_version: self.base_version,
+            source_id: self.source_id,
+            r#type: self.r#type,
+            tier: self.tier.map(Into::into),
+            replace_properties: self.replace_properties,
+        })
+    }
 }
 
 /// An edge, before it is queued.
@@ -998,23 +1031,24 @@ impl From<marfa_core::ItemState> for ItemState {
     }
 }
 
-impl From<marfa_core::Item> for Item {
-    fn from(item: marfa_core::Item) -> Self {
-        Item {
-            id: item.id,
-            r#type: item.r#type,
-            properties_json: serde_json::Value::Object(item.properties).to_string(),
-            state: item.state.into(),
-            tier: item.tier.map(Into::into),
-            version: item.version,
-            schema_version: item.schema_version,
-            source: item.source,
-            source_id: item.source_id,
-            occurred_at: item.occurred_at,
-            created_at: item.created_at,
-            updated_at: item.updated_at,
-            tags: item.tags,
-        }
+/// `shown` is what the core's catalog says the item shows.
+fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
+    Item {
+        id: item.id,
+        r#type: item.r#type,
+        properties_json: serde_json::Value::Object(item.properties).to_string(),
+        state: item.state.into(),
+        tier: item.tier.map(Into::into),
+        version: item.version,
+        schema_version: item.schema_version,
+        source: item.source,
+        source_id: item.source_id,
+        occurred_at: item.occurred_at,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        tags: item.tags,
+        title: shown.title,
+        body: shown.body,
     }
 }
 
@@ -1269,7 +1303,10 @@ pub struct Change {
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
-    pub reason: Option<String>,
+    /// The failure the stream could not be had for, on `server.unreachable`
+    /// alone, such as the network failing, a rate limit, a failing server or
+    /// a refusal naming no contract.
+    pub reason: Option<MarfaError>,
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1279,7 +1316,7 @@ impl From<&marfa_core::Change> for Change {
             item_id: change.item_id.clone(),
             edge_id: change.edge_id.clone(),
             cursor: change.cursor.clone(),
-            reason: change.reason.clone(),
+            reason: change.reason.clone().map(Into::into),
         }
     }
 }
@@ -1454,12 +1491,19 @@ impl Core {
     }
 
     pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Vec<Item>, MarfaError> {
-        let items = self.inner.list(&filters.into(), sort.into())?;
-        Ok(items.into_iter().map(Into::into).collect())
+        Ok(self
+            .inner
+            .list_shown(&filters.into(), sort.into())?
+            .into_iter()
+            .map(|(held, shown)| item(held, shown))
+            .collect())
     }
 
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
-        Ok(self.inner.get(&id)?.map(Into::into))
+        Ok(self
+            .inner
+            .get_shown(&id)?
+            .map(|(held, shown)| item(held, shown)))
     }
 
     pub fn edges_from(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
@@ -1495,11 +1539,12 @@ impl Core {
         filters: SearchFilters,
         limit: u32,
     ) -> Result<Vec<SearchHit>, MarfaError> {
-        let hits = self.inner.search(&query, &filters.into(), limit as usize)?;
-        Ok(hits
+        Ok(self
+            .inner
+            .search_shown(&query, &filters.into(), limit as usize)?
             .into_iter()
-            .map(|hit| SearchHit {
-                item: hit.item.into(),
+            .map(|(hit, shown)| SearchHit {
+                item: item(hit.item, shown),
                 score: hit.score,
                 snippet: hit.snippet,
             })
@@ -1586,26 +1631,14 @@ impl Core {
 
     /// Changes an item in the local copy and queues the change.
     pub fn update_item(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
-        let edit = marfa_core::Edit {
-            properties: object(&edit.properties_json)?,
-            base_version: edit.base_version,
-            source_id: edit.source_id,
-            ..Default::default()
-        };
-        queued(self.inner.update_item(&id, &edit)?)
+        queued(self.inner.update_item(&id, &edit.core()?)?)
     }
 
     /// Changes an item in the local copy and queues the change, based on a
     /// version read before the one the copy holds now, which the server
     /// merges the change against.
     pub fn update_item_as_read(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
-        let edit = marfa_core::Edit {
-            properties: object(&edit.properties_json)?,
-            base_version: edit.base_version,
-            source_id: edit.source_id,
-            ..Default::default()
-        };
-        queued(self.inner.update_item_as_read(&id, &edit)?)
+        queued(self.inner.update_item_as_read(&id, &edit.core()?)?)
     }
 
     /// Moves an item to the bin locally and queues the delete.
@@ -2478,6 +2511,152 @@ mod tests {
         assert!(canceled(core.catch_up(raised()).unwrap_err()));
         core.catch_up(None).unwrap();
         core.drain(None).unwrap();
+    }
+
+    fn draft(r#type: &str, properties_json: &str) -> Draft {
+        Draft {
+            r#type: r#type.into(),
+            id: None,
+            properties_json: properties_json.into(),
+            tags: Vec::new(),
+            tier: None,
+            source: None,
+            source_id: None,
+            occurred_at: None,
+            base_version: None,
+        }
+    }
+
+    fn edit(properties_json: &str, base_version: i64) -> Edit {
+        Edit {
+            properties_json: properties_json.into(),
+            replace_properties: false,
+            base_version: Some(base_version),
+            source_id: None,
+            r#type: None,
+            tier: None,
+        }
+    }
+
+    #[test]
+    fn an_edit_crosses_with_its_move_and_its_whole_properties() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None).unwrap();
+        let note = core
+            .create_item(draft(
+                "core.note",
+                r#"{"body":"b","title":"t","notes":"n"}"#,
+            ))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let body = |write: &QueuedWrite| {
+            serde_json::from_str::<serde_json::Value>(&write.body_json).unwrap()
+        };
+
+        let merged = core
+            .update_item(note.clone(), edit(r#"{"title":"T"}"#, 0))
+            .unwrap();
+        assert_eq!(body(&merged).get("properties_mode"), None);
+        let held = core.get(note.clone()).unwrap().unwrap();
+        assert_eq!(
+            held.properties_json,
+            r#"{"body":"b","title":"T","notes":"n"}"#
+        );
+
+        let replaced = core
+            .update_item(
+                note.clone(),
+                Edit {
+                    replace_properties: true,
+                    ..edit(r#"{"body":"b2"}"#, 0)
+                },
+            )
+            .unwrap();
+        assert_eq!(body(&replaced)["properties_mode"], "replace");
+        assert_eq!(
+            core.get(note.clone()).unwrap().unwrap().properties_json,
+            r#"{"body":"b2"}"#,
+            "a whole edit left the properties it did not name"
+        );
+
+        let moved = core
+            .update_item(
+                note.clone(),
+                Edit {
+                    r#type: Some("core.task".into()),
+                    tier: Some(Tier::Feed),
+                    ..edit(r#"{"title":"a task"}"#, 0)
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                &body(&moved)["type"],
+                &body(&moved)["retype"],
+                &body(&moved)["tier"]
+            ),
+            (
+                &serde_json::json!("core.task"),
+                &serde_json::json!(true),
+                &serde_json::json!("feed")
+            )
+        );
+        let held = core.get(note.clone()).unwrap().unwrap();
+        assert_eq!(
+            (held.r#type.as_str(), held.tier),
+            ("core.task", Some(Tier::Feed))
+        );
+
+        let queued = core.queue().unwrap().len();
+        assert!(matches!(
+            core.update_item(
+                note.clone(),
+                Edit {
+                    r#type: Some("acme.nothing".into()),
+                    ..edit("{}", 0)
+                },
+            ),
+            Err(MarfaError::UnknownType { .. })
+        ));
+        assert_eq!(
+            core.queue().unwrap().len(),
+            queued,
+            "a retype to a type the catalog does not hold was queued"
+        );
+        assert_eq!(core.get(note).unwrap().unwrap().r#type, "core.task");
+    }
+
+    #[test]
+    fn an_item_crosses_with_the_title_and_body_its_type_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None).unwrap();
+        let event = core
+            .create_item(draft(
+                "core.event",
+                r#"{"title":"Standup","description":"Daily","body":"not the body","starts_at":"2026-01-01T09:00:00Z"}"#,
+            ))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let held = core.get(event).unwrap().unwrap();
+        assert_eq!(
+            (held.title.as_deref(), held.body.as_deref()),
+            (Some("Standup"), Some("Daily")),
+            "an event's body was read from somewhere other than its description"
+        );
+        let listed = core
+            .list(
+                ListFilters::default(),
+                Sort {
+                    field: SortField::CreatedAt,
+                    direction: SortDirection::Descending,
+                },
+            )
+            .unwrap();
+        assert_eq!(listed[0].body.as_deref(), Some("Daily"));
     }
 
     #[test]
