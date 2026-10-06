@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { itemWrites } from "./item-writes.js";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, sweepTrashBefore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { writeItem } from "./item-write.js";
 
@@ -138,7 +138,8 @@ describe("ItemStore purge methods — FTS coverage", () => {
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
     );
 
-    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
+    const deleted = await sweepTrashBefore(
+      ctx.storage,
       FIXED_NOW.toISOString(),
     );
     expect(deleted).toBe(1);
@@ -189,7 +190,8 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
     );
 
-    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
+    const deleted = await sweepTrashBefore(
+      ctx.storage,
       FIXED_NOW.toISOString(),
     );
     expect(deleted).toBe(1);
@@ -228,7 +230,8 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
     await itemWrites(ctx.storage).transition(a, "trashed");
     await ageItem(a, FIXED_NOW.toISOString());
 
-    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
+    const deleted = await sweepTrashBefore(
+      ctx.storage,
       new Date(FIXED_NOW.getTime() - MS_PER_DAY).toISOString(),
     );
     expect(deleted).toBe(0);
@@ -330,7 +333,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(afterEdit).toBeDefined();
     expect(afterEdit! > LONG_AGO).toBe(true);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(1);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(1);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).toBeNull();
   });
 
@@ -344,7 +347,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     });
     await itemWrites(ctx.storage).delete(itemId);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -381,7 +384,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(stamp! > CUTOFF).toBe(true);
     expect(await readUpdatedAt(itemId)).toBe(LONG_AGO);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -428,7 +431,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     await itemWrites(ctx.storage).restore(itemId);
     await itemWrites(ctx.storage).delete(itemId);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -451,7 +454,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(await readTrashedAt(itemId)).toBeNull();
     expect(await readUpdatedAt(itemId)).toBe(LONG_AGO);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -469,7 +472,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     await ageItem(itemId, CUTOFF);
     expect(await readTrashedAt(itemId)).toBe(CUTOFF);
 
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 });

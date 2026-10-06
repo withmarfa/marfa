@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { itemWrites } from "./item-writes.js";
 import { MarfaError } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, sweepTrashBefore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // The link index and tombstones where a fixture cannot reach: the trash
@@ -145,7 +145,8 @@ describe("the timed trash sweep", () => {
         ?.state,
     ).toBe("trashed");
 
-    const purged = await itemWrites(ctx.storage).purgeTrashedOlderThan(
+    const purged = await sweepTrashBefore(
+      ctx.storage,
       "2999-01-01T00:00:00.000Z",
     );
     expect(purged).toBeGreaterThanOrEqual(1);
@@ -183,9 +184,7 @@ describe("the timed trash sweep", () => {
     });
     await itemWrites(ctx.storage).delete(orphan.id);
     await ctx.storage.types.delete(type.id);
-    await itemWrites(ctx.storage).purgeTrashedOlderThan(
-      "2999-01-01T00:00:00.000Z",
-    );
+    await sweepTrashBefore(ctx.storage, "2999-01-01T00:00:00.000Z");
     const byKey = { source: "orphan-source", source_ids: ["orphan-1"] };
     // The witness: the sweep left one under the identifier no type holds.
     expect(await ctx.storage.items.tombstones(type.id, byKey)).toHaveLength(1);

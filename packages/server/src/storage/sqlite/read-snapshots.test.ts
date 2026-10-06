@@ -21,6 +21,7 @@ import {
 import { createSqliteStorage } from "./index.js";
 import { sqliteRequestContext } from "./request-context.js";
 import { itemWrites } from "../item-writes.js";
+import { TrashPurger } from "../retention.js";
 import { STRUCTURAL_GENERATION_KEY } from "./structural-generation.js";
 
 const fault = vi.hoisted(() => ({
@@ -90,6 +91,13 @@ function gate() {
   return { promise, resolve };
 }
 let storage: Awaited<ReturnType<typeof createSqliteStorage>>;
+
+const sweepTrash = (cutoff: string): Promise<number> =>
+  new TrashPurger(
+    storage,
+    1,
+    () => new Date(Date.parse(cutoff) + 86_400_000),
+  ).runOnce();
 let path: string;
 const schema = {
   id: "example.read",
@@ -489,13 +497,9 @@ it("one root bumps once for retype, topology, registration and silent removal, w
   await storage.types.delete("example.missing");
   expect(await generation()).toBe(held);
   await itemWrites(storage).transition(created.id, "trashed");
-  expect(
-    await itemWrites(storage).purgeTrashedOlderThan("9999-12-31T00:00:00.000Z"),
-  ).toBe(1);
+  expect(await sweepTrash("9999-12-31T00:00:00.000Z")).toBe(1);
   expect(await generation()).toBe((BigInt(held!) + 1n).toString());
-  expect(
-    await itemWrites(storage).purgeTrashedOlderThan("9999-12-31T00:00:00.000Z"),
-  ).toBe(0);
+  expect(await sweepTrash("9999-12-31T00:00:00.000Z")).toBe(0);
   expect(await generation()).toBe((BigInt(held!) + 1n).toString());
 });
 

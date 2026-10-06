@@ -1,7 +1,8 @@
 import type { AuthSessionStore, SettingsStore, Storage } from "./interface.js";
+import { markStructuralReadChange } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
 import { runAuditedTransaction } from "./audited-transaction.js";
-import { itemWrites } from "./item-writes.js";
+import { writeItem } from "./item-write.js";
 import { readInstanceConfig } from "./instance-config.js";
 import { log } from "../middleware/logger.js";
 import { isConnectionLostError } from "./job-tick.js";
@@ -18,6 +19,41 @@ import { errorMessage } from "../error-text.js";
  */
 
 const MS_PER_DAY = 86_400_000;
+
+/**
+ * Purges each row through the write the purge doors use, a savepoint of the
+ * sweep's transaction with its events, so the removal and its announcement
+ * commit together. A row that cannot be purged is logged and left for the
+ * next run rather than costing every row behind it; a lost connection ends
+ * the sweep, which the scheduler classifies.
+ */
+async function purgeEach(
+  storage: Storage,
+  ids: readonly string[],
+  { revokedGrant }: { revokedGrant?: true },
+): Promise<number> {
+  let purged = 0;
+  for (const id of ids) {
+    try {
+      const result = await writeItem(
+        storage,
+        { kind: "platform" },
+        { op: "purge", id, ...(revokedGrant && { revokedGrant }) },
+      );
+      if (result.outcome === "moved") purged += 1;
+    } catch (err) {
+      storage.assertTransactionUsable();
+      if (isConnectionLostError(err)) throw err;
+      log("error", "Retention purge error", {
+        item_id: id,
+        error: errorMessage(err),
+      });
+    }
+  }
+  // A pinned read sees a different reach once rows have left.
+  if (purged > 0) markStructuralReadChange();
+  return purged;
+}
 
 /**
  * Optional instance-config wiring shared by the retention housekeeping
@@ -52,20 +88,11 @@ export interface RetentionOverride {
  * `trash_retention_days` override from the instance configuration. When
  * `override` is omitted the housekeeping job sweeps at the instance default.
  *
- * **This sweep announces nothing, and neither does `RevokedGrantPurger`.**
- * Every other path that removes a row publishes `item.purged`, and every
- * path that removes an edge publishes `edge.deleted`, so that a client
- * which was away can learn the row is gone by replaying the event log. A
- * sweep cannot serve that: its cutoff is sixty days and the event log is
- * kept for hours, so a row it removes fell out of the replay window long
- * before it was touched, and there is no cursor left that could carry the
- * event. Writing one per row would append thousands of rows inside a
- * single transaction to a log nobody can still be reading from.
- *
- * Removing those rows is the client's own reconciliation: a cursor too old
- * to resume is answered with `catchup_too_old`, and the client re-reads
- * and prunes what the server no longer has. An absence recorded here is a
- * decision; an absence discovered later would be a defect.
+ * **Every row it removes is announced as the purge doors announce it**:
+ * `item.purged`, with an `edge.deleted` for each edge the row had. The event
+ * log's retention and `trash_retention_days` are set independently in
+ * `/config`, so a row can be purged inside the window a device resumes
+ * from, and a device that never hears of the purge keeps the row.
  */
 export class TrashPurger {
   constructor(
@@ -104,7 +131,12 @@ export class TrashPurger {
   private purge(cutoff: string): Promise<number> {
     return runAuditedTransaction(
       this.storage,
-      () => itemWrites(this.storage).purgeTrashedOlderThan(cutoff, 200),
+      async () =>
+        purgeEach(
+          this.storage,
+          await this.storage.items.listTrashedOlderThan(cutoff, 200),
+          {},
+        ),
       (deleted) =>
         deleted > 0
           ? {
@@ -164,7 +196,12 @@ export class RevokedGrantPurger {
     ).toISOString();
     const deleted = await runAuditedTransaction(
       this.storage,
-      () => itemWrites(this.storage).purgeRevokedAppGrantsOlderThan(cutoff),
+      async () =>
+        purgeEach(
+          this.storage,
+          await this.storage.items.listRevokedAppGrantsOlderThan(cutoff, 200),
+          { revokedGrant: true },
+        ),
       (deleted) =>
         deleted > 0
           ? {

@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { itemWrites } from "./item-writes.js";
-import { createTestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  sweepRevokedGrantsBefore,
+  sweepTrashBefore,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
@@ -652,16 +656,14 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
 
   it("removes an app grant row revoked before the window", async () => {
     const id = await seedRevokedGrant(OLD);
-    const deleted = await itemWrites(
-      ctx.storage,
-    ).purgeRevokedAppGrantsOlderThan(CUTOFF);
+    const deleted = await sweepRevokedGrantsBefore(ctx.storage, CUTOFF);
     expect(deleted).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
   });
 
   it("keeps one revoked inside the window", async () => {
     const id = await seedRevokedGrant(RECENT);
-    await itemWrites(ctx.storage).purgeRevokedAppGrantsOlderThan(CUTOFF);
+    await sweepRevokedGrantsBefore(ctx.storage, CUTOFF);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
@@ -675,7 +677,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
         client_id: "live",
       },
     });
-    await itemWrites(ctx.storage).purgeRevokedAppGrantsOlderThan(CUTOFF);
+    await sweepRevokedGrantsBefore(ctx.storage, CUTOFF);
     expect(await ctx.storage.items.get(live.id)).not.toBeNull();
   });
 
@@ -714,9 +716,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
         client_id: "revoked-then-reapproved",
       },
     });
-    const deleted = await itemWrites(
-      ctx.storage,
-    ).purgeRevokedAppGrantsOlderThan(CUTOFF);
+    const deleted = await sweepRevokedGrantsBefore(ctx.storage, CUTOFF);
     expect(deleted).toBe(0);
     expect(await ctx.storage.items.get(resurrected.id)).not.toBeNull();
   });
@@ -726,7 +726,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // way the trash purge is matches none of these, because an
     // ordinarily-revoked grant sits at `state: "active"`.
     const id = await seedRevokedGrant(OLD);
-    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await sweepTrashBefore(ctx.storage, CUTOFF)).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 });

@@ -18,16 +18,16 @@
  * other; the bulk door is the one whose silence costs the most, because it
  * removes thousands of rows per call.
  *
- * The retention sweep is deliberately not among them, and that absence is a
- * decision rather than a gap: it runs a 60-day cutoff against a 7-day event
- * log, so every row it removes fell out of the window before it was touched
- * and no client can still be reading from a cursor that would carry the
- * event. Rule 11's prune is what removes those.
+ * **The retention sweeps announce too.** `trash_retention_days` and
+ * `event_log_retention_hours` are set independently, so a sweep can purge a
+ * row inside the window a device resumes from, and a device that never hears
+ * of it keeps the row.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
   request,
+  collectEdgeEvents,
   collectItemEvents,
   readSse,
   runBulkActionAsync,
@@ -35,6 +35,8 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
+import { RevokedGrantPurger, TrashPurger } from "../storage/retention.js";
+import { itemWrites } from "../storage/item-writes.js";
 import type { ItemEventWithId } from "../pubsub.js";
 
 let ctx: TestContext;
@@ -178,6 +180,113 @@ describe("a purge reaches the stream", () => {
     // derived rather than written down: a union member added without a
     // mapping would replay under a name nobody subscribes to.
     expect(text).toContain("event: item.purged");
+  });
+
+  describe("the trash sweep", () => {
+    const DAY = 86_400_000;
+
+    /** A sweep run a week after the row entered the bin, against a retention
+     *  of one day. */
+    function sweepLater(): Promise<number> {
+      return new TrashPurger(
+        ctx.storage,
+        1,
+        () => new Date(Date.now() + 7 * DAY),
+      ).runOnce();
+    }
+
+    it("announces the item and each edge it removed, as the doors do", async () => {
+      const doomed = await note("sweep-announced");
+      const other = await note("sweep-neighbor");
+      const edgeRes = await request(ctx.app, "POST", "/edges", {
+        key: ctx.workingKey,
+        body: { source_id: other, target_id: doomed, edge_type: "references" },
+      });
+      expect(edgeRes.status).toBe(201);
+      const edgeId = ((await edgeRes.json()) as { edge: { id: string } }).edge
+        .id;
+      await request(ctx.app, "DELETE", `/items/${doomed}`, {
+        key: ctx.workingKey,
+      });
+
+      const itemController = new AbortController();
+      const items = collectItemEvents(itemController.signal);
+      const edgeController = new AbortController();
+      const edges = collectEdgeEvents(edgeController.signal);
+      await settle();
+      expect(await sweepLater()).toBe(1);
+      await settle();
+      itemController.abort();
+      edgeController.abort();
+      await Promise.all([items.done, edges.done]);
+
+      const heardItems = items.events.filter((e) => e.item.id === doomed);
+      expect(heardItems.map((e) => e.type)).toEqual(["purged"]);
+      expect(heardItems[0]?.item.type).toBe("core.note");
+      expect(
+        edges.events.map((e) => [e.type, e.edge.id, e.purgedWith]),
+      ).toEqual([["edge_deleted", edgeId, doomed]]);
+    });
+
+    it("reaches a client that was away across it", async () => {
+      const doomed = await note("sweep-replayed");
+      await request(ctx.app, "DELETE", `/items/${doomed}`, {
+        key: ctx.workingKey,
+      });
+      const cursor = await currentCursor();
+
+      expect(await sweepLater()).toBe(1);
+
+      const stream = await request(ctx.app, "GET", "/events", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      expect(stream.status).toBe(200);
+      const { text } = await readSse(stream, {
+        until: (t) => t.includes(doomed) && t.includes("item.purged"),
+      });
+      expect(text).toContain("event: item.purged");
+    });
+
+    it("leaves a row inside its window unannounced, and in the bin", async () => {
+      const kept = await note("sweep-kept");
+      await request(ctx.app, "DELETE", `/items/${kept}`, {
+        key: ctx.workingKey,
+      });
+      const cursor = await currentCursor();
+
+      const purged = await new TrashPurger(ctx.storage, 60).runOnce();
+
+      expect(purged).toBe(0);
+      expect(await currentCursor()).toBe(cursor);
+      expect(await ctx.storage.items.getIncludingTrashed(kept)).not.toBeNull();
+    });
+  });
+
+  it("the revoked-grant sweep announces the grant row it removed", async () => {
+    const grant = await itemWrites(ctx.storage).create({
+      type: "system.connection",
+      properties: {
+        kind: "app",
+        status: "revoked",
+        granted_at: "2019-01-01T00:00:00.000Z",
+        revoked_at: "2020-01-01T00:00:00.000Z",
+        client_id: "swept-client",
+      },
+    });
+    const cursor = await currentCursor();
+
+    expect(await new RevokedGrantPurger(ctx.storage, 90).runOnce()).toBe(1);
+
+    const logged = await ctx.storage.eventLog.getAfter(cursor, 200);
+    expect(
+      logged
+        .map((row) => JSON.parse(row.payload) as Record<string, unknown>)
+        .map((frame) => [
+          frame.event_type,
+          (frame.item as { id: string } | undefined)?.id,
+        ]),
+    ).toEqual([["item.purged", grant.id]]);
   });
 
   it("is a name a webhook may subscribe to", async () => {

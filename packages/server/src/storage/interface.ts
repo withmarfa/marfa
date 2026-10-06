@@ -740,9 +740,10 @@ export interface ItemStore {
   delete(id: string, trashedWith?: CascadeRoot): Promise<void>;
   /** The row each cascaded row's trash named, while the bin holds it. */
   cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
-  /** Hard-deletes a trashed row, leaving its tombstones. So does
-   *  `purgeTrashedOlderThan`. */
-  purge(id: string): Promise<void>;
+  /** Hard-deletes a trashed row, leaving its tombstones. `revokedGrant` also
+   *  admits an app grant a person revoked, which stays `active` in its
+   *  lifecycle and is held to its `properties.status` instead. */
+  purge(id: string, opts?: { revokedGrant?: boolean }): Promise<void>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie
@@ -791,34 +792,29 @@ export interface ItemStore {
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
-   * Hard-delete every trashed item that entered the bin strictly before
-   * `beforeDate` (an ISO 8601 timestamp). Cleans the search index for
-   * each row. Returns the number of rows deleted.
+   * The ids of the trashed items that entered the bin strictly before
+   * `beforeDate` (an ISO 8601 timestamp), oldest first, at most `limit`
+   * (200 by default). The retention sweep purges them through `writeItem`.
    *
    * The window is measured from `trashed_at`, the time of the transition
    * into the soft-deleted state: `updated_at` is the modification time
    * rather than the removal time, and any write to a trashed row moves it,
    * so measuring from it would restart the retention clock on an edit made
    * in the bin.
-   *
-   * Unlike `purge`, this drops the purged items' edges itself (both
-   * directions, inside the same transaction). It is the terminal step of
-   * the automatic trash lifecycle with no route layer above it to do the
-   * cleanup, and edges have no FK to items to fall back on. At most `limit`
-   * rows per transaction (200 by default), oldest first.
    */
-  purgeTrashedOlderThan(beforeDate: string, limit?: number): Promise<number>;
+  listTrashedOlderThan(beforeDate: string, limit?: number): Promise<string[]>;
   /**
-   * Hard-delete every revoked **application** grant row whose
-   * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
-   * number of rows deleted.
+   * The ids of the revoked **application** grant rows whose
+   * `properties.revoked_at` is strictly older than `beforeDate`, at most
+   * `limit` (200 by default).
    *
    * **Predicated on `properties.status`, not on the item's `state`, and that
-   * is the whole reason this could not reuse either sibling.** A grant revoked
-   * through the ordinary user-facing path keeps `state: "active"` — the revoke
-   * writes `status: "revoked"` and `revoked_at` and deliberately leaves the
-   * lifecycle alone, so the record survives as a record. A sweep keyed on
-   * `state` the way the trash purge is would match none of them.
+   * is the whole reason this could not reuse the trash listing.** A grant
+   * revoked through the ordinary user-facing path keeps `state: "active"`:
+   * the revoke writes `status: "revoked"` and `revoked_at` and deliberately
+   * leaves the lifecycle alone, so the record survives as a record. A
+   * listing keyed on `state` the way the trash one is would match none of
+   * them.
    *
    * **`kind = 'app'` asks the question it means**: a withdrawn application
    * grant, not any revoked connection.
@@ -826,9 +822,11 @@ export interface ItemStore {
    * Filters on `revoked_at` rather than `updated_at`: `updated_at` moves on
    * any write, and the window here means "how long we keep the record of a
    * withdrawn grant".
-   * One call removes at most 200 matching revoked grants.
    */
-  purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number>;
+  listRevokedAppGrantsOlderThan(
+    beforeDate: string,
+    limit?: number,
+  ): Promise<string[]>;
   /**
    * Every live app grant nobody has used since `cutoffIso`: kind `app`,
    * active on both lifecycle axes, and `last_used_at`, or `granted_at`
@@ -3123,8 +3121,6 @@ export type ItemWriteMethod = keyof Pick<
   | "restoreBeneath"
   | "restoreDates"
   | "transition"
-  | "purgeTrashedOlderThan"
-  | "purgeRevokedAppGrantsOlderThan"
 >;
 
 /**

@@ -178,6 +178,16 @@ function isSourceDedupViolation(err: unknown): boolean {
  * rather than everything. `undefined` out means "no predicate", so a caller
  * pushes the result only when it is present.
  */
+/** An application grant a person revoked: the row's own `status`, not its
+ *  lifecycle `state`, which the revoke leaves alone. */
+function isRevokedAppGrantRow(row: Item): boolean {
+  return (
+    row.type === "system.connection" &&
+    row.properties.kind === "app" &&
+    row.properties.status === "revoked"
+  );
+}
+
 function typePatternClause(pattern: string): SQL {
   const { global, exact, descendantPattern } = typePatternToSql(pattern);
   if (global) return sql`1=1`;
@@ -1699,7 +1709,10 @@ export class SqliteItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
-  async purge(id: string): Promise<void> {
+  async purge(
+    id: string,
+    opts: { revokedGrant?: boolean } = {},
+  ): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -1709,7 +1722,8 @@ export class SqliteItemStore implements ItemStore {
     // row can never reach, and which would therefore make its rows
     // unpurgeable.
     const target = softDeleteState(row.type);
-    if (row.state !== target) {
+    const sweptGrant = opts.revokedGrant === true && isRevokedAppGrantRow(row);
+    if (row.state !== target && !sweptGrant) {
       // The code the restore door answers for the same class of mistake.
       // Both doors are asking what may happen to a row in the state it is
       // in, and a caller sorting refusals by code would otherwise sort
@@ -1729,94 +1743,51 @@ export class SqliteItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
-  /** Delete purged rows and every edge touching them. The blob references
-   *  of their edges and extensions go by the foreign keys' cascade, which
-   *  lifts the orphan reports of the blobs they named. */
-  private async dropWithReferences(
-    tx: SqliteTx,
-    ids: readonly string[],
-  ): Promise<void> {
-    const list = [...ids];
-    for (const end of [edges.source_id, edges.target_id]) {
-      await tx.delete(edges).where(inArray(end, list)).run();
-    }
-    const deleted = await tx
-      .delete(items)
-      .where(inArray(items.id, list))
-      .returning({ id: items.id });
-    if (deleted.length > 0) markStructuralReadChange();
-  }
-
-  async purgeTrashedOlderThan(
+  async listTrashedOlderThan(
     beforeDate: string,
     limit = 200,
-  ): Promise<number> {
-    const baseConditions = [
-      eq(items.state, "trashed"),
-      // The window runs from when the row entered the bin, not from when it
-      // was last written: `updated_at` moves on any write to a trashed row,
-      // a tag or an extension write included, so measuring from it would
-      // restart the clock on an edit made in the bin.
-      lt(items.trashed_at, beforeDate),
-    ];
-    const where = and(...baseConditions);
-
-    return await this.db.transaction(async (tx) => {
-      const idRows = await tx
-        .select({ id: items.id })
-        .from(items)
-        .where(where)
-        .orderBy(items.trashed_at, items.id)
-        .limit(limit)
-        .all();
-      if (idRows.length === 0) return 0;
-
-      const ids = idRows.map((row) => row.id);
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
-      // Edges carry no FK to items, so nothing else ever collects them —
-      // without this the background sweep leaves a dangling edge row for
-      // every relationship a purged item had. Same statement shape as the
-      // bulk-action purge worker.
-      // Nothing is announced for any of it, here or in the revoked-grant
-      // sweep: `TrashPurger` carries why, and it is a decision rather than
-      // an omission.
-      await this.rehomeTrashRecords(ids, tx);
-      await recordTombstones(tx, ids, new Date().toISOString());
-      await this.dropWithReferences(tx, ids);
-      return ids.length;
-    });
+  ): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(
+        and(
+          eq(items.state, "trashed"),
+          // The window runs from when the row entered the bin, not from when
+          // it was last written: `updated_at` moves on any write to a
+          // trashed row, a tag or an extension write included, so measuring
+          // from it would restart the clock on an edit made in the bin.
+          lt(items.trashed_at, beforeDate),
+        ),
+      )
+      .orderBy(items.trashed_at, items.id)
+      .limit(limit)
+      .all();
+    return rows.map((row) => row.id);
   }
 
-  async purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number> {
+  async listRevokedAppGrantsOlderThan(
+    beforeDate: string,
+    limit = 200,
+  ): Promise<string[]> {
     // A grant revoked through the user-facing path keeps
     // `state: "active"`, so this asks `properties` rather than the
     // lifecycle, and `kind = 'app'` keeps the sweep to application grants.
-    const where = and(
-      eq(items.type, "system.connection"),
-      sql`json_extract(${items.properties}, '$.kind') = 'app'`,
-      sql`json_extract(${items.properties}, '$.status') = 'revoked'`,
-      sql`json_extract(${items.properties}, '$.revoked_at') < ${beforeDate}`,
-    );
-
-    return await this.db.transaction(async (tx) => {
-      const idRows = await tx
-        .select({ id: items.id })
-        .from(items)
-        .where(where)
-        .orderBy(items.id)
-        .limit(200)
-        .all();
-      if (idRows.length === 0) return 0;
-
-      const ids = idRows.map((row) => row.id);
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
-      await this.dropWithReferences(tx, ids);
-      return ids.length;
-    });
+    const rows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          sql`json_extract(${items.properties}, '$.kind') = 'app'`,
+          sql`json_extract(${items.properties}, '$.status') = 'revoked'`,
+          sql`json_extract(${items.properties}, '$.revoked_at') < ${beforeDate}`,
+        ),
+      )
+      .orderBy(items.id)
+      .limit(limit)
+      .all();
+    return rows.map((row) => row.id);
   }
 
   async listInactiveAppGrants(cutoffIso: string): Promise<
