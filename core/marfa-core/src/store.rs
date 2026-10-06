@@ -315,7 +315,9 @@ pub fn slice_holds(
 pub const EVERY_TYPE: &str = "*";
 
 /// `EVERY_TYPE` takes what a bare server listing answers, which leaves out
-/// `system.*`.
+/// `system.*`. A `system.*` row named by type is taken at either tier: the
+/// server stamps one a tier that says nothing about it, and a copy of the
+/// feed still needs the folders it shows.
 pub fn slice_takes(
     catalog: &crate::catalog::Catalog,
     types: &[String],
@@ -323,14 +325,18 @@ pub fn slice_takes(
     row_type: &str,
     row_tier: Option<Tier>,
 ) -> bool {
-    row_tier == Some(tier)
-        && types.iter().any(|declared| {
-            if declared == EVERY_TYPE {
-                !row_type.starts_with("system.")
-            } else {
-                catalog.matches(declared, row_type)
-            }
-        })
+    let system = is_system(row_type);
+    types.iter().any(|declared| {
+        if declared == EVERY_TYPE {
+            !system && row_tier == Some(tier)
+        } else {
+            catalog.matches(declared, row_type) && (system || row_tier == Some(tier))
+        }
+    })
+}
+
+pub(crate) fn is_system(r#type: &str) -> bool {
+    r#type.starts_with("system.")
 }
 
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError> {

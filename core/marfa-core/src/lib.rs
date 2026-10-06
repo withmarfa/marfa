@@ -8,6 +8,7 @@ mod drain;
 mod error;
 mod filter;
 pub mod folder;
+mod folder_settings;
 /// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
@@ -47,6 +48,7 @@ pub use folder::{
     Restored, ScanReport, Settings, SettingsFileReport, StatusReport, SyncReport, Synced,
     WatchError, WatchEvent, WatchPass,
 };
+pub use folder_settings::FolderRow;
 pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,

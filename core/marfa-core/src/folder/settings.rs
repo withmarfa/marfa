@@ -108,24 +108,44 @@ impl Settings {
         state: &str,
         properties: &Map<String, Value>,
     ) -> Result<Settings> {
+        Settings::refuse_unless_folder(id, r#type)?;
+        if state == ItemState::Revoked.as_str() {
+            return Err(CoreError::Invalid(format!(
+                "the folder {id} is revoked, and a revoked folder has no settings to follow"
+            )));
+        }
+        let settings = Settings::parse(id, r#type, properties)?;
+        settings.check()?;
+        Ok(settings)
+    }
+
+    fn refuse_unless_folder(id: &str, r#type: &str) -> Result<()> {
         if r#type != FOLDER_TYPE {
             return Err(CoreError::Invalid(format!(
                 "{id} is a {type}, not a {FOLDER_TYPE}; `folders create` makes one",
                 type = r#type
             )));
         }
-        if state == ItemState::Revoked.as_str() {
-            return Err(CoreError::Invalid(format!(
-                "the folder {id} is revoked, and a revoked folder has no settings to follow"
-            )));
-        }
-        let settings: Settings = serde_json::from_value(Value::Object(properties.clone()))
-            .map_err(|error| {
+        Ok(())
+    }
+
+    /// In any state, and unchecked: a revoked folder's settings still say
+    /// what it held, and settings no folder follows are still the row's. The
+    /// server's `revoked_at` beside them is not a setting.
+    pub(crate) fn parse(
+        id: &str,
+        r#type: &str,
+        properties: &Map<String, Value>,
+    ) -> Result<Settings> {
+        Settings::refuse_unless_folder(id, r#type)?;
+        let mut properties = properties.clone();
+        properties.remove("revoked_at");
+        let settings: Settings =
+            serde_json::from_value(Value::Object(properties)).map_err(|error| {
                 CoreError::Invalid(format!(
                     "the settings of folder {id} ask for something this folder does not do: {error}"
                 ))
             })?;
-        settings.check()?;
         Ok(settings)
     }
 
@@ -216,6 +236,114 @@ impl Settings {
                 .types
                 .iter()
                 .any(|declared| catalog.matches(declared, named))
+    }
+
+    /// What the search holds, as clauses on `items`: the one evaluation a
+    /// folder's pass and a list or search in a folder share, so the two
+    /// cannot hold different items. `system.*` is never held.
+    pub(crate) fn narrow(
+        &self,
+        catalog: &Catalog,
+        clauses: &mut Vec<String>,
+        values: &mut Vec<Value>,
+    ) -> Result<()> {
+        let types = &self.search.types;
+        if !types.is_empty() && !types.iter().any(|named| named == crate::store::EVERY_TYPE) {
+            let mut alternatives = Vec::new();
+            for named in types {
+                crate::query::narrow_by_type(catalog, Some(named), &mut alternatives, values);
+            }
+            clauses.push(format!("({})", alternatives.join(" OR ")));
+        }
+        clauses.push("items.type NOT LIKE 'system.%'".into());
+        clauses.push("items.tier = ?".into());
+        values.push(Value::String(self.tier().as_str().into()));
+        let states: Vec<&str> = match &self.search.state {
+            None => vec![ItemState::Active.as_str(), ItemState::Archived.as_str()],
+            Some(states) => states.iter().map(String::as_str).collect(),
+        };
+        clauses.push(format!(
+            "items.state IN ({})",
+            vec!["?"; states.len()].join(", ")
+        ));
+        values.extend(states.into_iter().map(|state| Value::String(state.into())));
+        crate::filter::narrow(
+            self.search.filter.as_deref(),
+            self.search.beneath.as_deref(),
+            clauses,
+            values,
+        )
+    }
+
+    /// Refuses where the copy's slice does not take every item the search
+    /// can hold: answered from part of the folder, a list would read as the
+    /// whole of it.
+    pub(crate) fn refuse_unless_answerable(
+        &self,
+        conn: &rusqlite::Connection,
+        catalog: &Catalog,
+    ) -> Result<()> {
+        let unanswerable = |why: String| {
+            CoreError::Invalid(format!(
+                "this copy cannot answer the folder's search: {why}"
+            ))
+        };
+        let Some((types, tier)) = crate::store::slice(conn)?.filter(|(types, _)| !types.is_empty())
+        else {
+            return Err(unanswerable(
+                "it holds no slice yet; hydrate it with the types the folder holds".into(),
+            ));
+        };
+        if tier != self.tier() {
+            return Err(unanswerable(format!(
+                "the folder holds the {} tier and this copy holds the {} tier",
+                self.tier().as_str(),
+                tier.as_str()
+            )));
+        }
+        let untaken: Vec<&str> = catalog
+            .declared()
+            .map(|(id, _)| id)
+            .filter(|id| {
+                !crate::store::is_system(id)
+                    && self.holds_type(catalog, id)
+                    && !crate::store::slice_takes(catalog, &types, tier, id, Some(tier))
+            })
+            .collect();
+        // A subtype goes with its parent, so only the parent is named.
+        let mut named: Vec<&str> = untaken
+            .iter()
+            .copied()
+            .filter(|id| {
+                !untaken
+                    .iter()
+                    .any(|other| other != id && catalog.matches(other, id))
+            })
+            .collect();
+        if !named.is_empty() {
+            named.sort_unstable();
+            let named = named.join(", ");
+            return Err(unanswerable(if self.search.types.is_empty() {
+                format!(
+                    "the folder holds every type but `system.*`, and this copy's slice does not take {named}; hydrate with them, or with every type the key reads"
+                )
+            } else {
+                format!(
+                    "the folder holds {named}, and this copy's slice does not take them; hydrate with them"
+                )
+            }));
+        }
+        if self.search.beneath.is_some()
+            && !crate::store::whole_edge_types(conn)?
+                .iter()
+                .any(|held| held == crate::filter::PARENT_OF)
+        {
+            return Err(unanswerable(format!(
+                "it searches beneath an item, which only a copy holding `{}` whole can walk; hydrate with it as an edge type held whole",
+                crate::filter::PARENT_OF
+            )));
+        }
+        Ok(())
     }
 
     pub fn lists(&self) -> Result<super::lists::Lists> {

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
+mod folder_settings;
 mod folders;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

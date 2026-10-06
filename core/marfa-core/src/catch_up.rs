@@ -76,8 +76,12 @@ fn unexplained(
         return None;
     }
     let item = payload.item.as_ref()?;
-    // A row of the other tier leaves the copy whatever its type is.
-    if !pinned && Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
+    // A row of the other tier leaves the copy whatever its type is, but a
+    // `system.*` row, which `store::slice_takes` holds at either tier.
+    if !pinned
+        && !store::is_system(&item.r#type)
+        && Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier)
+    {
         return None;
     }
     if !catalog.known(&item.r#type) {

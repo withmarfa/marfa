@@ -3739,37 +3739,14 @@ impl Folder {
         Ok(LetGo::Removed)
     }
 
-    /// Answered by the local list so the folder and a list read one grammar
-    /// alike.
+    /// Answered as a list in the folder is, so the two hold the same items.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
-        let types: Vec<Option<String>> = if settings.types().is_empty() {
-            vec![None]
-        } else {
-            settings.types().iter().cloned().map(Some).collect()
-        };
-        let mut members = HashSet::new();
-        for declared in types {
-            let found = self.core.list(
-                &crate::model::ListFilters {
-                    r#type: declared,
-                    tier: Some(settings.tier()),
-                    all_states: true,
-                    filter: settings.search.filter.clone(),
-                    beneath: settings.search.beneath.clone(),
-                    ..Default::default()
-                },
-                crate::model::Sort::default(),
-            )?;
-            members.extend(
-                found
-                    .into_iter()
-                    .filter(|item| {
-                        !item.r#type.starts_with("system.") && settings.holds_state(item.state)
-                    })
-                    .map(|item| item.id),
-            );
-        }
-        Ok(members)
+        Ok(self
+            .core
+            .held_by(settings)?
+            .into_iter()
+            .map(|item| item.id)
+            .collect())
     }
 
     fn remove_departed(

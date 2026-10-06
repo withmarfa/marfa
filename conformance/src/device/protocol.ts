@@ -21,6 +21,14 @@ export interface Refusal {
 export type Outcome<T> =
   { ok: true; value: T } | { ok: false; refusal: Refusal };
 
+/** A `system.folder` row as a device reads it, with the settings it carries. */
+export interface FolderRow {
+  id: string;
+  version: number;
+  state: string;
+  settings: Record<string, unknown> & { title?: string };
+}
+
 export interface Item {
   id: string;
   type: string;

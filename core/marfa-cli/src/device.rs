@@ -83,6 +83,12 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: ItemsCommand,
     },
+    /// Folders' settings: read from the copy, written through the folder
+    /// door.
+    Folders {
+        #[command(subcommand)]
+        command: DeviceFoldersCommand,
+    },
     /// Full-text search over the local copy, best match first.
     Search {
         /// Words to look for, matched as the server matches them: all must
@@ -112,6 +118,10 @@ pub enum DeviceCommand {
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Only what this `system.folder`'s search holds, as the folder holds
+        /// it; refused where the copy's slice cannot answer the search whole.
+        #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tags", "filter", "beneath"])]
+        folder: Option<String>,
     },
     /// Every queued write, the body it carries and what became of it.
     Queue,
@@ -571,6 +581,46 @@ pub struct ListArgs {
     /// How many items to skip first.
     #[arg(long)]
     pub offset: Option<u32>,
+    /// Only what this `system.folder`'s search holds, as the folder holds
+    /// it; refused where the copy's slice cannot answer the search whole.
+    #[arg(long, value_name = "ID", conflicts_with_all = FOLDER_SCOPED)]
+    pub folder: Option<String>,
+}
+
+/// The narrowing a folder's own search sets.
+const FOLDER_SCOPED: [&str; 9] = [
+    "type_",
+    "state",
+    "all_states",
+    "tier",
+    "tags",
+    "occurred_after",
+    "occurred_before",
+    "filter",
+    "beneath",
+];
+
+#[derive(Debug, Subcommand)]
+pub enum DeviceFoldersCommand {
+    /// Create a folder's settings through the folder door, at once and never
+    /// queued; settings no folder follows are refused before they are sent.
+    Create(crate::commands::folders::CreateArgs),
+    /// Change a folder's settings through the folder door, at once, each
+    /// named one replaced whole.
+    Change(crate::commands::folders::ChangeArgs),
+    /// Retire a folder's settings through the folder door, at once. A
+    /// revoked folder does not change.
+    Revoke {
+        /// The folder's `system.folder` id.
+        id: String,
+        #[command(flatten)]
+        idempotency: crate::commands::items::IdempotencyArgs,
+    },
+    /// A folder's settings as the copy holds them.
+    Get {
+        /// The folder's `system.folder` id.
+        id: String,
+    },
 }
 
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
@@ -751,6 +801,17 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = store.open(None)?;
             match command {
                 ItemsCommand::List(args) => {
+                    let sort = Sort {
+                        field: args.sort.into(),
+                        direction: args.direction.into(),
+                    };
+                    if let Some(folder) = &args.folder {
+                        let (items, shown): (Vec<_>, Vec<_>) = core
+                            .list_in_folder(folder, sort, args.limit, args.offset)?
+                            .into_iter()
+                            .unzip();
+                        return output::items(&items, &shown, json).map(|()| Exit::Done);
+                    }
                     let filters = ListFilters {
                         r#type: args.type_,
                         state: args.state.map(Into::into),
@@ -763,10 +824,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         beneath: args.beneath,
                         limit: args.limit,
                         offset: args.offset,
-                    };
-                    let sort = Sort {
-                        field: args.sort.into(),
-                        direction: args.direction.into(),
                     };
                     let (items, shown): (Vec<_>, Vec<_>) =
                         core.list_shown(&filters, sort)?.into_iter().unzip();
@@ -894,7 +951,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             filter,
             beneath,
             limit,
+            folder,
         } => {
+            if let Some(folder) = folder {
+                let (hits, shown): (Vec<_>, Vec<_>) = store
+                    .open(None)?
+                    .search_in_folder(&query, &folder, limit)?
+                    .into_iter()
+                    .unzip();
+                return output::hits(&hits, &shown, json).map(|()| Exit::Done);
+            }
             let filters = SearchFilters {
                 state: state.map(Into::into),
                 all_states,
@@ -907,6 +973,28 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let (hits, shown): (Vec<_>, Vec<_>) =
                 core.search_shown(&query, &filters, limit)?.into_iter().unzip();
             output::hits(&hits, &shown, json)
+        }
+        DeviceCommand::Folders { command } => {
+            let row = match command {
+                DeviceFoldersCommand::Get { id } => match store.open(None)?.folder(&id)? {
+                    Some(row) => row,
+                    None => return Err(CliError::NotHeld(id)),
+                },
+                DeviceFoldersCommand::Create(args) => store.open_with_server(named)?.create_folder(
+                    &args.settings.read()?,
+                    args.idempotency.idempotency_key.as_deref(),
+                )?,
+                DeviceFoldersCommand::Change(args) => store.open_with_server(named)?.change_folder(
+                    &args.id,
+                    &args.settings.read()?,
+                    args.version,
+                    args.idempotency.idempotency_key.as_deref(),
+                )?,
+                DeviceFoldersCommand::Revoke { id, idempotency } => store
+                    .open_with_server(named)?
+                    .revoke_folder(&id, idempotency.idempotency_key.as_deref())?,
+            };
+            folder_row(&row, json)
         }
         DeviceCommand::Edges { command } => {
             let core = store.open(None)?;
@@ -1168,6 +1256,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
     }
     .map(|()| Exit::Done)
+}
+
+fn folder_row(row: &marfa_core::FolderRow, json: bool) -> Result<(), CliError> {
+    output::report(row, json, || {
+        format!(
+            "{} {} at version {}: {}",
+            row.id,
+            row.state.as_str(),
+            row.version,
+            row.settings.title.as_deref().unwrap_or("untitled")
+        )
+    })
 }
 
 fn type_line(held: &marfa_core::ItemType) -> String {
