@@ -168,6 +168,18 @@ describe("a file item carries the size of the bytes it names", () => {
     expect(renamed.properties.size_bytes).toBe(blob.size);
   });
 
+  it("is answered where the type declares it, ahead of a subtype's own fields", async () => {
+    const blob = await upload(ctx.workingKey, 8);
+    const row = await create(ctx.workingKey, "core.file.image", {
+      width: 3,
+      blob_ref: blob.hash,
+    });
+    const keys = Object.keys(row.properties);
+    expect(keys.indexOf("size_bytes")).toBeGreaterThan(-1);
+    expect(keys.indexOf("size_bytes")).toBeLessThan(keys.indexOf("width"));
+    expect(Object.keys((await read(row.id)).properties)).toEqual(keys);
+  });
+
   it("holds for every file type, and a type registered under one", async () => {
     registerTypeSchema({
       id: "acme.scan_size_test",
