@@ -45,11 +45,11 @@ Content-addressed binary storage beside the items that reference it. Where the b
 
 **Tests:** `compliance/file-size.test.ts › carries none for bytes its writer never sent, where the writer that sent them is told`, `› carries none for bytes not yet uploaded, and has it once the digest is written again with them`.
 
-33. **A stale write does not collide on a file's size.** When a write made against an earlier version of a file item carries `size_bytes`, or replaces the properties without it, the server MUST NOT count `size_bytes` as a change the write made, so it names no conflict on it and merges the rest of the write as it would without it (`versions.md`).
+33. **A stale write does not collide on a file's size.** When a write made against an earlier version of a file item, or of an item it moves into a file type, carries `size_bytes` as a whole number or null, or replaces the properties without it, the server MUST NOT count `size_bytes` as a change the write made, so it names no conflict on it and merges the rest of the write as it would without it (`versions.md`).
 
 **Reason:** the size is the server's to set (31, 32), so a value the write sent or left out is not the writer's edit. Counted as one, a whole edit built from the writer's own fields, which leaves the size out, would be refused whenever another writer had replaced the bytes since, though the writer changed nothing the other did.
 
-**Tests:** `packages/server/src/routes/file-size.test.ts › takes a stale whole edit that leaves the size out, with no collision on it`.
+**Tests:** `packages/server/src/routes/file-size.test.ts › takes a stale whole edit that leaves the size out, with no collision on it`, `› takes a stale move out of the file family with no collision on the size`, `› refuses a size of the wrong shape on a stale write, as on a current one`.
 
 The server sets `size_bytes` only on a write that creates or updates the item itself: its properties, tier, time, natural key or type. A file item stored without it is read without it until such a write, a change of title included, which sets it as 31 and 32 say; a write of only its tags, edges, extensions or lifecycle state leaves it as it is.
 

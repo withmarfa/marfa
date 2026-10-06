@@ -205,9 +205,50 @@ describe("a file item carries the size of the bytes it names", () => {
       },
     });
     expect(stale.properties.title).toBe("renamed while stale");
-    expect(stale.properties.size_bytes).toBe(
-      stale.properties.blob_ref === first.hash ? first.size : second.size,
-    );
+    // Naming the bytes it read is no change, so the newer bytes stand.
+    expect(stale.properties.blob_ref).toBe(second.hash);
+    expect(stale.properties.size_bytes).toBe(second.size);
+  });
+
+  it("takes a stale move out of the file family with no collision on the size", async () => {
+    const first = await upload(ctx.workingKey, 9);
+    const second = await upload(ctx.workingKey, 90);
+    const row = await create(ctx.workingKey, "core.file", {
+      blob_ref: first.hash,
+    });
+    await patch(ctx.workingKey, row, {
+      properties: { blob_ref: second.hash },
+    });
+    const moved = await patch(ctx.workingKey, row, {
+      type: "core.note",
+      retype: true,
+      properties_mode: "replace",
+      properties: {
+        title: "now a note",
+        body: "was a file",
+        blob_ref: first.hash,
+        mime_type: "image/png",
+      },
+    });
+    expect(moved.type).toBe("core.note");
+    expect(moved.properties.title).toBe("now a note");
+  });
+
+  it("refuses a size of the wrong shape on a stale write, as on a current one", async () => {
+    const blob = await upload(ctx.workingKey, 5);
+    const row = await create(ctx.workingKey, "core.file", {
+      blob_ref: blob.hash,
+    });
+    const current = await patch(ctx.workingKey, row, {
+      properties: { title: "moved on" },
+    });
+    for (const version of [current.version, row.version]) {
+      const res = await request(ctx.app, "PATCH", `/items/${row.id}`, {
+        key: ctx.workingKey,
+        body: { version, properties: { size_bytes: "abc" } },
+      });
+      expect(res.status, `at version ${String(version)}`).toBe(400);
+    }
   });
 
   it("is stamped by a bulk action's property patch", async () => {

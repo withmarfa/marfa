@@ -1399,13 +1399,19 @@ export class SqliteItemStore implements ItemStore {
       // the caller made: the caller cleared it.
       const replacing =
         input.properties_mode === "replace" && incomingProps !== undefined;
-      // A file's size is the server's to set, so a stale write neither
-      // changes nor clears it, and cannot collide on it.
-      const sized = isFileType(input.type ?? row.type);
+      // A file's size is the server's to set, on the row the write leaves
+      // and on the versions it compares, so a stale write neither changes
+      // nor clears it, and cannot collide on it. A value no write could
+      // carry stays, to be refused as it is at the current version.
+      const sized = isFileType(row.type) || isFileType(input.type ?? row.type);
+      const serverSize = (key: string, value: unknown) =>
+        sized &&
+        key === "size_bytes" &&
+        (value === null || Number.isSafeInteger(value));
       const clientProps: Record<string, unknown> = Object.fromEntries(
         Object.entries(incomingProps ?? {}).filter(
           ([key, value]) =>
-            !(replacing && value === null) && !(sized && key === "size_bytes"),
+            !(replacing && value === null) && !serverSize(key, value),
         ),
       );
       const clearedProperties = replacing
