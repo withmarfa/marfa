@@ -787,9 +787,7 @@ fn read_stream(
                 // A failed read of a row entering the slice reopens the
                 // stream from before this event rather than ending.
                 let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
-                    Err(CoreError::StreamIncomplete { ref reason })
-                        if reason == "local_copy_changed" =>
-                    {
+                    Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
                         // Pins changed during an awaited read. Replay this event
                         // against the new set without advancing its cursor.

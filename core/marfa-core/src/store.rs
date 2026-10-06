@@ -3209,7 +3209,10 @@ mod tests {
         assert!(purged(&conn, "pinned").unwrap());
         assert!(!purged(&conn, "unpinned").unwrap());
         pin(&conn, "pinned").unwrap();
-        assert!(purged(&conn, "pinned").unwrap(), "a later pin of the gone row");
+        assert!(
+            purged(&conn, "pinned").unwrap(),
+            "a later pin of the gone row"
+        );
         forget_purged(&conn, "pinned").unwrap();
         assert!(!purged(&conn, "pinned").unwrap());
     }

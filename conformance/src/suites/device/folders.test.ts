@@ -15452,6 +15452,8 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
     const status = await harness.folder.status();
     expect(status.ok && status.value.files).toEqual([]);
+    // A scan after the take-away is what would journal the file's delete.
+    expect((await harness.folder.scan()).ok).toBe(true);
     const queued = await harness.folder.device().queue();
     expect(queued.ok).toBe(true);
     expect(
@@ -15471,6 +15473,27 @@ describe("what a pull does with a file whose item is purged", () => {
       "1 file(s) of items purged removed",
     );
     expect(text.ok && text.value).not.toContain("trashed or out of the search");
+  });
+
+  it("says while watching that a purged item's file was removed", async () => {
+    harness = await purge("folder-purged-watch-words");
+    scriptFolderWrites(harness);
+    // Pulled without the catch-up, so the watch's stream brings the purge.
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout, watching.stdout).toContain(
+            "1 removed whose item was purged",
+          ),
+        { timeout: 30_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout).not.toContain("trashed or left by state");
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
   });
 
   it("keeps a purged item's file the person changed since the folder wrote it, and says so", async () => {
@@ -15571,6 +15594,36 @@ describe("what a pull does with a file whose item is purged", () => {
     );
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     expect(pulled.ok && pulled.value.written).toBe(1);
+  });
+
+  it("counts what an attempt wrote before the copy changed under it", async () => {
+    harness = await folderHarness("folder-copy-changed-after-a-write", {
+      rows: {
+        "core.note": [
+          { item: purged },
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000d3",
+              properties: { title: "staying", body: "body\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const pulled = await withFault("copy-changes-during-pull=second", () =>
+      harness.folder.pull(),
+    );
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    // One unchanged file is the witness: the second attempt found the file
+    // the first had written.
+    expect(
+      [pulled.value.written, pulled.value.unchanged],
+      "the report counted the last attempt alone",
+    ).toEqual([2, 1]);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(true);
+    expect(existsSync(join(harness.dir, "staying.md"))).toBe(true);
   });
 
   it("goes on watching where the copy keeps changing under its pull, and says so once", async () => {

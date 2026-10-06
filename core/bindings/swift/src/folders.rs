@@ -148,8 +148,10 @@ pub struct FolderPull {
     pub moved: u64,
     pub unchanged: u64,
     pub skipped: u64,
-    /// Files of items trashed or gone from the search's states, removed.
+    /// Files of items trashed, purged or gone from the search's states, removed.
     pub removed: u64,
+    /// Of `removed`, the files of items purged, which no restore brings back.
+    pub purged: u64,
     /// Files of items gone from the search, kept with the person's changes.
     pub kept: u64,
     /// Files the folder did not write, and would not write over.
@@ -571,6 +573,7 @@ fn pull_of(pull: marfa_core::PullReport) -> FolderPull {
         unchanged: pull.unchanged as u64,
         skipped: pull.skipped as u64,
         removed: pull.removed as u64,
+        purged: pull.purged as u64,
         kept: pull.kept as u64,
         unwritten: pull.unwritten as u64,
         absent: pull.absent as u64,
