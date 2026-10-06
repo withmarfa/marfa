@@ -11,7 +11,7 @@ import {
 const SECRET = "a".repeat(64);
 const BOOT_LINE = JSON.stringify({
   level: "warn",
-  message: `This instance holds no credential yet. Mint the first one with \`marfa --url <url> keys bootstrap\` and write this bootstrap secret on its stdin: ${SECRET}. This secret works once and is not shown again after that mint.`,
+  message: `This instance holds no credential yet. Mint the first one with \`marfa --url <url> keys bootstrap\` and write this bootstrap secret on its stdin: ${SECRET}. This secret works once and is not shown again after that mint. Nobody can sign in until the instance also has an owner: create one with \`marfa owner create\`, using the operator key.`,
 });
 
 describe("readBootstrapSecret", () => {

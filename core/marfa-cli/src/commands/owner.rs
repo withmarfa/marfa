@@ -43,14 +43,20 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             }
             let created = remote.json(&Request::post(&["owner"]).json(body))?;
             out.report(&created, || {
-                format!(
-                    "created the owner {} on {}",
+                created_line(
                     created.get("email").and_then(|v| v.as_str()).unwrap_or(""),
-                    remote.origin()
+                    remote.origin(),
                 )
             })
         }
     }
+}
+
+fn created_line(email: &str, origin: &str) -> String {
+    format!(
+        "created the owner {email} on {origin}\nsign in at {}/auth/sign-in",
+        origin.trim_end_matches('/')
+    )
 }
 
 fn read_password(from_stdin: bool) -> Result<String, CliError> {
@@ -71,4 +77,22 @@ fn read_password(from_stdin: bool) -> Result<String, CliError> {
         return Err(CliError::Invalid("the password is empty".into()));
     }
     Ok(password)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creating_the_owner_names_the_page_to_sign_in_at() {
+        assert_eq!(
+            created_line("owner@example.com", "http://127.0.0.1:8600"),
+            "created the owner owner@example.com on http://127.0.0.1:8600\nsign in at http://127.0.0.1:8600/auth/sign-in"
+        );
+        assert_eq!(
+            created_line("owner@example.com", "https://marfa.example/base/"),
+            "created the owner owner@example.com on https://marfa.example/base/\nsign in at https://marfa.example/base/auth/sign-in",
+            "a path prefix is kept and no slash doubles"
+        );
+    }
 }

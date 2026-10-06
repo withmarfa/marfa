@@ -45,6 +45,8 @@ marfa status                  # now with the item counts
 
 On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
 
+The README's quick start creates the owner, which sign-in needs.
+
 ## Code style
 
 - TypeScript strict mode, ESM-only
