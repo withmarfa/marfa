@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::Http;
-use crate::model::{CatchUpReport, Subject, Tier};
+use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::read_view::{self, Context};
 use crate::sse::{Frame, Frames};
 use crate::store;
@@ -45,7 +45,7 @@ pub(crate) const PACE: Pace = Pace {
 
 struct Slice {
     types: Vec<String>,
-    tier: Tier,
+    tier: SliceTier,
     whole: Vec<String>,
 }
 
@@ -76,11 +76,14 @@ fn unexplained(
         return None;
     }
     let item = payload.item.as_ref()?;
-    // A row of the other tier leaves the copy whatever its type is, but a
-    // `system.*` row, which `store::slice_takes` holds at either tier.
+    // A row of a tier the slice does not hold leaves the copy whatever its
+    // type is, but a `system.*` row, which `store::slice_takes` holds at
+    // either tier.
     if !pinned
         && !store::is_system(&item.r#type)
-        && Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier)
+        && !slice
+            .tier
+            .takes(Tier::parse_wire(item.tier.as_deref()).ok()?)
     {
         return None;
     }
@@ -1768,7 +1771,7 @@ mod tests {
         let catalog = Catalog::load(&conn).unwrap();
         let slice = Slice {
             types: vec!["user.photo".into()],
-            tier: Tier::Library,
+            tier: SliceTier::Library,
             whole: Vec::new(),
         };
         let event = |r#type: &str| {
@@ -1817,6 +1820,66 @@ mod tests {
             unexplained(&catalog, &slice, "item.created", &gone, &refreshed, false),
             None
         );
+    }
+
+    #[test]
+    fn a_move_between_the_tiers_of_a_slice_of_both_keeps_the_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("core.sqlite")).unwrap();
+        store::replace_types(
+            &conn,
+            &[store::testing::wire_type(NOTE, None, Some("title"))],
+        )
+        .unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let event = |version: i64, tier: &str| {
+            serde_json::from_str::<EventPayload>(
+                &serde_json::json!({
+                    "listed": true,
+                    "event_type": "item.updated",
+                    "item": {
+                        "id": "row", "type": NOTE, "state": "active", "tier": tier,
+                        "version": version, "schema_version": 1, "source": "test",
+                        "occurred_at": "2026-01-01T00:00:00Z",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": format!("2026-01-01T00:00:0{version}Z"),
+                        "properties": { "title": "inbox" },
+                    },
+                    "metadata": { "tags": [] },
+                })
+                .to_string(),
+            )
+            .unwrap()
+        };
+        let held = |conn: &rusqlite::Connection| {
+            store::items_by_ids(conn, &["row".to_string()])
+                .unwrap()
+                .pop()
+                .map(|item| item.tier)
+        };
+        // Held at the feed, then moved to the library: the feed's copy lets
+        // it go, which is the witness that the move is one a slice can see.
+        for (tier, at_feed, after_move) in [
+            (
+                SliceTier::All,
+                Some(Some(Tier::Feed)),
+                Some(Some(Tier::Library)),
+            ),
+            (SliceTier::Feed, Some(Some(Tier::Feed)), None),
+            (SliceTier::Library, None, Some(Some(Tier::Library))),
+        ] {
+            let slice = Slice {
+                types: vec![NOTE.into()],
+                tier,
+                whole: Vec::new(),
+            };
+            let tx = conn.unchecked_transaction().unwrap();
+            apply(&tx, &catalog, &slice, "item.created", &event(1, "feed")).unwrap();
+            assert_eq!(held(&tx), at_feed, "a slice at {tier} before the move");
+            apply(&tx, &catalog, &slice, "item.updated", &event(2, "library")).unwrap();
+            assert_eq!(held(&tx), after_move, "a slice at {tier} after the move");
+            tx.rollback().unwrap();
+        }
     }
 
     #[test]

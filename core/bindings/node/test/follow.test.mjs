@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { Handle, MarfaCore, Tier } from "../index.js";
+import { Handle, MarfaCore, SliceTier } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
@@ -140,7 +140,7 @@ async function hydrated(t, streams) {
   t.after(server.close);
   const path = storeFor(t);
   const core = MarfaCore.open(path, server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   return { server, path, core };
 }
 
@@ -262,12 +262,12 @@ test(
     const worker = new Worker(
       `
     const { parentPort, workerData } = require("node:worker_threads");
-    const { MarfaCore, Tier } = require(workerData.module);
+    const { MarfaCore, SliceTier } = require(workerData.module);
     // A follow's callbacks keep no thread alive, and this one must last
     // until it is torn down.
     setInterval(() => {}, 1000);
     const core = MarfaCore.open(workerData.path, workerData.url, "k");
-    core.hydrate(["core.note"], Tier.Library).then(() => {
+    core.hydrate(["core.note"], SliceTier.Library).then(() => {
       core.follow(() => {
         parentPort.postMessage("told");
         // Every change after this one queues behind it until the worker goes.
@@ -313,7 +313,7 @@ test(
     const path = storeFor(t);
     /** @type {MarfaCore | null} */
     let core = MarfaCore.open(path, server.url, "k");
-    await core.hydrate(["core.note"], Tier.Library);
+    await core.hydrate(["core.note"], SliceTier.Library);
     let collected = false;
     const registry = new FinalizationRegistry(() => {
       collected = true;

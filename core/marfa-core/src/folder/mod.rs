@@ -498,7 +498,7 @@ impl Folder {
         let catalog = Catalog::load(&planning)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
         self.core
-            .hydrate_every_type_or(settings.types(), settings.tier(), &whole, stop)
+            .hydrate_every_type_or(settings.types(), settings.tier().into(), &whole, stop)
     }
 
     /// `None` where the copy already answers for the slice the settings ask.
@@ -538,7 +538,7 @@ impl Folder {
             whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
                 .into_iter()
                 .collect();
-        Ok(held != asked || tier != settings.tier() || whole != wanted)
+        Ok(held != asked || tier != settings.tier().into() || whole != wanted)
     }
 
     pub fn catch_up(&self) -> Result<CaughtUp> {

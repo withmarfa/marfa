@@ -13,6 +13,14 @@ pub enum Tier {
     Feed,
 }
 
+/// The tiers a slice holds: one, or `all` for both.
+#[napi(string_enum = "snake_case")]
+pub enum SliceTier {
+    Library,
+    Feed,
+    All,
+}
+
 #[napi(string_enum = "snake_case")]
 pub enum ItemState {
     Active,
@@ -139,7 +147,7 @@ pub struct SearchHit {
 #[napi(object)]
 pub struct HydrateReport {
     pub types: Vec<String>,
-    pub tier: Tier,
+    pub tier: SliceTier,
     pub edge_types: Vec<String>,
     pub items: i64,
     pub edges: i64,
@@ -183,7 +191,7 @@ pub struct Status {
     /// The instance the copy was hydrated from.
     pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
-    pub slice_tier: Option<Tier>,
+    pub slice_tier: Option<SliceTier>,
     pub slice_edge_types: Vec<String>,
     pub pinned: Vec<String>,
     pub event_cursor: Option<String>,
@@ -571,6 +579,26 @@ impl From<Tier> for marfa_core::Tier {
         match tier {
             Tier::Library => marfa_core::Tier::Library,
             Tier::Feed => marfa_core::Tier::Feed,
+        }
+    }
+}
+
+impl From<SliceTier> for marfa_core::SliceTier {
+    fn from(tier: SliceTier) -> Self {
+        match tier {
+            SliceTier::Library => marfa_core::SliceTier::Library,
+            SliceTier::Feed => marfa_core::SliceTier::Feed,
+            SliceTier::All => marfa_core::SliceTier::All,
+        }
+    }
+}
+
+impl From<marfa_core::SliceTier> for SliceTier {
+    fn from(tier: marfa_core::SliceTier) -> Self {
+        match tier {
+            marfa_core::SliceTier::Library => SliceTier::Library,
+            marfa_core::SliceTier::Feed => SliceTier::Feed,
+            marfa_core::SliceTier::All => SliceTier::All,
         }
     }
 }
@@ -1150,7 +1178,7 @@ fn flag_of(stop: Option<&Stop>) -> Arc<AtomicBool> {
 pub struct Hydrate {
     core: Arc<marfa_core::Core>,
     types: Vec<String>,
-    tier: marfa_core::Tier,
+    tier: marfa_core::SliceTier,
     edge_types: Vec<String>,
     stop: Arc<AtomicBool>,
     failed: Option<marfa_core::CoreError>,
@@ -1494,12 +1522,13 @@ impl MarfaCore {
         })
     }
 
-    /// Replaces the local copy with the declared types at `tier`.
+    /// Replaces the local copy with the declared types at `tier`, one tier or
+    /// `all` for both.
     #[napi]
     pub fn hydrate(
         &self,
         types: Vec<String>,
-        tier: Tier,
+        tier: SliceTier,
         stop: Option<&Stop>,
     ) -> AsyncTask<Hydrate> {
         self.hydrate_with(types, tier, Vec::new(), stop)
@@ -1511,7 +1540,7 @@ impl MarfaCore {
     pub fn hydrate_with(
         &self,
         types: Vec<String>,
-        tier: Tier,
+        tier: SliceTier,
         edge_types: Vec<String>,
         stop: Option<&Stop>,
     ) -> AsyncTask<Hydrate> {

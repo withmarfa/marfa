@@ -18,6 +18,7 @@ import type {
   DeviceUnderTest,
   DrainReport,
   QueuedWrite,
+  SliceTier,
 } from "../../device/protocol.js";
 import {
   BUILT_FOR,
@@ -6849,13 +6850,16 @@ describe("a create the slice does not hold", () => {
   /** What the next catch-up's stream answers. */
   let stream: Answer = copyHeadRead("10");
 
-  async function feedSlice(label: string): Promise<Harness> {
+  async function feedSlice(
+    label: string,
+    tier: SliceTier = "feed",
+  ): Promise<Harness> {
     const started = await startHarness(label);
     scriptHydration(started.server, {
       head: "10",
       rows: { "core.note": [{ item: { id: FEED, tier: "feed" } }] },
     });
-    const hydrated = await started.device.hydrate(["core.note"], "feed");
+    const hydrated = await started.device.hydrate(["core.note"], tier);
     expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
     // The hydration's head read answers once more, then `stream` does.
     stream = copyHeadRead("10");
@@ -6887,6 +6891,50 @@ describe("a create the slice does not hold", () => {
       (JSON.parse(sent?.body ?? "{}") as { tier?: string }).tier,
       "a create naming no tier went without one, so the server gave it the key's default tier and the copy let it go at its echo",
     ).toBe("feed");
+  });
+
+  it("sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed", async () => {
+    harness = await feedSlice("queue-create-both-tiers", "all");
+    const { device, server } = harness;
+    const ids: Record<string, string> = {};
+    for (const [label, tier] of [
+      ["unnamed", undefined],
+      ["feed", "feed"],
+    ] as const) {
+      const created = await device.create({
+        type: "core.note",
+        ...(tier === undefined ? {} : { tier }),
+        properties: { title: label, body: label },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      ids[label] = created.ok ? (created.value.item_id ?? "") : "";
+    }
+    const shown = async (id: string) => {
+      const read = await device.get(id);
+      return read.ok ? read.value.tier : read;
+    };
+    expect(
+      await shown(ids.unnamed!),
+      "a create naming no tier in a slice of both was not shown at the library",
+    ).toBe("library");
+    expect(await shown(ids.feed!)).toBe("feed");
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "a create a slice of both holds was pinned as one it does not",
+    ).toEqual([]);
+    const door = createDoor(server);
+    scriptWrites(server, { create: [door, door] });
+    expect((await device.drain()).ok).toBe(true);
+    const sent = server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => (JSON.parse(request.body) as { tier?: string }).tier);
+    expect(
+      sent,
+      "a create naming no tier went without one from a slice of both, so the server gave it the key's default tier",
+    ).toEqual(["library", "feed"]);
   });
 
   it("holds a create the slice does not hold through its answer and its event", async () => {

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { Handle, Hydration, MarfaCore, Stop, Tier } from "../index.js";
+import { Handle, Hydration, MarfaCore, Stop, SliceTier } from "../index.js";
 import {
   CONTRACT,
   INSTANCE,
@@ -185,7 +185,7 @@ test("an app saves with no server, is checked against its declared types, and jo
   }
   assert.ok(joined, "the store was never let go of");
   const report = await joined
-    .hydrate(["app.recipe.entry"], Tier.Library)
+    .hydrate(["app.recipe.entry"], SliceTier.Library)
     .catch((e) => {
       console.log(server.seen);
       throw e;
@@ -200,7 +200,7 @@ test("a hydration given a stop that is raised in flight ends canceled and leaves
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
   const stop = new Stop();
-  const pending = core.hydrate(["core.note"], Tier.Library, stop);
+  const pending = core.hydrate(["core.note"], SliceTier.Library, stop);
   await sleep(150);
   stop.raise();
   const error = await refusal(pending);
@@ -210,7 +210,7 @@ test("a hydration given a stop that is raised in flight ends canceled and leaves
   assert.notEqual(core.status().hydration, Hydration.Complete);
   assert.throws(() => core.get("x"), /hydration_incomplete/);
   // The witness: the same copy hydrates when it is not stopped.
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(core.status().hydration, Hydration.Complete);
 });
 
@@ -218,7 +218,7 @@ test("a catch-up given a stop that is raised in flight ends canceled", async (t)
   const server = await serving();
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   server.holdStreams();
   const stop = new Stop();
   const pending = core.catchUp(stop);
@@ -232,7 +232,7 @@ test("a drain given a stop that is raised in flight ends canceled and leaves the
   const server = await serving({ slowWrites: true });
   t.after(server.close);
   const core = MarfaCore.open(storeFor(t), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
   core.createItem({ type: "core.note", properties: { title: "a" } });
   core.createItem({ type: "core.note", properties: { title: "b" } });
   const stop = new Stop();

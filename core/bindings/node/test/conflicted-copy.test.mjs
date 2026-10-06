@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MarfaCore, Tier } from "../index.js";
+import { MarfaCore, SliceTier } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const AT = "2026-01-01T00:00:00Z";
@@ -106,7 +106,7 @@ test("answers a conflicted copy's original, and the copies made from an item", a
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
-  await core.hydrate(["core.note"], Tier.Library);
+  await core.hydrate(["core.note"], SliceTier.Library);
 
   assert.equal(core.get("original"), null);
   assert.deepEqual(

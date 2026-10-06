@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
-use crate::model::Tier;
+use crate::model::SliceTier;
 use crate::wire::{
     WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItemWithMetadata, WirePage,
     WireType,
@@ -143,8 +143,8 @@ impl Transport for RefusalTransport {
 pub struct ItemsQuery<'a> {
     /// `None` lists every type the key reads.
     pub r#type: Option<&'a str>,
-    /// `None` lists both tiers.
-    pub tier: Option<Tier>,
+    /// `all` lists both tiers.
+    pub tier: SliceTier,
     pub cursor: Option<&'a str>,
 }
 
@@ -442,10 +442,8 @@ impl Http {
             .map(|declared| ("type", declared))
             .into_iter()
             .collect();
-        if let Some(tier) = query.tier {
-            params.push(("tier", tier.as_str()));
-        }
         params.extend([
+            ("tier", query.tier.as_str()),
             ("state", "any"),
             ("include", "edges,metadata"),
             ("limit", &limit),

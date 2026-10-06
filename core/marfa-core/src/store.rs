@@ -9,7 +9,7 @@ use crate::catalog::Indexing;
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{
-    BlockedReason, Edge, Item, ItemState, QueuedWrite, Subject, Tier, Verdict, WriteKind,
+    BlockedReason, Edge, Item, ItemState, QueuedWrite, SliceTier, Subject, Tier, Verdict, WriteKind,
 };
 use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
 
@@ -321,16 +321,16 @@ pub const EVERY_TYPE: &str = "*";
 pub fn slice_takes(
     catalog: &crate::catalog::Catalog,
     types: &[String],
-    tier: Tier,
+    tier: SliceTier,
     row_type: &str,
     row_tier: Option<Tier>,
 ) -> bool {
     let system = is_system(row_type);
     types.iter().any(|declared| {
         if declared == EVERY_TYPE {
-            !system && row_tier == Some(tier)
+            !system && tier.takes(row_tier)
         } else {
-            catalog.matches(declared, row_type) && (system || row_tier == Some(tier))
+            catalog.matches(declared, row_type) && (system || tier.takes(row_tier))
         }
     })
 }
@@ -339,14 +339,23 @@ pub(crate) fn is_system(r#type: &str) -> bool {
     r#type.starts_with("system.")
 }
 
-pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError> {
+pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {
     let Some(tier) = meta_get(conn, META_SLICE_TIER)? else {
         return Ok(None);
     };
     let Some(types) = meta_get(conn, META_SLICE_TYPES)? else {
         return Ok(None);
     };
-    Ok(Some((serde_json::from_str(&types)?, tier.parse()?)))
+    Ok(Some((serde_json::from_str(&types)?, slice_tier(&tier)?)))
+}
+
+/// A value this build does not read is the store's fault, not the caller's.
+pub fn slice_tier(stored: &str) -> Result<SliceTier, CoreError> {
+    stored.parse().map_err(|_| {
+        CoreError::Store(format!(
+            "the store holds a slice tier this build does not read: {stored:?}"
+        ))
+    })
 }
 
 pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {

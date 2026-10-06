@@ -24,7 +24,7 @@ function inChild(t, body) {
       "--eval",
       `
         import assert from "node:assert/strict";
-        import { MarfaCore, Stop, Tier } from ${JSON.stringify(binding)};
+        import { MarfaCore, SliceTier, Stop } from ${JSON.stringify(binding)};
         const core = MarfaCore.open(process.argv[1], "http://127.0.0.1:1", "k");
         const stop = new Stop();
         const invoke = (value, operation) => {
@@ -55,8 +55,8 @@ test("accepts genuine class receivers and a Stop for every long call", (t) => {
       Stop.prototype.raise.call(stop);
       assert.equal(MarfaCore.prototype.status.call(core).hydration, "never");
       for (const call of [
-        () => core.hydrate(["core.note"], Tier.Library, stop),
-        () => core.hydrateWith(["core.note"], Tier.Library, [], stop),
+        () => core.hydrate(["core.note"], SliceTier.Library, stop),
+        () => core.hydrateWith(["core.note"], SliceTier.Library, [], stop),
         () => core.catchUp(stop),
         () => core.drain(stop),
       ]) {
@@ -67,8 +67,8 @@ test("accepts genuine class receivers and a Stop for every long call", (t) => {
 });
 
 for (const operation of [
-  'value => core.hydrate(["core.note"], Tier.Library, value)',
-  'value => core.hydrateWith(["core.note"], Tier.Library, [], value)',
+  'value => core.hydrate(["core.note"], SliceTier.Library, value)',
+  'value => core.hydrateWith(["core.note"], SliceTier.Library, [], value)',
   "value => core.catchUp(value)",
   "value => core.drain(value)",
 ]) {
