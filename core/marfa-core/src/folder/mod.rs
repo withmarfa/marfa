@@ -43,11 +43,14 @@ use crate::error::CoreError;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 
+use crate::body::embed::{carries_frontmatter, is_document};
+use crate::body::resolve::{Names, Resolver};
+use crate::names::{name_of, title_of};
 use edge_types::EdgeTypes;
 use elsewhere::{Look, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
-use lines::{EdgeWork, Names, Resolver};
+use lines::{BoundFiles, EdgeWork};
 use lists::{Lists, in_package, is_package};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
@@ -1058,7 +1061,7 @@ impl Folder {
                         .or_else(|| document::id_line(text)),
                 );
                 let mut found = Vec::new();
-                for embed in document::embeds(&read.body) {
+                for embed in crate::body::text::embeds(&read.body) {
                     if let Some(target) = embeds::on_disk(key, &embed, &index) {
                         if let embeds::Target::At(at) = &target {
                             embedded.insert(at.clone());
@@ -1422,7 +1425,7 @@ impl Folder {
 
         // Every file is bound now, so a link or a line naming one that
         // arrived in the same scan resolves.
-        let mut resolver = Resolver::new(self, &catalog);
+        let mut resolver = Resolver::new(&self.core, &catalog, &BoundFiles);
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
@@ -1682,7 +1685,7 @@ impl Folder {
                 Some(placed) => placed,
                 None => placed.insert(self.placed_here()?),
             };
-            let Some(candidates) = placed.get(&names::folded(&file.key)) else {
+            let Some(candidates) = placed.get(&crate::names::folded(&file.key)) else {
                 continue;
             };
             for edge in candidates {
@@ -2183,7 +2186,7 @@ impl Folder {
             && !crate::store::item_waits(&*self.core.conn()?, item_id)?
             && match bound {
                 Some(bound) => {
-                    let names = Names::load(self, catalog)?;
+                    let names = Names::load(&*self.core.conn()?, catalog, &BoundFiles)?;
                     let rendered = self.render(
                         &held,
                         &file.key,
@@ -2582,18 +2585,6 @@ fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
         .ok_or_else(|| CoreError::Invalid(format!("the create queued for {key} names no item")))
 }
 
-fn name_of(key: &str) -> &str {
-    key.rsplit('/').next().unwrap_or(key)
-}
-
-fn title_of(key: &str) -> String {
-    let name = name_of(key);
-    match name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem.to_string(),
-        _ => name.to_string(),
-    }
-}
-
 /// A pair this cannot read has not passed, since a delete cannot be taken
 /// back.
 fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
@@ -2958,7 +2949,7 @@ impl Folder {
         );
         report.skipped = skipped.iter().filter(|id| !members.contains(*id)).count();
         // After the pins, so a line names a target the copy now holds.
-        let names = Names::load(self, &catalog)?;
+        let names = Names::load(&*self.core.conn()?, &catalog, &BoundFiles)?;
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
         let unmatched_ids: Vec<String> = work
@@ -3026,7 +3017,7 @@ impl Folder {
                 // A name its file already has in another case or form is that
                 // file's, which keeps its own name.
                 .map(|want| match &bound {
-                    Some(bound) if names::same(&bound.path, &want) => bound.path.clone(),
+                    Some(bound) if crate::names::same(&bound.path, &want) => bound.path.clone(),
                     _ => want,
                 })
             else {
@@ -3073,14 +3064,14 @@ impl Folder {
         // one disk holds as one file.
         let wanted: HashSet<String> = placing
             .iter()
-            .map(|entry| names::folded(&entry.want))
+            .map(|entry| crate::names::folded(&entry.want))
             .collect();
         let mut taken: HashSet<String> = HashSet::new();
         for entry in &mut placing {
-            if taken.contains(&names::folded(&entry.want)) {
+            if taken.contains(&crate::names::folded(&entry.want)) {
                 let own = entry.bound.as_ref().map(|bound| bound.path.as_str());
                 let free = |candidate: &str| {
-                    let name = names::folded(candidate);
+                    let name = crate::names::folded(candidate);
                     !taken.contains(&name)
                         && self.writes_at(&lists, candidate)
                         && (own == Some(candidate)
@@ -3089,7 +3080,7 @@ impl Folder {
                 entry.want = beside(&entry.want, |candidate| !free(candidate));
                 report.beside += 1;
             }
-            taken.insert(names::folded(&entry.want));
+            taken.insert(crate::names::folded(&entry.want));
         }
         if let Some(plan) = planning {
             // Every entry still unbound is a file the pull will write: where
@@ -3113,7 +3104,7 @@ impl Folder {
                     .as_ref()
                     .filter(|bound| bound.path != entry.want)
             })
-            .map(|bound| names::folded(&bound.path))
+            .map(|bound| crate::names::folded(&bound.path))
             .collect();
         let mut waiting = Vec::new();
         context.same_copy(&*self.core.conn()?)?;
@@ -3130,7 +3121,7 @@ impl Folder {
             match self.write_placed(&entry, &rendering, &withheld, Some(&leaving), &mut report)? {
                 PlacementWrite::Waiting => waiting.push(entry),
                 PlacementWrite::Refused => {
-                    refused.insert(names::folded(&entry.want));
+                    refused.insert(crate::names::folded(&entry.want));
                 }
                 PlacementWrite::Done => {}
             }
@@ -3141,7 +3132,7 @@ impl Folder {
                 self.write_placed(&entry, &rendering, &withheld, None, &mut report)?,
                 PlacementWrite::Refused
             ) {
-                refused.insert(names::folded(&entry.want));
+                refused.insert(crate::names::folded(&entry.want));
             }
         }
         context.same_copy(&*self.core.conn()?)?;
@@ -3386,7 +3377,7 @@ impl Folder {
         let rebound =
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
         if occupied && !rebound {
-            if leaving.is_some_and(|leaving| leaving.contains(&names::folded(&want))) {
+            if leaving.is_some_and(|leaving| leaving.contains(&crate::names::folded(&want))) {
                 return Ok(PlacementWrite::Waiting);
             }
             report.not_written(
@@ -3796,7 +3787,7 @@ impl Folder {
         };
         let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
-            if refused.contains(&names::folded(&row.path)) {
+            if refused.contains(&crate::names::folded(&row.path)) {
                 continue;
             }
             match self.departing(&row, members, settings, lists)? {
@@ -4415,16 +4406,6 @@ struct Placing<'a> {
     taken: Option<(PathBuf, state::Bound)>,
 }
 
-fn extension_of(path: &Path) -> Option<String> {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(str::to_lowercase)
-}
-
-fn carries_frontmatter(path: &Path) -> bool {
-    matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
-}
-
 /// The status change time where the system keeps one, which an editor
 /// restoring the modification time does not move back.
 fn changed_within(path: &Path, settle: Duration) -> bool {
@@ -4465,10 +4446,6 @@ fn stat_of(path: &Path) -> Option<String> {
         metadata.len(),
         executable::of(&metadata)
     ))
-}
-
-fn is_document(path: &Path) -> bool {
-    carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
 
 fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
@@ -4721,7 +4698,7 @@ mod tests {
                 store::item_by_id(&conn, "file").unwrap().unwrap()
             };
             let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
-            let names = Names::load(&folder, &catalog).unwrap();
+            let names = Names::load(&folder.core.conn().unwrap(), &catalog, &BoundFiles).unwrap();
             let edge_types = EdgeTypes::default();
             let context = crate::read_view::Context::capture(&folder.core.conn().unwrap()).unwrap();
             let rendering = Rendering {

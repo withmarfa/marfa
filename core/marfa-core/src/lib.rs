@@ -1,4 +1,5 @@
 mod blob;
+mod body;
 mod builtin;
 mod catalog;
 mod catch_up;
@@ -13,6 +14,7 @@ mod hydrate;
 mod js;
 mod lock;
 mod model;
+mod names;
 mod query;
 mod read_view;
 #[cfg(test)]

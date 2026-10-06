@@ -95,7 +95,7 @@ impl Folder {
             }
             if let Some(path) = path_of(&edge).and_then(cleaned) {
                 placed
-                    .entry(super::names::folded(&path))
+                    .entry(crate::names::folded(&path))
                     .or_default()
                     .push(edge);
             }
@@ -120,7 +120,7 @@ impl Folder {
         match self.placement(item_id)? {
             // A path differing only in case or form is the same place, so each
             // machine keeps its file's own name.
-            Some(edge) if path_of(&edge).is_some_and(|held| super::names::same(held, path)) => {
+            Some(edge) if path_of(&edge).is_some_and(|held| crate::names::same(held, path)) => {
                 return Ok(false);
             }
             Some(edge) => {
