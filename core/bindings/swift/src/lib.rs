@@ -65,6 +65,14 @@ pub struct Item {
     pub body: Option<String>,
 }
 
+/// A page of the server's bin.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BinPage {
+    pub items: Vec<Item>,
+    /// Where the next page starts; none on the last.
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Edge {
     pub id: String,
@@ -1471,7 +1479,8 @@ impl Core {
             .collect())
     }
 
-    /// Holds one row by id whatever the slice says of it, read now.
+    /// Holds one row by id whatever the slice says of it, read now. An item
+    /// in the bin throws `NotFound` with the code `trashed`.
     pub fn pin(&self, id: String) -> Result<PinReport, MarfaError> {
         Ok(PinReport {
             pinned: true,
@@ -1672,7 +1681,52 @@ impl Core {
         queued(self.inner.delete_item(&id)?)
     }
 
-    /// Takes an item out of the bin locally and queues the restore.
+    /// Destroys an item in the bin on the server now, never queued, and
+    /// takes it, its edges and its pin out of the copy once the server
+    /// accepts it. Sent at `version`, the one the caller was shown, such as
+    /// a bin entry's, or else the version the copy holds, and only with no
+    /// write to the item waiting. Before anything is sent it throws
+    /// `NotFound` with `not_held` for an item the copy does not hold where no
+    /// version is named, `Validation` with `invalid_transition` for one the
+    /// copy shows outside the bin, and `Invalid` while a write waits.
+    /// Every error leaves the copy and the queue as they were, but
+    /// `CopyExpired` for another instance at the origin. `Network` means the
+    /// server was not reached or did not answer, and in the second case it
+    /// may have purged the item, which its event then shows. The server
+    /// refuses an item it does not hold in the bin `Validation` with
+    /// `invalid_transition`, one that moved since the copy read it `Server`
+    /// with the status 409 and `version_conflict`, and a key without
+    /// `items.purge`, or without write on the item's type, `Forbidden`.
+    pub fn purge_item(&self, id: String, version: Option<i64>) -> Result<(), MarfaError> {
+        Ok(self.inner.purge_item(&id, version)?)
+    }
+
+    /// A page of the server's bin, newest change first, read online and held
+    /// nowhere in the copy. Each item's `updated_at` stands for when it went
+    /// to the bin. Offline it throws `Network`, and `NoServer` for a copy with
+    /// none.
+    pub fn bin(
+        &self,
+        r#type: Option<String>,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<BinPage, MarfaError> {
+        let page = self
+            .inner
+            .bin(r#type.as_deref(), cursor.as_deref(), limit)?;
+        Ok(BinPage {
+            items: page
+                .items
+                .into_iter()
+                .map(|(held, shown)| item(held, shown))
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    /// Takes an item out of the bin and queues the restore: locally where the
+    /// copy holds it, and by id where it does not, the item arriving once the
+    /// server answers where the slice takes it.
     pub fn restore_item(&self, id: String) -> Result<QueuedWrite, MarfaError> {
         queued(self.inner.restore_item(&id)?)
     }

@@ -10,7 +10,7 @@ Statements here are about a device's observable behavior, asserted by the device
 2. A working copy is bound to one server by origin — scheme, host, port and path prefix — and the key is no part of that identity and is never written to the store. A store opened against a different origin is refused, and the refusal names both. **It is bound to the instance too**: hydration captures the `instance_id` in the certified stream tuple. Catch-up and held-stream markers must name that same instance and read view; another instance cannot be mistaken for progress merely because its log has a larger cursor. A held follow also checks the server's root before opening its stream. **A drain and a folder's settings edit check the root before sending**, and another instance expires only the captured copy, sending nothing and preserving its queue. A delayed reply cannot expire a later rebuilt generation. A pin uses a conditional read under the captured certificate before taking a row. A copy naming no valid instance and proof must hydrate again. **Nothing is sent while the instance is unconfirmed**: a root that answers a failure that clears on its own ends a drain's pass with nothing sent, nothing counted against any write and the reason given, since a restart is when another instance appears, and the next drain asks again. `device/working-copy.test.ts › binds to one origin and refuses a store opened against another`, `› keeps the key out of the store`, `device/catch-up.test.ts › hydrates again when another instance answers at the same address`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`, `› sends nothing while the server cannot say which instance it is`, `device/folders.test.ts › sends no settings edit while the server cannot say which instance it is`.
 3. One store has one writer. A second opener gets a handle that reads and refuses every write, and says which it is. `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
 4. A read is refused where the store holds a slice it cannot answer from, and the refusal says so rather than answering with a partial copy. Two stores refuse: one whose hydration was interrupted, and **one that has expired** (16). The second is the one worth stating, because that copy is complete as of the moment it stopped: it refuses because it can no longer be kept current, and a copy that has quietly stopped tracking is the failure this whole chapter is about. The refusal is the same for both and the report is not (5). A hydration clears both. A store that has never hydrated holds no slice and is not refused: it answers from what its app has saved (56). `device/working-copy.test.ts › refuses a read after an interrupted hydration`, `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`.
-5. A device reports its own state: the origin it is bound to, the instance it was hydrated from (2), the slice, the edge types it holds whole, the rows it holds pinned, the cursor, what it holds, the version of the catalog it holds (49), and its hydration, which is one of four words. `never`, nothing has been pulled and the store holds only what Marfa ships and what the app has saved (56). `in_progress`, a hydration started and has not finished, which covers one still running and one that was interrupted (9). `complete`, the copy holds its slice and a cursor, and nothing has told it otherwise. `expired`, a catch-up or a held stream learned that the server's log no longer continues from the cursor it kept, or a catch-up, a held stream, a drain, a pin or a folder's settings edit found another instance at the origin (2), and the cursor was dropped (16). The last is a record of an answer rather than a reading of the log: a copy whose cursor aged out an hour ago and has not asked since reports `complete`, because nothing has told it. The last two are the same copy at different moments, and `expired` and `never` are the two a caller must not confuse: reads are refused on one and answered on the other, and the remedy for the first is a hydration while the second needs none to save, though it needs one to read what a server holds, and only the report says which. The report is answerable before a hydration and is how a caller learns one is owed. `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `› keeps a pinned row outside the slice current`, `› lets an unpinned row outside the slice go`.
+5. A device reports its own state: the origin it is bound to, the instance it was hydrated from (2), the slice, the edge types it holds whole, the rows it holds pinned, the cursor, what it holds, the version of the catalog it holds (49), and its hydration, which is one of four words. `never`, nothing has been pulled and the store holds only what Marfa ships and what the app has saved (56). `in_progress`, a hydration started and has not finished, which covers one still running and one that was interrupted (9). `complete`, the copy holds its slice and a cursor, and nothing has told it otherwise. `expired`, a catch-up or a held stream learned that the server's log no longer continues from the cursor it kept, or a catch-up, a held stream, a drain, a purge, a pin or a folder's settings edit found another instance at the origin (2), and the cursor was dropped (16). The last is a record of an answer rather than a reading of the log: a copy whose cursor aged out an hour ago and has not asked since reports `complete`, because nothing has told it. The last two are the same copy at different moments, and `expired` and `never` are the two a caller must not confuse: reads are refused on one and answered on the other, and the remedy for the first is a hydration while the second needs none to save, though it needs one to read what a server holds, and only the report says which. The report is answerable before a hydration and is how a caller learns one is owed. `device/working-copy.test.ts › reports its slice, cursor and hydration state before it has hydrated`, `› reports an interrupted re-hydration as in progress, not as a copy that aged out`, `› holds a named edge type whole, whichever end it holds`, `device/catch-up.test.ts › refuses reads after the cursor ages out, until a hydration`, `› keeps a pinned row outside the slice current`, `› lets an unpinned row outside the slice go`.
 
 ## Hydration
 
@@ -42,7 +42,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 22. A local create naming tags or edges either queues them as their own writes or refuses the create. It never drops them and answers as though it had not been asked. `device/local-refusals.test.ts › refuses a local create whose tags and edges it cannot queue`.
 23. A local update never drops a field it does not recognize. It sends it or refuses the update. `device/local-refusals.test.ts › refuses an update carrying a field it cannot send`.
 24. **A filter a device does not implement is refused, never ignored.** An ignored filter answers every row, which reads as a matched filter and is the hardest kind of wrong answer to notice. A local list and a local search implement the server's listing grammar (36), so the expressions refused are the ones the grammar refuses, and each is refused as the server refuses it: a nested property path, a field the grammar does not know, an operator its field does not take, `AND` and `OR` in one expression, an unterminated string, a bare word where a value goes, a number no double holds, a `null` literal after any operator that takes a value (`search-and-filters.md` 88), an empty expression, more than ten conditions and more than 2048 characters each answer the binary's `validation` class carrying the server's own `validation_error`, whether or not the expression would have matched anything, and on a search with no words as on any other. The limits are refused one past where they stop, and ten conditions and 2048 characters are answered. **A `backref` condition is refused as well**, in the binary's `invalid` class and carrying no server code, because the server answers it: a copy holds the edges its own items draw, not an edge drawn to one of them from a row outside the slice, so it would miss the rows such an edge selects and answer the rows it excludes. The same expression with `edge` for `backref` is answered. **The one term answered where the server refuses it** is `edge[<type>]` naming an edge type the key may not read, which the server refuses `403 edge_permission_denied` (`edges.md` 23). A local list consults none of the key's edge permissions, and makes no read of the server to learn them, so it cannot tell such a type from one nothing in its slice draws. The server gives the copy no edge of such a type, so the term is answered from the edges the copy holds: `exists` and `eq` answer none of the rows the server gave it, and `not_exists` and `neq` every one, but for an edge of that type this device queued and the server has not yet answered, which the copy holds as it holds any queued write. `device/fidelity.test.ts › answers from the copy an edge term the server refuses to a key that may not read its type`. `device/local-refusals.test.ts › refuses a list filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses, as the server does`, `› refuses a search filter the grammar refuses on a search with no words`, `› refuses a backref condition on a list and a search`, `device/fidelity.test.ts › answers each filter expression with the ids the server answers`, core `filter::tests::refuses_a_null_literal_and_names_the_test_that_asks_for_absence`.
-25. A device never purges. Purging is the server's, on a credential holding it. `device/local-refusals.test.ts › refuses a local purge`.
+25. **A device never queues a purge, and never purges its copy alone.** A purge is sent at once or refused (75 to 82): one held in a queue would destroy a row on the server long after the person who asked had stopped looking, past any edit made meanwhile, and one made to the copy alone would show a row gone that the server still holds. `device/local-refusals.test.ts › queues no purge, and keeps the row, when the purge cannot be sent`.
 26. A device never writes to a store it does not hold the writer handle for, and never to one bound to another server. `device/local-refusals.test.ts › refuses a write from a reading handle`, `› refuses a write to a store bound to another server`, `› refuses a hydration, a catch-up and a follow from a reading handle`.
 27. **A device never expires an item.** The event log has a retention and items do not. A device that swept its own copy by age would drop rows the server still holds and go on reporting the slice as complete, and the feed is not a place things fall out of. `device/working-copy.test.ts › keeps an item however old it is`.
 
@@ -239,6 +239,76 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 **Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs.md` 31). A type outside the file family does not declare the field, so it is not given one.
 
 **Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`. Core `tests::a_file_taken_in_shows_the_length_of_its_bytes_before_any_server_answers`.
+
+## Purging
+
+75. IF the copy does not hold a row and the caller names no version for it, THEN a device MUST refuse to purge it `not_found` with the code `not_held`, sending nothing.
+
+**Reason:** a purge names the version the person was shown (79): the copy's, or the one a read of the bin answered (83), which the caller names. A row the copy does not hold, named with no version, is one nobody can say the person was shown.
+
+**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`.
+
+76. IF the row the copy shows is not in the bin, THEN a device MUST refuse to purge it `validation` with the code `invalid_transition`, sending nothing.
+
+**Reason:** the copy shows the row with this device's waiting writes laid over it (`queue-and-verdicts.md` 35), so a restore it queued shows the row restored while the server still holds it in the bin. Restoring does not move the version, so the server's version check would let the purge destroy what the person brought back.
+
+**Tests:** `device/purge.test.ts › refuses a row the copy shows restored, sending nothing and keeping the restore`, `device/purge-live.test.ts › refuses a purge of a row not in the bin, keeping it`.
+
+77. IF a write to the row has no answer yet, or is blocked or dead, THEN a device MUST refuse to purge it `invalid`, sending nothing.
+
+**Reason:** the write would reach a row that is gone, sent after the purge or answered beside it, and a write that carried a person's content would be lost to a purge they may not have meant it for. A blocked or dead write waits until it is released, withdrawn or discarded.
+
+**Tests:** `device/purge.test.ts › refuses a row a write to which still waits, sending nothing`.
+
+78. WHERE the copy names the instance it was hydrated from, a device MUST confirm that instance at the copy's origin before it sends a purge, and another instance there MUST expire the copy (16), sending nothing.
+
+**Reason:** a purge cannot be taken back, so it is held to the rule a drain is held to (2): nothing is sent while the instance is unconfirmed, and a copy facing another instance is one that cannot be kept current.
+
+**Tests:** `device/purge.test.ts › sends nothing to another instance at the same address, and expires the copy`.
+
+79. WHEN a device purges a row, the device MUST send `POST /items/{id}/purge` at once, naming the version the caller names or else the version the copy holds (`items.md` 28), and MUST NOT queue it.
+
+**Reason:** a purge held in a queue would destroy a row long after the person who asked had stopped looking. The version is the one the person was shown, and trashing does not move it, so a row another device restored and edited since is refused `409 version_conflict` rather than destroyed.
+
+**Tests:** `device/purge.test.ts › refuses a row the copy does not hold, sending nothing`, which sends a purge at the version held as its witness, `device/bin-live.test.ts › purges a row read from the bin at the version it was read at`, `device/purge-live.test.ts › purges a row in the bin at once, queueing nothing`, `› refuses a purge of a row that moved since the copy read it, keeping it`.
+
+80. IF the server refuses a purge, or the purge cannot be sent, THEN a device MUST leave the copy's rows and its queue as they were.
+
+**Reason:** the caller is told what was met, the network's error or the server's refusal, and a copy that looked as though it had purged would disagree with the server for good.
+
+**Tests:** `device/local-refusals.test.ts › queues no purge, and keeps the row, when the purge cannot be sent`, `device/purge-live.test.ts › refuses a purge the key may not make, keeping the row`, `› refuses a purge of a row that moved since the copy read it, keeping it`.
+
+81. WHEN the server accepts a purge, a device MUST take the row, the edges at both its ends and its pin out of the copy, as an `item.purged` event takes them (14).
+
+**Reason:** the acceptance is the server's word that the row is gone. The `item.purged` event that follows finds nothing to take and changes nothing.
+
+**Tests:** `device/purge-live.test.ts › takes the row and its pin out once the server accepts, and the event after changes nothing`, and for the edges, which a copy shows at neither end of a row in the bin, `device/catch-up.test.ts › drops the edges at both ends of a purged row`, whose removal the acceptance shares.
+
+82. IF a purge is sent and no answer comes, THEN a device MUST keep the row and refuse the purge with the network's error.
+
+**Reason:** the server may have purged the row and the answer been lost. The outcome is unknown, so the copy keeps what it was last told, and the `item.purged` event takes the row out where the server did purge it (14).
+
+**Tests:** `device/purge.test.ts › keeps the row when a purge that was sent is never answered`.
+
+## The bin
+
+83. WHEN a caller reads the bin, a device MUST read it from the server as `GET /items?state=trashed`, a page at a time, and MUST NOT hold what it reads in the copy.
+
+**Reason:** a local read answers no row in the bin, by id (32) or in a search (33), and a copy holds a row in the bin only while its slice or a pin takes it, so the bin a person is shown is the server's. Held in the copy, a page would enter rows no event keeps current. The server answers no time a row went to the bin, so a row's `updated_at` stands for it: trashing moves it, and so does any later write to the row in the bin.
+
+**Tests:** `device/bin-live.test.ts › reads the server's bin a page at a time, holding nothing`.
+
+84. IF the bin cannot be read, THEN a device MUST refuse with what it met, and MUST NOT answer from the copy.
+
+**Reason:** a bin answered from the copy offline would read as the whole bin while missing every row outside the slice.
+
+**Tests:** `device/purge.test.ts › refuses to read the bin while the server cannot be reached`.
+
+85. IF a caller pins a row the server holds in the bin and the key may read, THEN a device MUST refuse `not_found` with the code `trashed`, pinning nothing.
+
+**Reason:** a read by id answers a row in the bin `404` as it answers one that is gone (`items.md` 19), so the device asks the bin which it is, and the caller can offer to restore the row rather than report it lost. A row of a type the key may not read answers as a missing one in the bin too (`keys-and-oauth.md` 20), so it is refused `not_found` as one.
+
+**Tests:** `device/bin-live.test.ts › refuses to pin a row in the bin, saying so`.
 
 ## What the real server cannot be made to produce
 

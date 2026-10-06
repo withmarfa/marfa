@@ -3728,7 +3728,7 @@ mod tests {
             });
             assert_eq!(queued.kind, kind);
         }
-        // A device never purges, so the kind must not be holdable at all.
+        // A device never queues a purge, so the kind must not be holdable at all.
         assert!("purge_item".parse::<WriteKind>().is_err());
         assert!(
             conn.execute(

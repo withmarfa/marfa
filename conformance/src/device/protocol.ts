@@ -420,7 +420,25 @@ export interface DeviceUnderTest {
 
   /** Move an item to the bin locally and queue the delete. */
   deleteItem(id: string): Promise<Outcome<QueuedWrite>>;
-  /** Take an item out of the bin locally and queue the restore. */
+  /**
+   * Destroy an item in the bin on the server now, never queued, and take it
+   * out of the copy once the server answers.
+   */
+  purgeItem(
+    id: string,
+    version?: number,
+  ): Promise<Outcome<{ id: string; purged: boolean }>>;
+  /** A page of the server's bin, read online and held nowhere in the copy. */
+  bin(options?: {
+    type?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<Outcome<{ data: Item[]; next_cursor: string | null }>>;
+  /**
+   * Take an item out of the bin and queue the restore: locally where the
+   * copy holds it, and by id, showing nothing until the server answers,
+   * where it does not.
+   */
   restoreItem(id: string): Promise<Outcome<QueuedWrite>>;
   /** Move an item to another lifecycle state. */
   transitionItem(id: string, state: string): Promise<Outcome<QueuedWrite>>;

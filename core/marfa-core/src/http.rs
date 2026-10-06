@@ -456,6 +456,42 @@ impl Http {
         self.get_json(&["items"], &params)
     }
 
+    /// A page of the bin: `GET /items?state=trashed`, newest change first,
+    /// with each row's tags. `filter` is the listing grammar's.
+    pub fn bin_page(
+        &self,
+        r#type: Option<&str>,
+        filter: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<WirePage<WireItemWithMetadata>, CoreError> {
+        let limit = limit.to_string();
+        let mut params: Vec<(&str, &str)> = vec![
+            ("state", "trashed"),
+            ("include", "metadata"),
+            ("sort", "updated_at"),
+            ("direction", "desc"),
+            ("limit", &limit),
+        ];
+        if let Some(declared) = r#type {
+            params.push(("type", declared));
+        }
+        if let Some(filter) = filter {
+            params.push(("filter", filter));
+        }
+        if let Some(cursor) = cursor {
+            params.push(("cursor", cursor));
+        }
+        self.get_json(&["items"], &params)
+    }
+
+    /// The row the server holds in the bin under `id`, which a read by id
+    /// answers `404` as it answers a row that is gone (`items.md` 19).
+    pub fn trashed_item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        let filter = format!("id eq {}", serde_json::Value::String(id.to_string()));
+        Ok(self.bin_page(None, Some(&filter), None, 1)?.data.pop())
+    }
+
     pub fn item_edges_page(
         &self,
         id: &str,
@@ -496,6 +532,30 @@ impl Http {
         }
         self.whole_catalog(page.next_cursor, "edge type")?;
         Ok(page.data)
+    }
+
+    /// `POST /items/{id}/purge` at the version the caller read (`items.md`
+    /// 28), so a row that moved since is refused `409` rather than destroyed.
+    pub fn purge_item(&self, id: &str, version: i64) -> Result<(), CoreError> {
+        let version = version.to_string();
+        let reply = self.call(Call {
+            method: Method::Post,
+            segments: &["items", id, "purge"],
+            params: &[("version", &version)],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        })?;
+        if (200..300).contains(&reply.status) {
+            return Ok(());
+        }
+        Err(self.refused(
+            reply.status,
+            reply.contract.is_some(),
+            &reply.body,
+            reply.retry_after_seconds,
+        ))
     }
 
     /// The instance the server says it is, which its root answers to anyone.

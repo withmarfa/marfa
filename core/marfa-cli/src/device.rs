@@ -246,7 +246,34 @@ pub enum ItemsCommand {
         /// The item id.
         id: String,
     },
-    /// Take an item out of the bin locally and queue the restore.
+    /// Destroy an item in the bin on the server now, and take it out of the
+    /// local copy. Never queued: it needs the server, a key holding
+    /// `items.purge` and write on the item's type, and an item the copy holds
+    /// in the bin with no write to it waiting.
+    Purge {
+        /// The item id.
+        id: String,
+        /// The version the item was read at in the bin; without it the copy's
+        /// own, and an item the copy does not hold is refused.
+        #[arg(long)]
+        version: Option<i64>,
+    },
+    /// Read a page of the server's bin, newest change first. Online only,
+    /// and held nowhere in the copy; each item's `updated_at` stands for
+    /// when it went to the bin.
+    Bin {
+        /// A type identifier; its subtypes are included.
+        #[arg(long = "type")]
+        type_: Option<String>,
+        /// Where the page starts, as the last page's `next_cursor` named it.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// How many items at most, up to 100.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Take an item out of the bin and queue the restore: locally where the
+    /// copy holds it, and by id where it does not.
     Restore {
         /// The item id.
         id: String,
@@ -797,6 +824,38 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 )
             })
         }
+        DeviceCommand::Items {
+            command:
+                ItemsCommand::Bin {
+                    type_,
+                    cursor,
+                    limit,
+                },
+        } => {
+            let page = store
+                .open_with_server(named)?
+                .bin(type_.as_deref(), cursor.as_deref(), limit)?;
+            let (items, shown): (Vec<_>, Vec<_>) = page.items.into_iter().unzip();
+            if json {
+                output::report(
+                    &serde_json::json!({ "data": items, "next_cursor": page.next_cursor }),
+                    true,
+                    String::new,
+                )
+            } else {
+                output::items(&items, &shown, false)
+            }
+        }
+        DeviceCommand::Items {
+            command: ItemsCommand::Purge { id, version },
+        } => {
+            store.open_with_server(named)?.purge_item(&id, version)?;
+            output::report(
+                &serde_json::json!({ "id": id, "purged": true }),
+                json,
+                || format!("purged {id}"),
+            )
+        }
         DeviceCommand::Items { command } => {
             let core = store.open(None)?;
             match command {
@@ -864,6 +923,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     output::queued_one(&queued, json)
                 }
                 ItemsCommand::Delete { id } => output::queued_one(&core.delete_item(&id)?, json),
+                ItemsCommand::Purge { .. } | ItemsCommand::Bin { .. } => {
+                    unreachable!("answered above, with the server")
+                }
                 ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),
                 ItemsCommand::Transition { id, state } => {
                     output::queued_one(&core.transition_item(&id, state.into())?, json)
