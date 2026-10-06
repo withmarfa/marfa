@@ -12,10 +12,9 @@
 # secrets, data and keys; server-down.sh leaves it in place.
 # PORT: a free one by default.
 #
-# A boot on localhost also creates an owner, so sign-in and the owner's pages
-# can be tried by hand. Its throwaway email and password come from
-# test-owner.example.env and are printed as MARFA_TEST_OWNER_EMAIL and
-# MARFA_TEST_OWNER_PASSWORD.
+# A boot also creates an owner, so sign-in and the owner's pages can be tried
+# by hand. Its throwaway email and password come from test-owner.example.env
+# and are printed as MARFA_TEST_OWNER_EMAIL and MARFA_TEST_OWNER_PASSWORD.
 set -euo pipefail
 umask 077
 
@@ -173,24 +172,15 @@ working="$(mint "${operator}" core-proof)"
 key="$(read_key <<<"${working}")"
 [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
-# Only on the machine's own address: a script pointed anywhere else would put
-# a known password on a real instance.
-case "${url}" in
-  http://localhost:* | http://127.0.0.1:* | http://\[::1\]:*)
-    # shellcheck disable=SC1091
-    source "$(dirname "$0")/test-owner.example.env"
-    created="$(curl -sS --max-time 10 -X POST "${url}/owner" \
-      -H "Authorization: Bearer ${operator}" \
-      -H 'Content-Type: application/json' \
-      -d "{\"email\":\"${MARFA_TEST_OWNER_EMAIL}\",\"password\":\"${MARFA_TEST_OWNER_PASSWORD}\"}")"
-    [[ "${created}" == *'"email"'* ]] || fail "the test owner could not be created: ${created}"
-    owner_email="${MARFA_TEST_OWNER_EMAIL}"
-    owner_password="${MARFA_TEST_OWNER_PASSWORD}"
-    ;;
-  *)
-    echo "server-up: ${url} is not a local address, so no test owner is created" >&2
-    ;;
-esac
+# shellcheck disable=SC1091
+source "$(dirname "$0")/test-owner.example.env"
+created="$(curl -sS --max-time 10 -X POST "${url}/owner" \
+  -H "Authorization: Bearer ${operator}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"${MARFA_TEST_OWNER_EMAIL}\",\"password\":\"${MARFA_TEST_OWNER_PASSWORD}\"}")"
+[[ "${created}" == *'"email"'* ]] || fail "the test owner could not be created: ${created}"
+owner_email="${MARFA_TEST_OWNER_EMAIL}"
+owner_password="${MARFA_TEST_OWNER_PASSWORD}"
 
 write_env "${key}" "${operator}"
 if [[ -n "${keep}" ]]; then

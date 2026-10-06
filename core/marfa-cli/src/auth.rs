@@ -164,6 +164,18 @@ pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     Ok(scopes.join(" "))
 }
 
+/// The page a person signs in on, at the issuer the server names. Read apart
+/// from `discover`, which refuses an issuer off the address the command was
+/// given: a server reached by one address may be configured for another, and
+/// the sign-in form trusts only its own.
+pub fn sign_in_page(remote: &Remote) -> Option<String> {
+    let value = remote
+        .json(&Request::get(&["auth", ".well-known", "oauth-authorization-server"]).public())
+        .ok()?;
+    let issuer = value.get("issuer")?.as_str()?;
+    Some(format!("{}/sign-in", issuer.trim_end_matches('/')))
+}
+
 pub fn register(discovery: &Discovery) -> Result<String, CliError> {
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
@@ -702,6 +714,25 @@ mod tests {
             other => panic!("{:?}", other.map(|_| ())),
         }
         assert_eq!(door.received().len(), 1);
+    }
+
+    #[test]
+    fn the_sign_in_page_is_the_one_at_the_issuer_the_server_names() {
+        let door = Door::open_at(|own| {
+            vec![Answer::json(
+                "200 OK",
+                &document(own, "http://localhost:8600"),
+            )]
+        });
+        let page = sign_in_page(&Remote::public_at(&door.url).unwrap());
+        assert_eq!(page.as_deref(), Some("http://localhost:8600/auth/sign-in"));
+        door.received();
+        let door = Door::open(vec![Answer::json(
+            "404 Not Found",
+            r#"{"error":{"code":"not_found","message":"no"}}"#,
+        )]);
+        assert_eq!(sign_in_page(&Remote::public_at(&door.url).unwrap()), None);
+        door.received();
     }
 
     #[test]

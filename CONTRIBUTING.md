@@ -32,7 +32,7 @@ export MARFA_API_URL=http://localhost:8600
 marfa keys bootstrap          # paste the secret from the server's log, then press Enter
 ```
 
-The command prints the operator key. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
+The command prints the operator key; the secret works once, so if the README's quick start already ran it, start at the `read -rs` step below. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
 
 ```bash
 read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
@@ -45,7 +45,7 @@ marfa status                  # now with the item counts
 
 On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
 
-The README's quick start creates the owner, which sign-in needs.
+Sign-in needs an owner too; the [README's quick start](./README.md#quick-start) creates it with the operator key.
 
 ## Code style
 
