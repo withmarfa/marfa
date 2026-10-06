@@ -132,8 +132,10 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 
     Tests: `compliance/bulk.test.ts › create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`.
 
+## A null in a create
+
 68. IF a create carries a null for a field its type declares and does not require, THEN the server MUST make the row without that field.
 
-**Reason:** a null on an optional field means the field is unset, as it does under a merge (22), so no null is stored for it. A null on a property the type does not declare is held as the value it is.
+    Reason: a null on an optional field means the field is unset, as it does under a merge (22), so no null is stored for it. A null on a property the type does not declare is held as the value it is.
 
-**Tests:** `compliance/validation.test.ts › leaves out a create's null on a declared optional field, and keeps one on an undeclared property`.
+    Tests: `compliance/validation.test.ts › leaves out a create's null on a declared optional field, and keeps one on an undeclared property`.

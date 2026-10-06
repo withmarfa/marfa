@@ -499,11 +499,9 @@ impl Catalog {
         crate::validation::properties(&fields, properties, complete)
     }
 
-    /// Match the server's null rule in the local projection; the queued
-    /// request stays unchanged so the server validates what the caller sent.
     /// A create's properties as the server holds them: a null on a field
     /// the type declares and does not require is dropped, and one on a
-    /// property it does not declare is kept (`items.md` 13).
+    /// property it does not declare is kept (`items.md` 68).
     pub(crate) fn created_properties(
         &self,
         type_id: &str,
@@ -535,6 +533,8 @@ impl Catalog {
         definition.get("required").and_then(Value::as_bool) == Some(true)
     }
 
+    /// Match the server's null rule in the local projection; the queued
+    /// request stays unchanged so the server validates what the caller sent.
     pub fn projected_properties(
         &self,
         type_id: &str,
