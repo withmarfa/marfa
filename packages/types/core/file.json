@@ -50,6 +50,10 @@
     "executable": {
       "type": "boolean",
       "description": "Whether the file may be run as a program; absent means it may not"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
     }
   },
   "required": ["blob_ref", "mime_type"],

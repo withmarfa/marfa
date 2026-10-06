@@ -24,6 +24,13 @@ pub(crate) struct Cache {
     settling: Mutex<()>,
 }
 
+/// Bytes taken in for an upload: the name they are held under and their
+/// length.
+pub(crate) struct Taken {
+    pub(crate) hash: String,
+    pub(crate) size: u64,
+}
+
 /// Why bytes did not arrive whole: the source failed, or the cache did.
 enum Copy {
     Source(io::Error),
@@ -105,7 +112,7 @@ impl Cache {
 
     /// The copy is what an upload later streams from, so a file the person
     /// changes or deletes after asking does not change what is sent.
-    pub(crate) fn take(&self, source: &Path) -> Result<String> {
+    pub(crate) fn take(&self, source: &Path) -> Result<Taken> {
         let unreadable = |error: io::Error| {
             CoreError::Invalid(format!("{} cannot be read: {error}", source.display()))
         };
@@ -122,7 +129,7 @@ impl Cache {
             )));
         }
         self.settle(&incoming, &hash)?;
-        Ok(hash)
+        Ok(Taken { hash, size })
     }
 
     /// A process that ended mid-copy leaves its file behind, and only its age

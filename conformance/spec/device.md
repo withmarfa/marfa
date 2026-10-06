@@ -232,6 +232,14 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
 
+## A file's size
+
+74. WHEN a device takes in bytes for a file item, as it attaches a file, adds one or pushes a folder's file that is not a document (38, 46, `folders.md` 36), it MUST store their length as `size_bytes` on the file item it saves, and on the update that names new bytes, where the item's type is `core.file` or inherits from it.
+
+**Reason:** an app lists files from the copy, and before the first drain no server has measured the bytes. The device counts them as it copies them in, so the copy shows the size the server will set from the same bytes (`blobs.md` 31). A type outside the file family does not declare the field, so it is not given one.
+
+**Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`. Core `tests::a_file_taken_in_shows_the_length_of_its_bytes_before_any_server_answers`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.

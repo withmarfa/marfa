@@ -1118,9 +1118,15 @@ impl Core {
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unknown_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             let mut draft = draft.clone();
-            name_bytes(&mut draft.properties, hash, &mime_type);
+            name_bytes(
+                &mut draft.properties,
+                catalog,
+                &draft.r#type,
+                taken,
+                &mime_type,
+            );
             queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))
         })
     }
@@ -1134,9 +1140,15 @@ impl Core {
     ) -> Result<QueuedWrite> {
         refuse_invalid_names(&[], &edit.properties)?;
         let mime_type = blob::mime_type_for(path, None);
-        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
             let mut edit = edit.clone();
-            name_bytes(&mut edit.properties, hash, &mime_type);
+            let r#type = match &edit.r#type {
+                Some(r#type) => Some(r#type.clone()),
+                None => store::item_by_id(tx, id)?.map(|held| held.r#type),
+            };
+            if let Some(r#type) = r#type {
+                name_bytes(&mut edit.properties, catalog, &r#type, taken, &mime_type);
+            }
             queue_update(
                 tx,
                 catalog,
@@ -1166,7 +1178,7 @@ impl Core {
         &self,
         path: &Path,
         mime_type: &str,
-        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &str) -> Result<T>,
+        then: impl FnOnce(&Connection, &catalog::Catalog, &QueuedWrite, &blob::Taken) -> Result<T>,
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_usable(&*self.conn()?)?;
@@ -1175,12 +1187,12 @@ impl Core {
             // Until the upload is queued, nothing but this hold keeps its
             // bytes from a trim.
             let _held = cache.hold();
-            let hash = cache.take(path)?;
+            let taken = cache.take(path)?;
             let mut conn = self.conn()?;
             let catalog = catalog::Catalog::load(&conn)?;
             let tx = conn.transaction()?;
-            let upload = queue_upload(&tx, &hash, mime_type)?;
-            let queued = then(&tx, &catalog, &upload, &hash)?;
+            let upload = queue_upload(&tx, &taken.hash, mime_type)?;
+            let queued = then(&tx, &catalog, &upload, &taken)?;
             tx.commit()?;
             queued
         };
@@ -1207,8 +1219,14 @@ impl Core {
         }
         let (mime_type, mut draft) = file_draft(path, attachment, &[]);
         self.refuse_unknown_type(&draft.r#type)?;
-        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
-            name_bytes(&mut draft.properties, hash, &mime_type);
+        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
+            name_bytes(
+                &mut draft.properties,
+                catalog,
+                &draft.r#type,
+                taken,
+                &mime_type,
+            );
             let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
             let edge = queue_edge(
                 tx,
@@ -1233,8 +1251,14 @@ impl Core {
         let (mime_type, mut draft) = file_draft(path, attachment, tags);
         refuse_invalid_names(&draft.tags, &draft.properties)?;
         self.refuse_unknown_type(&draft.r#type)?;
-        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
-            name_bytes(&mut draft.properties, hash, &mime_type);
+        self.with_upload(path, &mime_type, |tx, catalog, upload, taken| {
+            name_bytes(
+                &mut draft.properties,
+                catalog,
+                &draft.r#type,
+                taken,
+                &mime_type,
+            );
             let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
             Ok(Added {
                 upload: upload.clone(),
@@ -1784,9 +1808,21 @@ fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String,
     (mime_type, draft)
 }
 
-fn name_bytes(properties: &mut serde_json::Map<String, Value>, hash: &str, mime_type: &str) {
-    properties.insert("blob_ref".into(), hash.into());
+/// The length goes only on a file, the one family that declares it. The
+/// server sets it from the bytes it holds, so this is what the copy shows
+/// until the server answers.
+fn name_bytes(
+    properties: &mut serde_json::Map<String, Value>,
+    catalog: &catalog::Catalog,
+    r#type: &str,
+    taken: &blob::Taken,
+    mime_type: &str,
+) {
+    properties.insert("blob_ref".into(), taken.hash.clone().into());
     properties.insert("mime_type".into(), mime_type.into());
+    if catalog.matches("core.file", r#type) {
+        properties.insert("size_bytes".into(), taken.size.into());
+    }
 }
 
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
@@ -2120,6 +2156,98 @@ mod tests {
         let good = ["a".repeat(MAX_TAG_LENGTH)];
         assert!(core.add_file(&file, &Attachment::default(), &good).is_ok());
         assert!(core.blob_held(&hash).unwrap());
+    }
+
+    #[test]
+    fn a_file_taken_in_shows_the_length_of_its_bytes_before_any_server_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        store::replace_types(
+            &core.conn().unwrap(),
+            &[
+                store::testing::wire_type("core.note", None, Some("title")),
+                store::testing::wire_type("core.file", None, Some("title")),
+                store::testing::wire_type("core.file.image", Some("core.file"), Some("title")),
+                store::testing::wire_type("acme.scan", None, Some("title")),
+            ],
+        )
+        .unwrap();
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"twelve bytes").unwrap();
+        let longer = dir.path().join("longer.png");
+        std::fs::write(&longer, b"fifteen bytes!!").unwrap();
+        let size_of = |id: &str| {
+            core.get(id)
+                .unwrap()
+                .unwrap()
+                .properties
+                .get("size_bytes")
+                .cloned()
+        };
+
+        let added = core.add_file(&photo, &Attachment::default(), &[]).unwrap();
+        let added = added.item.item_id.unwrap();
+        assert_eq!(core.get(&added).unwrap().unwrap().r#type, "core.file.image");
+        assert_eq!(size_of(&added), Some(12.into()));
+
+        let note = core
+            .create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "holder" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let attached = core.attach(&note, &longer, &Attachment::default()).unwrap();
+        assert_eq!(size_of(&attached.item.item_id.unwrap()), Some(15.into()));
+
+        let draft = Draft {
+            r#type: "core.file.image".into(),
+            properties: serde_json::json!({ "title": "photo.png" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..Default::default()
+        };
+        let created = core
+            .create_file_item(&photo, &draft)
+            .unwrap()
+            .item_id
+            .unwrap();
+        assert_eq!(size_of(&created), Some(12.into()));
+        let held = core.get(&created).unwrap().unwrap();
+        let edit = Edit {
+            base_version: Some(held.version),
+            ..Edit::default()
+        };
+        core.update_file_item(&created, &longer, &edit, Based::OnHeld)
+            .unwrap();
+        assert_eq!(size_of(&created), Some(15.into()));
+
+        let scan = Attachment {
+            r#type: Some("acme.scan".into()),
+            ..Attachment::default()
+        };
+        let other = core
+            .add_file(&photo, &scan, &[])
+            .unwrap()
+            .item
+            .item_id
+            .unwrap();
+        let other = core.get(&other).unwrap().unwrap();
+        assert_eq!(
+            other.properties.get("blob_ref"),
+            Some(&blob::name_of(b"twelve bytes").into())
+        );
+        assert_eq!(
+            other.properties.get("size_bytes"),
+            None,
+            "a type outside the file family took a size"
+        );
     }
 
     #[test]
@@ -3710,7 +3838,7 @@ mod tests {
         let core = Core::open(&path, None).unwrap();
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"held here").unwrap();
-        let hash = core.cache().unwrap().take(&file).unwrap();
+        let hash = core.cache().unwrap().take(&file).unwrap().hash;
         let held = core.blob(&hash).unwrap();
         assert_eq!(std::fs::read(held).unwrap(), b"held here");
         let other = blob::name_of(b"never held");
@@ -3727,7 +3855,7 @@ mod tests {
         let file = |name: &str, bytes: &[u8]| {
             let path = dir.path().join(name);
             std::fs::write(&path, bytes).unwrap();
-            core.cache().unwrap().take(&path).unwrap()
+            core.cache().unwrap().take(&path).unwrap().hash
         };
         let waiting = file("waiting.txt", b"to be sent");
         let read = file("read.txt", b"fetched once");
@@ -3979,7 +4107,7 @@ mod tests {
         let writer = Core::open(&path, None).unwrap();
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"held here").unwrap();
-        let hash = writer.cache().unwrap().take(&file).unwrap();
+        let hash = writer.cache().unwrap().take(&file).unwrap().hash;
 
         let reader = Core::open_reader(&path).unwrap();
         let held = reader.blob(&hash).unwrap();

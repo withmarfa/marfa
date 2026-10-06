@@ -126,6 +126,7 @@ import {
   syncEdgeBlobReferences,
 } from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
+import { stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
@@ -212,6 +213,31 @@ export function allowedTypesCondition(
 
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
+/**
+ * A file row's `size_bytes` made the server's (`stampedFileSize`), written
+ * in the transaction that wrote the row, once its reference index has
+ * decided whether `blob_ref` lends. A create passes `arrange` to keep a
+ * size it adds where a read answers it (`items.md` 46). Answers what the
+ * row now holds.
+ */
+async function keepFileSize(
+  tx: SqliteTx,
+  row: { id: string; type: string; properties: Record<string, unknown> },
+  arrange: (stamped: Record<string, unknown>) => Record<string, unknown> = (
+    stamped,
+  ) => stamped,
+): Promise<Record<string, unknown>> {
+  const found = await stampedFileSize(tx, row);
+  if (found === undefined) return row.properties;
+  const stamped = arrange(found);
+  await tx
+    .update(items)
+    .set({ properties: sql`jsonb(${JSON.stringify(stamped)})` })
+    .where(eq(items.id, row.id))
+    .run();
+  return stamped;
+}
+
 function linkRequired(type: string): boolean {
   const field = linkFieldOf(type);
   return (
@@ -266,7 +292,7 @@ async function insertConflictedSibling(
 ): Promise<{ sibling: Item; edges: Edge[] } | null> {
   const { siblingId, row, now, mayCopyEdge } = args;
   const linkField = linkFieldOf(row.type);
-  const properties =
+  let properties =
     linkField === undefined
       ? args.properties
       : Object.fromEntries(
@@ -301,6 +327,11 @@ async function insertConflictedSibling(
   await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
     carried: args.carried,
     inherited,
+  });
+  properties = await keepFileSize(tx, {
+    id: siblingId,
+    type: row.type,
+    properties,
   });
 
   const [held] = await tx
@@ -677,14 +708,11 @@ export class SqliteItemStore implements ItemStore {
         errors: validation.errors,
       });
     }
-    const properties = inAnswerOrder(
-      Object.keys(
-        resolveTypeSchema(input.type, (typeId) => getTypeSchema(typeId))
-          ?.fields ?? {},
-      ),
-      validation.data,
-      input.properties,
+    const declared = Object.keys(
+      resolveTypeSchema(input.type, (typeId) => getTypeSchema(typeId))
+        ?.fields ?? {},
     );
+    let properties = inAnswerOrder(declared, validation.data, input.properties);
 
     const now = new Date().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
@@ -776,6 +804,11 @@ export class SqliteItemStore implements ItemStore {
         tx,
         { id, properties },
         input.blob_proof ?? null,
+      );
+      properties = await keepFileSize(
+        tx,
+        { id, type: input.type, properties },
+        (stamped) => inAnswerOrder(declared, stamped, input.properties),
       );
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
@@ -1227,7 +1260,7 @@ export class SqliteItemStore implements ItemStore {
         // not this write's.
         await writeVersion(currentProps);
 
-        const merged = mergeUpdateProperties(
+        let merged = mergeUpdateProperties(
           currentProps,
           incomingProps,
           input.properties_mode ?? "merge",
@@ -1286,6 +1319,11 @@ export class SqliteItemStore implements ItemStore {
           input.blob_proof ?? null,
           digestsIn(incomingProps ?? {}),
         );
+        merged = await keepFileSize(tx, {
+          id,
+          type: input.type ?? row.type,
+          properties: merged,
+        });
 
         await this.searchStore.index(id, merged, input.type ?? row.type);
 
@@ -1561,6 +1599,11 @@ export class SqliteItemStore implements ItemStore {
         input.blob_proof ?? null,
         staleCarried,
       );
+      resolvedProperties = await keepFileSize(tx, {
+        id,
+        type: input.type ?? row.type,
+        properties: resolvedProperties,
+      });
 
       await this.searchStore.index(
         id,

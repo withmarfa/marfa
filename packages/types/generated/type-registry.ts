@@ -91,6 +91,7 @@ const coreFile: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
+    size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)" },
   },
   display_hints: { title_field: "title" },
   merge_policy: { default: "last_writer_wins" },
@@ -268,6 +269,7 @@ const coreFileAudio: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
+    size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)" },
     duration: { type: "number", description: "Length in seconds (server enrichment: derived from the file when the client does not supply it)" },
   },
   display_hints: { title_field: "title" },
@@ -292,6 +294,7 @@ const coreFileImage: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
+    size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)" },
     width: { type: "integer", description: "Width in pixels (server enrichment: derived from the file when the client does not supply it)" },
     height: { type: "integer", description: "Height in pixels (server enrichment: derived from the file when the client does not supply it)" },
     latitude: { type: "number", description: "Subject latitude" },
@@ -320,6 +323,7 @@ const coreFileVideo: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
     executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
+    size_bytes: { type: "integer", description: "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)" },
     width: { type: "integer", description: "Width in pixels (server enrichment: derived from the file when the client does not supply it)" },
     height: { type: "integer", description: "Height in pixels (server enrichment: derived from the file when the client does not supply it)" },
     duration: { type: "number", description: "Length in seconds (server enrichment: derived from the file when the client does not supply it)" },
@@ -949,6 +953,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "notes": {
         "type": "string"
       },
+      "size_bytes": {
+        "type": "integer"
+      },
       "source_url": {
         "type": "url"
       },
@@ -998,6 +1005,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "size_bytes": {
+        "type": "integer"
       },
       "source_url": {
         "type": "url"
@@ -1058,6 +1068,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "size_bytes": {
+        "type": "integer"
       },
       "source_url": {
         "type": "url"
@@ -1124,6 +1137,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "notes": {
         "type": "string"
+      },
+      "size_bytes": {
+        "type": "integer"
       },
       "source_url": {
         "type": "url"
