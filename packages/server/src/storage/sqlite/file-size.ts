@@ -8,6 +8,11 @@ type Executor = DrizzleDb | SqliteTxContext;
 
 const FILE_TYPE = "core.file";
 
+/** Whether rows of `type` are files, whose `size_bytes` is the server's. */
+export function isFileType(type: string): boolean {
+  return isSubtypeOf(type, FILE_TYPE);
+}
+
 /**
  * The properties a file row holds once its `size_bytes` is the server's:
  * the stored length of the bytes its `blob_ref` names where that reference
@@ -23,7 +28,7 @@ export async function stampedFileSize(
   db: Executor,
   row: { id: string; type: string; properties: Record<string, unknown> },
 ): Promise<Record<string, unknown> | undefined> {
-  if (!isSubtypeOf(row.type, FILE_TYPE)) return undefined;
+  if (!isFileType(row.type)) return undefined;
   const ref = row.properties.blob_ref;
   let size: number | undefined;
   if (typeof ref === "string" && isValidBlobHash(ref)) {

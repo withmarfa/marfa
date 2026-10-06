@@ -126,7 +126,7 @@ import {
   syncEdgeBlobReferences,
 } from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
-import { stampedFileSize } from "./file-size.js";
+import { isFileType, stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
@@ -1399,14 +1399,20 @@ export class SqliteItemStore implements ItemStore {
       // the caller made: the caller cleared it.
       const replacing =
         input.properties_mode === "replace" && incomingProps !== undefined;
-      const clientProps: Record<string, unknown> = replacing
-        ? Object.fromEntries(
-            Object.entries(incomingProps).filter(([, value]) => value !== null),
-          )
-        : (incomingProps ?? {});
+      // A file's size is the server's to set, so a stale write neither
+      // changes nor clears it, and cannot collide on it.
+      const sized = isFileType(input.type ?? row.type);
+      const clientProps: Record<string, unknown> = Object.fromEntries(
+        Object.entries(incomingProps ?? {}).filter(
+          ([key, value]) =>
+            !(replacing && value === null) && !(sized && key === "size_bytes"),
+        ),
+      );
       const clearedProperties = replacing
         ? Object.keys(ancestor.properties).filter(
-            (key) => !Object.hasOwn(clientProps, key),
+            (key) =>
+              !Object.hasOwn(clientProps, key) &&
+              !(sized && key === "size_bytes"),
           )
         : [];
 

@@ -461,7 +461,7 @@
     },
     "size_bytes": {
      "type": "integer",
-     "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
+     "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     }
    },
    "display_hints": {
@@ -527,7 +527,7 @@
     },
     "size_bytes": {
      "type": "integer",
-     "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
+     "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "duration": {
      "type": "number",
@@ -597,7 +597,7 @@
     },
     "size_bytes": {
      "type": "integer",
-     "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
+     "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "width": {
      "type": "integer",
@@ -683,7 +683,7 @@
     },
     "size_bytes": {
      "type": "integer",
-     "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
+     "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     },
     "width": {
      "type": "integer",

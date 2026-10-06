@@ -10,7 +10,12 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { initEventLog } from "../pubsub.js";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  runBulkActionAsync,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -180,6 +185,60 @@ describe("a file item carries the size of the bytes it names", () => {
     expect(Object.keys((await read(row.id)).properties)).toEqual(keys);
   });
 
+  it("takes a stale whole edit that leaves the size out, with no collision on it", async () => {
+    const first = await upload(ctx.workingKey, 6);
+    const second = await upload(ctx.workingKey, 60);
+    const row = await create(ctx.workingKey, "core.file", {
+      blob_ref: first.hash,
+    });
+    await patch(ctx.workingKey, row, {
+      properties: { blob_ref: second.hash },
+    });
+    // Based on the first version, naming the bytes as they stood then and
+    // a new title: the size it leaves out is not a change it made.
+    const stale = await patch(ctx.workingKey, row, {
+      properties_mode: "replace",
+      properties: {
+        blob_ref: first.hash,
+        mime_type: "image/png",
+        title: "renamed while stale",
+      },
+    });
+    expect(stale.properties.title).toBe("renamed while stale");
+    expect(stale.properties.size_bytes).toBe(
+      stale.properties.blob_ref === first.hash ? first.size : second.size,
+    );
+  });
+
+  it("is stamped by a bulk action's property patch", async () => {
+    const blob = await upload(ctx.workingKey, 44);
+    const tag = `size-action-${String(seq)}`;
+    const { item: row } = await json<{ item: Row }>(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          tags: [tag],
+          properties: { blob_ref: blob.hash, mime_type: "image/png" },
+        },
+      }),
+      201,
+    );
+    const { initialStatus } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "update_properties",
+        patch: { size_bytes: 1, title: "patched in bulk" },
+        filter: { tags: [tag] },
+      },
+      ctx.workingKey,
+    );
+    expect(initialStatus).toBe(202);
+    const after = await read(row.id);
+    expect(after.properties.title).toBe("patched in bulk");
+    expect(after.properties.size_bytes).toBe(blob.size);
+  });
+
   it("holds for every file type, and a type registered under one", async () => {
     registerTypeSchema({
       id: "acme.scan_size_test",
@@ -330,6 +389,15 @@ describe("an archive restore", () => {
     const lent = await create(ctx.workingKey, "core.file", {
       blob_ref: blob.hash,
     });
+    // Each row as an archive from elsewhere might carry it, so the restore
+    // has to set both rather than copy them.
+    const raw = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await raw.__sqliteRun(
+      "UPDATE items SET properties = jsonb_set(properties, '$.size_bytes', ?) WHERE id IN (?, ?)",
+      [3, lent.id, planted.id],
+    );
     const exported = await request(
       ctx.app,
       "GET",

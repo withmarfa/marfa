@@ -53,7 +53,7 @@
     },
     "size_bytes": {
       "type": "integer",
-      "description": "Size in bytes of the referenced blob (set by the server from the bytes it holds; absent where the writer of blob_ref could not read them)"
+      "description": "Size in bytes of the referenced blob (set by the server from the bytes the instance holds; absent where whoever named blob_ref never proved it holds them)"
     }
   },
   "required": ["blob_ref", "mime_type"],
