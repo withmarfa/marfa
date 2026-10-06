@@ -318,6 +318,15 @@ pub struct EdgeType {
     pub shipped: bool,
 }
 
+/// A server's two catalogs as it lists them now.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ServerCatalog {
+    /// By id.
+    pub item_types: Vec<ItemType>,
+    /// By id.
+    pub edge_types: Vec<EdgeType>,
+}
+
 impl From<marfa_core::TypeField> for TypeField {
     fn from(field: marfa_core::TypeField) -> Self {
         TypeField {
@@ -1734,6 +1743,17 @@ impl Core {
     /// `NotFound` where the catalog holds no such edge type.
     pub fn edge_type(&self, id: String) -> Result<EdgeType, MarfaError> {
         Ok(self.inner.edge_type(&id)?.into())
+    }
+
+    /// The server's item types and edge types, read from it now, so an app
+    /// can choose a slice before a first hydration. Nothing in the copy
+    /// changes. `NoServer` for a copy with no server.
+    pub fn server_catalog(&self, stop: Option<Arc<Stop>>) -> Result<ServerCatalog, MarfaError> {
+        let served = self.inner.server_catalog_until(&flag_of(stop))?;
+        Ok(ServerCatalog {
+            item_types: served.item_types.into_iter().map(Into::into).collect(),
+            edge_types: served.edge_types.into_iter().map(Into::into).collect(),
+        })
     }
 
     /// Which handle this process holds: the one that may write, or a second

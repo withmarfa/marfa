@@ -246,6 +246,85 @@ describe("a device refuses a condition its copy cannot answer as the server does
 });
 
 describe("a device refuses a write only the server may make", () => {
+  it("refuses a create or an edge naming an id the server refuses, before it saves or queues anything", async () => {
+    harness = await hydrated("malformed-id");
+    const { device } = harness;
+    const malformed = [
+      "my-note-1",
+      "01A00000-0000-7000-8000-00000000000B",
+      "01a00000-0000-4000-8000-00000000000b",
+      "01a00000-0000-7000-c000-00000000000b",
+      "",
+    ];
+    for (const id of malformed) {
+      const refused = await device.create({
+        type: "core.note",
+        id,
+        properties: { title: "t", body: "b" },
+      });
+      expect(refused.ok ? "queued" : refused.refusal.code, id).toBe(
+        "validation",
+      );
+      expect(refused.ok ? "" : refused.refusal.raw, id).toContain("invalid_id");
+    }
+    const held = await device.create({
+      type: "core.note",
+      properties: { title: "t", body: "b" },
+    });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    for (const id of malformed) {
+      const refused = await device.createEdge({
+        source: "n1",
+        target: held.ok ? (held.value.item_id ?? "") : "",
+        type: "references",
+        id,
+      });
+      expect(refused.ok ? "queued" : refused.refusal.raw, id).toContain(
+        "invalid_id",
+      );
+    }
+    // A witness that the same calls queue under an id the server takes.
+    const named = "01a00000-0000-7000-8000-00000000000b";
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          id: named,
+          properties: { title: "t", body: "b" },
+        })
+      ).ok,
+    ).toBe(true);
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.map((row) => row.item_id)).toEqual([
+      held.ok ? held.value.item_id : null,
+      named,
+    ]);
+    for (const id of malformed)
+      expect((await device.get(id)).ok, id).toBe(false);
+  });
+
+  it("refuses a list or a search naming a type outside the server's grammar", async () => {
+    harness = await hydrated("type-grammar");
+    const { device } = harness;
+    for (const type of ["core", "Core.note", "app.notes", "keys.thing"]) {
+      const listed = await device.list({ type });
+      expect(listed.ok ? "answered" : listed.refusal.code, type).toBe(
+        "validation",
+      );
+      const searched = await device.search("n1", { type });
+      expect(searched.ok ? "answered" : searched.refusal.code, type).toBe(
+        "validation",
+      );
+    }
+    // The same calls answer a type and a namespace the grammar takes.
+    for (const type of ["core.note", "core.*"]) {
+      const listed = await device.list({ type });
+      expect(listed.ok && listed.value.map((item) => item.id), type).toEqual([
+        "n1",
+      ]);
+    }
+  });
+
   it("queues no purge, and keeps the row, when the purge cannot be sent", async () => {
     harness = await startHarness("purge");
     scriptHydration(harness.server, {

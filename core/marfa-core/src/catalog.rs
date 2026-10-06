@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::error::CoreError;
 use crate::model::{Item, Shown};
 use crate::store;
-use crate::wire::WireEdgeType;
+use crate::wire::{WireCatalog, WireEdgeType};
 
 const TITLE_PROPERTY: &str = "title";
 
@@ -58,6 +58,27 @@ pub struct TypeField {
     pub declared_by: String,
     /// The definition whole, as the server answers it.
     pub definition: Value,
+}
+
+/// A server's two catalogs as it lists them now, each type resolved as the
+/// copy's own reads resolve it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ServerCatalog {
+    /// By id.
+    pub item_types: Vec<ItemType>,
+    /// By id.
+    pub edge_types: Vec<EdgeType>,
+}
+
+/// Held in a store of its own, so the reads that answer for the copy's
+/// catalog answer for this one, and the copy's is left as it was.
+pub(crate) fn served(listed: &WireCatalog) -> Result<ServerCatalog, CoreError> {
+    let conn = store::open_in_memory()?;
+    store::replace_catalog(&conn, listed)?;
+    Ok(ServerCatalog {
+        item_types: item_types(&conn)?,
+        edge_types: edge_types(&conn)?,
+    })
 }
 
 /// An item type as the copy holds it, its inheritance resolved as
@@ -167,27 +188,15 @@ pub(crate) fn declaration(
         return Err(invalid("a type to declare names its id".into()));
     };
     let root = id.split('.').next().unwrap_or_default();
-    if id.ends_with(".*")
-        || !crate::hydrate::type_pattern(id)
-        || (root == "app" && id.split('.').count() != 3)
-    {
+    if id.ends_with(".*") || !crate::hydrate::type_pattern(id)? {
         return Err(invalid(format!(
-            "not a type to declare: {id:?}; a type is app.<app-name>.<type>, user.<type>, or <publisher>.<type>, with lowercase dotted segments and at most 128 characters; app names have exactly three segments"
+            "not a type to declare: {id:?}; {}",
+            crate::hydrate::GRAMMAR
         )));
     }
     if SHIPPED_ROOTS.contains(&root) || crate::builtin::ships(id)? {
         return Err(invalid(format!(
             "{id} is Marfa's, and an app declares types under its own namespace: `app.`, `user.` or a name of its own"
-        )));
-    }
-    if root != "app"
-        && root != "user"
-        && crate::builtin::reserved_type_roots()?
-            .iter()
-            .any(|reserved| reserved == root)
-    {
-        return Err(invalid(format!(
-            "not a type to declare: {id:?}; {root} is a reserved type root"
         )));
     }
     let mut row = row.clone();

@@ -170,13 +170,13 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     Status,
-    /// The item types the copy holds, read from it alone, and the ones an app
-    /// declares for it.
+    /// The item types the copy holds, read from it alone, the ones an app
+    /// declares for it, and the server's.
     Types {
         #[command(subcommand)]
         command: TypesCommand,
     },
-    /// The edge types the copy holds, read from it alone.
+    /// The edge types the copy holds, read from it alone, and the server's.
     #[command(name = "edge-types")]
     EdgeTypes {
         #[command(subcommand)]
@@ -416,6 +416,9 @@ pub enum EdgesCommand {
 pub enum TypesCommand {
     /// Every one the copy holds, by id.
     List,
+    /// Every one the server holds, read from it now, so a slice can be chosen
+    /// before a first hydration. The copy is left as it is.
+    Served,
     /// One by id; a type inherits the fields of the types above it.
     Get {
         /// The id, such as `core.note`.
@@ -449,6 +452,9 @@ pub enum TypesCommand {
 pub enum CatalogCommand {
     /// Every one the copy holds, by id.
     List,
+    /// Every one the server holds, read from it now, so a slice can be chosen
+    /// before a first hydration. The copy is left as it is.
+    Served,
     /// One by id; a type inherits the fields of the types above it.
     Get {
         /// The id, such as `core.note` or `parent-of`.
@@ -1246,8 +1252,17 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Types { command } => {
-            let core = store.open(None)?;
+            let core = match command {
+                TypesCommand::Served => store.open_with_server(named)?,
+                _ => store.open(None)?,
+            };
             match command {
+                TypesCommand::Served => {
+                    let types = core.server_catalog()?.item_types;
+                    output::report(&types, json, || {
+                        types.iter().map(type_line).collect::<Vec<_>>().join("\n")
+                    })
+                }
                 TypesCommand::Declare { definitions, file } => {
                     let text = match (definitions, file) {
                         (Some(text), _) => text,
@@ -1310,8 +1325,21 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             }
         }
         DeviceCommand::EdgeTypes { command } => {
-            let core = store.open(None)?;
+            let core = match command {
+                CatalogCommand::Served => store.open_with_server(named)?,
+                _ => store.open(None)?,
+            };
             match command {
+                CatalogCommand::Served => {
+                    let types = core.server_catalog()?.edge_types;
+                    output::report(&types, json, || {
+                        types
+                            .iter()
+                            .map(edge_type_line)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
                 CatalogCommand::List => {
                     let types = core.edge_types()?;
                     output::report(&types, json, || {

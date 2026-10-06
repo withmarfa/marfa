@@ -243,3 +243,115 @@ fn a_stopped_drain_records_the_in_flight_answer_before_ending() {
         assert_eq!(queue[0].verdict.is_some(), succeeds);
     }
 }
+
+pub(crate) fn note(id: Option<&str>) -> crate::Draft {
+    crate::Draft {
+        r#type: "core.note".into(),
+        id: id.map(str::to_string),
+        properties: serde_json::json!({ "title": "a", "body": "b" })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..Default::default()
+    }
+}
+
+pub(crate) fn holding_a_catalog(core: &Core) {
+    let conn = core.conn().unwrap();
+    store::replace_catalog(&conn, &crate::builtin::catalog().unwrap()).unwrap();
+}
+
+/// Takes every connection and answers none, as a server still being reached
+/// does: a request to it waits until its own time runs out.
+fn silent_server() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            held.push(stream);
+        }
+    });
+    url
+}
+
+fn copy_at(url: &str) -> Arc<Core> {
+    let core = Core::open_in_memory(Some(Server {
+        url: url.into(),
+        key: "k".into(),
+    }))
+    .unwrap();
+    {
+        let conn = core.conn().unwrap();
+        store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+        store::meta_set(&conn, crate::read_view::FENCE, scripted::FENCE).unwrap();
+        store::meta_set(&conn, store::META_INSTANCE_ID, scripted::INSTANCE).unwrap();
+        store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+        store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+    }
+    holding_a_catalog(&core);
+    Arc::new(core)
+}
+
+fn ends_soon_after_its_stop(
+    core: Arc<Core>,
+    call: impl FnOnce(&Core, &AtomicBool) -> Result<()> + Send + 'static,
+) -> Result<()> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done, result) = mpsc::channel();
+    let raised = stop.clone();
+    std::thread::spawn(move || {
+        let _ = done.send(call(&core, &raised));
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    let raised_at = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let result = result
+        .recv_timeout(WAIT)
+        .expect("a stopped call still waited on its request");
+    assert!(raised_at.elapsed() < WAIT);
+    result
+}
+
+#[test]
+fn a_stop_ends_a_call_whose_first_request_waits_on_a_silent_server() {
+    let url = silent_server();
+    let fresh = Arc::new(
+        Core::open_in_memory(Some(Server {
+            url: url.clone(),
+            key: "k".into(),
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        ends_soon_after_its_stop(fresh.clone(), |core, stop| hydrate(core, stop).map(|_| ())),
+        Err(CoreError::Canceled)
+    );
+    assert_eq!(
+        ends_soon_after_its_stop(fresh, |core, stop| core
+            .server_catalog_until(stop)
+            .map(|_| ())),
+        Err(CoreError::Canceled)
+    );
+    assert_eq!(
+        ends_soon_after_its_stop(copy_at(&url), |core, stop| hydrate(core, stop).map(|_| ())),
+        Err(CoreError::Canceled)
+    );
+    assert_eq!(
+        ends_soon_after_its_stop(copy_at(&url), |core, stop| core
+            .catch_up_until(stop)
+            .map(|_| ())),
+        Err(CoreError::Canceled)
+    );
+    let draining = copy_at(&url);
+    draining.create_item(&note(None)).unwrap();
+    assert_eq!(
+        ends_soon_after_its_stop(draining.clone(), |core, stop| core
+            .drain_until(stop)
+            .map(|_| ())),
+        Err(CoreError::Canceled)
+    );
+    let queue = draining.queue().unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].verdict, None);
+}

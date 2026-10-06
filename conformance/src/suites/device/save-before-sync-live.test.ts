@@ -22,8 +22,9 @@ import { requireBinary } from "./harness.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 beforeAll(async () => {
-  ({ client, ctx, apiUrl } = await createTestContext(
+  ({ client, ctx, apiUrl, apiKey } = await createTestContext(
     "device",
     "save-before-sync",
   ));
@@ -139,4 +140,95 @@ it("says which declared types the key could not register, and the server refuses
     value(await joined.queue()).find((row) => row.item_id === saved.item_id)
       ?.verdict,
   ).toBe("refused");
+});
+
+it("refuses a drain before its first hydration, sending nothing and keeping the queue", async () => {
+  const store = newStore("drain-before-join");
+  const offline = new CliDevice({ binary: requireBinary(), store });
+  value(await offline.status());
+  const saved = [
+    value(
+      await offline.create({
+        type: "core.note",
+        properties: { title: "One", body: "first" },
+      }),
+    ),
+    value(
+      await offline.create({
+        type: "core.note",
+        properties: { title: "Two", body: "second" },
+      }),
+    ),
+  ];
+  const joined = offline.reopen({ url: apiUrl, key: apiKey });
+  const refused = await joined.drain();
+  expect(refused.ok ? "drained" : refused.refusal.code).toBe("no_cursor");
+  for (const row of saved) {
+    expect((await client.getItem(row.item_id ?? "")).ok).toBe(false);
+  }
+  const queue = value(await joined.queue());
+  expect(queue.map((row) => [row.item_id, row.verdict])).toEqual(
+    saved.map((row) => [row.item_id, null]),
+  );
+  // Hydrated, the same queue goes whole.
+  value(await joined.hydrate(["core.note"], "library"));
+  const drained = value(await joined.drain());
+  expect(drained.verdicts.map((verdict) => verdict.verdict)).toEqual([
+    "accepted",
+    "accepted",
+  ]);
+  for (const row of saved) {
+    trackItem(ctx, row.item_id ?? "");
+    expect((await client.getItem(row.item_id ?? "")).ok).toBe(true);
+  }
+});
+
+it("reads the server's catalog before its first hydration, leaving the copy's own as it was", async () => {
+  const registered = `user.served_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  const declared = `${registered}_declared`;
+  const made = await client.registerType({
+    id: registered,
+    fields: { title: { type: "string" } },
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  trackType(ctx, registered, client);
+  const store = newStore("catalog-before-join");
+  const device = new CliDevice({
+    binary: requireBinary(),
+    store,
+    url: apiUrl,
+    key: apiKey,
+  });
+  value(await device.status());
+  value(
+    await device.declareTypes([
+      { id: declared, fields: { title: { type: "string" } } },
+    ]),
+  );
+  const ids = (types: Array<{ id: string }>) => types.map((type) => type.id);
+  const served = value(await device.servedItemTypes());
+  expect(ids(served)).toContain(registered);
+  expect(ids(served)).not.toContain(declared);
+  const listed = await client.listTypes();
+  expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+  expect(ids(served).sort()).toEqual(
+    ids(listed.ok ? listed.data.data : []).sort(),
+  );
+  const parent = value(await device.servedEdgeTypes()).find(
+    (type) => type.id === "parent-of",
+  );
+  expect([parent?.reverse_name, parent?.written_at]).toEqual([
+    "child-of",
+    "target",
+  ]);
+  // The copy still holds what it held: the shipped and declared types, no
+  // server catalog and no hydration.
+  const held = ids(value(await device.itemTypes()));
+  expect(held).toContain(declared);
+  expect(held).not.toContain(registered);
+  const status = value(await device.status());
+  expect([status.hydration, status.catalog_version ?? null]).toEqual([
+    "never",
+    null,
+  ]);
 });

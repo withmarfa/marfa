@@ -1680,6 +1680,12 @@ mod tests {
             )
             .unwrap();
             store::meta_delete(&conn, RECHECK).unwrap();
+            // A drain talks to a server only under a hydration's read view.
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "1").unwrap();
+            store::meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
         }
         let asked = || server.seen("/").len() + server.seen("/items").len();
         core.drain().unwrap();

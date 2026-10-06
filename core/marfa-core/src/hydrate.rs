@@ -385,7 +385,13 @@ fn register_declared(
 /// most 128 characters, or a root of one or more such segments under `.*`.
 /// The server's rules for each root go further, and a name that passes here
 /// and breaks them is one the catalog does not hold.
-pub(crate) fn type_pattern(name: &str) -> bool {
+/// What a type is, said where a name is refused for breaking the grammar.
+pub(crate) const GRAMMAR: &str = "a type is two or more lowercase dotted segments of letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
+
+/// The server's type pattern grammar (`types.md` 1): a type identifier, or a
+/// namespace under `.*`. The bare `*` is no pattern here; each caller says
+/// what it means.
+pub(crate) fn type_pattern(name: &str) -> Result<bool> {
     let segment = |part: &str| {
         let mut characters = part.chars();
         characters
@@ -395,11 +401,24 @@ pub(crate) fn type_pattern(name: &str) -> bool {
                 rest.is_ascii_lowercase() || rest.is_ascii_digit() || rest == '-' || rest == '_'
             })
     };
-    let (root, least) = match name.strip_suffix(".*") {
-        Some(root) => (root, 1),
-        None => (name, 2),
-    };
-    name.len() <= 128 && root.split('.').count() >= least && root.split('.').all(segment)
+    if name.len() > 128 {
+        return Ok(false);
+    }
+    // A wildcard's root is a namespace, held to the segments alone.
+    if let Some(root) = name.strip_suffix(".*") {
+        return Ok(!root.is_empty() && root.split('.').all(segment));
+    }
+    let segments: Vec<&str> = name.split('.').collect();
+    if segments.len() < 2 || !segments.iter().all(|part| segment(part)) {
+        return Ok(false);
+    }
+    Ok(match segments[0] {
+        "app" => segments.len() == 3,
+        "core" | "system" | "user" | "marfa" => true,
+        root => !crate::builtin::reserved_type_roots()?
+            .iter()
+            .any(|reserved| reserved == root),
+    })
 }
 
 /// A `system.*` type is listed at both tiers, as the slice takes it
@@ -415,9 +434,9 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
         let name = raw.trim();
-        if !type_pattern(name) {
+        if !type_pattern(name)? {
             return Err(CoreError::Invalid(format!(
-                "not a type to declare: {raw:?}; a type is two or more lowercase dotted segments, or a namespace under .*"
+                "not a type to declare: {raw:?}; {GRAMMAR}, or a namespace under .*"
             )));
         }
         if !declared.iter().any(|seen| seen == name) {
@@ -643,7 +662,10 @@ pub(crate) fn fetch_overflow(
 fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
-        let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
+        let asked = http.clone();
+        let reader = crate::catch_up::read_unless_stopped(stop, move || {
+            asked.open_events(None, HEAD_READ_TIMEOUT)
+        })?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;

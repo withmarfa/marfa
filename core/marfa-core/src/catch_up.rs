@@ -159,11 +159,20 @@ pub struct FollowReport {
 
 fn start(core: &Core) -> Result<(Slice, String)> {
     let mut conn = core.conn()?;
-    if !store::hydration_complete(&conn)? {
+    refuse_unless_current(&mut conn)?;
+    start_build(&conn)
+}
+
+/// A copy talks to its server only under the read view a completed hydration
+/// gave it: refused `HydrationIncomplete` part way through one, `NoCursor`
+/// where none has completed, and expired where its cursor has gone. Asked
+/// before anything is sent, so the refusal is the same offline.
+pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<()> {
+    if !store::hydration_complete(conn)? {
         return Err(CoreError::HydrationIncomplete);
     }
-    if !store::hydrated(&conn)? {
-        if store::holds_slice(&conn)? {
+    if !store::hydrated(conn)? {
+        if store::holds_slice(conn)? {
             let tx = conn.transaction()?;
             read_view::expire(&tx)?;
             tx.commit()?;
@@ -171,7 +180,7 @@ fn start(core: &Core) -> Result<(Slice, String)> {
         }
         return Err(CoreError::NoCursor);
     }
-    start_build(&conn)
+    Ok(())
 }
 
 fn start_build(conn: &rusqlite::Connection) -> Result<(Slice, String)> {
@@ -357,7 +366,8 @@ pub(crate) fn replay_build(
     stop: &AtomicBool,
 ) -> Result<CatchUpReport> {
     let (slice, cursor) = start_build(&*core.conn()?)?;
-    let catalog = http.catalog()?;
+    let asked = http.clone();
+    let catalog = read_unless_stopped(stop, move || asked.catalog())?;
     refuse_if_stopped(stop)?;
     let (mut catalog, _) = adopt(core, context, &catalog)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
@@ -519,6 +529,16 @@ fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option<String> {
 /// which a catch-up sends it to. A server that cannot be asked is an error
 /// like any other, so nothing is sent while the instance is unconfirmed.
 pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
+    refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
+}
+
+/// Ended with `Canceled` as soon as `stop` is raised, even while the root is
+/// still being asked.
+pub(crate) fn refuse_another_instance_until(
+    core: &Core,
+    http: &Http,
+    stop: &AtomicBool,
+) -> Result<()> {
     let generation = {
         let conn = core.conn()?;
         if store::meta_get(&conn, store::META_INSTANCE_ID)?.is_none() {
@@ -526,7 +546,37 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
         }
         read_view::generation(&conn)?
     };
-    same_instance(core, &http.instance_id()?, generation)
+    let asked = http.clone();
+    let served = read_unless_stopped(stop, move || asked.instance_id())?;
+    same_instance(core, &served, generation)
+}
+
+/// Runs a read on a thread of its own and ends with `Canceled` as soon as
+/// `stop` is raised, so a call stopped while its first request waits on a
+/// server that does not answer, one still being connected to among them,
+/// ends then rather than when the request gives up. Only for a read: the
+/// request may still reach the server after the call has ended.
+pub(crate) fn read_unless_stopped<T: Send + 'static>(
+    stop: &AtomicBool,
+    read: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    refuse_if_stopped(stop)?;
+    let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
+    thread::spawn(move || {
+        let _ = sender.send(read());
+    });
+    loop {
+        refuse_if_stopped(stop)?;
+        match answer.recv_timeout(PACE.stop_poll) {
+            Ok(read) => return read,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(CoreError::Network(
+                    "the request ended with no answer".into(),
+                ));
+            }
+        }
+    }
 }
 
 fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {

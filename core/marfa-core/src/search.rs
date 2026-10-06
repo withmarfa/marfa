@@ -33,7 +33,7 @@ pub(crate) fn search(
         filters.r#type.as_deref(),
         &mut clauses,
         &mut values,
-    );
+    )?;
     query::narrow_by_tags(&filters.tags, &mut clauses, &mut values);
     // Before the query is looked at, so an expression the grammar refuses
     // is refused on a search with no words as on any other.
