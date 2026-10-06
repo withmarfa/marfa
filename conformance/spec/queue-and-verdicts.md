@@ -146,3 +146,13 @@ The list and the reason for each entry are in `device.md`; `device/fidelity.test
 58. When a restore of a row the copy does not hold already waits, the device MUST refuse another restore of it `invalid`, queueing nothing.
     **Reason:** The bin goes on listing the row until the restore is answered, so a person can ask twice, and the second restore would come back a refusal for a row that was restored.
     **Tests:** `device/bin-live.test.ts › restores a row read from the bin that the copy does not hold`.
+
+## A null a write carries
+
+59. When a merging edit carries a null for a property the row's type does not require, the device MUST leave the property as the row holds it.
+    **Reason:** The server drops such a null (`items.md` 22), so it clears nothing; an edit that sends its properties whole (45) is how a property is cleared. A copy that cleared it would show a row the server never holds.
+    **Tests:** `device/null-properties-live.test.ts › leaves a property a merging null names, as the server does`.
+
+60. When a create carries a null for a field its type declares and does not require, the device MUST hold the new row without that field.
+    **Reason:** The server makes the row without it (`items.md` 68), and a copy showing the null would show a field the server never holds. A null on a property the type does not declare is held as the server holds it, as a value.
+    **Tests:** `device/null-properties-live.test.ts › leaves out a create's null on a declared optional field, as the server does`, core `catalog::tests::a_create_holds_its_nulls_as_the_server_does`.

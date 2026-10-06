@@ -325,6 +325,52 @@ describe("type identifier validation", () => {
     expect(Object.keys(read.data.item.properties)).toEqual(order);
   });
 
+  it("clears nothing with a null under a merge, declared or not", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "b", notes: "declared", courier: "undeclared" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const merged = await client.updateItem(r.data.item.id, {
+      properties: { notes: null, courier: null, title: "changed" },
+      version: r.data.item.version,
+    });
+    expect(merged.ok, JSON.stringify(merged.error)).toBe(true);
+    expect(merged.data.item.properties).toEqual({
+      body: "b",
+      notes: "declared",
+      courier: "undeclared",
+      title: "changed",
+    });
+    // The witness: a whole edit that leaves them out clears both.
+    const replaced = await client.updateItem(r.data.item.id, {
+      properties: { body: "b", title: "changed" },
+      properties_mode: "replace",
+      version: merged.data.item.version,
+    });
+    expect(replaced.ok).toBe(true);
+    expect(replaced.data.item.properties).toEqual({
+      body: "b",
+      title: "changed",
+    });
+  });
+
+  it("leaves out a create's null on a declared optional field, and keeps one on an undeclared property", async () => {
+    const r = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "b", title: null, courier: null },
+    });
+    expect(r.ok, JSON.stringify(r.error)).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    expect(r.data.item.properties).toEqual({ body: "b", courier: null });
+    const read = await client.getItem(r.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(read.data.item.properties).toEqual({ body: "b", courier: null });
+  });
+
   it("keeps the order a merge finds and adds after it, and takes the order a whole edit sends", async () => {
     const r = await client.createItem({
       type: "core.note",

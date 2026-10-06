@@ -1638,7 +1638,10 @@ fn queue_create(
     // and sent in the order the server answers, so the copy shows one order
     // before the answer and after it.
     let mut draft = draft.clone();
-    draft.properties = catalog.in_answer_order(&draft.r#type, &draft.properties);
+    draft.properties = catalog.in_answer_order(
+        &draft.r#type,
+        &catalog.created_properties(&draft.r#type, &draft.properties),
+    );
     if draft.tier.is_none() {
         draft.tier = Some(match store::slice(tx)? {
             Some((_, tier)) => tier,

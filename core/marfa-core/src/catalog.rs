@@ -501,6 +501,40 @@ impl Catalog {
 
     /// Match the server's null rule in the local projection; the queued
     /// request stays unchanged so the server validates what the caller sent.
+    /// A create's properties as the server holds them: a null on a field
+    /// the type declares and does not require is dropped, and one on a
+    /// property it does not declare is kept (`items.md` 13).
+    pub(crate) fn created_properties(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        properties
+            .iter()
+            .filter(|(name, value)| {
+                !value.is_null() || self.definition(type_id, name).is_none_or(Self::required)
+            })
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
+
+    /// The nearest declaration of `name` in the type's chain.
+    fn definition(&self, type_id: &str, name: &str) -> Option<&Value> {
+        let mut current = type_id;
+        for _ in 0..MAX_PARENT_WALK {
+            let entry = self.entries.get(current)?;
+            if let Some(definition) = entry.definitions.get(name) {
+                return Some(definition);
+            }
+            current = entry.parent.as_deref()?;
+        }
+        None
+    }
+
+    fn required(definition: &Value) -> bool {
+        definition.get("required").and_then(Value::as_bool) == Some(true)
+    }
+
     pub fn projected_properties(
         &self,
         type_id: &str,
@@ -1034,6 +1068,32 @@ mod tests {
             keys("acme.unheld"),
             ["extra1", "beta", "alpha", "extra0", "zeta", "mid"],
             "a type the catalog does not hold moved a property"
+        );
+    }
+
+    #[test]
+    fn a_create_holds_its_nulls_as_the_server_does() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base",
+                  "fields": { "title": { "type": "string" },
+                              "body": { "type": "string", "required": true } } },
+                { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        let sent: Map<String, Value> = serde_json::from_value(
+            serde_json::json!({ "title": null, "body": null, "extra": null }),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog
+                .created_properties("acme.leaf", &sent)
+                .keys()
+                .collect::<Vec<_>>(),
+            ["body", "extra"],
+            "an inherited optional field kept its null, or a required or undeclared one lost it"
         );
     }
 
