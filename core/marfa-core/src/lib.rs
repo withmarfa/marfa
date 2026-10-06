@@ -406,6 +406,7 @@ impl Core {
 
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
+    ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
     /// it has its first stream (`device.md` 40).
