@@ -22,6 +22,7 @@ afterAll(async () => {
 /** The sweeps every instance runs whatever its configuration. */
 const ALWAYS_LISTED = [
   "audit-cleanup",
+  "auth-session-cleanup",
   "blob-integrity",
   "blob-replicate",
   "event-log-cleanup",
@@ -85,6 +86,7 @@ describe("the housekeeping the server runs on itself", () => {
       last_started_at: run.data.started_at,
       last_finished_at: run.data.finished_at,
       last_outcome: "ok",
+      last_error: run.data.error,
       last_result: { deleted: 0 },
     });
     // Due again no later than an interval after the finish, and never

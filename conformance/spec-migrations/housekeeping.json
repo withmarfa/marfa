@@ -1,7 +1,7 @@
 {
   "1": [
     "housekeeping/list-jobs",
-    "housekeeping/list-refuses-working-key",
+    "housekeeping/list-operator-only",
     "housekeeping/last-outcome",
     "housekeeping/running-since-set"
   ],
@@ -14,7 +14,7 @@
   "4": [
     "housekeeping/run-unknown-name",
     "housekeeping/run-malformed-name",
-    "housekeeping/run-refuses-working-key"
+    "housekeeping/run-operator-only"
   ],
   "5": [
     "housekeeping/enrichment-failure-counted",

@@ -1,6 +1,6 @@
 # Housekeeping
 
-The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. `GLOSSARY.md` lists them. One scheduler runs every job from one table, so the operator can see what runs, when each job is next due and what its last run did, and can run any job now.
+The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. `GET /housekeeping` lists the jobs an instance runs. One scheduler runs every job from one table, so the operator can see what runs, when each job is next due and what its last run did, and can run any job now.
 
 ## The housekeeping jobs
 
@@ -12,15 +12,15 @@ When the operator key sends `GET /housekeeping`, the server MUST answer with eve
 
 **Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the operator key`.
 
-### `housekeeping/list-refuses-working-key`
+### `housekeeping/list-operator-only`
 
-When a working key sends `GET /housekeeping`, the server MUST answer `403 forbidden`.
+When a credential other than the operator key sends `GET /housekeeping`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/housekeeping.test.ts › refuses the listing to a working key`.
+**Tests:** `compliance/housekeeping.test.ts › refuses the listing to a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`.
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate` and `blob-integrity` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate` and `blob-integrity` on every instance, whatever its settings and its `/config`.
 
 **Reason:** these jobs have no off switch. A job whose retention `/config` can set still runs when that retention is 0, and keeps everything.
 
@@ -92,11 +92,11 @@ When the operator key asks to run a name that does not match `^[a-z][a-z0-9-]*$`
 
 **Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`.
 
-### `housekeeping/run-refuses-working-key`
+### `housekeeping/run-operator-only`
 
-When a working key asks to run a housekeeping job, the server MUST answer `403 forbidden`.
+When a credential other than the operator key asks to run a housekeeping job, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`.
+**Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`, `compliance/housekeeping-job-running.test.ts › refuses the listing and a run to an app's access token`.
 
 ### `housekeeping/runs-concurrent-across-jobs`
 
@@ -106,7 +106,7 @@ While a run of one housekeeping job is in progress, the server MUST run another 
 
 ## The enrichment sweep
 
-The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`. It runs only where a setting switches enrichment on, and reads text from images only where OCR is on too.
+The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`. Enrichment is on unless a setting switches it off, and OCR, which reads text from images, can be switched off on its own.
 
 ### `housekeeping/enrichment-failure-counted`
 
@@ -202,33 +202,39 @@ Where a retention is positive, the server MUST expire the eligible records older
 
 ### `housekeeping/retention-maximum-runs`
 
-Where a retention is at the largest value the server accepts, the server MUST finish each cleanup job that reads it with `last_outcome` `ok`.
+Where a retention `PUT /config` sets is at the largest value it accepts, the server MUST finish each cleanup job that reads that retention with `last_outcome` `ok`.
 
 **Reason:** the largest window must still give a valid cutoff date.
 
 **Tests:** `compliance/housekeeping.test.ts › runs each cleanup job at the largest retention it accepts`.
 
+### `housekeeping/retention-setting-maximum-runs`
+
+Where a retention setting is at the largest value it accepts, the server MUST finish each cleanup job that reads that setting with `last_outcome` `ok`.
+
+**Tests:** waiting on #1444.
+
 ### `housekeeping/retention-setting-days-range`
 
-If `AUDIT_RETENTION_DAYS`, `TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` is anything but an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+If `AUDIT_RETENTION_DAYS`, `TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** waiting on #1444.
 
 ### `housekeeping/retention-setting-hours-range`
 
-If `MARFA_EVENT_LOG_RETENTION_HOURS` is anything but an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** waiting on #1444.
 
 ### `housekeeping/retention-setting-ms-range`
 
-If `MARFA_BULK_ACTION_JOB_RETENTION_MS` is anything but an integer from 0 through 3153600000000 when the server starts, then the server MUST refuse to start and name the setting.
+If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor an integer from 0 through 3153600000000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** waiting on #1444.
 
 ## Restarts and deadlines
 
-No fixture can yet restart the server, or hold a run past its deadline: the heartbeat, the one job a fixture can hold open, stops waiting for its receiver before its deadline.
+No fixture can yet restart the server, or hold a run past its deadline: the heartbeat and the webhook poll, which wait on receivers a fixture can run, stop waiting after 10 seconds, before their deadlines.
 
 ### `housekeeping/schedule-survives-restart`
 

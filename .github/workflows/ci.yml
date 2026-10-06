@@ -274,8 +274,9 @@ jobs:
         run: pnpm test:generators
 
       # A statement's ID is permanent, so one that this change deletes or
-      # renames fails here. The base is the commit the change was made on,
-      # not `main` as it stands, which may have moved during the run.
+      # renames fails here. The base is the pull request's base commit, or
+      # the commit before the push, not `main` as it stands, which may have
+      # moved during the run.
       - name: Hold the contract's IDs to the base
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         working-directory: conformance
