@@ -14,6 +14,7 @@ import {
   type EdgeDraft,
   type EdgeType,
   type Edit,
+  type FolderRow,
   type FollowReport,
   type HydrateReport,
   type Item,
@@ -207,6 +208,63 @@ export class CliDevice implements DeviceUnderTest {
 
   async get(id: string): Promise<Outcome<Item>> {
     return this.json<Item>(["items", "get", id]);
+  }
+
+  /** What a folder's search holds, answered from the copy (`device.md` 66). */
+  async listInFolder(
+    folder: string,
+    page: { limit?: number; offset?: number } = {},
+  ): Promise<Outcome<Item[]>> {
+    const args = ["items", "list", "--folder", folder];
+    if (page.limit !== undefined) args.push("--limit", String(page.limit));
+    if (page.offset !== undefined) args.push("--offset", String(page.offset));
+    return this.json<Item[]>(args);
+  }
+
+  async searchInFolder(
+    query: string,
+    folder: string,
+  ): Promise<Outcome<SearchHit[]>> {
+    return this.json<SearchHit[]>(["search", query, "--folder", folder]);
+  }
+
+  /** A folder's settings as the copy holds them. */
+  async folder(id: string): Promise<Outcome<FolderRow>> {
+    return this.json<FolderRow>(["folders", "get", id]);
+  }
+
+  /** Sent through the folder door at once, never queued (`device.md` 70). */
+  async createFolder(
+    settings: Record<string, unknown>,
+  ): Promise<Outcome<FolderRow>> {
+    return this.json<FolderRow>([
+      "folders",
+      "create",
+      ...this.server(),
+      "--body",
+      JSON.stringify(settings),
+    ]);
+  }
+
+  async changeFolder(
+    id: string,
+    changes: Record<string, unknown>,
+    version: number,
+  ): Promise<Outcome<FolderRow>> {
+    return this.json<FolderRow>([
+      "folders",
+      "change",
+      ...this.server(),
+      id,
+      "--version",
+      String(version),
+      "--body",
+      JSON.stringify(changes),
+    ]);
+  }
+
+  async revokeFolder(id: string): Promise<Outcome<FolderRow>> {
+    return this.json<FolderRow>(["folders", "revoke", ...this.server(), id]);
   }
 
   /**

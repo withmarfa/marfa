@@ -132,7 +132,7 @@ fn hydrate_inner(
                 crate::catch_up::refuse_if_stopped(stop)?;
                 let page = http.items_page(&ItemsQuery {
                     r#type: declared,
-                    tier,
+                    tier: listed_tier(declared, tier),
                     cursor: page_cursor.as_deref(),
                 })?;
                 pages += 1;
@@ -394,6 +394,15 @@ pub(crate) fn type_pattern(name: &str) -> bool {
     name.len() <= 128 && root.split('.').count() >= least && root.split('.').all(segment)
 }
 
+/// A `system.*` type is listed at both tiers, as the slice takes it
+/// (`store::slice_takes`).
+fn listed_tier(declared: Option<&str>, tier: Tier) -> Option<Tier> {
+    match declared {
+        Some(declared) if store::is_system(declared) => None,
+        _ => Some(tier),
+    }
+}
+
 fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
@@ -448,7 +457,7 @@ fn refuse_unreadable(
             for name in named {
                 let probe = http.items_page(&ItemsQuery {
                     r#type: Some(name),
-                    tier,
+                    tier: listed_tier(Some(name), tier),
                     cursor: None,
                 });
                 match probe {

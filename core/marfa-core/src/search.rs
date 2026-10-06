@@ -43,6 +43,17 @@ pub(crate) fn search(
         &mut clauses,
         &mut values,
     )?;
+    search_where(conn, query, &clauses, values, limit)
+}
+
+/// Ranked as `search` ranks, narrowed by `clauses` on `items`.
+pub(crate) fn search_where(
+    conn: &Connection,
+    query: &str,
+    clauses: &[String],
+    mut values: Vec<Value>,
+    limit: usize,
+) -> Result<Vec<SearchHit>> {
     let Some(expression) = fts_expression(query) else {
         return Ok(Vec::new());
     };

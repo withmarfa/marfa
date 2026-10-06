@@ -56,6 +56,17 @@ pub(crate) fn list(
         &mut clauses,
         &mut values,
     )?;
+    list_where(conn, &clauses, &values, sort, filters.limit, filters.offset)
+}
+
+pub(crate) fn list_where(
+    conn: &Connection,
+    clauses: &[String],
+    values: &[Value],
+    sort: Sort,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<Item>> {
     let where_sql = if clauses.is_empty() {
         "1 = 1".to_string()
     } else {
@@ -67,7 +78,7 @@ pub(crate) fn list(
         sort.direction.as_sql(),
         sort.direction.as_sql()
     );
-    let limit_sql = match (filters.limit, filters.offset) {
+    let limit_sql = match (limit, offset) {
         (None, None) => String::new(),
         (limit, offset) => format!(
             "LIMIT {} OFFSET {}",
@@ -75,7 +86,7 @@ pub(crate) fn list(
             offset.unwrap_or(0)
         ),
     };
-    store::items_where(conn, &where_sql, &order_sql, &limit_sql, &values)
+    store::items_where(conn, &where_sql, &order_sql, &limit_sql, values)
 }
 
 /// A declared type and its subtree, by name and by declared parent, the

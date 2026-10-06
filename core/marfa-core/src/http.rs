@@ -143,7 +143,8 @@ impl Transport for RefusalTransport {
 pub struct ItemsQuery<'a> {
     /// `None` lists every type the key reads.
     pub r#type: Option<&'a str>,
-    pub tier: Tier,
+    /// `None` lists both tiers.
+    pub tier: Option<Tier>,
     pub cursor: Option<&'a str>,
 }
 
@@ -441,8 +442,10 @@ impl Http {
             .map(|declared| ("type", declared))
             .into_iter()
             .collect();
+        if let Some(tier) = query.tier {
+            params.push(("tier", tier.as_str()));
+        }
         params.extend([
-            ("tier", query.tier.as_str()),
             ("state", "any"),
             ("include", "edges,metadata"),
             ("limit", &limit),
