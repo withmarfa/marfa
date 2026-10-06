@@ -63,7 +63,7 @@ A statement is a level-3 heading holding only its ID, then the rule, then an opt
   | With a feature        | Where …, the server MUST …   |
   | On something unwanted | If …, then the server MUST … |
 
-  A rule may combine a feature or a state with an event: "Where enrichment is on, if …, then the server MUST …".
+  A rule may combine a feature or a state with an event or an unwanted condition: "Where enrichment is on, if …, then the server MUST …".
 
 - **Subject.** The subject is the server, a device or the command.
   - **The server** is any implementation of the server's half.
@@ -83,7 +83,7 @@ A reason says why the rule exists, in one or two sentences. It holds no requirem
 
 ## IDs
 
-- **Every statement has an ID,** `<chapter>/<name>`: the chapter is the file's name without `.md`, and the name is lowercase words joined by hyphens, at most 40 characters, such as `housekeeping/run-unknown-name`.
+- **Every statement has an ID,** `<chapter>/<name>`: the chapter is the file's name without `.md`, and the name is lowercase words and numbers joined by hyphens, starting with a word, at most 40 characters, such as `housekeeping/run-unknown-name`.
 - **An ID is a name, not a summary.** It is never changed to follow a change in wording.
 - **An ID is never reused.** A statement that is removed, or replaced by others, moves to the `## Retired` list at the end of its chapter, with what replaced it:
 

@@ -257,7 +257,7 @@ describe("the chapters in a directory", () => {
   write("README.md", "### `sample/a`\n");
   write("coverage.md", "1. Row.\n");
   write("findings.md", "## 1. A finding\n");
-  write("How Marfa Behaves.md", "1. Prose.\n");
+  write("Reading Notes.md", "1. Prose.\n");
   write("alpha.md", "1. A rule.\n");
   write(
     "beta-gamma.md",

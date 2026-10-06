@@ -126,4 +126,34 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     });
     expect((await listedHeartbeat()).running_since).toBeNull();
   });
+  it("runs another job while one is held, and lists when the held run started", async () => {
+    answerAtOnce = false;
+    const before = received;
+    const heldRun = runHeartbeat();
+    const deadline = Date.now() + 10_000;
+    while (received === before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(received, "the run never reached the receiver").toBe(before + 1);
+    const runningSince = (await listedHeartbeat()).running_since;
+    expect(runningSince).not.toBeNull();
+
+    const other = await fetch(
+      `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${server!.operatorKey}` },
+      },
+    );
+    expect(other.status).toBe(200);
+    expect((await listedHeartbeat()).running_since).toBe(runningSince);
+
+    answerAtOnce = true;
+    for (const response of held.splice(0)) response.writeHead(204).end();
+    const finished = await heldRun;
+    expect(finished.status).toBe(200);
+    expect(((await finished.json()) as { started_at: string }).started_at).toBe(
+      runningSince,
+    );
+  });
 });

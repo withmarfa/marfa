@@ -64,6 +64,12 @@ function sourceFiles(): string[] {
   return [
     ...walk(resolve(root, "..", "core", "marfa-core", "src"), ".rs"),
     ...walk(resolve(root, "..", "core", "marfa-cli", "src"), ".rs"),
+    ...walk(resolve(root, "..", "core", "bindings", "swift", "src"), ".rs"),
+    ...walk(resolve(root, "..", "core", "bindings", "node", "src"), ".rs"),
+    ...readdirSync(resolve(root, "..", "packages")).flatMap((name) => {
+      const dir = resolve(root, "..", "packages", name, "src");
+      return existsSync(dir) ? walk(dir, ".ts") : [];
+    }),
     ...walk(resolve(root, "src"), ".ts"),
   ];
 }

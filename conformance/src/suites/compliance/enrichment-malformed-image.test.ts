@@ -73,6 +73,14 @@ async function imageItem(bytes: Buffer, title: string): Promise<string> {
 }
 
 describe("a malformed image", () => {
+  it("lists the enrichment sweep on a server with enrichment on", async () => {
+    const listed = await operator.listHousekeeping();
+    expect(listed.status).toBe(200);
+    expect(listed.data.data.map((row) => row.name)).toContain(
+      "enrichment-sweep",
+    );
+  });
+
   it("is recorded as a failed enrichment, and the server goes on answering", async () => {
     // The control: a real image on the same server, which the first sweep
     // reads with OCR and whose size it writes, so the failure and the
