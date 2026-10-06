@@ -728,3 +728,158 @@ describe("the server resolves a conflict", () => {
     ).toBe("feed");
   });
 });
+
+describe("a conflicted copy names its original", () => {
+  /** A note whose next write at `version` collides on `body`. */
+  const collidingNote = async (title: string) => {
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title, body: `${title} body` },
+      }),
+    );
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    const { id, version } = made.data.item;
+    const winner = await client.updateItem(id, {
+      properties: { body: `${title} body from the winner` },
+      version,
+    });
+    expect(winner.ok).toBe(true);
+    return { id, version };
+  };
+  const derivedFrom = async (id: string) => {
+    const out = await client.listItemEdges(id, { edge_type: "derived-from" });
+    expect(out.ok, JSON.stringify(out.error)).toBe(true);
+    return out.data.data;
+  };
+  const copiesOf = async (id: string) => {
+    const back = await client.listItemBackrefs(id, {
+      edge_type: "derived-from",
+    });
+    expect(back.ok, JSON.stringify(back.error)).toBe(true);
+    return back.data.data.map((edge) => edge.source_id);
+  };
+
+  it("links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    // The writer may write notes and no edge type at all.
+    const keyResp = await client.createKey({
+      label: "conflict-copy-no-edges",
+      source: `${ctx.source}-no-edges`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: {},
+    });
+    expect(keyResp.ok, JSON.stringify(keyResp.error)).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    // The original was itself made from something. The copy is made from
+    // the original, so it takes none of the original's own derived-from
+    // edges, and its one edge of that type names the original.
+    const origin = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "origin", body: "origin body" },
+      }),
+    );
+    expect(origin.ok).toBe(true);
+    trackItem(ctx, origin.data.item.id);
+    const original = await collidingNote("derived original");
+    const provenance = await client.createEdge({
+      source_id: original.id,
+      target_id: origin.data.item.id,
+      edge_type: "derived-from",
+    });
+    expect(provenance.ok).toBe(true);
+    trackEdge(ctx, provenance.data.edge.id);
+
+    // The control: the writer may not draw the edge itself.
+    const drawn = await writer.createEdge({
+      source_id: original.id,
+      target_id: origin.data.item.id,
+      edge_type: "derived-from",
+    });
+    expect(drawn.status).toBe(403);
+
+    const key = `copy-link-${ctx.runId}`;
+    const send = () =>
+      writer.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${original.id}?conflict=auto`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": key },
+        body: {
+          properties: { body: "derived body from the loser" },
+          version: original.version,
+        },
+      });
+    const resolved = await send();
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy, "no conflicted copy was written").toBeTruthy();
+
+    const links = await derivedFrom(copy!);
+    expect(
+      links.map((edge) => edge.target_id),
+      "the conflicted copy does not name its original, so nothing finds one from the other once the verdict is gone",
+    ).toEqual([original.id]);
+    expect(links[0]?.properties).toEqual({});
+    expect(links[0]?.version).toBe(1);
+    expect(await copiesOf(original.id)).toEqual([copy]);
+    // The witness that a derived-from edge on the original is one the copy
+    // could have taken: the original still holds it.
+    expect(
+      (await derivedFrom(original.id)).map((edge) => edge.target_id),
+    ).toEqual([origin.data.item.id]);
+
+    // The same write again under the same key is its first answer, and
+    // writes neither a second copy nor a second link.
+    const replayed = await send();
+    expect(replayed.ok, JSON.stringify(replayed.error)).toBe(true);
+    expect(replayed.data.conflict_resolution?.conflicted_copy_id).toBe(copy);
+    expect(await derivedFrom(copy!)).toHaveLength(1);
+    expect(await copiesOf(original.id)).toEqual([copy]);
+  });
+
+  it("keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const original = await collidingNote("purged original");
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "the text the person lost" },
+        version: original.version,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    expect((await client.deleteItem(original.id)).ok).toBe(true);
+    expect(
+      (await derivedFrom(copy!)).map((edge) => edge.target_id),
+      "trashing the original took the link, so restoring it would not bring its copy back beside it",
+    ).toEqual([original.id]);
+
+    expect((await client.purgeItem(original.id)).ok).toBe(true);
+    expect(await derivedFrom(copy!)).toEqual([]);
+    const kept = await client.getItem(copy!);
+    expect(
+      kept.status,
+      "purging the original took its conflicted copy, which holds the text the person lost",
+    ).toBe(200);
+    expect(kept.data.item.state).toBe("active");
+    expect(kept.data.item.properties.body).toBe("the text the person lost");
+  });
+});

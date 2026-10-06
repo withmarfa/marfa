@@ -331,6 +331,72 @@ describe("event stream contract", () => {
     }
   });
 
+  it("announces a conflicted copy's link to its original between the copy's create and the original's update", async ({
+    signal,
+  }) => {
+    const original = await seed("linked-original");
+    const read = await client.getItem(original);
+    const base = read.data.item.version;
+    expect(
+      (
+        await client.updateItem(original, {
+          properties: { body: "the winner's linked body" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const stream = await openEventStream(apiUrl, apiKey);
+    try {
+      await new Promise((r) => setTimeout(r, 250));
+      const resolved = await client.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${original}?conflict=auto`, {
+        method: "PATCH",
+        body: {
+          properties: { body: "the loser's linked body" },
+          version: base,
+        },
+      });
+      expect(resolved.ok).toBe(true);
+      const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+      expect(copy).toBeTruthy();
+      trackItem(ctx, copy!);
+      const { events } = await collectUntil(
+        stream,
+        (evts) =>
+          evts.some(
+            (e) =>
+              e.event === "item.updated" &&
+              (e.data as { item?: { id?: string } }).item?.id === original,
+          ),
+        `item.updated for ${original}`,
+        signal,
+      );
+      const order = events.flatMap((e) => {
+        if (!/^(item|edge)\./.test(e.event)) return [];
+        const data = e.data as {
+          item?: { id: string };
+          edge?: { source_id: string; edge_type: string; target_id: string };
+        };
+        if (data.edge !== undefined)
+          return [
+            `${e.event} ${data.edge.source_id} ${data.edge.edge_type} ${data.edge.target_id}`,
+          ];
+        const id = data.item?.id;
+        if (id !== undefined && (id === copy || id === original))
+          return [`${e.event} ${id}`];
+        return [];
+      });
+      expect(order).toEqual([
+        `item.created ${String(copy)}`,
+        `edge.created ${String(copy)} derived-from ${original}`,
+        `item.updated ${original}`,
+      ]);
+    } finally {
+      await stream.close();
+    }
+  });
+
   it("announces item.state_changed on a lifecycle transition", async ({
     signal,
   }) => {

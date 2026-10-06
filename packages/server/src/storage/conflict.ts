@@ -568,6 +568,9 @@ export function conflictedSiblingIdFor(
 /** The tag a keep-both sibling carries, so an app can list them. */
 export const CONFLICTED_COPY_TAG = "conflicted-copy";
 
+/** The edge type linking a keep-both sibling, its source, to the original. */
+export const CONFLICTED_COPY_EDGE = "derived-from";
+
 /**
  * Puts the resolution report on the item the store is about to return.
  *

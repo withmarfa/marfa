@@ -98,16 +98,16 @@ export interface DisplayHints {
 /**
  * Per-field strategy for resolving concurrent edits on the same item.
  *
- * - `last_writer_wins` — server's current value wins on conflict; the
- *   client's stale change is dropped. The default for every field;
- *   matches single-value semantics like enums, scalars, IDs, and
- *   timestamps.
- * - `keep_both_copies` — preserve the client's edit by spawning a sibling
- *   item of the same type tagged `conflicted-copy`. The original item
- *   accepts the server's current value for the field. Reserved for the
- *   conventional user-authored long-text fields (`body`, `notes`,
- *   highlight `note`), where silently dropping a write is the worst
- *   outcome.
+ * - `last_writer_wins`: the later write wins on conflict, so the stale
+ *   client's change replaces the value written since. The default for
+ *   every field; matches single-value semantics like enums, scalars, IDs,
+ *   and timestamps.
+ * - `keep_both_copies`: preserve the client's edit by spawning a sibling
+ *   item of the same type tagged `conflicted-copy`, with a `derived-from`
+ *   edge to the original. The original item keeps the server's current
+ *   value for the field. Reserved for the conventional user-authored
+ *   long-text fields (`body`, `notes`, highlight `note`), where silently
+ *   dropping a write is the worst outcome.
  */
 export type MergeStrategy = "last_writer_wins" | "keep_both_copies";
 

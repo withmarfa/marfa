@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
@@ -6,12 +9,15 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 /** Link and unlink: an edge between two notes, read from both ends. */
 
 let c: CliContext;
+let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("edges");
+  dir = mkdtempSync(join(tmpdir(), "marfa-cli-edges-"));
 });
 
 afterAll(async () => {
+  rmSync(dir, { recursive: true, force: true });
   await cleanup(c.ctx);
 });
 
@@ -192,5 +198,70 @@ describe("edges from the terminal", () => {
     ]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.code).toBe("edge_cycle");
+  });
+});
+
+describe("a conflicted copy from the terminal", () => {
+  it("links the copy a drain's conflict made to its original, in a store opened again", async () => {
+    const id = await note(unique("cli-conflicted-original"));
+    const device = ["device", "--db", join(dir, "conflicted")];
+    await c.cli.json([
+      ...device,
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    await c.cli.json([
+      ...device,
+      "items",
+      "update",
+      id,
+      "--version",
+      "1",
+      "--properties",
+      JSON.stringify({ body: "Edited on the device" }),
+    ]);
+    // Another writer changes the body first, so the device's edit collides.
+    await c.cli.json([
+      "items",
+      "update",
+      id,
+      "--version",
+      "1",
+      "--properties",
+      JSON.stringify({ body: "Changed elsewhere" }),
+    ]);
+    const drained = await c.cli.json<{
+      verdicts: Array<{ verdict: string; conflicted_copy_id: string | null }>;
+    }>([...device, "drain"]);
+    expect(drained.verdicts.map((row) => row.verdict)).toEqual(["conflicted"]);
+    const copy = drained.verdicts[0]!.conflicted_copy_id!;
+    trackItem(c.ctx, copy);
+
+    // The server holds the link.
+    const served = rows(await c.cli.json(["items", "edges", copy]));
+    expect(
+      served.map((edge) => `${edge.edge_type} ${edge.target_id}`),
+    ).toContain(`derived-from ${id}`);
+
+    // Each command below opens the store again, so the copy answers the link
+    // from what it saved, not from the process that caught up.
+    await c.cli.json([...device, "catch-up"]);
+    const from = await c.cli.json<Edge[]>([...device, "edges", "list", copy]);
+    expect(
+      from.map((edge) => `${edge.edge_type} ${edge.target_id}`),
+      "the copy holds the conflicted copy and not its link to the original",
+    ).toEqual([`derived-from ${id}`]);
+    const to = await c.cli.json<Edge[]>([...device, "edges", "to", id]);
+    expect(to.map((edge) => edge.source_id)).toContain(copy);
+    const held = await c.cli.json<{ tags: string[] }>([
+      ...device,
+      "items",
+      "get",
+      copy,
+    ]);
+    expect(held.tags).toContain("conflicted-copy");
   });
 });

@@ -492,6 +492,11 @@ describe("a folder round trip", () => {
     expect(readFileSync(copy, "utf8")).toContain("Edited here");
     const copyId = /marfa_id: (\S+)/.exec(readFileSync(copy, "utf8"))![1]!;
     trackItem(c.ctx, copyId);
+    // The copy's file names the file it is a copy of, by the original's id
+    // because the two share a title.
+    expect(readFileSync(copy, "utf8")).toContain(
+      `derived-from:\n  - "[[${id}]]"\n`,
+    );
     expect(
       pushed.stdout
         .split("\n")

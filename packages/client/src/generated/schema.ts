@@ -1742,7 +1742,7 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * @description How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`.
+         * @description How Marfa resolves a conflict on one field. `last_writer_wins` takes the later write. `keep_both_copies` keeps the losing value in a new item tagged `conflicted-copy`, with a `derived-from` edge to the original.
          * @enum {string}
          */
         MergeStrategy: "last_writer_wins" | "keep_both_copies";
@@ -5273,7 +5273,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`. */
+            /** @description Returns the updated item and its metadata. If `conflict=auto` resolved a collision, `conflict_resolution` lists the fields and strategies. A `keep_both_copies` field keeps the current value and puts yours on a new sibling tagged `conflicted-copy`, with a `derived-from` edge to this item. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5286,7 +5286,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemWithMetadata"] & {
-                        /** @description What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values. */
+                        /** @description What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values, which has a `derived-from` edge to this item. */
                         conflict_resolution?: {
                             fields: string[];
                             strategy: {

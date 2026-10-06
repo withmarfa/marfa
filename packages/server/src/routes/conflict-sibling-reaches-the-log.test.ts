@@ -188,18 +188,63 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     });
 
     const rows = await logSince(cursor);
-    for (const row of rows) {
+    const items = rows.flatMap((row) => {
       const payload = JSON.parse(row.payload) as {
-        item: Record<string, unknown>;
+        item?: Record<string, unknown>;
       };
+      return payload.item === undefined
+        ? []
+        : [{ event_type: row.event_type, item: payload.item }];
+    });
+    // The witness: the sibling's create and the original's update.
+    expect(items.map((row) => row.event_type).sort()).toEqual([
+      "created",
+      "updated",
+    ]);
+    for (const row of items) {
       // The row has no such column, so a stream subscriber must not see a
       // field that no HTTP read of the item returns.
       expect(
-        "conflict_resolution" in payload.item,
+        "conflict_resolution" in row.item,
         `${row.event_type} carried the resolution report on its item`,
       ).toBe(false);
-      expect("conflict_sibling" in payload.item).toBe(false);
+      expect("conflict_sibling" in row.item).toBe(false);
     }
+  });
+
+  it("appends the edge linking the sibling to its original between the two", async () => {
+    const { id, base } = await collidingNote();
+    const cursor = await logCursor();
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
+      key: ctx.workingKey,
+      body: { properties: { body: "a losing edit to link" }, version: base },
+    });
+    expect(res.status).toBe(200);
+    const siblingId = (
+      (await res.json()) as {
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }
+    ).conflict_resolution?.conflicted_copy_id;
+    if (siblingId === undefined) throw new Error("no conflicted copy written");
+
+    const rows = await logSince(cursor);
+    const order = rows.map((r) => {
+      const payload = JSON.parse(r.payload) as {
+        edge?: { source_id: string; target_id: string; edge_type: string };
+      };
+      if (payload.edge === undefined) return `${r.event_type} ${r.item_id}`;
+      const { source_id, edge_type, target_id } = payload.edge;
+      return `${r.event_type} ${source_id} ${edge_type} ${target_id}`;
+    });
+    expect(
+      order,
+      "the link from the sibling to its original was not announced between the sibling's create and the original's update",
+    ).toEqual([
+      `created ${siblingId}`,
+      `edge_created ${siblingId} derived-from ${id}`,
+      `updated ${id}`,
+    ]);
   });
 
   it("announces nothing extra when a retry writes no new sibling", async () => {
@@ -271,8 +316,14 @@ describe("a conflicted copy is observable to a client that was not the writer", 
       (await ctx.storage.edges.listToTarget(siblingId!)).data.filter(
         (held) => held.edge_type === "parent-of",
       );
-    // The witness: the first execution gave the sibling its parent.
+    const originalsOf = async () =>
+      (await ctx.storage.edges.listFromSource(siblingId!)).data.filter(
+        (held) => held.edge_type === "derived-from",
+      );
+    // The witness: the first execution gave the sibling its parent and its
+    // link to the original.
     expect(await parentsOf()).toHaveLength(1);
+    expect((await originalsOf()).map((held) => held.target_id)).toEqual([id]);
 
     const cursor = await logCursor();
     const again = await itemWrites(ctx.storage).update(id, {
@@ -287,6 +338,10 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     expect(
       await parentsOf(),
       "a retry gave the sibling a second copy of its parent edge",
+    ).toHaveLength(1);
+    expect(
+      await originalsOf(),
+      "a retry gave the sibling a second link to its original",
     ).toHaveLength(1);
     expect(await logSince(cursor)).toHaveLength(0);
   });
