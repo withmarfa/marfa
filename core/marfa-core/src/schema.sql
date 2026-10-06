@@ -267,7 +267,8 @@ CREATE TABLE IF NOT EXISTS body_checks (
 ) WITHOUT ROWID;
 
 -- The rows the body rule pinned to hold what a link or an embed names, let
--- go once no such edge reaches them. A pin asked for again leaves this.
+-- go once no `references` edge reaches them and no `attached-to` edge leaves
+-- them. A pin asked for again leaves this.
 CREATE TABLE IF NOT EXISTS body_pins (
   item_id TEXT PRIMARY KEY
 ) WITHOUT ROWID;

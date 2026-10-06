@@ -578,13 +578,27 @@ pub(crate) fn derive(
         for other in &now {
             if held_edges(conn, kind, host, other)?.is_empty() {
                 let queued = crate::queue_edge(conn, &draft(kind, host, other), &waits)?;
-                remember_edge(conn, &queued.id, host, kind, other, Some(write))?;
+                remember_edge(
+                    conn,
+                    &queued.id,
+                    host,
+                    kind,
+                    other,
+                    waits.first().map(String::as_str),
+                )?;
             }
         }
         for other in had.iter().filter(|other| !now.contains(other)) {
             for edge in held_edges(conn, kind, host, other)? {
                 let queued = crate::queue_edge_delete(conn, &edge, &waits)?;
-                remember_edge(conn, &queued.id, host, kind, other, Some(write))?;
+                remember_edge(
+                    conn,
+                    &queued.id,
+                    host,
+                    kind,
+                    other,
+                    waits.first().map(String::as_str),
+                )?;
             }
         }
     }
@@ -670,12 +684,33 @@ fn unanswered(conn: &Connection, write: Option<&str>) -> Result<Option<String>> 
         .map(|row| row.id))
 }
 
-/// Whether a body written here carries a name still to be asked about.
+const RECHECK: &str = "body_recheck";
+
+/// Notes that the copy's rows changed while a name waits that the server
+/// answered naming nothing or more than one item, so the next pass counts
+/// again what the copy holds of it.
+pub(crate) fn rows_changed(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO meta (key, value)
+         SELECT ?1, '1' WHERE EXISTS (
+           SELECT 1 FROM body_names WHERE state IN ('missing', 'ambiguous'))",
+        [RECHECK],
+    )?;
+    Ok(())
+}
+
+/// Whether a body written here carries a name worth asking about now: one
+/// the server has not answered, or one it answered where the copy's rows
+/// have changed since, which is all a pass asks the server about.
 pub(crate) fn waiting(conn: &Connection) -> Result<bool> {
+    let recheck = store::meta_get(conn, RECHECK)?.is_some();
     Ok(conn
         .query_row(
-            "SELECT 1 FROM body_names WHERE state IN ('pending', 'missing', 'ambiguous', 'unanswered') LIMIT 1",
-            [],
+            "SELECT 1 FROM body_names
+              WHERE state IN ('pending', 'unanswered')
+                 OR (?1 AND state IN ('missing', 'ambiguous'))
+              LIMIT 1",
+            [recheck],
             |_| Ok(()),
         )
         .optional()?
@@ -694,12 +729,17 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         if store::refuse_unless_usable(&conn).is_err() || !waiting(&conn)? {
             return Ok(());
         }
+        let recheck = store::meta_get(&conn, RECHECK)?.is_some();
+        // Cleared before the names are counted, so a row that changes while
+        // the pass runs is counted at the next.
+        store::meta_delete(&conn, RECHECK)?;
         let mut statement = conn.prepare(&format!(
             "SELECT {ROW_COLUMNS} FROM body_names
-              WHERE state IN ('pending', 'missing', 'ambiguous', 'unanswered')
+              WHERE state IN ('pending', 'unanswered')
+                 OR (?1 AND state IN ('missing', 'ambiguous'))
               ORDER BY item_id, kind, text"
         ))?;
-        let rows = statement.query_map([], row_of)?;
+        let rows = statement.query_map([recheck], row_of)?;
         rows.collect::<rusqlite::Result<_>>()?
     };
     let catalog = Catalog::load(&*core.conn()?)?;
@@ -720,6 +760,7 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         let embeds = text::embeds(&body);
         for row in rows {
             if stop.load(Ordering::Relaxed) {
+                rows_changed(&*core.conn()?)?;
                 return Ok(());
             }
             let carried = match row.kind {
@@ -888,7 +929,7 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
                 &row.item_id,
                 row.kind,
                 &found,
-                row.write_id.as_deref(),
+                waits.first().map(String::as_str),
             )?;
         }
         put_row(
@@ -907,8 +948,8 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
     Ok(())
 }
 
-/// Lets go of each row the rule pinned that no edge a body makes still
-/// reaches: a link's target, or an embedded file.
+/// Lets go of each row the rule pinned that no `references` edge reaches and
+/// no `attached-to` edge leaves, whoever made the edge.
 fn release_pins(conn: &Connection) -> Result<()> {
     let pinned: Vec<String> = {
         let mut statement = conn.prepare(
@@ -945,11 +986,16 @@ pub(crate) fn lost_body(
     let Some(body_write) = body_write else {
         return Ok(None);
     };
-    let Some(written) = store::queued_write(conn, &body_write)? else {
-        return Ok(None);
+    Ok(lost_on_body(conn, &body_write)?.then(|| LOST.to_string()))
+}
+
+/// Whether the write came back conflicted on the item's body.
+fn lost_on_body(conn: &Connection, write: &str) -> Result<bool> {
+    let Some(written) = store::queued_write(conn, write)? else {
+        return Ok(false);
     };
     let Some(crate::model::Outcome::Conflicted { fields, .. }) = written.outcome()? else {
-        return Ok(None);
+        return Ok(false);
     };
     let Some(item) = written
         .item_id
@@ -958,14 +1004,11 @@ pub(crate) fn lost_body(
         .transpose()?
         .flatten()
     else {
-        return Ok(None);
+        return Ok(false);
     };
     let catalog = Catalog::load(conn)?;
     let body = fields::body_field(&catalog, &item.r#type);
-    Ok(fields
-        .iter()
-        .any(|field| field == body)
-        .then(|| LOST.to_string()))
+    Ok(fields.iter().any(|field| field == body))
 }
 
 /// Reads back what the queue answered of the writes the rule follows: an
@@ -998,7 +1041,9 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
                         .as_deref()
                         .is_some_and(crate::folder::placement::is_duplicate);
                 if duplicate || row.reason.as_deref() == Some(LOST) {
-                    store::discard(&tx, &write)?;
+                    // Refused while a write still waits on it, a delete of the
+                    // same edge say, it goes once that one is answered.
+                    store::discard(&tx, &write)?
                 } else {
                     let reason = row
                         .refusal
@@ -1007,8 +1052,8 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
                         .or_else(|| row.reason.clone())
                         .unwrap_or_else(|| "refused".into());
                     refuse_names_of(&tx, &host, Kind::parse(&kind), &other, &reason)?;
+                    true
                 }
-                true
             }
             _ => false,
         };
@@ -1025,8 +1070,13 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
     for (write, host, old) in checks {
         match store::queued_write(&tx, &write)?.and_then(|row| row.verdict) {
             Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted) => {
-                if let Some(item) = store::item_by_id(&tx, &host)? {
-                    derive(&tx, &catalog, &old, &item, &write)?;
+                // A body that lost is not the item's, and the one kept is its
+                // writer's to read.
+                if !lost_on_body(&tx, &write)?
+                    && let Some(item) = store::item_by_id(&tx, &host)?
+                {
+                    let latest = latest_body_write(&tx, &host)?.unwrap_or(write.clone());
+                    derive(&tx, &catalog, &old, &item, &latest)?;
                 }
             }
             Some(Verdict::Refused) => {}
@@ -1038,6 +1088,27 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
     release_pins(&tx)?;
     tx.commit()?;
     Ok(())
+}
+
+/// The item's newest write that can change its body and is still to be
+/// answered, which what the copy shows of the body now waits on.
+fn latest_body_write(conn: &Connection, host: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM queue
+              WHERE item_id = ?1 AND kind IN (?2, ?3)
+                AND (verdict IS NULL OR verdict IN (?4, ?5))
+              ORDER BY seq DESC LIMIT 1",
+            params![
+                host,
+                WriteKind::CreateItem.as_str(),
+                WriteKind::UpdateItem.as_str(),
+                Verdict::Blocked.as_str(),
+                Verdict::Dead.as_str()
+            ],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 /// Every name in the host's body that reads as `other` takes the refusal of
@@ -1543,6 +1614,89 @@ mod tests {
             )
             .unwrap();
         assert_eq!(deferred, 1);
+    }
+
+    #[test]
+    fn an_edit_read_on_its_answer_takes_out_only_what_the_landed_body_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let kept = note(&core, "Kept", "");
+        let dropped = note(&core, "Dropped", "");
+        let host = note(&core, "Host", &format!("[[{kept}]] [[{dropped}]]"));
+        let write = edit(&core, &host, serde_json::json!({ "title": "Host" }));
+        {
+            let conn = core.conn().unwrap();
+            let before = store::item_by_id(&conn, &host).unwrap().unwrap();
+            derive_on_answer(&conn, &Catalog::load(&conn).unwrap(), &before, &write.id).unwrap();
+            // The server took the edit, and its row keeps one link of the two.
+            conn.execute(
+                "UPDATE queue SET verdict = 'accepted' WHERE id = ?1",
+                [&write.id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE items SET properties = json_set(properties, '$.body', ?2) WHERE id = ?1",
+                params![host, format!("[[{kept}]]")],
+            )
+            .unwrap();
+        }
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        let deletes: Vec<_> = edge_writes(&core)
+            .into_iter()
+            .filter(|(kind, ..)| *kind == WriteKind::DeleteEdge)
+            .collect();
+        assert_eq!(deletes, vec![(WriteKind::DeleteEdge, host, dropped)]);
+        let left: i64 = core
+            .conn()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM body_checks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "an answered edit stayed to be read");
+    }
+
+    #[test]
+    fn a_drain_with_only_answered_names_asks_no_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("copy.db");
+        let host = {
+            let core = copy(&dir);
+            note(&core, "Host", "[[Nobody]]")
+        };
+        let server = crate::scripted::Scripted::start();
+        let core = Core::open(
+            &path,
+            Some(crate::Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            conn.execute("DELETE FROM queue", []).unwrap();
+            conn.execute(
+                "UPDATE body_names SET state = 'missing', held = 0 WHERE item_id = ?1",
+                [&host],
+            )
+            .unwrap();
+            store::meta_delete(&conn, RECHECK).unwrap();
+        }
+        let asked = || server.seen("/").len() + server.seen("/items").len();
+        core.drain().unwrap();
+        assert_eq!(
+            asked(),
+            0,
+            "a name the server answered sent an empty pass to the server"
+        );
+        core.conn()
+            .unwrap()
+            .execute("UPDATE body_names SET state = 'pending'", [])
+            .unwrap();
+        core.drain().unwrap();
+        assert!(
+            asked() > 0,
+            "a name never asked about did not reach for the server, so the pass above proves nothing"
+        );
     }
 
     #[test]
