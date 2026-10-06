@@ -1542,12 +1542,13 @@ impl Core {
     /// The held conflicted copies made from `id` that are outside the bin,
     /// oldest link first.
     pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
-        Ok(self
-            .inner
-            .conflicted_copies_of(&id)?
-            .into_iter()
-            .map(Into::into)
-            .collect())
+        let mut copies = Vec::new();
+        for copy in self.inner.conflicted_copies_of(&id)? {
+            if let Some((held, shown)) = self.inner.get_shown(&copy.id)? {
+                copies.push(item(held, shown));
+            }
+        }
+        Ok(copies)
     }
 
     pub fn search(
