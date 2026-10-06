@@ -15522,7 +15522,7 @@ describe("what a pull does with a file whose item is purged", () => {
     harness = await purge("folder-purged-mid-pull");
     scriptFolderWrites(harness);
     const pulled = await withFault(`purge-during-pull=${purged.id}`, () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
@@ -15538,7 +15538,7 @@ describe("what a pull does with a file whose item is purged", () => {
     harness = await purge("folder-purged-before-placement");
     scriptFolderWrites(harness);
     const pulled = await withFault(`purge-before-placement=${purged.id}`, () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(
       pulled.ok,
@@ -15591,13 +15591,13 @@ describe("what a pull does with a file whose item is purged", () => {
     scriptFolderWrites(harness);
     // The witness: the same change at every attempt ends the pull.
     const ended = await withFault("copy-changes-during-pull=always", () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(ended.ok).toBe(false);
     if (ended.ok) return;
     expect(ended.refusal.raw).toContain("local_copy_changed");
     const pulled = await withFault("copy-changes-during-pull=once", () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     expect(pulled.ok && pulled.value.written).toBe(1);
@@ -15619,7 +15619,7 @@ describe("what a pull does with a file whose item is purged", () => {
     });
     scriptFolderWrites(harness);
     const pulled = await withFault("copy-changes-during-pull=second", () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
@@ -15641,7 +15641,7 @@ describe("what a pull does with a file whose item is purged", () => {
     scriptFolderWrites(harness);
     // The witness: a one-off pull meeting the same change says so and fails.
     const pulled = await withFault("copy-changes-during-pull=always", () =>
-      harness.folder.pull(),
+      harness!.folder.pull(),
     );
     expect(pulled.ok).toBe(false);
     if (pulled.ok) return;
