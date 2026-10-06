@@ -168,71 +168,65 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 63. WHERE a slice names a `system.*` type, a working copy MUST hold that type's rows at either tier.
 
-**Reason:** the server stamps a `system.folder` with the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows.
+**Reason:** the server stamps a `system.folder` with the `library` tier, which says nothing about it, and a copy of the feed still needs the folders it shows. A slice of every type, which only a folder's own hydration makes, still holds no `system.*` row, as a bare listing answers none (`items.md` 16 and `folders.md` 2).
 
 **Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`. Core `folder_settings::tests::a_folder_named_by_type_is_held_at_either_tier_and_every_type_leaves_it_out`.
 
-64. WHERE a slice names every type, a working copy MUST NOT hold a `system.*` row by it.
-
-**Reason:** a bare listing leaves `system.*` out (`items.md` 16), and a slice of every type holds what that listing answers.
-
-**Tests:** Core `folder_settings::tests::a_folder_named_by_type_is_held_at_either_tier_and_every_type_leaves_it_out`.
-
-65. WHEN a caller reads a folder the copy holds, the device MUST answer its settings in any state, those that name a condition no folder follows (`folders.md` 2) included.
+64. WHEN a caller reads a folder the copy holds, the device MUST answer its settings in any state, those that name a condition no folder follows (`folders.md` 2) included.
 
 **Reason:** an app shows every folder a person made, a revoked one or one made elsewhere with a `backref` among them, by its title.
 
 **Tests:** `device/folder-settings-live.test.ts › holds the folders a slice names, at either tier`, `› refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
 
-66. WHEN a caller lists or searches in a folder, a working copy MUST answer the items that folder's search holds by the one evaluation the folder's own pass holds its items by (`folders.md` 2): each type with its subtree, the tier, the states, `active` and `archived` where it names none, the `filter` and `beneath`, and never a `system.*` row.
+65. WHEN a caller lists or searches in a folder, a working copy MUST answer the items that folder's search holds by the one evaluation the folder's own pass holds its items by (`folders.md` 2): each type with its subtree, the tier, the states, `active` and `archived` where it names none, the `filter` and `beneath`, and never a `system.*` row.
 
 **Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right.
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's search holds`. Core `folder_settings::tests::a_list_in_a_folder_holds_what_the_folders_own_pass_holds`.
 
-67. IF the copy's slice does not take every item a folder's search can hold, a type or the tier outside it, or `beneath` without `parent-of` held whole (1), THEN the device MUST refuse a list or a search in that folder `invalid`, naming what the slice lacks, and MUST NOT answer the items it holds.
+66. IF the copy's slice does not take every item a folder's search can hold, a type or the tier outside it, or `beneath` without `parent-of` held whole (1), THEN the device MUST refuse a list or a search in that folder `invalid`, naming what the slice lacks, and MUST NOT answer the items it holds.
 
 **Reason:** answered from part of the folder, a list reads as the whole of it, which is the wrong answer hardest to notice (24).
 
 **Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
 
-68. IF a folder is revoked, the row is not a `system.folder`, or its settings name a condition no folder follows (`folders.md` 2), THEN the device MUST refuse a list or a search in it `invalid`.
+67. IF a folder is revoked, the row is not a `system.folder`, or its settings name a condition no folder follows (`folders.md` 2), THEN the device MUST refuse a list or a search in it `invalid`.
 
 **Reason:** a revoked folder has no settings to follow, and a condition the copy does not implement would otherwise be ignored (24).
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`, `› refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
 
-69. IF the copy does not hold a folder, THEN the device MUST refuse a list or a search in it `not_found`, with the code `not_held`.
+68. IF the copy does not hold a folder, THEN the device MUST refuse a list or a search in it `not_found`, with the code `not_held`.
 
 **Reason:** the remedy is to hold the folder, by a pin or by naming `system.folder` in the slice, not to change the slice's types.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses a folder search its slice cannot answer whole, and a folder it does not hold`. Core `folder_settings::tests::a_search_the_copy_cannot_answer_whole_is_refused_never_answered_in_part`.
 
-70. WHEN a caller creates, changes or revokes a folder's settings through a working copy, the device MUST send the request to the folder door at once (`items.md` 49 to 52), under an idempotency key, and MUST NOT queue it.
+69. WHEN a caller creates, changes or revokes a folder's settings through a working copy, the device MUST send the request to the folder door at once (`items.md` 49 to 52), under an idempotency key, and MUST NOT queue it.
 
 **Reason:** the folder door is the only door that writes a `system.folder` (`items.md` 16), and a drain sends to the item doors, so a folder write queued offline would wait on a door no drain reaches.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`. Core `folder_settings::tests::a_folder_is_created_changed_and_revoked_through_the_folder_door_and_held_at_once`.
 
-71. IF a folder write through a working copy cannot reach the server, THEN the device MUST fail the call and MUST leave nothing to send later.
+70. IF a folder write through a working copy cannot reach the server, THEN the device MUST fail the call and MUST leave nothing to send later.
 
-**Reason:** a write kept for later would be sent by no drain (70), and a caller told nothing failed would believe the folder made.
+**Reason:** a write kept for later would be sent by no drain (69), and a caller told nothing failed would believe the folder made.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::settings_no_folder_could_follow_are_refused_before_anything_is_sent`.
 
-72. IF a folder's settings sent through a working copy name a condition no folder follows, or defaults its search would not hold (`folders.md` 2 and 3), THEN the device MUST refuse them `invalid` before anything is sent, checking a change as the settings will stand where the copy holds the folder.
+71. IF a folder's settings sent through a working copy name a condition no folder follows, or defaults its search would not hold (`folders.md` 2 and 3), THEN the device MUST refuse them `invalid` before anything is sent, checking a change as the settings will stand where the copy holds the folder.
 
 **Reason:** the door takes a `backref` condition, which no copy can answer (24), so a folder made with one could be followed by no folder on disk and listed in no copy.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings no folder follows before anything is sent, and fails offline with nothing kept`. Core `folder_settings::tests::settings_no_folder_could_follow_are_refused_before_anything_is_sent`.
 
-73. WHEN the folder door accepts a write, and the copy's slice or a pin takes the row, the device MUST hold the row as a fresh certified read answers it (52) before the call returns.
+72. WHEN the folder door accepts a write, and the copy's slice or a pin takes the row, the device MUST hold the row as a fresh certified read answers it (52) before the call returns.
 
 **Reason:** an app that made a folder shows it at once.
 
 **Tests:** `device/folder-settings-live.test.ts › creates, changes and revokes at once, holding the answer and queueing nothing`. Core `folder_settings::tests::a_folder_is_created_changed_and_revoked_through_the_folder_door_and_held_at_once`, `an_answered_write_is_the_callers_whatever_the_read_back_or_the_settings_say`.
 
-74. IF the read after an accepted folder write fails, or the settings it answers name a condition no folder follows, THEN the device MUST answer the write as accepted, leaving the row to the next catch-up.
+73. IF the read after an accepted folder write fails, or the settings it answers name a condition no folder follows, THEN the device MUST answer the write as accepted, leaving the row to the next catch-up.
 
 **Reason:** the write has taken effect, and a caller told it failed would send it again.
 

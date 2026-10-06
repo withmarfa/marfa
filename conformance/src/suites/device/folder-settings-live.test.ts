@@ -15,7 +15,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A working copy reads a folder's settings, answers its search, and writes
- * its settings through the folder door (`device.md` 63 to 74), against the
+ * its settings through the folder door (`device.md` 63 to 73), against the
  * real server and the real binary.
  */
 

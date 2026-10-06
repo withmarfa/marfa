@@ -210,7 +210,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
-  /** What a folder's search holds, answered from the copy (`device.md` 66). */
+  /** What a folder's search holds, answered from the copy (`device.md` 65). */
   async listInFolder(
     folder: string,
     page: { limit?: number; offset?: number } = {},
@@ -233,7 +233,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<FolderRow>(["folders", "get", id]);
   }
 
-  /** Sent through the folder door at once, never queued (`device.md` 70). */
+  /** Sent through the folder door at once, never queued (`device.md` 69). */
   async createFolder(
     settings: Record<string, unknown>,
   ): Promise<Outcome<FolderRow>> {
