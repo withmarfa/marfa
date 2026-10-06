@@ -259,7 +259,7 @@ A folder is a device surface: a directory on a machine that holds, as files, wha
     **Reason:** the item has no file left to place, so a refusal kept for it was reported at every pass as a placement the server refused, until the key or the settings changed.
     **Tests:** `device/folders.test.ts › lets go of a refused placement once its item is purged`.
 
-87. WHEN a pull reads the copy again because it changed under an attempt (81), the pull's report MUST count the files that attempt wrote, moved, placed, took in or took away.
+87. WHEN a pull reads the copy again because it changed under an attempt (81), the pull's report MUST count the files that attempt wrote, moved, placed, took in, took away or let go.
     **Reason:** what an earlier attempt wrote stays written, and the attempt after it finds those files unchanged, so a report of the last attempt alone said the pull wrote nothing it had written.
     **Tests:** `device/folders.test.ts › counts what an attempt wrote before the copy changed under it`.
 

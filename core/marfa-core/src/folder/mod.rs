@@ -4595,6 +4595,7 @@ impl PullReport {
         self.removed += other.removed;
         self.purged += other.purged;
         self.taken += other.taken;
+        self.let_go += other.let_go;
     }
 
     fn not_written(&mut self, why: NotWritten, item: &str, path: &str, reason: impl Into<String>) {

@@ -15589,6 +15589,13 @@ describe("what a pull does with a file whose item is purged", () => {
   it("pulls again where the copy changes under the pull", async () => {
     harness = await purge("folder-copy-changed-once");
     scriptFolderWrites(harness);
+    // The witness: the same change at every attempt ends the pull.
+    const ended = await withFault("copy-changes-during-pull=always", () =>
+      harness.folder.pull(),
+    );
+    expect(ended.ok).toBe(false);
+    if (ended.ok) return;
+    expect(ended.refusal.raw).toContain("local_copy_changed");
     const pulled = await withFault("copy-changes-during-pull=once", () =>
       harness.folder.pull(),
     );
