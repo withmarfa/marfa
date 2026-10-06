@@ -61,9 +61,9 @@ impl Registry {
         ))))
     }
 
-    /// A unit test run where nothing names a registry, as cargo run from
-    /// outside `core/` or an editor's test runner, would otherwise list its
-    /// folders in the machine's own.
+    /// The runner that names a registry applies only when Cargo runs from
+    /// under `core/`, so a unit test run from elsewhere or by an editor would
+    /// otherwise list its folders in the machine's own.
     #[cfg(test)]
     fn unnamed() -> Option<Registry> {
         static OWN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -216,7 +216,6 @@ impl Registry {
     }
 }
 
-/// The machine's own registry under `home`.
 fn machine_path(home: &Path) -> PathBuf {
     let base = if cfg!(target_os = "macos") {
         home.join("Library")
@@ -274,6 +273,7 @@ mod tests {
         let unnamed = Registry::unnamed().unwrap();
         assert_ne!(unnamed.path(), machine);
         assert!(unnamed.path().starts_with(std::env::temp_dir()));
+        assert_ne!(Registry::located().unwrap().path(), machine);
     }
 
     #[test]
