@@ -293,6 +293,28 @@ export interface DrainVerdict {
   refusal: WriteRefusal | null;
 }
 
+/** What a link or an embed in a body names (`device.md` 97). */
+export type BodyTarget =
+  | { state: "item"; id: string }
+  | { state: "pending" }
+  | { state: "missing" }
+  | { state: "ambiguous" }
+  | { state: "refused"; reason: string };
+
+export interface BodyName {
+  /** As the body carries it: `[[Note|shown]]`, `![[photo.png]]`. */
+  text: string;
+  /** What it is read as. */
+  name: string;
+  target: BodyTarget;
+}
+
+export interface BodyLinks {
+  links: BodyName[];
+  /** Embeds of files; an embed of a note is text. */
+  embeds: BodyName[];
+}
+
 /** A create, before it is queued. */
 export interface Draft {
   type: string;

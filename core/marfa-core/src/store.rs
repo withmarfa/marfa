@@ -1948,6 +1948,9 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
 
 /// Whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    // A pin asked for again is somebody's own, which the body rule's release
+    // must not take.
+    conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [id])?;
     let changed = conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
     if changed {
         crate::read_view::pins_changed(conn)?;
@@ -4528,7 +4531,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "23d6a905c0141c7b",
+            "6ea9135aa1f86f85",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

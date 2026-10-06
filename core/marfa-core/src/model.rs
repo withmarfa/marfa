@@ -1235,6 +1235,9 @@ pub struct Attached {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
     pub edge: QueuedWrite,
+    /// `![[title]]`, which names this file alone among the item's
+    /// attachments; `None` where its title cannot name it alone in an embed.
+    pub embed: Option<String>,
 }
 
 /// In the order they go out.

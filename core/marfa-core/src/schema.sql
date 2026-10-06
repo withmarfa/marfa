@@ -221,3 +221,53 @@ CREATE TABLE IF NOT EXISTS folder_journal (
   item_id TEXT NOT NULL,
   missing_since TEXT NOT NULL
 ) WITHOUT ROWID;
+
+-- What each link and embed in a body written through this copy names: the
+-- item it resolved to, by which its edge is still known as the body's once
+-- that item is renamed, or why it names none yet, so it is reported and
+-- asked again. A folder keeps its own record of what each file showed, in
+-- `folder_files`.
+CREATE TABLE IF NOT EXISTS body_names (
+  item_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('link', 'embed')),
+  -- As the body carries it: a link's text inside `[[ ]]`, or a whole embed.
+  text TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (
+    state IN ('resolved', 'pending', 'missing', 'ambiguous', 'unanswered', 'refused')
+  ),
+  other_id TEXT,
+  reason TEXT,
+  -- How many items the copy held that the name names when the server last
+  -- answered it, so it is asked again only once that changes.
+  held INTEGER,
+  -- The write that left the body carrying it, which an edge made from it
+  -- waits on while it is unanswered.
+  write_id TEXT,
+  PRIMARY KEY (item_id, kind, text)
+) WITHOUT ROWID;
+
+-- The edge writes a body made, so their answer is read back onto the body:
+-- a duplicate is the edge standing already, any other refusal is reported.
+CREATE TABLE IF NOT EXISTS body_edges (
+  write_id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('link', 'embed')),
+  other_id TEXT NOT NULL,
+  -- The body's write it was read from, whose answer says whether that body
+  -- is the item's.
+  body_write TEXT
+) WITHOUT ROWID;
+
+-- An edit based on an earlier version, whose body is read once it is
+-- answered, against the body the copy held when it was made.
+CREATE TABLE IF NOT EXISTS body_checks (
+  write_id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  body TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- The rows the body rule pinned to hold what a link or an embed names, let
+-- go once no such edge reaches them. A pin asked for again leaves this.
+CREATE TABLE IF NOT EXISTS body_pins (
+  item_id TEXT PRIMARY KEY
+) WITHOUT ROWID;

@@ -422,7 +422,7 @@ pub(super) fn unplaced_rank(settled: bool) -> Rank {
     (true, !settled, String::new(), String::new())
 }
 
-fn is_duplicate(answer: &str) -> bool {
+pub(crate) fn is_duplicate(answer: &str) -> bool {
     serde_json::from_str::<Value>(answer).is_ok_and(|body| {
         body.pointer("/error/details/constraint")
             .and_then(Value::as_str)

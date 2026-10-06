@@ -718,6 +718,28 @@ pub fn titles(answer: &Value) -> impl Iterator<Item = (String, String)> + '_ {
         })
 }
 
+/// One line per link and embed: what the body carries, then what it names.
+pub fn body_links(links: &marfa_core::BodyLinks) -> String {
+    let named = |target: &marfa_core::BodyTarget| match target {
+        marfa_core::BodyTarget::Item { id } => id.clone(),
+        marfa_core::BodyTarget::Pending => "pending: not yet looked up on the server".into(),
+        marfa_core::BodyTarget::Missing => "missing: names no item".into(),
+        marfa_core::BodyTarget::Ambiguous => "ambiguous: names more than one item".into(),
+        marfa_core::BodyTarget::Refused { reason } => format!("refused: {reason}"),
+    };
+    let lines: Vec<String> = links
+        .links
+        .iter()
+        .chain(&links.embeds)
+        .map(|name| format!("{}\t{}", name.text, named(&name.target)))
+        .collect();
+    if lines.is_empty() {
+        "the body carries no link or embed of a file".into()
+    } else {
+        lines.join("\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

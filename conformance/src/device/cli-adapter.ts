@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { keychainEnv } from "../utils/keychain.js";
 import {
+  type BodyLinks,
   type CatchUpReport,
   type Change,
   type DeviceUnderTest,
@@ -712,6 +713,20 @@ export class CliDevice implements DeviceUnderTest {
     if (options.title !== undefined) args.push("--title", options.title);
     if (options.type !== undefined) args.push("--type", options.type);
     return this.json<QueuedWrite[]>(args);
+  }
+
+  /** Each link and embed of a file in an item's body, with what it names
+   *  (`device.md` 97). */
+  async bodyLinks(id: string): Promise<Outcome<BodyLinks>> {
+    return this.json<BodyLinks>(["items", "links", id]);
+  }
+
+  /** The text that embeds a file item in an item's body (`device.md` 98). */
+  async embedText(
+    host: string,
+    file: string,
+  ): Promise<Outcome<{ embed: string }>> {
+    return this.json<{ embed: string }>(["items", "embed", host, file]);
   }
 
   async addFile(

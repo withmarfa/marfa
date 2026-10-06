@@ -7,13 +7,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
+use super::embed::FILE_TYPE;
 use super::text::Typed;
 use crate::catalog::Catalog;
 use crate::folder::fields;
 use crate::names::{folded, forms, name_of, title_of};
 use crate::{Core, Result, store};
 
-/// Where the files of items sit, which a name may name by path or file name.
+/// Where the files of items sit, which a name may name by path or file name:
+/// a folder's files on disk, or the placements a working copy holds.
 pub(crate) trait Paths {
     /// Each path with the item whose file it is.
     fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>>;
@@ -181,7 +183,7 @@ impl<'a> Resolver<'a> {
                 Resolved::Waiting
             });
         }
-        let (rows, more) = match self.on_server(name) {
+        let (rows, more) = match self.on_server(name, false) {
             Ok(answered) => answered,
             Err(error) => return Ok(self.failed(error)),
         };
@@ -210,14 +212,53 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The items the server holds under this title, and whether a lookup
-    /// stopped at its page cap.
-    fn on_server(&self, name: &str) -> Result<(BTreeMap<String, Option<String>>, bool)> {
+    /// How many items the copy holds that `name` names.
+    pub fn held_named(&mut self, name: &str) -> Result<usize> {
+        Ok(self.names()?.of(name).map_or(0, BTreeSet::len))
+    }
+
+    /// The file item named `name` among those the copy holds, `held`, and
+    /// those the server holds under that title.
+    pub fn file_named(&mut self, name: &str, held: &[String]) -> Result<Resolved> {
+        if !self.online {
+            return Ok(if held.len() > 1 {
+                Resolved::Ambiguous
+            } else {
+                Resolved::Waiting
+            });
+        }
+        let (rows, more) = match self.on_server(name, true) {
+            Ok(answered) => answered,
+            Err(error) => return Ok(self.failed(error)),
+        };
+        let mut found: BTreeSet<String> = rows.into_keys().collect();
+        found.extend(held.iter().cloned());
+        Ok(match found.len() {
+            0 | 1 if more => Resolved::Unanswered(format!(
+                "more than {LOOKUP_PAGES} pages of items contain it"
+            )),
+            0 => Resolved::Unmatched,
+            1 => Resolved::Found {
+                id: found.into_iter().next().expect("one"),
+                r#type: None,
+            },
+            _ => Resolved::Ambiguous,
+        })
+    }
+
+    /// The items the server holds under this title, file items alone where
+    /// `files` says, and whether a lookup stopped at its page cap.
+    fn on_server(
+        &self,
+        name: &str,
+        files: bool,
+    ) -> Result<(BTreeMap<String, Option<String>>, bool)> {
         let http = self.core.http()?;
+        let wanted_type = |r#type: &str| !files || self.catalog.matches(FILE_TYPE, r#type);
         let mut title_fields: Vec<&str> = self
             .catalog
             .declared()
-            .filter(|(r#type, _)| !r#type.starts_with("system."))
+            .filter(|(r#type, _)| !r#type.starts_with("system.") && wanted_type(r#type))
             .map(|(r#type, _)| fields::title_field(self.catalog, r#type))
             .collect();
         title_fields.sort();
@@ -242,6 +283,12 @@ impl<'a> Resolver<'a> {
                 let item = row.item;
                 if !matches!(item.state.as_str(), "active" | "archived")
                     || fields::title_field(self.catalog, &item.r#type) != field
+                    || !wanted_type(&item.r#type)
+                    || files
+                        && !item
+                            .properties
+                            .get("blob_ref")
+                            .is_some_and(Value::is_string)
                 {
                     continue;
                 }
@@ -290,9 +337,68 @@ pub(crate) fn answers_to(
         .any(|path| file_names(path).contains(&wanted)))
 }
 
-/// The one of `others`, the items at the other end of edges already held,
-/// that `text` names, so a name keeps naming what it already names whatever
-/// else takes the same name.
+/// The items at the other end of edges already held, each with the names it
+/// answers to, so a name keeps naming what it already names whatever else
+/// takes the same name.
+pub(crate) struct Others {
+    named: Vec<(String, BTreeSet<String>)>,
+}
+
+impl Others {
+    pub fn load(
+        conn: &Connection,
+        catalog: &Catalog,
+        paths: &dyn Paths,
+        others: &[String],
+    ) -> Result<Others> {
+        let mut named = Vec::new();
+        for other in others {
+            if named.iter().any(|(held, _): &(String, _)| held == other) {
+                continue;
+            }
+            store::refuse_unless_usable(conn)?;
+            let mut names = BTreeSet::new();
+            if let Some(item) = store::item_by_id(conn, other)?
+                && let Some(title) = item
+                    .properties
+                    .get(fields::title_field(catalog, &item.r#type))
+                    .and_then(Value::as_str)
+            {
+                names.insert(folded(title.trim()));
+            }
+            for path in paths.of(conn, other)? {
+                names.extend(file_names(&path));
+            }
+            named.push((other.clone(), names));
+        }
+        Ok(Others { named })
+    }
+
+    /// The one `text` names, or more than one.
+    pub fn named(&self, conn: &Connection, text: &str) -> Result<Option<Resolved>> {
+        let text = text.trim();
+        let wanted = folded(text);
+        let found: Vec<&String> = self
+            .named
+            .iter()
+            .filter(|(id, names)| text == id || names.contains(&wanted))
+            .map(|(id, _)| id)
+            .collect();
+        Ok(match found.as_slice() {
+            [] => None,
+            [id] => {
+                let r#type = store::item_by_id(conn, id)?.map(|item| item.r#type);
+                Some(Resolved::Found {
+                    id: (*id).clone(),
+                    r#type,
+                })
+            }
+            _ => Some(Resolved::Ambiguous),
+        })
+    }
+}
+
+/// The one of `others` that `text` names.
 pub(crate) fn existing(
     conn: &Connection,
     catalog: &Catalog,
@@ -300,21 +406,7 @@ pub(crate) fn existing(
     text: &str,
     others: &[String],
 ) -> Result<Option<Resolved>> {
-    let mut found = BTreeSet::new();
-    for other in others {
-        if answers_to(conn, catalog, paths, text, other)? {
-            found.insert(other.clone());
-        }
-    }
-    Ok(match found.len() {
-        0 => None,
-        1 => {
-            let id = found.into_iter().next().expect("one");
-            let r#type = store::item_by_id(conn, &id)?.map(|item| item.r#type);
-            Some(Resolved::Found { id, r#type })
-        }
-        _ => Some(Resolved::Ambiguous),
-    })
+    Others::load(conn, catalog, paths, others)?.named(conn, text)
 }
 
 /// Keep both spellings until resolution: C# notes may be a whole title,
@@ -327,8 +419,11 @@ pub(crate) fn resolve_reference(
         return Ok(Resolved::Unmatched);
     }
     let found = resolve(&typed.name)?;
+    // An id is read as an id alone (`folders.md` 11), so what follows it
+    // cannot make it name another item.
     if let Resolved::Found { id, .. } = &found
         && typed.raw != typed.name
+        && !is_id(&typed.name)
     {
         match resolve(&typed.raw)? {
             Resolved::Found { id: whole, .. } if whole != *id => return Ok(Resolved::Ambiguous),
@@ -373,6 +468,23 @@ mod tests {
                 assert!(matches!(actual, Resolved::Waiting));
             }
         }
+    }
+
+    #[test]
+    fn an_id_names_its_item_whatever_alias_follows_it() {
+        let id = "01a10ed5-92a0-73e0-96d2-32cc12d86082";
+        let actual = resolve_reference(&Typed::new(&format!("{id}|Shown")), |text| {
+            Ok(if text == id {
+                Resolved::Found {
+                    id: id.into(),
+                    r#type: None,
+                }
+            } else {
+                Resolved::Waiting
+            })
+        })
+        .unwrap();
+        assert!(matches!(actual, Resolved::Found { id: found, .. } if found == id));
     }
 
     #[test]

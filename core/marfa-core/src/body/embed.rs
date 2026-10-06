@@ -2,8 +2,22 @@
 
 use std::path::Path;
 
+use serde_json::Value;
+
 use super::text::Embed;
+use crate::catalog::Catalog;
+use crate::model::Item;
 use crate::names::{folded, name_of, same};
+
+pub(crate) const FILE_TYPE: &str = "core.file";
+
+/// The hash of a file item's bytes; `None` for an item that is not one.
+pub(crate) fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
+    if !catalog.matches(FILE_TYPE, &item.r#type) {
+        return None;
+    }
+    item.properties.get("blob_ref").and_then(Value::as_str)
+}
 
 fn extension_of(path: &Path) -> Option<String> {
     path.extension()

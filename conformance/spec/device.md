@@ -324,6 +324,82 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 **Tests:** `device/catch-up.test.ts › keeps a row that moves between its tiers on a catch-up`, `› keeps a row that moves between its tiers on a held stream`, `device/slice-tiers-live.test.ts › hydrates both tiers, keeps a triage made offline through a restart and its drain, and sees a move made elsewhere`. Core `catch_up::tests::a_move_between_the_tiers_of_a_slice_of_both_keeps_the_row`.
 
+## Links and embeds in a body
+
+A body is read here by the rule a folder reads a Markdown file's body by (`folders.md` 12): what a link and an embed are, which text is code or a comment, and how a name is compared (`folders.md` 11 and 27). These statements say what differs for a body written through a working copy, which has no directory and no file record.
+
+88. WHEN a create or an edit through a working copy changes an item's body, the device MUST read the body before and after the write and queue the edges the change names, unless the write is a folder's own sync of a file, which the folder reads itself (`folders.md` 11 and 31).
+
+**Reason:** an app on a binding or the command line has no folder, so without this a link it saves names nothing, and every app would need its own copy of the rule. The body is the property `folders.md` 7 names: the type's `body_field`, or `body` for a type naming none, so `core.event`'s is its `description`. A create reads its body against none. An edit that leaves the body as it was, whatever else it changes, queues no edge write, and one that moves the item to another type reads each body in its own type's property, so a body a retype only moves makes no change. An edit based on a version earlier than the one the copy holds (`queue-and-verdicts.md` 43) is read once it is answered, against the row it lands, since the copy cannot tell what the server will make of such an edit's body; its edges go at the next drain. A folder's sync is left to the folder, which keeps its own record of what each file showed.
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› queues no edge write for an edit that leaves the body as it was`. Core `body::rule::tests::an_edit_that_leaves_the_body_queues_no_edge_write`, `a_retype_reads_the_body_where_the_new_type_keeps_it`, `a_folder_reads_its_own_bodies`, `an_edit_based_on_an_earlier_version_is_read_once_it_is_answered`.
+
+89. WHEN a body carries a link, the device MUST resolve its name as `folders.md` 11 and 12 resolve one, against the rows the copy holds and the server's lookup, and queue a `references` edge from the item to the one item it names.
+
+**Reason:** a working copy holds a slice and its pins, so it cannot tell alone that a title names one item: a name resolves offline only where it names an item the item already has a `references` edge to, or is an id the copy holds, and otherwise waits for the server's lookup (95). A name answers to an item's id, its title, or the path or file name of its file in a folder, which the copy reads from the item's `in-folder` edges. An alias or a heading, `[[name|shown]]` or `[[name#part]]`, names what comes before it, and the whole text is held to the lookup as `folders.md` 11 holds it, but for a name that already names an edge's item, whose whole text is held only to the item's other edges, and an id, which names its item whatever follows it. A link to an item this device created that the server has not taken resolves against the copy's row, and its edge waits on that create (`queue-and-verdicts.md` 4). A link naming its own item, a heading-only link and a link in code or a comment make no edge.
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reads an alias and a heading as the name before them, and a link in code as text`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`, `a_link_in_code_or_a_comment_or_to_itself_is_no_edge`.
+
+90. WHEN a body carries an embed of a file, of any kind, the device MUST resolve it to one file item and queue that file item's `attached-to` edge to the item.
+
+**Reason:** the embed is how the body says which file it shows, so an app can find the file item and show or play it (97), and a photo, a recording and a PDF are embedded alike. A working copy has no files on disk, so an embed is read against file items: first the ones attached to the item, then every file item the copy holds, then the server's lookup by title (95). An embed by name, `![[name]]`, names the file item whose title, or whose file name in a folder, is the embed's file name; one by path, `![](path)`, names the attachment placed at that path read from where the item is placed in a folder, and otherwise is read by its file name as an embed by name is. An embed is of a file as `folders.md` 12 says: where a file item answers to it, or where its extension names a MIME type, and never where it names a document; an embed of a note is text.
+
+**Tests:** `device/body-edges-live.test.ts › makes an embed of an image and of a video, by name and by path, the file's attached-to edge`, `› embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_embed_of_a_note_is_text_and_one_of_an_unknown_file_waits`, `a_path_reads_from_where_the_host_is_placed_and_else_by_its_name`.
+
+91. WHEN a body's change names an edge, the device MUST queue it as a write of its own that waits on the write that changed the body and on the creates of its ends.
+
+**Reason:** each edge is its own write with its own verdict (`queue-and-verdicts.md` 33), so a refused edge leaves the body saved, and the body's write is refused alone where the server refuses it. Waiting on the body's write means an edge never lands for a body the server refused, since what waits on a refused write is refused with it (`queue-and-verdicts.md` 16), and waiting on its ends' creates is what lets a link name an item created earlier in the same queue (`queue-and-verdicts.md` 4). A body's edge the server refuses stays in the queue as any refused write does (`queue-and-verdicts.md` 47), but for those 93 and 94 take out, and its link or embed reads as refused with the server's reason (97). An item the server alone holds is pinned before its edge is queued, as a folder pins the other end of a line (`folders.md` 11): a link's target, so the copy can say offline what the link names, and an embedded file item, since a copy holds no edge from a row it does not hold (44). The pin is let go once no edge a body makes reaches the item, unless somebody pinned it again meanwhile.
+
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› reports a refused edge write against its link, and keeps the body`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`.
+
+92. WHEN a body's change names an edge of a type and ends the copy holds already, the device MUST NOT queue another.
+
+**Reason:** one triple is one edge (`edges.md` 30), so a body naming an item twice, or naming an item a folder or another device linked already, makes none, and the server would refuse a second create as a duplicate.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`, `› agrees with a folder on the same item, and neither repeats the other's edge`. Core `body::rule::tests::a_link_by_id_is_a_references_edge_that_waits_on_the_write`.
+
+93. WHEN the server refuses a body's edge create because the edge exists, the device MUST take that create out of the queue.
+
+**Reason:** two writers that make the same edge before either hears of the other, two devices or a device and a folder, each send a create, and the second is refused as a duplicate. The edge it asked for stands, so keeping the refusal until somebody discards it (`queue-and-verdicts.md` 47) would report as failed a link that works, as a folder's duplicate placement would (`queue-and-verdicts.md` 55). The copy takes the server's edge from the event log.
+
+**Tests:** `device/body-edges-live.test.ts › settles an edge two copies both made as one, and leaves no refusal`.
+
+94. WHEN the write a body's edges were made from is answered conflicted on the body, the device MUST take those edge writes out of the queue unsent.
+
+**Reason:** the server kept another body on the item and wrote this one to a conflicted copy (`queue-and-verdicts.md` 11), so the edges this body asked for are not the item's: a link taken out of the losing body would delete an edge the kept body names, and one only the losing body names would link the item to something its body does not show. The edges the kept body names were made by the writer whose body it is. Each such write is refused, its edge read back as the server holds it, and taken out, since it carried nothing a person wrote that the conflicted copy does not keep.
+
+**Tests:** `device/body-edges-live.test.ts › sends no edge write whose body lost to another device's, and keeps the edge the kept body names`.
+
+95. WHEN a link or an embed in a body written through a working copy names no item the copy can resolve, the device MUST save the body as typed, record the name against the item, and try it again at each drain, catch-up and hydration until it names one item or the body no longer carries it.
+
+**Reason:** an app has a person's save in its hand whatever the network is doing (56), so a name waits rather than refusing the save or being dropped. A name the server has not been asked about is `pending`, and a drain that reaches the server asks it before it sends anything, so the edge goes in the same pass, after the writes it waits on. One the server answered naming nothing is `missing` and one naming more than one item `ambiguous`; each is asked again only once the copy holds a different number of items the name names, a catch-up bringing one say, and keeps what the server said of it while later writes leave it in the body, so a body full of links to notes not written yet costs no lookup at every drain or save. A lookup the server refuses, and a pin of the item it names that fails, leave the name to be asked again at the next drain; an edge the server refuses (91) is not asked again until the name is typed anew. A pass that is stopped ends between names (58), and one that cannot read the copy or the server leaves every name as it was for the next. The name stops waiting once it resolves, once a later write takes it out of the body, once the body no longer carries it whoever changed it, and once the item is gone from the copy. **Limit:** a name the server answered as naming nothing, whose item the copy does not hold when it appears, a type outside the slice say, waits until the body is written again.
+
+**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› resolves a waiting name at the next hydration`, `› reports an ambiguous name and makes no edge`, `› waits offline, and resolves and sends at the drain after reconnecting`. Core `body::rule::tests::a_link_by_title_waits_for_the_server_and_says_so`.
+
+96. WHEN a write takes a link or an embed out of a body, the device MUST queue the delete of the edge the body before it named through it, and of no other edge.
+
+**Reason:** taking a link out removes its edge as in a folder (`folders.md` 31). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body; a link that names nothing therefore holds no removal back, which a folder needs because it compares against what its file showed at an earlier scan. The device records the item each link and embed resolved to while its edge stands, so a link to an item renamed since still names it, reads as naming it (97), and takes its edge when it is taken out. Only the edge the link or embed named goes: an edge of another type between the same items, an attachment no embed shows, and a `references` edge no body named all stay, since a body makes only `references` and `attached-to`.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`. Core `body::rule::tests::taking_a_link_out_deletes_its_edge_and_no_other`, `an_attached_file_embeds_by_the_text_the_attach_answers`, `a_renamed_item_s_link_still_takes_its_edge_when_taken_out`.
+
+97. WHEN a caller reads an item's links and embeds, the device MUST answer each link and each embed of a file in its body, as typed, with the item it names or the reason it names none: `pending`, `missing`, `ambiguous` or `refused` with the reason, from the copy alone.
+
+**Reason:** an app shows a link it can follow and an embedded file it can show or play, and has to show a name that resolves to nothing as unresolved rather than guess, offline as well. An embed answers with the file item that holds the bytes, which the app reads and fetches as any blob (37). A name answers as the edges say: one the device has not recorded and that no edge resolves, in a body another device wrote say, is `pending`, since this device has not asked the server about it. The command line reads them with `device items links`.
+
+**Tests:** `device/body-edges-live.test.ts › reports a name it cannot resolve, keeps the body as typed, and resolves it once the item arrives by catch-up`, `› makes an embed of an image and of a video, by name and by path, the file's attached-to edge`. Core `body::rule::tests::an_embed_of_a_note_is_text_and_one_of_an_unknown_file_waits`.
+
+98. WHEN a file is attached to an item (38), the device MUST answer the text that embeds it in that item's body, `![[title]]`, where its title names it alone among the item's attachments.
+
+**Reason:** an app attaches a photo and writes its embed into the body, and saving that body must read back as the edge the attach made, not a second edge or a second file item. Where the title is shared or cannot be written in an embed, the attach answers no embed text. A caller asks later for the embed text of any file attached to an item, refused where the file is not attached, since an embed is read against the item's attachments first and only those can be told apart offline, or where no embed can name it alone; the command line asks with `device items embed`.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_attached_file_embeds_by_the_text_the_attach_answers`, `an_embed_text_names_its_file_alone_or_is_refused`.
+
+99. WHEN a file is attached to an item under no title its caller gave, the device MUST title it with the first of its name, `name 2.ext`, `name 3.ext` that no other attachment of the item answers to.
+
+**Reason:** two attachments of one item under one name would make an embed of either name both, which is the usual case for pasted images, all called `image.png`. A title the caller chose is theirs and is kept.
+
+**Tests:** `device/body-edges-live.test.ts › embeds an attached file by the text the attach answers, with no second edge`. Core `body::rule::tests::an_attached_file_embeds_by_the_text_the_attach_answers`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server for the same reason `coverage.md` records an unreachable success path: the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's shape, and these are the entries it cannot check.

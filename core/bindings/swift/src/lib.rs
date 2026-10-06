@@ -614,12 +614,72 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
-/// The three writes an attachment is, in the order they go out.
+/// The three writes an attachment is, in the order they go out, and the
+/// text that embeds the file in the item's body.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Attached {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
     pub edge: QueuedWrite,
+    /// `![[title]]`, which reads back as `edge` once written into the item's
+    /// body; none where its title cannot name it alone in an embed.
+    pub embed: Option<String>,
+}
+
+/// The two writes a file added on its own is, in the order they go out.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Added {
+    pub upload: QueuedWrite,
+    pub item: QueuedWrite,
+}
+
+/// What a link or an embed in an item's body names.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum BodyTarget {
+    /// The item it names; for an embed, the file item with the bytes.
+    Item { id: String },
+    /// Not yet looked up on the server.
+    Pending,
+    /// Names no item.
+    Missing,
+    /// Names more than one item.
+    Ambiguous,
+    /// The edge's write, or the server's lookup, was refused, for `reason`.
+    Refused { reason: String },
+}
+
+/// A link or an embed as the body carries it, and what it names.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BodyName {
+    /// As typed: `[[Note|shown]]`, `![[photo.png]]`.
+    pub text: String,
+    /// What it is read as: the name before any `|` or `#`, or the embed's
+    /// path or name.
+    pub name: String,
+    pub target: BodyTarget,
+}
+
+/// The links in an item's body, and its embeds of files, in body order.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BodyLinks {
+    pub links: Vec<BodyName>,
+    pub embeds: Vec<BodyName>,
+}
+
+impl From<marfa_core::BodyName> for BodyName {
+    fn from(name: marfa_core::BodyName) -> BodyName {
+        BodyName {
+            text: name.text,
+            name: name.name,
+            target: match name.target {
+                marfa_core::BodyTarget::Item { id } => BodyTarget::Item { id },
+                marfa_core::BodyTarget::Pending => BodyTarget::Pending,
+                marfa_core::BodyTarget::Missing => BodyTarget::Missing,
+                marfa_core::BodyTarget::Ambiguous => BodyTarget::Ambiguous,
+                marfa_core::BodyTarget::Refused { reason } => BodyTarget::Refused { reason },
+            },
+        }
+    }
 }
 
 /// What became of one write a drain answered, sent or not.
@@ -1873,7 +1933,49 @@ impl Core {
             upload: queued(attached.upload)?,
             item: queued(attached.item)?,
             edge: queued(attached.edge)?,
+            embed: attached.embed,
         })
+    }
+
+    /// Adds a file as an item of its own, attached to nothing: its upload and
+    /// a file item naming the bytes, and a write for each tag.
+    pub fn add_file(
+        &self,
+        path: String,
+        attachment: Attachment,
+        tags: Vec<String>,
+    ) -> Result<Added, MarfaError> {
+        let added = self.inner.add_file(
+            std::path::Path::new(&path),
+            &marfa_core::Attachment {
+                mime_type: attachment.mime_type,
+                title: attachment.title,
+                r#type: attachment.r#type,
+                tier: attachment.tier.map(Into::into),
+            },
+            &tags,
+        )?;
+        Ok(Added {
+            upload: queued(added.upload)?,
+            item: queued(added.item)?,
+        })
+    }
+
+    /// Each link and each embed of a file in an item's body, with the item it
+    /// names or why it names none yet, from the copy alone. An item the copy
+    /// does not hold throws `NotFound`.
+    pub fn body_links(&self, id: String) -> Result<BodyLinks, MarfaError> {
+        let links = self.inner.body_links(&id)?;
+        Ok(BodyLinks {
+            links: links.links.into_iter().map(Into::into).collect(),
+            embeds: links.embeds.into_iter().map(Into::into).collect(),
+        })
+    }
+
+    /// The text that embeds the file item `file` in the body of `id`, which
+    /// names that file alone; throws `Invalid` where no embed can.
+    pub fn embed_text(&self, id: String, file: String) -> Result<String, MarfaError> {
+        Ok(self.inner.embed_text(&id, &file)?)
     }
 
     /// Where a blob's bytes are held, fetching them first where this store
@@ -2347,6 +2449,69 @@ mod tests {
                 "{crossed:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_attached_file_crosses_with_its_embed_and_reads_back_from_the_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None).unwrap();
+        let host = core
+            .create_item(Draft {
+                r#type: "core.note".into(),
+                properties_json: r#"{"title":"Host","body":""}"#.into(),
+                id: None,
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let file = dir.path().join("clip.mov");
+        std::fs::write(&file, b"not really a video").unwrap();
+        let file = file.display().to_string();
+        let attached = core
+            .attach(host.clone(), file.clone(), Attachment::default())
+            .unwrap();
+        let embed = attached.embed.clone().expect("no embed text");
+        assert_eq!(embed, "![[clip.mov]]");
+        let file_id = attached.item.item_id.clone().unwrap();
+        assert_eq!(
+            core.embed_text(host.clone(), file_id.clone()).unwrap(),
+            embed
+        );
+        let version = core.get(host.clone()).unwrap().unwrap().version;
+        core.update_item(
+            host.clone(),
+            Edit {
+                properties_json:
+                    serde_json::json!({ "body": format!("{embed} and [[Elsewhere]]") }).to_string(),
+                base_version: Some(version),
+                source_id: None,
+                replace_properties: false,
+                r#type: None,
+                tier: None,
+            },
+        )
+        .unwrap();
+        let links = core.body_links(host).unwrap();
+        assert_eq!(
+            links.embeds,
+            vec![BodyName {
+                text: embed,
+                name: "clip.mov".into(),
+                target: BodyTarget::Item { id: file_id },
+            }]
+        );
+        assert_eq!(links.links[0].target, BodyTarget::Pending);
+        let added = core
+            .add_file(file, Attachment::default(), vec!["kept".into()])
+            .unwrap();
+        assert!(added.item.item_id.is_some());
     }
 
     #[test]

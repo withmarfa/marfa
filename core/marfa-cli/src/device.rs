@@ -292,6 +292,20 @@ pub enum ItemsCommand {
     /// Attach a file to an item: its upload, a file item naming the bytes,
     /// and an `attached-to` edge, three queued writes.
     Attach(AttachArgs),
+    /// The links and embeds of files in an item's body, read from the local
+    /// copy: each with the item it names, or why it names none yet.
+    Links {
+        /// The item id.
+        id: String,
+    },
+    /// The text that embeds a file item in an item's body, which reads back
+    /// as the file's `attached-to` edge to the item.
+    Embed {
+        /// The item whose body the embed goes in.
+        id: String,
+        /// The file item to embed.
+        file: String,
+    },
     /// The thumbnail an item carries, read from the local copy with no
     /// request: its MIME type and size, and its bytes written to `--out`.
     Thumbnail {
@@ -951,6 +965,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     };
                     let attached = core.attach(&args.id, &args.file, &attachment)?;
                     output::queued(&[attached.upload, attached.item, attached.edge], json)
+                }
+                ItemsCommand::Links { id } => {
+                    let links = core.body_links(&id)?;
+                    output::report(&links, json, || output::body_links(&links))
+                }
+                ItemsCommand::Embed { id, file } => {
+                    let text = core.embed_text(&id, &file)?;
+                    output::report(&serde_json::json!({ "embed": text }), json, || text)
                 }
                 ItemsCommand::Thumbnail { id, out } => {
                     if core.get(&id)?.is_none() {

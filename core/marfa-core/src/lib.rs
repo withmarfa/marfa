@@ -39,6 +39,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
+pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, TypeField};
 pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
@@ -299,7 +300,9 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)
+        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)?;
+        self.settle_bodies(stop)?;
+        Ok(report)
     }
 
     /// Holds every edge of `edge_types` the key reads, whichever ends the
@@ -323,7 +326,9 @@ impl Core {
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)
+        let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)?;
+        self.settle_bodies(stop)?;
+        Ok(report)
     }
 
     /// Refused where neither the server nor the copy holds `id`, and
@@ -390,19 +395,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        let pinned = store::unpin(&tx, id)?;
-        if pinned
-            && store::waiting_writes_for_item(&tx, id)?.is_empty()
-            && let Some((types, tier)) = store::slice(&tx)?
-            && let Some(held) = store::items_by_ids(&tx, &[id.to_string()])?.pop()
-        {
-            let catalog = catalog::Catalog::load(&tx)?;
-            if !read_view::listed(&tx, id)?
-                || !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier)
-            {
-                store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
-            }
-        }
+        let pinned = unpin_held(&tx, id)?;
         tx.commit()?;
         Ok(pinned)
     }
@@ -416,7 +409,9 @@ impl Core {
     pub fn catch_up_until(&self, stop: &AtomicBool) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)
+        let report = catch_up::catch_up(self, self.http()?, self.catch_up_idle, stop)?;
+        self.settle_bodies(stop)?;
+        Ok(report)
     }
 
     /// `on_change` is called with no lock on the store held, so it may read
@@ -782,26 +777,18 @@ impl Core {
         Ok(true)
     }
 
+    /// The links and embeds in the item's body are queued as edges of their
+    /// own, after it.
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let tx = conn.transaction()?;
-        let catalog = catalog::Catalog::load(&tx)?;
-        let queued = queue_create(&tx, &catalog, draft, &[])?;
-        tx.commit()?;
-        Ok(queued)
+        self.write_create(draft, Body::Read)
     }
 
+    /// What the edit changes of the item's body's links and embeds is
+    /// queued as edge writes of their own, after it.
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
-        let mut conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let tx = conn.transaction()?;
-        let catalog = catalog::Catalog::load(&tx)?;
-        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::OnHeld)?;
-        tx.commit()?;
-        Ok(queued)
+        self.write_update(id, edit, Based::OnHeld, Body::Read)
     }
 
     /// The base may be a version earlier than the one held, which the server
@@ -809,11 +796,26 @@ impl Core {
     /// rather than overwritten.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
+        self.write_update(id, edit, Based::AsRead, Body::Read)
+    }
+
+    pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
         let catalog = catalog::Catalog::load(&tx)?;
-        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::AsRead)?;
+        let queued = queue_create(&tx, &catalog, draft, &[])?;
+        if body == Body::Read
+            && let Some(item) = queued
+                .item_id
+                .as_deref()
+                .map(|id| store::item_by_id(&tx, id))
+                .transpose()?
+                .flatten()
+        {
+            body::rule::derive(&tx, &catalog, "", &item, &queued.id)?;
+        }
         tx.commit()?;
         Ok(queued)
     }
@@ -875,6 +877,51 @@ impl Core {
         store::purge_item(&tx, id)?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub(crate) fn write_update(
+        &self,
+        id: &str,
+        edit: &Edit,
+        based: Based,
+        body: Body,
+    ) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        let tx = conn.transaction()?;
+        let catalog = catalog::Catalog::load(&tx)?;
+        let before = store::item_by_id(&tx, id)?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[], based)?;
+        if body == Body::Read
+            && let Some(before) = before
+            && let Some(after) = store::item_by_id(&tx, id)?
+        {
+            if edit.base_version.is_some_and(|base| base < before.version) {
+                body::rule::derive_on_answer(&tx, &catalog, &before, &queued.id)?;
+            } else {
+                let old = body::rule::body_of(&catalog, &before).to_string();
+                body::rule::derive(&tx, &catalog, &old, &after, &queued.id)?;
+            }
+        }
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Each link and embed of a file in the item's body, with the item it
+    /// names or why it names none, read from the copy alone.
+    pub fn body_links(&self, id: &str) -> Result<BodyLinks> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        body::rule::read(&conn, id)
+    }
+
+    /// The text that embeds the file item `file` in `host`'s body, which
+    /// names that file alone; refused where none can.
+    pub fn embed_text(&self, host: &str, file: &str) -> Result<String> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        body::rule::embed_text(&conn, host, file)
     }
 
     /// Not a purge: the row stays in the copy, trashed.
@@ -1011,7 +1058,7 @@ impl Core {
         let mut conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
         let tx = conn.transaction()?;
-        let queued = queue_edge(&tx, draft)?;
+        let queued = queue_edge(&tx, draft, &[])?;
         tx.commit()?;
         Ok(queued)
     }
@@ -1087,7 +1134,7 @@ impl Core {
         store::refuse_unless_usable(&conn)?;
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
-        let queued = queue_edge_delete(&tx, &held)?;
+        let queued = queue_edge_delete(&tx, &held, &[])?;
         tx.commit()?;
         Ok(queued)
     }
@@ -1326,7 +1373,8 @@ impl Core {
 
     /// Three writes, each with its own verdict, each waiting on the one
     /// before it: the upload, a file item naming the bytes, and an
-    /// `attached-to` edge from the file to the item.
+    /// `attached-to` edge from the file to the item. Answers the text that
+    /// embeds the file in the item's body, which reads back as that edge.
     pub fn attach(&self, target: &str, path: &Path, attachment: &Attachment) -> Result<Attached> {
         self.lock.refuse_unless_writer()?;
         {
@@ -1351,20 +1399,31 @@ impl Core {
                 taken,
                 &mime_type,
             );
+            // A name another attachment has would make an embed of this one
+            // name two files; a title the caller chose is theirs.
+            if attachment.title.is_none()
+                && let Some(Value::String(title)) = draft.properties.get("title").cloned()
+            {
+                let title = body::rule::unique_title(tx, catalog, target, &title)?;
+                draft.properties.insert("title".into(), title.into());
+            }
             let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            let file = item.item_id.clone().unwrap_or_default();
             let edge = queue_edge(
                 tx,
                 &EdgeDraft {
-                    source_id: item.item_id.clone().unwrap_or_default(),
+                    source_id: file.clone(),
                     target_id: target.to_string(),
-                    edge_type: "attached-to".into(),
+                    edge_type: body::rule::ATTACHMENT_EDGE.into(),
                     ..Default::default()
                 },
+                &[],
             )?;
             Ok(Attached {
                 upload: upload.clone(),
                 item,
                 edge,
+                embed: body::rule::embed_text(tx, target, &file).ok(),
             })
         })
     }
@@ -1470,8 +1529,20 @@ impl Core {
     /// stays until it is discarded.
     pub fn forget_answered(&self) -> Result<usize> {
         self.lock.refuse_unless_writer()?;
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        // Read before the answers it reads go.
+        body::rule::after_answers(&mut conn)?;
         store::forget_answered(&conn)
+    }
+
+    /// Asks again about the names bodies written here carry and no edge says
+    /// yet. Best effort: a failure leaves them for the next pass, but for a
+    /// store that can no longer be written.
+    pub(crate) fn settle_bodies(&self, stop: &AtomicBool) -> Result<()> {
+        match body::rule::settle(self, stop) {
+            Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Takes a refused write out of the queue, with what it carried. Answers
@@ -1578,6 +1649,24 @@ impl Core {
         }
         Ok(conn)
     }
+}
+
+/// Lets go of a pin, and of the row where the slice does not take it.
+fn unpin_held(tx: &Connection, id: &str) -> Result<bool> {
+    let pinned = store::unpin(tx, id)?;
+    if pinned
+        && store::waiting_writes_for_item(tx, id)?.is_empty()
+        && let Some((types, tier)) = store::slice(tx)?
+        && let Some(held) = store::items_by_ids(tx, &[id.to_string()])?.pop()
+    {
+        let catalog = catalog::Catalog::load(tx)?;
+        if !read_view::listed(tx, id)?
+            || !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier)
+        {
+            store::evict_item(tx, id, &store::whole_edge_types(tx)?)?;
+        }
+    }
+    Ok(pinned)
 }
 
 /// The names a write carries held to the server's bounds before anything is
@@ -1723,6 +1812,14 @@ fn queue_create(
     Ok(queued)
 }
 
+/// Whether a write reads the item's body as edges. A folder reads its own
+/// files' bodies, and keeps its own record of what each showed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Body {
+    Read,
+    Folder,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Based {
     OnHeld,
@@ -1851,8 +1948,9 @@ fn queue_update(
 }
 
 /// An edge the copy could not take is refused: no event about it would
-/// reach the copy, so it would sit there as written for good.
-fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
+/// reach the copy, so it would sit there as written for good. It waits on
+/// its ends' creates and on `after`.
+fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
     if !store::takes_edge(
         tx,
         &draft.source_id,
@@ -1870,7 +1968,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
-    let mut depends_on: Vec<String> = Vec::new();
+    let mut depends_on: Vec<String> = after.to_vec();
     for endpoint in [&draft.source_id, &draft.target_id] {
         for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
@@ -1903,8 +2001,13 @@ fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
     })
 }
 
-fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite> {
-    let depends_on = store::untaken_create_for_edge(tx, &held.id)?;
+fn queue_edge_delete(tx: &Connection, held: &model::Edge, after: &[String]) -> Result<QueuedWrite> {
+    let mut depends_on = store::untaken_create_for_edge(tx, &held.id)?;
+    for waited in after {
+        if !depends_on.contains(waited) {
+            depends_on.push(waited.clone());
+        }
+    }
     // A refused delete is reconciled by reading edges by type, and the row
     // is gone from the copy by then.
     let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
@@ -3960,6 +4063,8 @@ mod tests {
                     "tag_write",
                     "extension_write",
                     "with_upload",
+                    "write_create",
+                    "write_update",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain"][..]),
