@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::body::text::Typed;
 use crate::catalog::{EdgeType, End};
 use crate::error::CoreError;
 
@@ -58,32 +59,9 @@ impl EdgeTypes {
     }
 }
 
-/// One target a line names: what was typed inside `[[ ]]`, and the name it
-/// is read as, which is what comes before a `|` or a `#`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Typed {
-    pub raw: String,
-    pub name: String,
-}
-
-impl Typed {
-    pub fn new(raw: &str) -> Typed {
-        let raw = raw.trim();
-        Typed {
-            raw: raw.to_string(),
-            name: raw
-                .split(['|', '#'])
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
-        }
-    }
-}
-
 /// The targets a line names, once each whatever their case or form; unquoted
 /// `[[name]]` is YAML for a list inside a list.
-pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
+pub(crate) fn typed(value: &Value) -> Result<Vec<Typed>, String> {
     let named: Vec<&Value> = match value {
         Value::Null => Vec::new(),
         Value::Array(_) if is_bare_link(value) => vec![value],
@@ -110,7 +88,7 @@ pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
         }
         if !found
             .iter()
-            .any(|held| super::names::same(&held.raw, raw.trim()))
+            .any(|held| crate::names::same(&held.raw, raw.trim()))
         {
             found.push(target);
         }

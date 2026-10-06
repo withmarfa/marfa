@@ -270,7 +270,7 @@ pub(super) fn presentation(
             _ if edge_types.is_name(name) => super::edge_types::typed(value).ok().map(|targets| {
                 let mut names: Vec<_> = targets
                     .into_iter()
-                    .map(|target| super::names::folded(&target.raw))
+                    .map(|target| crate::names::folded(&target.raw))
                     .collect();
                 names.sort();
                 names.dedup();

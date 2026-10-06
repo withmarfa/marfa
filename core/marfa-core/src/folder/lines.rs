@@ -1,15 +1,15 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
+use rusqlite::Connection;
 use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeTypes};
 use super::embeds::{self, ATTACHMENT_EDGE, Target};
-use super::names::{folded, forms};
 use super::state::{self, Line};
-use super::{
-    FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, document, fields, name_of, title_of,
-};
+use super::{FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, fields};
 use crate::Result;
+use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolve_reference};
+use crate::body::text::{self, Typed};
 use crate::catalog::Catalog;
 use crate::catalog::{EdgeType, End};
 use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
@@ -35,85 +35,24 @@ pub(super) struct Outcome {
     pub embeds: Vec<String>,
 }
 
-/// Every name an item answers to in this copy, folded: its title, and its
-/// file's path and name here with and without the extension.
-pub(super) struct Names {
-    ids: HashMap<String, BTreeSet<String>>,
-}
+/// The files on disk a folder has bound to items.
+pub(super) struct BoundFiles;
 
-impl Names {
-    pub fn load(folder: &Folder, catalog: &Catalog) -> Result<Names> {
-        let mut ids: HashMap<String, BTreeSet<String>> = HashMap::new();
-        let conn = folder.core.conn()?;
-        let mut statement = conn.prepare(
-            "SELECT id, type, properties FROM items WHERE state IN ('active', 'archived') AND type NOT LIKE 'system.%'",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (id, r#type, properties) = row?;
-            let properties: Map<String, Value> =
-                serde_json::from_str(&properties).unwrap_or_default();
-            if let Some(title) = properties
-                .get(fields::title_field(catalog, &r#type))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                ids.entry(folded(title)).or_default().insert(id);
-            }
-        }
-        for bound in state::every_bound(&conn)? {
-            for name in file_names(&bound.path) {
-                ids.entry(name).or_default().insert(bound.item_id.clone());
-            }
-        }
-        Ok(Names { ids })
+impl Paths for BoundFiles {
+    fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>> {
+        state::bound_paths(conn)
     }
 
-    fn of(&self, name: &str) -> Option<&BTreeSet<String>> {
-        self.ids.get(&folded(name.trim()))
+    fn of(&self, conn: &Connection, id: &str) -> Result<Vec<String>> {
+        Ok(state::bound_to_item(conn, id)?
+            .map(|bound| bound.path)
+            .into_iter()
+            .collect())
     }
-}
-
-fn file_names(path: &str) -> Vec<String> {
-    let stem = |text: &str| match text.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() && !stem.ends_with('/') => stem.to_string(),
-        _ => text.to_string(),
-    };
-    let mut names = vec![
-        path.to_string(),
-        stem(path),
-        name_of(path).to_string(),
-        title_of(path),
-    ];
-    names.iter_mut().for_each(|name| *name = folded(name));
-    names.sort();
-    names.dedup();
-    names
 }
 
 /// A file's lines by name, and the edges they name.
 type Written = (Vec<(String, Value)>, Vec<Line>);
-
-#[derive(Debug, Clone)]
-enum Resolved {
-    Found {
-        id: String,
-        r#type: Option<String>,
-    },
-    Unmatched,
-    Ambiguous,
-    /// The server could not be reached, so the name is asked again later.
-    Waiting,
-    /// The server answered the lookup with something other than items.
-    Unanswered(String),
-}
 
 impl Resolved {
     /// The item found, or `None` with the reason a line names nothing.
@@ -143,196 +82,14 @@ impl Resolved {
     }
 }
 
-/// Lookup pages read for one name and title field: a name more common than
-/// this is named by id instead.
-const LOOKUP_PAGES: usize = 5;
-
-pub(super) struct Resolver<'a> {
-    folder: &'a Folder,
-    catalog: &'a Catalog,
-    online: bool,
-    names: Option<Names>,
-    cache: HashMap<String, Resolved>,
-}
-
-impl<'a> Resolver<'a> {
-    pub fn new(folder: &'a Folder, catalog: &'a Catalog) -> Resolver<'a> {
-        Resolver {
-            folder,
-            catalog,
-            online: folder.core.http().is_ok(),
-            names: None,
-            cache: HashMap::new(),
-        }
-    }
-
-    fn names(&mut self) -> Result<&Names> {
-        if self.names.is_none() {
-            self.names = Some(Names::load(self.folder, self.catalog)?);
-        }
-        Ok(self.names.as_ref().expect("loaded above"))
-    }
-
-    fn resolve(&mut self, text: &str) -> Result<Resolved> {
-        let key = folded(text.trim());
-        if let Some(held) = self.cache.get(&key) {
-            return Ok(held.clone());
-        }
-        let resolved = if is_id(text) {
-            self.resolve_id(text)?
-        } else {
-            self.resolve_name(text)?
-        };
-        self.cache.insert(key, resolved.clone());
-        Ok(resolved)
-    }
-
-    fn resolve_id(&mut self, id: &str) -> Result<Resolved> {
-        if let Some(item) = self.folder.core.get(id)? {
-            return Ok(Resolved::Found {
-                id: item.id,
-                r#type: Some(item.r#type),
-            });
-        }
-        if !self.online {
-            return Ok(Resolved::Waiting);
-        }
-        Ok(match self.folder.core.http()?.item(id) {
-            Ok(Some(row)) => Resolved::Found {
-                id: row.item.id,
-                r#type: Some(row.item.r#type),
-            },
-            Ok(None) => Resolved::Unmatched,
-            Err(error) => self.failed(error),
-        })
-    }
-
-    fn resolve_name(&mut self, name: &str) -> Result<Resolved> {
-        let mut found: BTreeMap<String, Option<String>> = BTreeMap::new();
-        let local: Vec<String> = self
-            .names()?
-            .of(name)
-            .map(|ids| ids.iter().cloned().collect())
-            .unwrap_or_default();
-        for id in local {
-            let r#type = self.folder.core.get(&id)?.map(|item| item.r#type);
-            found.insert(id, r#type);
-        }
-        if !self.online {
-            return Ok(if found.len() > 1 {
-                Resolved::Ambiguous
-            } else {
-                Resolved::Waiting
-            });
-        }
-        let (rows, more) = match self.on_server(name) {
-            Ok(answered) => answered,
-            Err(error) => return Ok(self.failed(error)),
-        };
-        found.extend(rows);
-        Ok(match found.len() {
-            0 | 1 if more => Resolved::Unanswered(format!(
-                "more than {LOOKUP_PAGES} pages of items contain it"
-            )),
-            0 => Resolved::Unmatched,
-            1 => {
-                let (id, r#type) = found.into_iter().next().expect("one");
-                Resolved::Found { id, r#type }
-            }
-            _ => Resolved::Ambiguous,
-        })
-    }
-
-    /// A lookup that failed flags its file, and never ends the scan.
-    fn failed(&mut self, error: crate::error::CoreError) -> Resolved {
-        if error.is_environmental() {
-            self.online = false;
-            Resolved::Waiting
-        } else {
-            Resolved::Unanswered(error.to_string())
-        }
-    }
-
-    /// The items the server holds under this title, and whether a lookup
-    /// stopped at its page cap.
-    fn on_server(&self, name: &str) -> Result<(BTreeMap<String, Option<String>>, bool)> {
-        let http = self.folder.core.http()?;
-        let mut title_fields: Vec<&str> = self
-            .catalog
-            .declared()
-            .filter(|(r#type, _)| !r#type.starts_with("system."))
-            .map(|(r#type, _)| fields::title_field(self.catalog, r#type))
-            .collect();
-        title_fields.sort();
-        title_fields.dedup();
-        let wanted = folded(name.trim());
-        let mut found = BTreeMap::new();
-        let mut more = false;
-        // The server compares the text it is sent as it is, so each form a
-        // title can be held in is asked.
-        let asked: Vec<(&str, String)> = title_fields
-            .iter()
-            .flat_map(|field| {
-                forms(name.trim())
-                    .into_iter()
-                    .map(move |form| (*field, form))
-            })
-            .collect();
-        for (field, form) in asked {
-            let (rows, capped) = http.items_containing(field, &form, LOOKUP_PAGES)?;
-            more |= capped;
-            for row in rows {
-                let item = row.item;
-                if !matches!(item.state.as_str(), "active" | "archived")
-                    || fields::title_field(self.catalog, &item.r#type) != field
-                {
-                    continue;
-                }
-                let title = item.properties.get(field).and_then(Value::as_str);
-                if title.is_some_and(|title| folded(title.trim()) == wanted) {
-                    found.insert(item.id, Some(item.r#type));
-                }
-            }
-        }
-        Ok((found, more))
-    }
-}
-
-/// An id as the server mints one, in its hyphenated form.
-fn is_id(text: &str) -> bool {
-    text.len() == 36 && uuid::Uuid::parse_str(text).is_ok()
-}
-
 struct Group<'t> {
     name: String,
     edge_type: &'t EdgeType,
     end: End,
-    typed: Option<std::result::Result<Vec<edge_types::Typed>, String>>,
+    typed: Option<std::result::Result<Vec<Typed>, String>>,
 }
 
 impl Folder {
-    /// Whether `text` names the item `id` in this copy: by its id, its
-    /// title, or its file here, as a folder compares names.
-    fn answers_to(&self, text: &str, id: &str, catalog: &Catalog) -> Result<bool> {
-        let text = text.trim();
-        if text == id {
-            return Ok(true);
-        }
-        let wanted = folded(text);
-        if let Some(item) = self.core.get(id)?
-            && item
-                .properties
-                .get(fields::title_field(catalog, &item.r#type))
-                .and_then(Value::as_str)
-                .is_some_and(|title| folded(title.trim()) == wanted)
-        {
-            return Ok(true);
-        }
-        let conn = self.core.conn()?;
-        Ok(state::bound_to_item(&conn, id)?
-            .is_some_and(|bound| file_names(&bound.path).contains(&wanted)))
-    }
-
     /// Whether the item can carry frontmatter, where the copy holds it: a
     /// file item's file is its bytes.
     fn carries(&self, id: &str, catalog: &Catalog) -> Result<Option<bool>> {
@@ -475,7 +232,13 @@ impl Folder {
                 Some(value) => {
                     let mut kept = None;
                     for typed in edge_types::typed(value).unwrap_or_default() {
-                        if self.answers_to(&typed.name, &other, catalog)? {
+                        if resolve::answers_to(
+                            &*self.core.conn()?,
+                            catalog,
+                            &BoundFiles,
+                            &typed.name,
+                            &other,
+                        )? {
                             kept = Some(typed.raw);
                             break;
                         }
@@ -505,7 +268,7 @@ impl Folder {
             let entry = grouped
                 .entry(name.to_string())
                 .or_insert((def.one_at(end), Vec::new()));
-            entry.1.push(document::render_link(&shown));
+            entry.1.push(text::render_link(&shown));
             written.push(Line {
                 edge_type: def.id.clone(),
                 end,
@@ -588,7 +351,7 @@ impl Folder {
         let mut named: Vec<String> = Vec::new();
         let mut links_resolved = true;
         for raw in &work.links {
-            let typed = edge_types::Typed::new(raw);
+            let typed = Typed::new(raw);
             let resolved = resolve_reference(&typed, |text| {
                 self.resolve_typed(
                     text,
@@ -948,31 +711,6 @@ impl Folder {
         Ok(Some(found.into_iter().map(|(id, _)| id).collect()))
     }
 
-    fn existing_reference(
-        &self,
-        text: &str,
-        current: &[&Edge],
-        other_of: &dyn Fn(&Edge) -> String,
-        catalog: &Catalog,
-    ) -> Result<Option<Resolved>> {
-        let mut found = BTreeSet::new();
-        for edge in current {
-            let other = other_of(edge);
-            if self.answers_to(text, &other, catalog)? {
-                found.insert(other);
-            }
-        }
-        Ok(match found.len() {
-            0 => None,
-            1 => {
-                let id = found.into_iter().next().expect("one");
-                let r#type = self.core.get(&id)?.map(|item| item.r#type);
-                Some(Resolved::Found { id, r#type })
-            }
-            _ => Some(Resolved::Ambiguous),
-        })
-    }
-
     /// Rendering is also used to detect unsaved edits, so it must resolve
     /// names from the copy alone, without a network-dependent answer.
     pub(super) fn body_links(
@@ -982,20 +720,19 @@ impl Folder {
         catalog: &Catalog,
         names: &Names,
     ) -> Result<Vec<String>> {
-        let edges = self.core.edges_from(&item.id)?;
-        let references: Vec<&Edge> = edges
-            .iter()
+        let references: Vec<String> = self
+            .core
+            .edges_from(&item.id)?
+            .into_iter()
             .filter(|edge| edge.edge_type == LINK_EDGE)
+            .map(|edge| edge.target_id)
             .collect();
         let mut found = Vec::new();
-        for raw in document::links(body) {
-            let resolved = resolve_reference(&edge_types::Typed::new(&raw), |text| {
-                if let Some(resolved) = self.existing_reference(
-                    text,
-                    &references,
-                    &|edge| edge.target_id.clone(),
-                    catalog,
-                )? {
+        for raw in text::links(body) {
+            let resolved = resolve_reference(&Typed::new(&raw), |text| {
+                if let Some(resolved) =
+                    resolve::existing(&*self.core.conn()?, catalog, &BoundFiles, text, &references)?
+                {
                     return Ok(resolved);
                 }
                 if is_id(text) {
@@ -1036,92 +773,12 @@ impl Folder {
         catalog: &Catalog,
         resolver: &mut Resolver<'_>,
     ) -> Result<Resolved> {
-        if let Some(resolved) = self.existing_reference(text, current, other_of, catalog)? {
+        let others: Vec<String> = current.iter().map(|edge| other_of(edge)).collect();
+        if let Some(resolved) =
+            resolve::existing(&*self.core.conn()?, catalog, &BoundFiles, text, &others)?
+        {
             return Ok(resolved);
         }
         resolver.resolve(text)
-    }
-}
-
-/// Keep both spellings until resolution: C# notes may be a whole title,
-/// and reading it as a heading on C must not quietly choose another item.
-fn resolve_reference(
-    typed: &edge_types::Typed,
-    mut resolve: impl FnMut(&str) -> Result<Resolved>,
-) -> Result<Resolved> {
-    if typed.name.is_empty() {
-        return Ok(Resolved::Unmatched);
-    }
-    let found = resolve(&typed.name)?;
-    if let Resolved::Found { id, .. } = &found
-        && typed.raw != typed.name
-    {
-        match resolve(&typed.raw)? {
-            Resolved::Found { id: whole, .. } if whole != *id => return Ok(Resolved::Ambiguous),
-            Resolved::Ambiguous => return Ok(Resolved::Ambiguous),
-            Resolved::Waiting => return Ok(Resolved::Waiting),
-            Resolved::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
-            _ => {}
-        }
-    }
-    Ok(found)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_body_reference_never_guesses_when_the_whole_name_is_unsettled() {
-        let typed = edge_types::Typed::new("Note#part|shown");
-        for whole in [
-            Resolved::Ambiguous,
-            Resolved::Waiting,
-            Resolved::Unanswered("permission_denied".into()),
-            Resolved::Found {
-                id: "other".into(),
-                r#type: None,
-            },
-        ] {
-            let actual = resolve_reference(&typed, |text| {
-                Ok(if text == "Note" {
-                    Resolved::Found {
-                        id: "note".into(),
-                        r#type: None,
-                    }
-                } else {
-                    whole.clone()
-                })
-            })
-            .unwrap();
-            assert!(!matches!(actual, Resolved::Found { .. }));
-            if matches!(whole, Resolved::Waiting) {
-                assert!(matches!(actual, Resolved::Waiting));
-            }
-        }
-    }
-
-    #[test]
-    fn a_body_reference_keeps_the_target_when_its_suffix_is_unambiguous() {
-        for whole in [
-            Resolved::Unmatched,
-            Resolved::Found {
-                id: "note".into(),
-                r#type: None,
-            },
-        ] {
-            let actual = resolve_reference(&edge_types::Typed::new("Note#part"), |text| {
-                Ok(if text == "Note" {
-                    Resolved::Found {
-                        id: "note".into(),
-                        r#type: None,
-                    }
-                } else {
-                    whole.clone()
-                })
-            })
-            .unwrap();
-            assert!(matches!(actual, Resolved::Found { id, .. } if id == "note"));
-        }
     }
 }
