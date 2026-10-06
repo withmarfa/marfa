@@ -1055,6 +1055,9 @@ export interface PullReport {
   /** Files of items another folder on the machine holds with a file of its
    *  own, taken away with nothing trashed (`folders.md` 44). */
   let_go: number;
+  /** Placements deleted because their file left the folder for good
+   *  (`folders.md` 88). */
+  ended: number;
   /** File items whose bytes could not be had, so no file was written (`folders.md` 37). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */

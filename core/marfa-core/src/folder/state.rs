@@ -315,6 +315,15 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
         .optional()?)
 }
 
+/// Whether a file other than the one at `path` is bound to the item.
+pub fn bound_beside(conn: &Connection, item_id: &str, path: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM folder_files WHERE item_id = ?1 AND path <> ?2)",
+        [item_id, path],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn bound_paths(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
     let mut statement = conn.prepare("SELECT path, item_id FROM folder_files ORDER BY path")?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;

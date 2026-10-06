@@ -1956,13 +1956,19 @@ impl Folder {
         };
         // An item already in the bin is where the delete would put it, and the
         // server refuses a second delete `404`.
+        let mut leaves = true;
         let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
+            let holds = self.holds(item_id, settings, members);
             let look = match &bound {
-                Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
+                Some(bound) => peers.moved_to(bound, holds),
                 None => Look::Nowhere,
             };
             match look {
-                Look::Moved => Missing::Moved,
+                // A folder that still holds the item writes its file again.
+                Look::Moved => {
+                    leaves = !holds;
+                    Missing::Moved
+                }
                 // Held as a delete is while offline, until it can be told.
                 Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
                 Look::Nowhere => {
@@ -1973,6 +1979,10 @@ impl Folder {
         } else {
             Missing::Gone
         };
+        // Before the binding goes, so a failure leaves it for the next pass.
+        if leaves {
+            self.end_placement(item_id, path)?;
+        }
         let conn = self.core.conn()?;
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
@@ -2048,6 +2058,7 @@ impl Folder {
                 .tags
                 .unwrap_or_else(|| settings.defaults.tags.clone()),
             tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
+            occurred_at: read.lines.occurred_at,
             ..Default::default()
         };
         let created = match self.core.write_create(&draft, crate::Body::Folder) {
@@ -2322,7 +2333,11 @@ impl Folder {
                     .map(|()| false);
             }
             // Tags and a state are writes of their own, and need no edit.
-            if !unchanged || changes.r#type.is_some() || changes.tier.is_some() {
+            if !unchanged
+                || changes.r#type.is_some()
+                || changes.tier.is_some()
+                || changes.occurred_at.is_some()
+            {
                 let read_at = untaken.or(match standing {
                     Standing::Behind(line) => Some(line),
                     _ => None,
@@ -2332,6 +2347,7 @@ impl Folder {
                     base_version: Some(read_at.unwrap_or(held.version)),
                     r#type: changes.r#type.clone(),
                     tier: changes.tier,
+                    occurred_at: changes.occurred_at.clone(),
                     replace_properties: whole,
                     ..Edit::default()
                 };
@@ -2378,7 +2394,10 @@ impl Folder {
                 .map(|(id, line)| state::Queued { id, save, line }),
         );
         // A refused change the file no longer carries holds it no longer.
-        let agrees = unchanged && changes.r#type.is_none() && changes.tier.is_none();
+        let agrees = unchanged
+            && changes.r#type.is_none()
+            && changes.tier.is_none()
+            && changes.occurred_at.is_none();
         writes.refused.retain(|refused| match &refused.change {
             state::Change::Edit => !agrees,
             state::Change::AddTag(tag) => own.tags.as_ref().is_none_or(|tags| tags.contains(tag)),
@@ -3815,8 +3834,14 @@ impl Folder {
         if !removed {
             return Ok(LetGo::Inapplicable);
         }
+        drop(conn);
+        // After the removal, which may be refused, and before the binding
+        // goes, so a failure leaves the binding for the scan to settle.
+        let ended = self.end_placement(item_id, &bound.path)?;
+        let conn = self.core.conn()?;
         state::unbind(&conn, &bound.path)?;
         state::journal_clear(&conn, &bound.path)?;
+        report.ended += ended;
         report.let_go += 1;
         Ok(LetGo::Removed)
     }
@@ -3873,9 +3898,10 @@ impl Folder {
         for row in going {
             context.check(&*self.core.conn()?)?;
             let purged = crate::store::purged(&*self.core.conn()?, &row.item_id)?;
-            if self.take_away(&row, &mut context)? {
+            if let Some(ended) = self.take_away(&row, &mut context)? {
                 report.removed += 1;
                 report.purged += usize::from(purged);
+                report.ended += ended;
             } else {
                 report.kept += 1;
             }
@@ -3921,14 +3947,18 @@ impl Folder {
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
-    /// nothing now. Answers `false`, and keeps the file bound, where it
+    /// nothing now. Answers `None`, and keeps the file bound, where it
     /// changed since it was found to be the folder's own: the person's edit
-    /// is theirs.
+    /// is theirs. Otherwise answers how many placements it ended with the
+    /// file.
     fn take_away(
         &self,
         row: &state::Bound,
         context: &mut crate::read_view::Context,
-    ) -> Result<bool> {
+    ) -> Result<Option<usize>> {
+        // First: a failure leaves the file and its binding, and the next pass
+        // finds no placement left to end and takes the file away.
+        let ended = self.end_placement(&row.item_id, &row.path)?;
         let conn = self.core.conn()?;
         context.check(&conn)?;
         let path = self.root.join(&row.path);
@@ -3941,12 +3971,12 @@ impl Folder {
                 })?
                 && path.exists()
             {
-                return Ok(false);
+                return Ok(None);
             }
         }
         context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
         state::journal_clear(&conn, &row.path)?;
-        Ok(true)
+        Ok(Some(ended))
     }
 
     fn deleted_as_agreed(
@@ -4097,13 +4127,27 @@ impl Folder {
             .into_iter()
             .filter_map(|shown| shown.item)
             .collect();
+        let (names, typed, recorded) = lines;
         let mut front = fields::lines_of(item);
+        // A file that already says when the item happened goes on saying it,
+        // and a blank line stays blank where there is no time to show.
+        match typed.and_then(|document| document.front.get(fields::OCCURRED_AT_FIELD)) {
+            Some(Value::Null) if !front.contains_key(fields::OCCURRED_AT_FIELD) => {
+                front.insert(fields::OCCURRED_AT_FIELD.into(), Value::Null);
+            }
+            Some(_) => {
+                front.insert(
+                    fields::OCCURRED_AT_FIELD.into(),
+                    Value::String(item.occurred_at.clone()),
+                );
+            }
+            None => {}
+        }
         for (field, value) in &item.properties {
             if field != body_field && !fields::reserved(field, edge_types) {
                 front.insert(field.clone(), value.clone());
             }
         }
-        let (names, typed, recorded) = lines;
         let (entries, written) = self.lines_for(
             item,
             edge_types,
@@ -4250,6 +4294,7 @@ struct OwnChanges {
     added: Vec<String>,
     removed: Vec<String>,
     state: Option<ItemState>,
+    occurred_at: Option<String>,
 }
 
 impl OwnChanges {
@@ -4259,6 +4304,7 @@ impl OwnChanges {
             && self.added.is_empty()
             && self.removed.is_empty()
             && self.state.is_none()
+            && self.occurred_at.is_none()
     }
 }
 
@@ -4340,6 +4386,14 @@ fn own_changes(
         agreed.tier = Some(tier);
         changes.tier = (Some(tier) != now.tier).then_some(tier);
     }
+    if let Some(time) = lines
+        .occurred_at
+        .clone()
+        .filter(|time| *time != base.occurred_at)
+    {
+        agreed.occurred_at = time.clone();
+        changes.occurred_at = (time != now.occurred_at).then_some(time);
+    }
     let tags = lines.tags.clone().or_else(|| clears.then(Vec::new));
     if let Some(tags) = &tags {
         for tag in tags.iter().filter(|tag| !base.tags.contains(tag)) {
@@ -4417,6 +4471,13 @@ fn differing(lines: &fields::Lines, shown: &fields::Own) -> Vec<String> {
     }
     if lines.state.is_some_and(|state| state != shown.state) {
         differ.push("state".into());
+    }
+    if lines
+        .occurred_at
+        .as_ref()
+        .is_some_and(|time| *time != shown.occurred_at)
+    {
+        differ.push("occurred_at".into());
     }
     differ
 }
@@ -4570,6 +4631,8 @@ pub struct PullReport {
     pub unsuited: usize,
     pub unplaced: usize,
     pub placed: usize,
+    /// Placements the pull ended, for the files it took away or let go.
+    pub ended: usize,
     pub removed: usize,
     /// Of `removed`, the files of items purged.
     pub purged: usize,
@@ -4603,6 +4666,7 @@ impl PullReport {
         self.moved += other.moved;
         self.revived += other.revived;
         self.placed += other.placed;
+        self.ended += other.ended;
         self.removed += other.removed;
         self.purged += other.purged;
         self.taken += other.taken;
@@ -4669,6 +4733,71 @@ fn name_from_title(title: &str, extension: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn held_at(occurred_at: &str) -> Item {
+        Item {
+            id: "item".into(),
+            r#type: "core.note".into(),
+            properties: Map::new(),
+            state: ItemState::Active,
+            tier: Some(crate::model::Tier::Library),
+            version: 2,
+            schema_version: 1,
+            source: "test".into(),
+            source_id: None,
+            occurred_at: occurred_at.into(),
+            created_at: "2026-09-01T10:00:00.000Z".into(),
+            updated_at: "2026-09-01T10:00:00.000Z".into(),
+            tags: Vec::new(),
+        }
+    }
+
+    fn naming(time: Option<&str>) -> fields::Lines {
+        fields::Lines {
+            occurred_at: time.map(str::to_string),
+            ..fields::Lines::default()
+        }
+    }
+
+    #[test]
+    fn a_current_files_time_is_sent_only_where_it_differs_from_the_items() {
+        let held = held_at("2026-10-06T00:00:00.000Z");
+        let moved = own_changes(
+            &naming(Some("2026-10-07T00:00:00.000Z")),
+            Standing::Current,
+            &held,
+            None,
+            Some(2),
+        );
+        assert_eq!(
+            moved.changes.occurred_at.as_deref(),
+            Some("2026-10-07T00:00:00.000Z")
+        );
+        for same in [Some("2026-10-06T00:00:00.000Z"), None] {
+            let quiet = own_changes(&naming(same), Standing::Current, &held, None, Some(2));
+            assert!(quiet.changes.is_empty(), "{same:?} was sent as a change");
+            assert_eq!(quiet.flag, None);
+        }
+    }
+
+    #[test]
+    fn a_files_time_behind_the_item_is_flagged_and_never_sent() {
+        let held = held_at("2026-10-06T00:00:00.000Z");
+        let behind = own_changes(
+            &naming(Some("2026-10-01T00:00:00.000Z")),
+            Standing::Behind(1),
+            &held,
+            None,
+            Some(1),
+        );
+        assert!(behind.changes.is_empty());
+        assert!(
+            behind
+                .flag
+                .is_some_and(|reason| reason.contains("occurred_at")),
+            "the line was not named"
+        );
+    }
 
     #[test]
     fn blob_transport_failure_does_not_complete_a_folder_pull() {

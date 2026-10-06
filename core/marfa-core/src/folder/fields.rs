@@ -17,13 +17,20 @@ pub const TYPE_FIELD: &str = "type";
 pub const TIER_FIELD: &str = "tier";
 pub const TAGS_FIELD: &str = "tags";
 pub const STATE_FIELD: &str = "state";
+pub const OCCURRED_AT_FIELD: &str = "occurred_at";
 
 /// Whether a frontmatter line of this name is anything but a property: a
 /// line naming the item, its version, one of its own fields, or an edge.
 pub fn reserved(name: &str, edge_types: &EdgeTypes) -> bool {
     matches!(
         name,
-        ID_FIELD | VERSION_FIELD | TYPE_FIELD | TIER_FIELD | TAGS_FIELD | STATE_FIELD
+        ID_FIELD
+            | VERSION_FIELD
+            | TYPE_FIELD
+            | TIER_FIELD
+            | TAGS_FIELD
+            | STATE_FIELD
+            | OCCURRED_AT_FIELD
     ) || edge_types.is_name(name)
 }
 
@@ -33,6 +40,10 @@ pub struct Own {
     pub tier: Option<Tier>,
     pub tags: Vec<String>,
     pub state: ItemState,
+    /// The item's own time as the server stores it; empty in a record kept
+    /// without it, which no line equals.
+    #[serde(default)]
+    pub occurred_at: String,
 }
 
 impl Own {
@@ -44,6 +55,7 @@ impl Own {
             tier: item.tier,
             tags,
             state: item.state,
+            occurred_at: crate::time::projected(&item.occurred_at),
         }
     }
 }
@@ -107,6 +119,8 @@ pub struct Lines {
     pub tier: Option<Tier>,
     pub tags: Option<Vec<String>>,
     pub state: Option<ItemState>,
+    /// The time the line names, as the server stores it.
+    pub occurred_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -150,6 +164,18 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
                     }
                 });
             }
+            // A template's empty date names no time.
+            OCCURRED_AT_FIELD if value.is_null() => {}
+            OCCURRED_AT_FIELD => {
+                read.lines.occurred_at = Some(
+                    value
+                        .as_str()
+                        .and_then(|time| crate::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                        .ok_or_else(|| {
+                            format!("{OCCURRED_AT_FIELD} is a date or a date and time, not {value}")
+                        })?,
+                );
+            }
             name if reserved(name, edge_types) => {}
             _ => {
                 read.properties.insert(name.clone(), value.clone());
@@ -190,7 +216,8 @@ fn tags_of(value: &Value) -> Result<Vec<String>, String> {
 }
 
 /// The item's own fields as frontmatter lines: the type and tier always,
-/// the tags where it has any and the state where it is archived.
+/// the tags where it has any, the state where it is archived and the time
+/// where it is not the moment the item was made.
 pub fn lines_of(item: &Item) -> Map<String, Value> {
     let mut lines = Map::new();
     lines.insert(TYPE_FIELD.into(), Value::String(item.r#type.clone()));
@@ -207,6 +234,12 @@ pub fn lines_of(item: &Item) -> Map<String, Value> {
     }
     if item.state == ItemState::Archived {
         lines.insert(STATE_FIELD.into(), Value::String("archived".into()));
+    }
+    if crate::time::projected(&item.occurred_at) != crate::time::projected(&item.created_at) {
+        lines.insert(
+            OCCURRED_AT_FIELD.into(),
+            Value::String(item.occurred_at.clone()),
+        );
     }
     lines
 }
@@ -259,6 +292,10 @@ pub(super) fn presentation(
         let replacement = match name.as_str() {
             TYPE_FIELD => value.as_str().map(|s| Value::String(s.trim().into())),
             VERSION_FIELD => super::version_named(value).map(Value::from),
+            OCCURRED_AT_FIELD => value
+                .as_str()
+                .and_then(|time| crate::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                .map(Value::String),
             TAGS_FIELD => tags_of(value).ok().map(|mut tags| {
                 tags.sort();
                 Value::Array(tags.into_iter().map(Value::String).collect())
@@ -350,6 +387,14 @@ mod tests {
                 json!({"child-of": [["One"]]}),
                 json!({"child-of": "[[One]]"}),
             ),
+            (
+                json!({"occurred_at": "2026-10-06"}),
+                json!({"occurred_at": "2026-10-06T00:00:00.000Z"}),
+            ),
+            (
+                json!({"occurred_at": "2026-10-06T01:00:00+01:00"}),
+                json!({"occurred_at": "2026-10-06T00:00:00.000Z"}),
+            ),
         ] {
             let before = front(before);
             let mut wanted = front(wanted);
@@ -403,8 +448,75 @@ mod tests {
     }
 
     #[test]
+    fn an_occurred_at_line_is_the_items_own_time_in_any_form_the_server_reads() {
+        for (line, stored) in [
+            ("2026-10-06", "2026-10-06T00:00:00.000Z"),
+            ("2026-10", "2026-10-01T00:00:00.000Z"),
+            ("2026-10-06T09:30:00+01:00", "2026-10-06T08:30:00.000Z"),
+            ("2026-10-06T09:30:00", "2026-10-06T09:30:00.000Z"),
+            ("2026-10-06T09:30:00.123456Z", "2026-10-06T09:30:00.123Z"),
+        ] {
+            let read = read(
+                &front(json!({ "occurred_at": line, "status": "open" })),
+                &edge_types(),
+            )
+            .unwrap();
+            assert_eq!(read.lines.occurred_at.as_deref(), Some(stored), "{line}");
+            assert_eq!(
+                read.properties.keys().collect::<Vec<_>>(),
+                ["status"],
+                "the line {line} was also read as a property"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blank_occurred_at_line_names_no_time() {
+        let read = read(
+            &front(json!({ "occurred_at": null, "status": "open" })),
+            &edge_types(),
+        )
+        .unwrap();
+        assert_eq!(read.lines.occurred_at, None);
+        assert_eq!(read.properties.keys().collect::<Vec<_>>(), ["status"]);
+    }
+
+    fn item(occurred_at: &str, created_at: &str) -> Item {
+        Item {
+            id: "item".into(),
+            r#type: "core.note".into(),
+            properties: Map::new(),
+            state: ItemState::Active,
+            tier: Some(Tier::Library),
+            version: 1,
+            schema_version: 1,
+            source: "test".into(),
+            source_id: None,
+            occurred_at: occurred_at.into(),
+            created_at: created_at.into(),
+            updated_at: created_at.into(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_time_is_written_only_where_it_is_not_the_moment_the_item_was_made() {
+        let made = "2026-09-01T10:00:00.000Z";
+        assert!(!lines_of(&item(made, made)).contains_key("occurred_at"));
+        assert!(!lines_of(&item("2026-09-01T10:00:00Z", made)).contains_key("occurred_at"));
+        let set = lines_of(&item("2026-10-06T00:00:00.000Z", made));
+        assert_eq!(set["occurred_at"], "2026-10-06T00:00:00.000Z");
+    }
+
+    #[test]
     fn an_own_field_no_item_can_hold_is_refused() {
         for bad in [
+            json!({ "occurred_at": "yesterday" }),
+            json!({ "occurred_at": "2026-13-45" }),
+            json!({ "occurred_at": "10000-01-01" }),
+            json!({ "occurred_at": 20261006 }),
+            json!({ "occurred_at": ["2026-10-06"] }),
+            json!({ "occurred_at": "" }),
             json!({ "type": 3 }),
             json!({ "type": " " }),
             json!({ "tier": "attic" }),

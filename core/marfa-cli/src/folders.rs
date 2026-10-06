@@ -453,7 +453,7 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
             .map(|entry| format!("{}.{}", entry.r#type, entry.property))
             .collect();
         format!(
-            "no file can carry {}: a file reads type, tier, tags, state and edge names as the item's own",
+            "no file can carry {}: a file reads type, tier, tags, state, occurred_at and edge names as the item's own",
             named.join(", ")
         )
     })
@@ -555,6 +555,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         (
             report.let_go,
             "file(s) removed whose item another folder on this machine holds, with nothing trashed",
+        ),
+        (
+            report.ended,
+            "placement(s) ended, for files that left the folder for good",
         ),
     ]
     .into_iter()

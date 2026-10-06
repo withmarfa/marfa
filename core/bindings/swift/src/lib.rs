@@ -550,6 +550,7 @@ impl Edit {
             source_id: self.source_id,
             r#type: self.r#type,
             tier: self.tier.map(Into::into),
+            occurred_at: None,
             replace_properties: self.replace_properties,
         })
     }

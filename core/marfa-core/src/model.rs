@@ -433,6 +433,9 @@ pub struct Edit {
     pub source_id: Option<String>,
     pub r#type: Option<String>,
     pub tier: Option<Tier>,
+    /// When the item's content happened, in any form the server reads as a
+    /// time.
+    pub occurred_at: Option<String>,
     /// A property left out is cleared; otherwise they merge over the row's.
     pub replace_properties: bool,
 }
@@ -458,6 +461,9 @@ impl Edit {
         }
         if let Some(tier) = self.tier {
             body.insert("tier".into(), serde_json::to_value(tier)?);
+        }
+        if let Some(occurred_at) = &self.occurred_at {
+            body.insert("occurred_at".into(), Value::String(occurred_at.clone()));
         }
         Ok(serde_json::to_string(&Value::Object(body))?)
     }

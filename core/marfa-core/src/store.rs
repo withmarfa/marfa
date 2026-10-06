@@ -2717,6 +2717,9 @@ fn lay_write(
             if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
                 item.tier = Tier::parse_wire(Some(tier))?;
             }
+            if let Some(occurred_at) = payload.get("occurred_at").and_then(Value::as_str) {
+                item.occurred_at = crate::time::projected(occurred_at);
+            }
         }
         WriteKind::TransitionItem => {
             if let Some(state) = payload.get("state").and_then(Value::as_str) {

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::Folder;
+use super::{Folder, state};
 use crate::catalog::Catalog;
 use crate::drain::{DrainReport, ReadBack};
 use crate::error::CoreError;
@@ -125,6 +125,39 @@ impl Folder {
             Err(_) if !crate::store::item_held(&*self.core.conn()?, item_id)? => Ok(false),
             placed => placed,
         }
+    }
+
+    /// Ends this folder's placement of an item whose file at `leaving` is
+    /// leaving the folder for good, so the server stops listing the folder as
+    /// placing an item it no longer shows. Called before the file's binding
+    /// goes, so a failure leaves the binding for the next pass to try again.
+    /// Ends nothing while another file here is bound to the item. A restored
+    /// item is placed again, as a new one is. Answers how many placements it
+    /// ended.
+    pub(super) fn end_placement(&self, item_id: &str, leaving: &str) -> Result<usize> {
+        if state::bound_beside(&*self.core.conn()?, item_id, leaving)? {
+            return Ok(0);
+        }
+        if super::fault::named("end-placement-fails").is_some() {
+            return Err(CoreError::Store(
+                "injected failure to end a placement".into(),
+            ));
+        }
+        let mut ended = 0;
+        for edge in self
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
+        {
+            match self.core.delete_edge(&edge.id) {
+                Ok(_) => ended += 1,
+                // Gone from the copy since it was listed, by another machine's end.
+                Err(CoreError::NotFound { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(ended)
     }
 
     fn queue_placement(&self, item_id: &str, path: &str) -> Result<bool> {
@@ -749,6 +782,46 @@ mod tests {
                 "moved meanwhile: {moved_meanwhile}"
             );
         }
+    }
+
+    fn bound_file(path: &str) -> state::Bound {
+        state::Bound {
+            path: path.into(),
+            item_id: "note".into(),
+            identity: None,
+            content_hash: "hash".into(),
+            presentation: None,
+            written_hash: None,
+            links: Vec::new(),
+            lines: Vec::new(),
+            edit_line: None,
+            held: None,
+            own: None,
+            writes: state::Writes::default(),
+        }
+    }
+
+    #[test]
+    fn a_placement_ends_only_with_the_last_file_bound_to_its_item() {
+        let (_dir, folder) = moved_and_refused_as_stale("http://127.0.0.1:1".into());
+        {
+            let conn = folder.core.conn().unwrap();
+            state::bind(&conn, &bound_file("Plan.md")).unwrap();
+            state::bind(&conn, &bound_file("Copy.md")).unwrap();
+        }
+        assert_eq!(folder.end_placement("note", "Plan.md").unwrap(), 0);
+        assert!(
+            folder.placement("note").unwrap().is_some(),
+            "the placement ended while another file here was bound to the item"
+        );
+        state::unbind(&folder.core.conn().unwrap(), "Copy.md").unwrap();
+        assert_eq!(folder.end_placement("note", "Plan.md").unwrap(), 1);
+        assert!(folder.placement("note").unwrap().is_none());
+        assert_eq!(
+            folder.end_placement("note", "Plan.md").unwrap(),
+            0,
+            "a second end found a placement to end"
+        );
     }
 
     #[test]
