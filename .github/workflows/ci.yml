@@ -273,6 +273,15 @@ jobs:
         working-directory: conformance
         run: pnpm test:generators
 
+      # A statement's ID is permanent, so one that this change deletes or
+      # renames fails here. `main` as it stands is the base, which the
+      # shallow checkout does not hold.
+      - name: Hold the contract's IDs to main
+        working-directory: conformance
+        run: |
+          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+          pnpm exec tsx scripts/check-spec-ids.ts origin/main
+
       # The object store the server attaches beside its disk, so the
       # object-store half of the blob chapters is asserted rather than
       # skipped. `garage:up` writes S3 settings to GITHUB_ENV for the server.

@@ -106,6 +106,39 @@ describe("the housekeeping the server runs on itself", () => {
     expect(unknown.error?.error.code).toBe("housekeeping_job_not_found");
   });
 
+  it("leaves a job a setting switches off out of the listing, and answers 404 for it", async () => {
+    // The referee boots with enrichment off. The enrichment fixtures boot
+    // servers with it on and run this name there.
+    const operator = getOperatorClient();
+    const listed = await operator.listHousekeeping();
+    expect(listed.status).toBe(200);
+    const names = listed.data.data.map((row) => row.name);
+    expect(names).toContain("trash-purge");
+    expect(names).not.toContain("enrichment-sweep");
+    const run = await operator.runHousekeeping("enrichment-sweep");
+    expect(run.status).toBe(404);
+    expect(run.error?.error.code).toBe("housekeeping_job_not_found");
+  });
+
+  it("refuses a retention beyond its range and keeps the stored one", async () => {
+    const before = await client.getConfig();
+    expect(before.status).toBe(200);
+    const config = before.data as Record<string, unknown>;
+    for (const [field, beyond] of [
+      ["audit_retention_days", 36501],
+      ["trash_retention_days", 36501],
+      ["event_log_retention_hours", 876001],
+    ] as const) {
+      const refused = await client.updateConfig({ ...config, [field]: beyond });
+      expect(refused.status, field).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      const after = await client.getConfig();
+      expect((after.data as Record<string, unknown>)[field], field).toBe(
+        config[field],
+      );
+    }
+  });
+
   it("refuses a malformed name and a working key", async () => {
     const operator = getOperatorClient();
     expect((await operator.runHousekeeping("trash-purge")).status).toBe(200);

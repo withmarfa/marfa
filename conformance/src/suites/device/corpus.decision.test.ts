@@ -3,6 +3,11 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureTitles } from "../../utils/fixture-titles.js";
+import {
+  readChapter,
+  statementText,
+  type Chapter,
+} from "../../utils/spec-statements.js";
 
 /**
  * The corpus against the chapters, with no server and no device.
@@ -27,6 +32,7 @@ const CONTINUED = /^› (.+)$/;
 
 interface Statement {
   chapter: string;
+  /** A number while the chapter is numbered, an ID once it is not. */
   number: string;
   text: string;
 }
@@ -48,63 +54,34 @@ function statements(chapter: string): Statement[] {
  *
  * So the shape is refused rather than parsed. Every statement in the three
  * chapters is one paragraph, and a rule that needs two is a rule to split in
- * two.
+ * two. A chapter in the ID form has its shape held by `spec-form.test.ts`.
  */
 function orphanedContinuations(chapter: string): string[] {
   return read(chapter).orphans;
 }
 
-function read(chapter: string): { found: Statement[]; orphans: string[] } {
+function read(chapter: string): {
+  found: Statement[];
+  orphans: string[];
+  form: Chapter["form"];
+} {
   return readText(chapter, readFileSync(resolve(specDir, chapter), "utf8"));
 }
 
 function readText(
   chapter: string,
   text: string,
-): { found: Statement[]; orphans: string[] } {
-  const lines = text.split("\n");
-  const found: Statement[] = [];
-  const orphans: string[] = [];
-  let current: Statement | undefined;
-  let numbered: Statement | undefined;
-  // The statement a blank line just ended, kept only until the next
-  // non-blank line says whether that line meant to continue it.
-  let ended: Statement | undefined;
-  for (const line of lines) {
-    const start = /^(\d+)\. (.*)$/.exec(line);
-    if (start) {
-      current = { chapter, number: start[1], text: start[2] };
-      numbered = current;
-      ended = undefined;
-      found.push(current);
-      continue;
-    }
-    if (/^\s*$/.test(line)) {
-      ended = ended ?? current;
-      current = undefined;
-      continue;
-    }
-    if (numbered && /^\*\*Tests:\*\*/.test(line)) {
-      numbered.text += ` ${line}`;
-      ended = undefined;
-      continue;
-    }
-    if (numbered && /^\*\*Reason:\*\*/.test(line)) {
-      ended = undefined;
-      continue;
-    }
-    // A statement prettier left wrapped continues on an indented line.
-    if (current && /^\s+\S/.test(line)) {
-      current.text += ` ${line.trim()}`;
-      continue;
-    }
-    if (ended && /^\s+\S/.test(line)) {
-      orphans.push(`${chapter} ${ended.number}: ${line.trim().slice(0, 60)}`);
-    }
-    ended = undefined;
-    numbered = undefined;
-  }
-  return { found, orphans };
+): { found: Statement[]; orphans: string[]; form: Chapter["form"] } {
+  const parsed = readChapter(chapter, text);
+  return {
+    found: parsed.statements.map((statement) => ({
+      chapter,
+      number: statement.key,
+      text: statementText(statement),
+    })),
+    orphans: parsed.orphans,
+    form: parsed.form,
+  };
 }
 
 /**
@@ -152,7 +129,7 @@ describe("separate rule metadata", () => {
       "device.md",
       `1. A rule.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
     );
-    expect(parsed.found[0].text).toBe(`A rule. **Tests:** ${cited}`);
+    expect(parsed.found[0].text).toBe(`A rule. ${cited}`);
     expect(parsed.orphans).toEqual([]);
   });
 
@@ -164,6 +141,24 @@ describe("separate rule metadata", () => {
       );
       expect(parsed.found[0].text, boundary).toBe("A rule.");
     }
+  });
+
+  it("reads an ID statement's citations from its Tests paragraph and not from its reason", () => {
+    const parsed = readText(
+      "device.md",
+      `### \`device/a-rule\`\n\nWhen asked, the command MUST answer.\n\n**Reason:** ${cited} explains its reason.\n\n**Tests:** ${cited}\n`,
+    );
+    expect(parsed.form).toBe("id");
+    expect(parsed.found).toEqual([
+      {
+        chapter: "device.md",
+        number: "device/a-rule",
+        text: `When asked, the command MUST answer. ${cited}`,
+      },
+    ]);
+    expect(citationsIn(parsed.found[0].text)).toEqual([
+      { file: "device/stop.test.ts", title: "a stopped call" },
+    ]);
   });
 
   it("still refuses an indented rule continuation after a blank line", () => {
@@ -185,20 +180,28 @@ describe("every device statement is asserted by something", () => {
     // Contiguous from 1, per chapter, rather than a count over the three.
     // A loose floor lets most of a chapter fall out of the parse while every
     // check below passes on whatever survived, and it lets a renumbering
-    // leave a gap nobody notices.
+    // leave a gap nobody notices. A chapter in the ID form has no numbers to
+    // run from 1, so it is held to distinct IDs instead.
     for (const chapter of CHAPTERS) {
-      const numbers = allStatements
-        .filter((statement) => statement.chapter === chapter)
-        .map((statement) => Number(statement.number));
+      const parsed = read(chapter);
+      const keys = parsed.found.map((statement) => statement.number);
+      if (parsed.form === "id") {
+        expect(
+          keys.filter((key, index) => keys.indexOf(key) !== index),
+          `${chapter} states the same ID twice`,
+        ).toEqual([]);
+      } else {
+        const numbers = keys.map(Number);
+        expect(
+          numbers,
+          `${chapter} did not parse to a run of statements numbered from 1, so either the parse is reading part of the chapter or the chapter has a gap`,
+        ).toEqual(
+          Array.from({ length: numbers.length }, (_, index) => index + 1),
+        );
+      }
       expect(
-        numbers,
-        `${chapter} did not parse to a run of statements numbered from 1, so either the parse is reading part of the chapter or the chapter has a gap`,
-      ).toEqual(
-        Array.from({ length: numbers.length }, (_, index) => index + 1),
-      );
-      expect(
-        numbers.length,
-        `${chapter} parsed to ${String(numbers.length)} statements, which is fewer than it carries`,
+        keys.length,
+        `${chapter} parsed to ${String(keys.length)} statements, which is fewer than it carries`,
       ).toBeGreaterThanOrEqual(15);
     }
   });
