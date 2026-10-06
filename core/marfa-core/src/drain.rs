@@ -551,7 +551,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         retry_after_seconds: None,
     };
     // Confirmed once, and only where the pass talks to the server: a pass
-    // with nothing to send or read sends nothing at all, and one that cannot
+    // with nothing to send, read or look up sends nothing at all, and one that cannot
     // confirm the instance is a server that cannot take writes, since a
     // restart is when another instance appears.
     let mut confirmed = false;
@@ -585,6 +585,22 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         waited(&mut report, why.retry_after_seconds);
     }
 
+    // Before the queue is read, so an edge a name now resolves to goes out in
+    // this pass, after the writes it waits on.
+    crate::body::rule::after_answers(&mut *core.conn()?)?;
+    if report.unavailable.is_none() && !unconfirmed && crate::body::rule::waiting(&*core.conn()?)? {
+        // A server that cannot be asked about names is no failure of the
+        // pass: they wait for the next, and a write sent later confirms the
+        // instance again.
+        let (unavailable, retry_after) = (report.unavailable.clone(), report.retry_after_seconds);
+        if confirm(&mut report)? {
+            core.settle_bodies(stop)?;
+        } else {
+            report.unavailable = unavailable;
+            report.retry_after_seconds = retry_after;
+        }
+    }
+
     let all = {
         let conn = core.conn()?;
         store::queued_writes(&conn)?
@@ -613,7 +629,14 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         };
         let row = current.as_ref().unwrap_or(row);
 
-        match readiness(row, &rows, &answers, &waiting) {
+        let ready = match readiness(row, &rows, &answers, &waiting) {
+            Readiness::Ready => match crate::body::rule::lost_body(&*core.conn()?, row)? {
+                Some(reason) => Readiness::RefusedWith(reason),
+                None => Readiness::Ready,
+            },
+            other => other,
+        };
+        match ready {
             Readiness::Held => {
                 let conn = core.conn()?;
                 store::record_verdict(
@@ -852,6 +875,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         }
     }
 
+    crate::body::rule::after_answers(&mut *core.conn()?)?;
     Ok(report)
 }
 

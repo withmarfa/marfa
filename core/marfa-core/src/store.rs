@@ -1619,6 +1619,7 @@ pub fn upsert_item(
     indexing: &Indexing,
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
+    crate::body::rule::rows_changed(conn)?;
     conn.execute(
         "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -1858,6 +1859,7 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 /// Keeps the edges of a type in `whole`, and edges drawn to the item, as a
 /// hydration holds them.
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
+    crate::body::rule::rows_changed(conn)?;
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
         "source_id = ?1".to_string()
@@ -1948,6 +1950,9 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
 
 /// Whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    // A pin asked for again is somebody's own, which the body rule's release
+    // must not take.
+    conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [id])?;
     let changed = conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
     if changed {
         crate::read_view::pins_changed(conn)?;
@@ -3042,6 +3047,7 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
 /// The version and the time are the server's, untouched: a row the server
 /// writes after this is ordered against them (`Stamp`).
 pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
+    crate::body::rule::rows_changed(conn)?;
     let changed = conn.execute(
         "UPDATE items SET state = ?2 WHERE id = ?1",
         params![id, state.as_str()],
@@ -4528,7 +4534,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "23d6a905c0141c7b",
+            "6ea9135aa1f86f85",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

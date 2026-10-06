@@ -3,4 +3,7 @@
 
 pub(crate) mod embed;
 pub(crate) mod resolve;
+pub(crate) mod rule;
 pub(crate) mod text;
+
+pub use rule::{BodyLinks, BodyName, BodyTarget};

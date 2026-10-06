@@ -43,7 +43,7 @@ use crate::error::CoreError;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 
-use crate::body::embed::{carries_frontmatter, is_document};
+use crate::body::embed::{FILE_TYPE, bytes_of, carries_frontmatter, is_document};
 use crate::body::resolve::{Names, Resolver};
 use crate::names::{name_of, title_of};
 use edge_types::EdgeTypes;
@@ -2024,7 +2024,7 @@ impl Folder {
             tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
             ..Default::default()
         };
-        let created = match self.core.create_item(&draft) {
+        let created = match self.core.write_create(&draft, crate::Body::Folder) {
             Err(error) if local_admission_refusal(&error) => {
                 return Ok(Some(Flagged::of(
                     &file.key,
@@ -2310,9 +2310,19 @@ impl Folder {
                     ..Edit::default()
                 };
                 let updated = if read_at.is_some() {
-                    self.core.update_item_as_read(item_id, &edit)
+                    self.core.write_update(
+                        item_id,
+                        &edit,
+                        crate::Based::AsRead,
+                        crate::Body::Folder,
+                    )
                 } else {
-                    self.core.update_item(item_id, &edit)
+                    self.core.write_update(
+                        item_id,
+                        &edit,
+                        crate::Based::OnHeld,
+                        crate::Body::Folder,
+                    )
                 };
                 let id = match updated {
                     Err(error) if local_admission_refusal(&error) => {
@@ -2429,8 +2439,18 @@ impl Folder {
             true
         } else if !edit.properties.is_empty() {
             match based {
-                crate::Based::AsRead => self.core.update_item_as_read(&held.id, &edit)?,
-                crate::Based::OnHeld => self.core.update_item(&held.id, &edit)?,
+                crate::Based::AsRead => self.core.write_update(
+                    &held.id,
+                    &edit,
+                    crate::Based::AsRead,
+                    crate::Body::Folder,
+                )?,
+                crate::Based::OnHeld => self.core.write_update(
+                    &held.id,
+                    &edit,
+                    crate::Based::OnHeld,
+                    crate::Body::Folder,
+                )?,
             };
             true
         } else {
@@ -4425,13 +4445,6 @@ fn stat_of(path: &Path) -> Option<String> {
     ))
 }
 
-fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
-    if !catalog.matches(FILE_TYPE, &item.r#type) {
-        return None;
-    }
-    item.properties.get("blob_ref").and_then(Value::as_str)
-}
-
 fn bytes_type(path: &Path, catalog: &Catalog) -> Option<String> {
     if is_document(path) {
         return None;
@@ -4443,8 +4456,6 @@ fn bytes_type(path: &Path, catalog: &Catalog) -> Option<String> {
         FILE_TYPE.to_string()
     })
 }
-
-const FILE_TYPE: &str = "core.file";
 
 pub const LINK_EDGE: &str = "references";
 
