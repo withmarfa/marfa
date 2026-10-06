@@ -230,6 +230,56 @@ describe("a whole-day series", () => {
   });
 });
 
+describe("a whole-day event, single or repeating", () => {
+  // Berlin is an hour east of UTC in January, so 15 January there runs from
+  // 23:00Z on the 14th to 23:00Z on the 15th.
+  const day = { all_day: true, starts_at: "2046-01-15" };
+  const berlin = { ...day, timezone: "Europe/Berlin" };
+  const repeating = { recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"] };
+
+  async function span(
+    id: string,
+    from: string,
+    to: string,
+  ): Promise<string[][]> {
+    return (await window(from, to))
+      .filter((o) => o.item.id === id)
+      .slice(0, 1)
+      .map((o) => [o.starts_at, o.ends_at ?? ""]);
+  }
+
+  it("places a whole-day event by its zone's midnights, single or repeating", async () => {
+    const single = await event(berlin);
+    const series = await event({ ...berlin, ...repeating });
+    const midnights = [
+      ["2046-01-14T23:00:00.000Z", "2046-01-15T23:00:00.000Z"],
+    ];
+    for (const id of [single, series]) {
+      expect(
+        await span(id, "2046-01-14T12:00:00Z", "2046-01-17T00:00:00Z"),
+      ).toEqual(midnights);
+      // Both edges sit on the zone's midnights: a UTC-midnight reading holds
+      // the event in neither window.
+      expect(
+        await span(id, "2046-01-14T22:30:00Z", "2046-01-14T23:30:00Z"),
+      ).toEqual(midnights);
+      expect(
+        await span(id, "2046-01-15T23:00:00Z", "2046-01-16T00:30:00Z"),
+      ).toEqual([]);
+    }
+  });
+
+  it("places a whole-day event in UTC when it names no zone", async () => {
+    const single = await event(day);
+    const series = await event({ ...day, ...repeating });
+    for (const id of [single, series]) {
+      expect(
+        await span(id, "2046-01-14T12:00:00Z", "2046-01-17T00:00:00Z"),
+      ).toEqual([["2046-01-15T00:00:00.000Z", "2046-01-16T00:00:00.000Z"]]);
+    }
+  });
+});
+
 describe("the window", () => {
   it("includes every event that overlaps it, and no event that ends as it opens", async () => {
     const running = await event({

@@ -11620,7 +11620,7 @@ export interface operations {
     listOccurrences: {
         parameters: {
             query: {
-                /** @description Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. An event's end is its `ends_at`, else its start plus `duration`, else, for a whole-day event, the next day. */
+                /** @description Window start, ISO 8601. An event overlaps the window if it starts before `to` and ends after this time. Its end is `ends_at`, else its start plus `duration`. A whole-day event fills whole days in its `timezone`, or in UTC if it has none. */
                 from: string;
                 /** @description Window end, ISO 8601. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;

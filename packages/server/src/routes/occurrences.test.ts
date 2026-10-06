@@ -902,3 +902,81 @@ describe("a series whose length no instant can hold", () => {
     expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
   });
 });
+
+describe("a whole-day event, single or repeating", () => {
+  // Berlin is an hour east of UTC in January, so the day of 15 January there
+  // runs from 23:00Z on the 14th to 23:00Z on the 15th.
+  const day = {
+    all_day: true,
+    starts_at: "2036-01-15",
+    timezone: "Europe/Berlin",
+  };
+
+  async function placed(
+    properties: Record<string, unknown>,
+    from: string,
+    to: string,
+  ): Promise<{ starts_at: string; ends_at?: string } | undefined> {
+    const id = await createEvent({ title: "Whole day", ...day, ...properties });
+    const { status, rows } = await occurrences(from, to);
+    expect(status).toBe(200);
+    const row = rows.find((r) => r.item.id === id);
+    return row && { starts_at: row.starts_at, ends_at: row.ends_at };
+  }
+
+  const repeats = { recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"] };
+  const midnights = {
+    starts_at: "2036-01-14T23:00:00.000Z",
+    ends_at: "2036-01-15T23:00:00.000Z",
+  };
+
+  it.each([
+    ["single", {}],
+    ["repeating", repeats],
+  ])("%s: starts at local midnight in its zone", async (_, extra) => {
+    expect(
+      await placed(extra, "2036-01-14T20:00:00Z", "2036-01-17T00:00:00Z"),
+    ).toEqual(midnights);
+  });
+
+  it.each([
+    ["single", {}],
+    ["repeating", repeats],
+  ])("%s: is in a window opening as its day starts", async (_, extra) => {
+    expect(
+      await placed(extra, "2036-01-14T22:30:00Z", "2036-01-14T23:30:00Z"),
+    ).toBeDefined();
+  });
+
+  it.each([
+    ["single", {}],
+    ["repeating", repeats],
+  ])("%s: is not in a window opening as its day ends", async (_, extra) => {
+    expect(
+      await placed(extra, "2036-01-15T23:00:00Z", "2036-01-16T00:30:00Z"),
+    ).toBeUndefined();
+  });
+
+  it("a single event with no zone is placed at UTC midnight, as a series with none is", async () => {
+    const properties = { all_day: true, starts_at: "2036-02-10" };
+    const single = await createEvent({ title: "Whole day", ...properties });
+    const series = await createEvent({
+      title: "Whole day",
+      ...properties,
+      ...repeats,
+    });
+    const { rows } = await occurrences(
+      "2036-02-09T00:00:00Z",
+      "2036-02-12T00:00:00Z",
+    );
+    const times = (id: string) =>
+      rows
+        .filter((r) => r.item.id === id)
+        .map((r) => [r.starts_at, r.ends_at])
+        .slice(0, 1);
+    expect(times(single)).toEqual([
+      ["2036-02-10T00:00:00.000Z", "2036-02-11T00:00:00.000Z"],
+    ]);
+    expect(times(series)).toEqual(times(single));
+  });
+});

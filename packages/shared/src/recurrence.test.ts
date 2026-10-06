@@ -8,6 +8,7 @@ import {
   RecurrenceMeter,
   RecurrenceRuleError,
   scheduleProblem,
+  wholeDaySpan,
 } from "./recurrence.js";
 import type { RecurrenceSchedule } from "./recurrence.js";
 
@@ -382,6 +383,49 @@ describe("a whole-day series", () => {
     expect(() =>
       compileSchedule(offsite({ recurrence: ["RRULE:FREQ=HOURLY"] })),
     ).toThrow(RecurrenceRuleError);
+  });
+});
+
+describe("a whole-day event that does not repeat", () => {
+  const iso = (span: { startMs: number; endMs: number }): string[] => [
+    new Date(span.startMs).toISOString(),
+    new Date(span.endMs).toISOString(),
+  ];
+
+  it("occupies the first occurrence of the series it would be", () => {
+    for (const timezone of [
+      "Europe/Berlin",
+      "America/Los_Angeles",
+      undefined,
+    ]) {
+      const day = {
+        starts_at: "2026-03-29",
+        ends_at: "2026-03-30",
+        ...(timezone !== undefined ? { timezone } : {}),
+      };
+      const series = compileSchedule({
+        ...day,
+        all_day: true,
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=2"],
+      });
+      expect(iso(wholeDaySpan(day))).toEqual([
+        new Date(series.startMs).toISOString(),
+        new Date(occurrenceEndMs(series, series.startMs)).toISOString(),
+      ]);
+    }
+  });
+
+  it("runs from local midnight to local midnight across a clock change", () => {
+    // 29 March 2026 is the 23-hour day Berlin's clocks go forward.
+    expect(
+      iso(wholeDaySpan({ starts_at: "2026-03-29", timezone: "Europe/Berlin" })),
+    ).toEqual(["2026-03-28T23:00:00.000Z", "2026-03-29T22:00:00.000Z"]);
+  });
+
+  it("is a whole day when its end is the day it starts, and in UTC with no zone", () => {
+    expect(
+      iso(wholeDaySpan({ starts_at: "2026-03-29", ends_at: "2026-03-29" })),
+    ).toEqual(["2026-03-29T00:00:00.000Z", "2026-03-30T00:00:00.000Z"]);
   });
 });
 

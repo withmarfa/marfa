@@ -715,6 +715,30 @@ export function occurrenceEndMs(
   );
 }
 
+/**
+ * The span a whole-day event occupies, single or repeating: from midnight of
+ * the day it starts on to midnight of the day it ends on, in `timezone`, or
+ * in UTC when it names none. It is the first occurrence of the schedule
+ * `compileSchedule` reads for a whole-day series, so the two cannot place the
+ * same day differently.
+ */
+export function wholeDaySpan(
+  event: Pick<
+    RecurrenceSchedule,
+    "starts_at" | "ends_at" | "duration" | "timezone"
+  >,
+): { startMs: number; endMs: number } {
+  const compiled = compileSchedule({
+    ...event,
+    all_day: true,
+    recurrence: [],
+  });
+  return {
+    startMs: compiled.startMs,
+    endMs: occurrenceEndMs(compiled, compiled.startMs),
+  };
+}
+
 /** The longest an occurrence can last, for looking back past a window. */
 function maxLengthMs(schedule: CompiledSchedule): number {
   return "ms" in schedule.length

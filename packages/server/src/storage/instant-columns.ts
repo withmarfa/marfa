@@ -14,8 +14,18 @@
  * thing, so a `BETWEEN` on text answers a question about time.
  */
 
+import {
+  isEventDuration,
+  isEventTimeZone,
+  RecurrenceRuleError,
+  wholeDaySpan,
+} from "@withmarfa/shared";
+
 /** A whole day: no time, so no instant of its own. */
 const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A date with no time, whole or partial: the day or period it names. */
+const DATE_ONLY = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 
 /** A time with no zone named: no trailing `Z`, no `±HH:MM` offset. */
 const NAIVE_DATETIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
@@ -33,8 +43,8 @@ function normalizeInstant(value: unknown): string | null {
   let candidate = raw;
   if (BARE_DATE.test(raw)) {
     // The all-day model stores a bare date deliberately, because a whole
-    // day has no instant. UTC midnight is the projection the rest of the
-    // calendar already gives it, so it is the one used here too.
+    // day has no instant. A timed event that carries one is read at UTC
+    // midnight; a whole-day event is placed by `wholeDaySpan` instead.
     candidate = `${raw}T00:00:00.000Z`;
   } else if (NAIVE_DATETIME.test(raw)) {
     // A naive datetime is read as UTC, explicitly. Handing it to `new
@@ -61,13 +71,14 @@ function normalizeInstant(value: unknown): string | null {
  * enumerate which types those are.
  *
  * `ends_at` is when the row stops occupying time, which is what a window
- * asks: the stated end, else the start plus `duration` seconds, else the
- * day after the start for a whole-day row. A row with none of these has no
- * length, and the column is null.
+ * asks: the stated end, else the start plus `duration` seconds. A row with
+ * neither has no length, and the column is null. A whole-day row, single or
+ * repeating, occupies whole days instead (`wholeDayColumnValues`).
  */
 export function instantColumnValues(
   properties: Record<string, unknown>,
 ): InstantColumnValues {
+  if (properties.all_day === true) return wholeDayColumnValues(properties);
   const startsAt = normalizeInstant(properties.starts_at);
   return {
     starts_at: startsAt,
@@ -81,15 +92,55 @@ function impliedEnd(
   properties: Record<string, unknown>,
 ): string | null {
   if (startsAt === null) return null;
-  const start = Date.parse(startsAt);
   const duration = properties.duration;
-  const end =
-    typeof duration === "number" && duration > 0
-      ? start + duration * 1000
-      : properties.all_day === true
-        ? start + 86_400_000
-        : Number.NaN;
+  if (typeof duration !== "number" || duration <= 0) return null;
   // Past the range a Date can hold there is no instant to store, so no end.
-  const at = new Date(end);
+  const at = new Date(Date.parse(startsAt) + duration * 1000);
   return Number.isNaN(at.getTime()) ? null : at.toISOString();
+}
+
+/** A value read as the day or instant it names, ready for `wholeDaySpan`. */
+function wholeDayValue(value: unknown): string | undefined {
+  const normalized = normalizeInstant(value);
+  if (normalized === null) return undefined;
+  const raw = (value as string).trim();
+  return DATE_ONLY.test(raw) ? normalized.slice(0, 10) : normalized;
+}
+
+/**
+ * The columns of a whole-day row: local midnight of its first day to local
+ * midnight of the day it ends on, in its `timezone` or in UTC when it names
+ * none. It is the rule a repeating whole-day series places each occurrence
+ * by, so the same day falls in the same windows whether or not it repeats.
+ */
+function wholeDayColumnValues(
+  properties: Record<string, unknown>,
+): InstantColumnValues {
+  const startsAt = wholeDayValue(properties.starts_at);
+  if (startsAt === undefined) return { starts_at: null, ends_at: null };
+  const { ends_at, duration, timezone } = properties;
+  const endsAt = wholeDayValue(ends_at);
+  try {
+    const span = wholeDaySpan({
+      starts_at: startsAt,
+      ...(endsAt !== undefined ? { ends_at: endsAt } : {}),
+      ...(typeof duration === "number" && isEventDuration(duration)
+        ? { duration }
+        : {}),
+      ...(typeof timezone === "string" && isEventTimeZone(timezone)
+        ? { timezone }
+        : {}),
+    });
+    return {
+      starts_at: new Date(span.startMs).toISOString(),
+      ends_at: new Date(span.endMs).toISOString(),
+    };
+  } catch (err) {
+    // A row stored before its zone or length was refused, or a day past the
+    // range a Date holds, has no span rather than a failed write.
+    if (err instanceof RecurrenceRuleError || err instanceof RangeError) {
+      return { starts_at: null, ends_at: null };
+    }
+    throw err;
+  }
 }
