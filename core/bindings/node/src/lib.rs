@@ -1612,7 +1612,7 @@ impl MarfaCore {
     }
 
     /// The ID of the item a conflicted copy was made from, or `null` where
-    /// `id` is not a held conflicted copy.
+    /// `id` is not a held conflicted copy outside the bin.
     #[napi]
     pub fn original_of_conflicted_copy(&self, env: Env, id: String) -> Result<Option<String>> {
         self.inner
@@ -1620,7 +1620,8 @@ impl MarfaCore {
             .map_err(|error| failure(env, error))
     }
 
-    /// The held conflicted copies made from `id`, oldest link first.
+    /// The held conflicted copies made from `id` that are outside the bin,
+    /// oldest link first.
     #[napi]
     pub fn conflicted_copies_of(&self, env: Env, id: String) -> Result<Vec<Item>> {
         Ok(self

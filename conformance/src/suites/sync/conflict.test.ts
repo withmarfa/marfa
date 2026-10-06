@@ -848,6 +848,69 @@ describe("a conflicted copy names its original", () => {
     expect(await copiesOf(original.id)).toEqual([copy]);
   });
 
+  it("gives the conflicted copy none of the original's own derived-from edges, though its writer could have made them", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const origin = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "made-from", body: "made-from body" },
+      }),
+    );
+    expect(origin.ok).toBe(true);
+    trackItem(ctx, origin.data.item.id);
+    const original = await collidingNote("provenance original");
+    const provenance = await client.createEdge({
+      source_id: original.id,
+      target_id: origin.data.item.id,
+      edge_type: "derived-from",
+    });
+    expect(provenance.ok).toBe(true);
+    trackEdge(ctx, provenance.data.edge.id);
+    // The witness: an outbound edge of a type the original's own file
+    // writes, many-to-many, orphaning, to a live row and drawn by a writer
+    // who holds every grant, is one the copy takes.
+    const topic = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "topic", body: "topic body" },
+      }),
+    );
+    expect(topic.ok).toBe(true);
+    trackItem(ctx, topic.data.item.id);
+    const mention = await client.createEdge({
+      source_id: original.id,
+      target_id: topic.data.item.id,
+      edge_type: "references",
+    });
+    expect(mention.ok).toBe(true);
+    trackEdge(ctx, mention.data.edge.id);
+
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "provenance body from the loser" },
+        version: original.version,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const out = await client.listItemEdges(copy!);
+    expect(out.ok).toBe(true);
+    expect(out.data.data.map((e) => `${e.edge_type}>${e.target_id}`)).toContain(
+      `references>${topic.data.item.id}`,
+    );
+    expect(
+      (await derivedFrom(copy!)).map((edge) => edge.target_id),
+      "the copy took the original's own derived-from edge, so its derived-from edges no longer name its original alone",
+    ).toEqual([original.id]);
+  });
+
   it("keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy", async () => {
     requireRule(caps, "serverSideMerge");
 

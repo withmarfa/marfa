@@ -48,7 +48,7 @@ Statements 6 to 9 and 11 are about the update door, which requires the version. 
 
 ## A conflicted copy and its original
 
-Statements 22 to 27 hold for every conflicted copy the server writes (13). `PATCH /items/{id}?conflict=auto` is the one door that writes one: `POST /items` and `POST /items/bulk` take no `conflict` mode.
+Statements 22 to 29 hold for every conflicted copy the server writes (13). `PATCH /items/{id}?conflict=auto` is the one door that writes one: `POST /items` and `POST /items/bulk` take no `conflict` mode.
 
 22. WHEN the server writes a conflicted copy, the server MUST write, in the same transaction, one `derived-from` edge whose source is the copy and whose target is the original, with no properties and at `version: 1`.
     **Reason:** the verdict and the answer name the copy once (`queue-and-verdicts.md` 11), and nothing else joins the two rows: without the edge, an app that reads the copy later, on this device after a restart or on another device, cannot show it beside its original, and an app that reads the original cannot find the copies made from it. `derived-from` is the shipped edge type for a row made from another (`edges.md` 2), many-to-many, written at its source, and it orphans the other end on delete, so the copy's file writes it and discarding either row leaves the other.
@@ -60,16 +60,24 @@ Statements 22 to 27 hold for every conflicted copy the server writes (13). `PATC
 
 24. WHEN the server writes a conflicted copy, the server MUST NOT copy onto it an outbound `derived-from` edge of the original.
     **Reason:** the copy is made from the original, which keeps its own provenance, so a reader follows the copy's one `derived-from` edge to its original without having to tell that edge from the original's own.
-    **Tests:** `sync/conflict.test.ts › links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds`.
+    **Tests:** `sync/conflict.test.ts › gives the conflicted copy none of the original's own derived-from edges, though its writer could have made them`, `› links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds`.
 
 25. WHEN the server writes a conflicted copy, the server MUST announce the edge of 22 as `edge.created` after the copy's `item.created` and before the original's `item.updated`.
     **Reason:** a subscriber applies the copy before an edge that names it as source, and meets the copy and its link before the original's update, so it never holds the original past the losing edit with nothing that leads to that edit.
     **Tests:** `compliance/events-contract.test.ts › announces a conflicted copy's link to its original between the copy's create and the original's update`. The server's own suite asserts the order in the log (`packages/server/src/routes/conflict-sibling-reaches-the-log.test.ts`).
 
-26. WHEN the server executes again a write that wrote a conflicted copy, under the same `Idempotency-Key`, the server MUST NOT write a second copy or a second edge of 22.
+26. WHEN the server executes again, under the same `Idempotency-Key`, a write that wrote a conflicted copy, the server MUST NOT write a second copy or a second edge of 22.
     **Reason:** a retry is the same edit, and a second copy or a second link would show the person a conflict they had once as two.
     **Tests:** `sync/conflict.test.ts › links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds`. The server's own suite asserts it for an execution the replay cache does not answer (`packages/server/src/routes/conflict-sibling-reaches-the-log.test.ts`).
 
-27. WHEN the original of a conflicted copy is purged, the server MUST remove the edge of 22 with it, announced as `edge.deleted` carrying `purged_with` (`edges.md` 17), and MUST leave the copy as it was.
-    **Reason:** the copy holds the text the person lost, which a purge of the original does not decide about; the edge has no row to point at once the original is gone. A trash of the original keeps the edge, as it keeps every edge, so a restore brings the original back beside its copy.
+27. WHEN the original of a conflicted copy is trashed, the server MUST keep the edge of 22.
+    **Reason:** a trash keeps every edge of the row it trashes, so a restore brings the original back beside its copy.
+    **Tests:** `sync/conflict.test.ts › keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy`.
+
+28. WHEN the original of a conflicted copy is purged, the server MUST remove the edge of 22, announced as `edge.deleted` carrying `purged_with` (`edges.md` 17).
+    **Reason:** the edge has no row to point at once the original is gone.
+    **Tests:** `sync/conflict.test.ts › keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy`.
+
+29. WHEN the original of a conflicted copy is purged, the server MUST leave the copy as it was.
+    **Reason:** the copy holds the text the person lost, which a purge of the original does not decide about; `derived-from` orphans the other end on delete (`edges.md` 16).
     **Tests:** `sync/conflict.test.ts › keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy`.

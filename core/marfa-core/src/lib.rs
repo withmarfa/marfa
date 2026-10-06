@@ -536,9 +536,9 @@ impl Core {
     }
 
     /// The id of the item a conflicted copy was made from: the target of its
-    /// `derived-from` edge, where `id` is a held row tagged `conflicted-copy`.
-    /// `None` for any other row, and for one the copy does not hold. The
-    /// original itself may be a row the copy does not hold.
+    /// `derived-from` edge, where `id` is a held row outside the bin tagged
+    /// `conflicted-copy`. `None` for any other row, and for one the copy does
+    /// not hold. The original itself may be a row the copy does not hold.
     pub fn original_of_conflicted_copy(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
@@ -555,8 +555,8 @@ impl Core {
     }
 
     /// The held conflicted copies made from `id`, oldest link first: rows
-    /// tagged `conflicted-copy` whose `derived-from` edge names it. `id` need
-    /// not be a row the copy holds.
+    /// outside the bin tagged `conflicted-copy` whose `derived-from` edge
+    /// names it. `id` need not be a row the copy holds.
     pub fn conflicted_copies_of(&self, id: &str) -> Result<Vec<Item>> {
         let conn = self.conn()?;
         store::refuse_unless_usable(&conn)?;
