@@ -236,7 +236,7 @@ pub struct ItemType {
     pub compatible_with: Vec<String>,
 }
 
-/// The end of an edge whose file writes it.
+/// One end of an edge.
 #[napi(string_enum = "snake_case")]
 pub enum EdgeEnd {
     Source,
@@ -465,12 +465,21 @@ pub struct EdgeDraft {
     pub id: Option<String>,
 }
 
-/// A change to an edge's properties, and the version it was read at.
+/// A change to an edge's properties, a move of one of its ends, or both,
+/// and the version it was read at.
 #[napi(object)]
 pub struct EdgeEdit {
     #[napi(ts_type = "Record<string, unknown>")]
     pub properties: serde_json::Value,
     pub base_version: Option<i64>,
+    pub moves: Option<EdgeMove>,
+}
+
+/// The end an edge edit moves, and the item it moves it to.
+#[napi(object)]
+pub struct EdgeMove {
+    pub end: EdgeEnd,
+    pub to: String,
 }
 
 /// One queued write and what became of it.
@@ -1896,10 +1905,22 @@ impl MarfaCore {
 
     #[napi]
     pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<QueuedWrite> {
+        let (source_id, target_id) = match edit.moves {
+            None => (None, None),
+            Some(EdgeMove {
+                end: EdgeEnd::Source,
+                to,
+            }) => (Some(to), None),
+            Some(EdgeMove {
+                end: EdgeEnd::Target,
+                to,
+            }) => (None, Some(to)),
+        };
         let edit = marfa_core::EdgeEdit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
-            ..Default::default()
+            source_id,
+            target_id,
         };
         queued(
             env,
