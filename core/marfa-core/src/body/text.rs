@@ -1,5 +1,4 @@
-//! A body's links and embeds, read as Obsidian shows them: a folder's files
-//! and a body written through a working copy are read by this one rule.
+//! A body's links and embeds, read as Obsidian shows them.
 
 /// What was typed inside `[[ ]]`, in a body's link or a frontmatter line,
 /// and the name it is read as, which is what comes before a `|` or a `#`.

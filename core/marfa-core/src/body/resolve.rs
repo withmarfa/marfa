@@ -13,8 +13,7 @@ use crate::folder::fields;
 use crate::names::{folded, forms, name_of, title_of};
 use crate::{Core, Result, store};
 
-/// Where the files of items sit, which a name may name by path or file name:
-/// a folder's files on disk, or the placements a working copy holds.
+/// Where the files of items sit, which a name may name by path or file name.
 pub(crate) trait Paths {
     /// Each path with the item whose file it is.
     fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>>;
@@ -67,7 +66,7 @@ impl Names {
 }
 
 /// A path as the names it answers to, folded.
-pub(crate) fn file_names(path: &str) -> Vec<String> {
+fn file_names(path: &str) -> Vec<String> {
     let stem = |text: &str| match text.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() && !stem.ends_with('/') => stem.to_string(),
         _ => text.to_string(),
@@ -100,7 +99,7 @@ pub(crate) enum Resolved {
 
 /// Lookup pages read for one name and title field: a name more common than
 /// this is named by id instead.
-pub(crate) const LOOKUP_PAGES: usize = 5;
+const LOOKUP_PAGES: usize = 5;
 
 pub(crate) struct Resolver<'a> {
     core: &'a Core,
@@ -200,7 +199,8 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// A lookup that failed is the name's alone, and never ends the pass.
+    /// A failed lookup never ends the pass; after one the network failed, no
+    /// later name is asked of the server.
     fn failed(&mut self, error: crate::error::CoreError) -> Resolved {
         if error.is_environmental() {
             self.online = false;
@@ -273,6 +273,7 @@ pub(crate) fn answers_to(
     if text == id {
         return Ok(true);
     }
+    store::refuse_unless_usable(conn)?;
     let wanted = folded(text);
     if let Some(item) = store::item_by_id(conn, id)?
         && item
