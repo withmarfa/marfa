@@ -1304,8 +1304,8 @@ pub struct Change {
     pub edge_id: Option<String>,
     pub cursor: String,
     /// The failure the stream could not be had for, on `server.unreachable`
-    /// alone: the network, a rate limit, a failing server or a refusal
-    /// naming no contract.
+    /// alone, such as the network failing, a rate limit, a failing server or
+    /// a refusal naming no contract.
     pub reason: Option<MarfaError>,
 }
 
