@@ -294,7 +294,7 @@ pub struct ItemType {
     pub compatible_with: Vec<String>,
 }
 
-/// The end of an edge whose file writes it.
+/// One end of an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum EdgeEnd {
     Source,
@@ -558,12 +558,22 @@ pub struct EdgeDraft {
     pub id: Option<String>,
 }
 
-/// A change to an edge's properties, and the version it was read at.
+/// A change to an edge's properties, a move of one of its ends, or both,
+/// and the version it was read at.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EdgeEdit {
     pub properties_json: String,
     #[uniffi(default = None)]
     pub base_version: Option<i64>,
+    #[uniffi(default = None)]
+    pub moves: Option<EdgeMove>,
+}
+
+/// The end an edge edit moves, and the item it moves it to.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EdgeMove {
+    pub end: EdgeEnd,
+    pub to: String,
 }
 
 /// One queued write and what became of it.
@@ -1837,10 +1847,22 @@ impl Core {
     }
 
     pub fn update_edge(&self, id: String, edit: EdgeEdit) -> Result<QueuedWrite, MarfaError> {
+        let (source_id, target_id) = match edit.moves {
+            None => (None, None),
+            Some(EdgeMove {
+                end: EdgeEnd::Source,
+                to,
+            }) => (Some(to), None),
+            Some(EdgeMove {
+                end: EdgeEnd::Target,
+                to,
+            }) => (None, Some(to)),
+        };
         let edit = marfa_core::EdgeEdit {
             properties: object(&edit.properties_json)?,
             base_version: edit.base_version,
-            ..Default::default()
+            source_id,
+            target_id,
         };
         queued(self.inner.update_edge(&id, &edit)?)
     }
@@ -2903,6 +2925,66 @@ mod tests {
             "a retype to a type the catalog does not hold was queued"
         );
         assert_eq!(core.get(note).unwrap().unwrap().r#type, "core.task");
+    }
+
+    #[test]
+    fn an_edge_edit_crosses_with_the_one_end_it_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, None, None).unwrap();
+        let note = |title: &str| {
+            core.create_item(draft(
+                "core.note",
+                &format!(r#"{{"body":"b","title":"{title}"}}"#),
+            ))
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let (first, second, child) = (note("first"), note("second"), note("child"));
+        let edge = core
+            .create_edge(EdgeDraft {
+                source_id: first.clone(),
+                target_id: child.clone(),
+                edge_type: "parent-of".into(),
+                properties_json: "{}".into(),
+                id: None,
+            })
+            .unwrap()
+            .edge_id
+            .unwrap();
+        let move_to = |end: EdgeEnd, to: &str| EdgeEdit {
+            properties_json: "{}".into(),
+            base_version: Some(0),
+            moves: Some(EdgeMove { end, to: to.into() }),
+        };
+
+        let moved = core
+            .update_edge(edge.clone(), move_to(EdgeEnd::Source, &second))
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&moved.body_json).unwrap();
+        assert_eq!(body["source_id"], serde_json::json!(second));
+        assert_eq!(body.get("target_id"), None);
+        let parents: Vec<String> = core
+            .edges_to(child.clone())
+            .unwrap()
+            .into_iter()
+            .map(|edge| edge.source_id)
+            .collect();
+        assert_eq!(parents, vec![second.clone()]);
+        assert!(core.edges_from(first.clone()).unwrap().is_empty());
+
+        let queued = core.queue().unwrap().len();
+        for (end, to, code) in [
+            (EdgeEnd::Source, child.as_str(), "edge_cycle"),
+            (EdgeEnd::Target, first.as_str(), "validation_error"),
+        ] {
+            match core.update_edge(edge.clone(), move_to(end, to)) {
+                Err(MarfaError::Validation { code: refused, .. }) => assert_eq!(refused, code),
+                other => panic!("a move the server refuses was answered {other:?}"),
+            }
+        }
+        assert_eq!(core.queue().unwrap().len(), queued);
     }
 
     #[test]

@@ -1086,6 +1086,18 @@ impl Core {
                 held.version
             )));
         }
+        // The server judges a named end against the edge it holds, which an
+        // earlier waiting move may not leave where the copy shows it, so an
+        // end the copy holds already is not sent.
+        let mut edit = edit.clone();
+        if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
+            edit.source_id = None;
+        }
+        if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
+            edit.target_id = None;
+        }
+        let edit = &edit;
+        refuse_edge_move(&conn, &held, edit)?;
         let payload = edit.payload(base)?;
         let mut depends_on = store::untaken_create_for_edge(&conn, id)?;
         let mut next = held.clone();
@@ -1947,10 +1959,57 @@ fn queue_update(
     Ok(queued)
 }
 
+fn refuse_self_loop(source_id: &str, target_id: &str) -> Result<()> {
+    if source_id == target_id {
+        return Err(CoreError::Validation {
+            code: "edge_cycle".into(),
+            message: format!("an edge from {source_id} to itself closes a cycle"),
+        });
+    }
+    Ok(())
+}
+
+/// Refuses what the server refuses of every such move whatever the rows
+/// hold, judged against the edge as the copy shows it. The type is judged
+/// from the catalog the copy holds; one it does not hold is left to the
+/// server.
+fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> Result<()> {
+    let (moved, source_id, target_id) = match (edit.source_id.as_deref(), edit.target_id.as_deref())
+    {
+        (None, None) => return Ok(()),
+        (Some(_), Some(_)) => {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!(
+                    "an update moves one end of edge {} at a time; delete it and create the edge wanted",
+                    held.id
+                ),
+            });
+        }
+        (Some(source), None) => (catalog::End::Source, source, held.target_id.as_str()),
+        (None, Some(target)) => (catalog::End::Target, held.source_id.as_str(), target),
+    };
+    match catalog::edge_type(conn, &held.edge_type) {
+        Ok(edge_type) if !edge_type.one_at(moved.other()) => {
+            return Err(CoreError::Validation {
+                code: "validation_error".into(),
+                message: format!(
+                    "{} is {}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one",
+                    held.edge_type, edge_type.cardinality
+                ),
+            });
+        }
+        Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
+        Err(error) => return Err(error),
+    }
+    refuse_self_loop(source_id, target_id)
+}
+
 /// An edge the copy could not take is refused: no event about it would
 /// reach the copy, so it would sit there as written for good. It waits on
 /// its ends' creates and on `after`.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
+    refuse_self_loop(&draft.source_id, &draft.target_id)?;
     if !store::takes_edge(
         tx,
         &draft.source_id,
@@ -3341,12 +3400,7 @@ mod tests {
 
     #[test]
     fn a_row_leaving_keeps_an_edge_a_waiting_write_moved_off_it() {
-        let core = held_copy();
-        {
-            let conn = core.conn().unwrap();
-            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
-        }
+        let core = movable_link();
         core.update_edge(
             "link",
             &EdgeEdit {
@@ -3366,6 +3420,167 @@ mod tests {
             "a row leaving took an edge a waiting write moved to a row the copy holds"
         );
         assert!(store::beneath_edge(&conn, "link").unwrap().is_some());
+    }
+
+    /// `link` as a `supersedes` edge from `row` to `older`, so its source can
+    /// move, and `other`, a row it can move to.
+    fn movable_link() -> Core {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+            store::put_server_edge(
+                &conn,
+                &store::testing::wire_edge("link", "row", "older", "supersedes"),
+            )
+            .unwrap();
+        }
+        core
+    }
+
+    fn moving(source_id: Option<&str>, target_id: Option<&str>) -> EdgeEdit {
+        EdgeEdit {
+            base_version: Some(1),
+            source_id: source_id.map(str::to_string),
+            target_id: target_id.map(str::to_string),
+            ..EdgeEdit::default()
+        }
+    }
+
+    #[test]
+    fn an_edge_move_the_server_always_refuses_is_refused_before_it_is_queued() {
+        let core = movable_link();
+        {
+            let conn = core.conn().unwrap();
+            store::put_server_edge(
+                &conn,
+                &store::testing::wire_edge("many", "row", "other", "references"),
+            )
+            .unwrap();
+        }
+        let before = core.queue().unwrap();
+        for (id, edit, code) in [
+            (
+                "link",
+                moving(Some("other"), Some("row")),
+                "validation_error",
+            ),
+            ("many", moving(Some("other"), None), "validation_error"),
+            ("many", moving(None, Some("older")), "validation_error"),
+            ("link", moving(Some("older"), None), "edge_cycle"),
+            ("link", moving(None, Some("row")), "edge_cycle"),
+        ] {
+            let failure = core.update_edge(id, &edit).unwrap_err();
+            assert!(
+                matches!(&failure, CoreError::Validation { code: refused, .. } if refused == code),
+                "{id} {edit:?}: {failure:?}"
+            );
+        }
+        let failure = core
+            .create_edge(&EdgeDraft {
+                source_id: "row".into(),
+                target_id: "row".into(),
+                edge_type: "references".into(),
+                ..EdgeDraft::default()
+            })
+            .unwrap_err();
+        assert!(
+            matches!(&failure, CoreError::Validation { code, .. } if code == "edge_cycle"),
+            "{failure:?}"
+        );
+        assert_eq!(core.queue().unwrap(), before, "a refused move was queued");
+        let conn = core.conn().unwrap();
+        let link = store::edge_by_id(&conn, "link").unwrap().unwrap();
+        assert_eq!(
+            (link.source_id.as_str(), link.target_id.as_str()),
+            ("row", "older")
+        );
+
+        // The witness: the same edge moves where the server would take it.
+        drop(conn);
+        let moved = core
+            .update_edge("link", &moving(Some("other"), None))
+            .unwrap();
+        assert_eq!(moved.body["source_id"], "other");
+    }
+
+    #[test]
+    fn an_edge_move_naming_the_end_that_stays_as_it_is_moves_the_other_one() {
+        let core = movable_link();
+        let edit = core
+            .update_edge("link", &moving(Some("row"), Some("other")))
+            .unwrap();
+        assert_eq!(edit.body.get("source_id"), None, "{}", edit.body);
+        assert_eq!(edit.body["target_id"], "other");
+        let conn = core.conn().unwrap();
+        let link = store::edge_by_id(&conn, "link").unwrap().unwrap();
+        assert_eq!(
+            (link.source_id.as_str(), link.target_id.as_str()),
+            ("row", "other")
+        );
+    }
+
+    #[test]
+    fn an_edge_move_waits_on_its_new_end_and_follows_that_create_to_its_answered_id() {
+        let core = movable_link();
+        let created = core
+            .create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "new" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let local = created.item_id.clone().unwrap();
+        let moved = core
+            .update_edge("link", &moving(Some(&local), None))
+            .unwrap();
+        assert_eq!(moved.depends_on, vec![created.id.clone()]);
+        assert_eq!(
+            core.edges_from(&local).unwrap().len(),
+            1,
+            "the move is not shown at once"
+        );
+
+        let conn = core.conn().unwrap();
+        store::adopt_answered_id(&conn, &local, "answered").unwrap();
+        let row = store::queued_write(&conn, &moved.id).unwrap().unwrap();
+        let body = &row.body;
+        assert_eq!(body["source_id"], "answered");
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap().unwrap().source_id,
+            "answered"
+        );
+    }
+
+    #[test]
+    fn an_edge_move_onto_a_create_that_lands_on_a_held_row_goes_to_that_row() {
+        let core = movable_link();
+        let created = core
+            .create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "new" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let local = created.item_id.clone().unwrap();
+        let moved = core
+            .update_edge("link", &moving(Some(&local), None))
+            .unwrap();
+        let conn = core.conn().unwrap();
+        let refused = store::land_on_held_row(&conn, &created, "other").unwrap();
+        assert!(refused.is_empty(), "{refused:?}");
+        let row = store::queued_write(&conn, &moved.id).unwrap().unwrap();
+        assert_eq!(row.verdict, None);
+        assert!(row.depends_on.is_empty());
+        let body = &row.body;
+        assert_eq!(body["source_id"], "other");
     }
 
     #[test]

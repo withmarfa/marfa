@@ -1700,7 +1700,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     // Once sent, both the request body and its addressed row keep their
     // original meaning under the original idempotency key.
     let mut edges = conn.prepare(
-        "SELECT id, payload FROM queue WHERE kind = 'create_edge' AND sent = 0
+        "SELECT id, payload FROM queue WHERE kind IN ('create_edge', 'update_edge') AND sent = 0
          AND (verdict IS NULL OR verdict IN ('blocked', 'dead', 'refused'))",
     )?;
     let waiting: Vec<(String, String)> = edges
@@ -1727,8 +1727,8 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
 
 /// Moves the copy onto `answered`, the held row a refused create's natural
 /// key resolved, and returns the dependent writes it refused. Only writes
-/// that add (a tag, an edge) carry over: any other was made against this
-/// device's row and would act on another device's.
+/// that add (a tag, an edge, an edge's end moved to it) carry over: any other
+/// was made against this device's row and would act on another device's.
 pub fn land_on_held_row(
     conn: &Connection,
     create: &QueuedWrite,
@@ -1743,7 +1743,7 @@ pub fn land_on_held_row(
             continue;
         }
         let replaces = match row.kind {
-            WriteKind::AddTag | WriteKind::CreateEdge => false,
+            WriteKind::AddTag | WriteKind::CreateEdge | WriteKind::UpdateEdge => false,
             WriteKind::UpdateItem
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
@@ -1755,10 +1755,7 @@ pub fn land_on_held_row(
             | WriteKind::DeleteExtension => true,
             // Not written against an item's create, so never one of its
             // dependants; refused all the same should one ever be.
-            WriteKind::CreateItem
-            | WriteKind::UpdateEdge
-            | WriteKind::DeleteEdge
-            | WriteKind::UploadBlob => true,
+            WriteKind::CreateItem | WriteKind::DeleteEdge | WriteKind::UploadBlob => true,
         };
         if replaces {
             let reason = format!(

@@ -28,7 +28,7 @@ struct Entry {
     definitions: Map<String, Value>,
 }
 
-/// The end of an edge whose file writes it.
+/// One end of an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum End {
