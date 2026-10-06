@@ -11,6 +11,7 @@ import {
   request,
   seedOauthBearer,
   settle,
+  sweepTrashBefore,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Connector } from "../storage/interface.js";
@@ -413,7 +414,8 @@ describe("what a connector keeps", () => {
 
     await itemWrites(ctx.storage).purge(bulk.id);
     expect(await agreements()).toEqual([{ item_id: swept.id }]);
-    await itemWrites(ctx.storage).purgeTrashedOlderThan(
+    await sweepTrashBefore(
+      ctx.storage,
       new Date(Date.now() + 86_400_000).toISOString(),
     );
     expect(await agreements()).toEqual([]);

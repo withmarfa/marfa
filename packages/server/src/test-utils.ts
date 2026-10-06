@@ -13,6 +13,7 @@ import type { BlobLayer } from "./storage/blob-layer.js";
 import { DiskBlobStore, type BlobStore } from "./storage/blob-store.js";
 import type { Stores } from "./housekeeping/blob-delete.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
+import { RevokedGrantPurger, TrashPurger } from "./storage/retention.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { PersistedEvent, Storage } from "./storage/interface.js";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -1198,4 +1199,27 @@ export function raceTheNextTransaction(
       storage.runInTransaction = original;
     },
   };
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Run the trash sweep as it would run with `cutoffIso` as its cutoff, and
+ * answer how many rows it purged.
+ */
+export function sweepTrashBefore(
+  storage: Storage,
+  cutoffIso: string,
+): Promise<number> {
+  const now = new Date(Date.parse(cutoffIso) + MS_PER_DAY);
+  return new TrashPurger(storage, 1, () => now).runOnce();
+}
+
+/** The revoked-grant sweep, with `cutoffIso` as its cutoff. */
+export function sweepRevokedGrantsBefore(
+  storage: Storage,
+  cutoffIso: string,
+): Promise<number> {
+  const now = new Date(Date.parse(cutoffIso) + MS_PER_DAY);
+  return new RevokedGrantPurger(storage, 1, () => now).runOnce();
 }

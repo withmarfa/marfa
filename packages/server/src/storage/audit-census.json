@@ -442,12 +442,11 @@
     "boundary": "Audited bounded trash/grant/key/client purge and shared audited inactive grant retirement; expired session and rate-record cleanup remain operational. credential-retention-audit.test.ts and grant-inactivity-retirer.test.ts.",
     "calls": {
       "AuthSessionStore.deleteExpired": 1,
-      "ItemStore.purgeRevokedAppGrantsOlderThan": 1,
-      "ItemStore.purgeTrashedOlderThan": 1,
       "KeyStore.deleteRevokedKeysOlderThan": 1,
       "OauthProviderStore.deleteGrantlessClientsOlderThan": 1,
       "RateLimitStore.cleanup": 1,
-      "runAuditedTransaction": 4
+      "runAuditedTransaction": 4,
+      "writeItem": 1
     }
   },
   "storage/version-thinner.ts": {

@@ -33,8 +33,6 @@ const WRITERS: Record<string, string> = {
   "storage/item-writes.ts": "the way to the writes",
   "storage/interface.ts":
     "declares `ItemStore`, and `ItemReader` as it without its writes",
-  "storage/retention.ts":
-    "the trash and revoked-grant sweeps the store runs on itself, each typed to its one method",
 };
 
 /** A statement written against the `items` table itself. */

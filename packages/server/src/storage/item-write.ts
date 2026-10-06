@@ -190,6 +190,9 @@ export interface ItemPurge {
   op: "purge";
   id: string;
   version?: number;
+  /** The retention sweep's purge of an app grant a person revoked, which no
+   *  credential may ask for. */
+  revokedGrant?: true;
 }
 
 export type ItemWrite =
@@ -1230,6 +1233,11 @@ async function purgeRow(
     includeTrashed: true,
     message: "Item not found",
   });
+  if (write.revokedGrant && writer.kind !== "platform")
+    throw new MarfaError(
+      ErrorCode.INVALID_TRANSITION,
+      "Only revoked items can be purged",
+    );
   refuseUnlessUninstalled(row);
   // The reserved-namespace fence is asked only of a row not yet
   // soft-deleted. A reserved row already there got there by a cascade or an
@@ -1256,7 +1264,9 @@ async function purgeRow(
     storage,
     edges.map((edge) => edge.source_id),
   );
-  await itemWrites(storage).purge(row.id);
+  await itemWrites(storage).purge(row.id, {
+    revokedGrant: write.revokedGrant === true,
+  });
   return moved(row, row.state, {
     edges,
     edgeSourceTypes,

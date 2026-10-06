@@ -13,7 +13,7 @@ import { expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../..");
 const READS: Record<string, string> = {
   ItemStore:
-    "get getMany getIncludingTrashed list findBySourceId findByLinks findBySourceIds tombstones cascadeMarks countByType stats listInactiveAppGrants",
+    "get getMany getIncludingTrashed list findBySourceId findByLinks findBySourceIds tombstones cascadeMarks countByType stats listInactiveAppGrants listTrashedOlderThan listRevokedAppGrantsOlderThan",
   MetadataStore: "get getMany listTags getExtensions getExtensionsForItems",
   VersionStore: "list all getByVersion scanProperties listThinningCandidates",
   TypeStore:
@@ -45,7 +45,7 @@ const READS: Record<string, string> = {
 // existing operational exceptions and provider credential boundaries.
 const WRITES: Record<string, string> = {
   ItemStore:
-    "create settleTombstones update delete purge restore restoreBeneath restoreDates transition purgeTrashedOlderThan purgeRevokedAppGrantsOlderThan",
+    "create settleTombstones update delete purge restore restoreBeneath restoreDates transition",
   MetadataStore:
     "set merge addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
