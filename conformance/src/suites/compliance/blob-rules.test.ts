@@ -912,6 +912,54 @@ describe("how the copies are placed and removed", () => {
     await replicateToZero();
   });
 
+  it("records a drop, a replication and a purge in the audit log", async () => {
+    const audited = async (action: string, hash: string) =>
+      (await client.listAudit({ action, resource_id: hash })).data.data;
+    const hash = await uploadReferencedText("dropped and replicated again");
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+
+    // Whether the server's own wake or the run above placed the copy, one
+    // row says it was placed, and from where.
+    const replicated = await audited("blob.copy_replicated", hash);
+    expect(replicated).toHaveLength(1);
+    expect(replicated[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: hash,
+      details: { from: disk.id, store_id: s3.id },
+    });
+    expect(await audited("blob.copy_dropped", hash)).toHaveLength(0);
+
+    expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+    const dropped = await audited("blob.copy_dropped", hash);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: hash,
+      details: { store_id: s3.id },
+    });
+
+    // The copy put back is a second placement.
+    await replicateToZero();
+    expect(await audited("blob.copy_replicated", hash)).toHaveLength(2);
+
+    const orphan = await uploadText("purged with a row in the log");
+    expect(await audited("blob.purge", orphan)).toHaveLength(0);
+    await run("blob-orphans");
+    expect(await audited("blob.purge", orphan)).toHaveLength(0);
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(orphan)).status).toBe(404);
+    const purged = await audited("blob.purge", orphan);
+    expect(purged).toHaveLength(1);
+    expect(purged[0]).toMatchObject({
+      resource_type: "blob",
+      resource_id: orphan,
+    });
+    expect(purged[0]!.details).toEqual({});
+  });
+
   it("removes a purged blob's bytes from every store", async () => {
     const hash = await uploadText("purged from the disk and the object store");
     await replicateToZero();
