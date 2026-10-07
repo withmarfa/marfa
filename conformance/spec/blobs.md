@@ -226,9 +226,9 @@ When the server answers a read of a blob with `416`, the server MUST send `Conte
 
 ### `blobs/range-unsatisfiable-size`
 
-When the server answers `GET /blobs/{hash}` with `416`, the server MUST name the blob's size in `details.size_bytes`.
+When the server answers `GET /blobs/{hash}` or a `GET` of the link the instance serves with `416`, the server MUST name the blob's size in `details.size_bytes`.
 
-**Tests:** `correctness/blob-correctness.test.ts › serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`.
+**Tests:** `correctness/blob-correctness.test.ts › serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts`, `compliance/blob-served.test.ts › answers an unsatisfiable range on an instance link with the size in details`.
 
 ### `blobs/range-unread`
 
@@ -432,7 +432,7 @@ If a working key or an app's access token whose type map reaches no type sends `
 
 **Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth.md` 1), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
 
-**Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike`.
+**Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike`, `compliance/blob-reach-app.test.ts › is refused every blob door as a key reaching no type is`.
 
 ### `blobs/read-operator-key`
 
@@ -442,11 +442,11 @@ When the operator key sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blo
 
 ### `blobs/read-unregistered-map`
 
-If a working key whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
+If a working key or an app's access token whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
 
 **Reason:** a pattern is a pattern whether or not a type matches it, so the key reaches a type and is not refused under `blobs/read-no-type`.
 
-**Tests:** `compliance/blob-reach.test.ts › answers a key whose type map names only an unregistered type as it answers an unknown blob, and refuses it the upload`.
+**Tests:** `compliance/blob-reach.test.ts › answers a key whose type map names only an unregistered type as it answers an unknown blob, and refuses it the upload`, `compliance/blob-reach-app.test.ts › answers a blob as unknown to an app whose scopes reach no registered type`.
 
 ### `blobs/read-unreferenced`
 
@@ -454,7 +454,7 @@ While no row references a blob, the server MUST answer `404 blob_not_found` to e
 
 **Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
 
-**Tests:** `compliance/blob-reach.test.ts › answers a blob nothing references as an unknown one, to the key that uploaded it too`.
+**Tests:** `compliance/blob-reach.test.ts › answers a blob nothing references as an unknown one, to the key that uploaded it too`, `compliance/blob-reach-app.test.ts › answers a blob nothing references as an unknown one to the app that uploaded it`.
 
 ### `blobs/read-unreadable`
 
@@ -490,13 +490,13 @@ While a working key or an app's access token may read an edge's type by its edge
 
 **Reason:** otherwise no working credential can read a blob named only in an edge's properties, and a working key's export archive would leave its bytes out. The target's type is not asked.
 
-**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`.
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `compliance/blob-reach-app.test.ts › serves a blob named only in an edge's properties to an app that reads the edge, and to no other`.
 
 ### `blobs/lend-edge-unread`
 
 If a working key or an app's access token may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
 
-**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`.
+**Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `compliance/blob-reach-app.test.ts › serves a blob named only in an edge's properties to an app that reads the edge, and to no other`, `› does not serve a blob named only in an edge's properties to an app that holds no edge scope`.
 
 ### `blobs/lend-edge-bin`
 
@@ -566,7 +566,7 @@ When a working key or an app's access token writes an edge's properties through 
 
 **Reason:** a credential that may write an edge could otherwise read any blob whose hash it knows by naming it there.
 
-**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
+**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`, `compliance/blob-reach-app.test.ts › lends through an edge only a digest the app proved`, `compliance/blob-reach.test.ts › lends a digest named by a bulk edge create only when its writer sent the bytes`, `› lends a digest named by a bulk edge update only when its writer sent the bytes`.
 
 ### `blobs/proof-extension`
 
@@ -588,7 +588,7 @@ While an item, an edge or an extension namespace keeps naming a digest through a
 
 **Reason:** a write that keeps a digest decides nothing about it, so a writer that never sent the bytes cannot withdraw what another proved.
 
-**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`.
+**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`, `compliance/blob-reach.test.ts › keeps a lending digest on an edge lending through later writes by a key that never sent the bytes`, `› keeps a lending digest in an extension lending through later writes by a key that never sent the bytes`.
 
 ### `blobs/proof-repair`
 
@@ -627,6 +627,28 @@ When the enrichment sweep writes onto a file item, the server MUST NOT make a di
 **Reason:** a write made for no credential proves nothing.
 
 **Tests:** `compliance/enrichment-reach.test.ts › keeps a digest the sweep wrote dead after a full key rewrites the file`.
+
+## Order of refusals
+
+### `blobs/read-order`
+
+If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a malformed `ttl`, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
+
+**Reason:** a blob the credential may not read and an unknown one answer alike, so their order cannot be told.
+
+**Tests:** `compliance/blob-order.test.ts › answers a missing credential before a stray query key`, `› refuses a key that reaches no type before a stray query key`, `› answers a stray query key before an unknown hash`, `› answers a stray query key before a malformed hash`, `› answers a stray query key before a malformed ttl`, `› answers a malformed ttl before an unknown hash`, `› answers a malformed ttl before a malformed hash`, `› answers a malformed ttl before a blob the key may not read`.
+
+### `blobs/upload-order`
+
+If a request to `POST /blobs` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a credential that may not upload, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; a `multipart/form-data` or empty body, `400 validation_error`.
+
+**Tests:** `compliance/blob-order.test.ts › refuses an upload a key may not make before a stray query key`, `› answers a stray query key on an upload before the body it carries`, `compliance/blob-reach.test.ts › refuses a key that may not upload before it reads the body it sent`.
+
+### `blobs/link-instance-order`
+
+Where the instance serves a link, if a fetch of it meets more than one refusal, then the server MUST answer the first in this order: a query key the link does not declare, `400 validation_error`; a missing `expires` or `signature`, `400 missing_required_field`; a malformed hash, `400 validation_error`; a signature that does not verify or a lifetime that has run out, `401 unauthorized`; a blob the instance no longer holds, `404 blob_not_found`.
+
+**Tests:** `compliance/blob-order.test.ts › answers a stray key on an instance link before a missing query value`, `› answers a missing query value on an instance link before a malformed hash`, `› answers a stray key on an instance link before a malformed hash`, `› answers a malformed hash on an instance link before its signature`, `› answers a stray key on an instance link before its signature`, `› answers an altered signature on an instance link before a blob the sweep has purged`.
 
 ## Export and restore
 
