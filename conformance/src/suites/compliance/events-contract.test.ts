@@ -616,6 +616,67 @@ describe("event stream contract", () => {
     expect(data.edge.properties.note).toBe("after");
   });
 
+  it("names the event in event_type on an item frame and on an edge frame", async ({
+    signal,
+  }) => {
+    const ofItem = (e: SseEvent): string | undefined =>
+      (e.data as { item?: { id?: string } }).item?.id;
+    const ofEdge = (e: SseEvent): string | undefined =>
+      (e.data as { edge?: { id?: string } }).edge?.id;
+
+    const frames = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await collectUntil(
+        stream,
+        (events) => events.some((e) => e.event === "stream_cursor"),
+        "the frame announcing the stream's position",
+        signal,
+      );
+      const a = await seed("event-type-a");
+      const b = await seed("event-type-b");
+      const edge = await client.createEdge({
+        source_id: a,
+        target_id: b,
+        edge_type: "about",
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      expect((await client.deleteEdge(edge.data.edge.id)).ok).toBe(true);
+      expect((await client.deleteItem(b)).ok).toBe(true);
+      const { events } = await collectUntil(
+        stream,
+        (seen) =>
+          seen.some((e) => e.event === "item.deleted" && ofItem(e) === b) &&
+          seen.some(
+            (e) =>
+              e.event === "edge.deleted" && ofEdge(e) === edge.data.edge.id,
+          ),
+        `item.deleted for ${b} and edge.deleted for ${edge.data.edge.id}`,
+        signal,
+      );
+      const pick = (name: string, id: string, of: typeof ofItem) =>
+        events.find((e) => e.event === name && of(e) === id);
+      return {
+        itemCreated: pick("item.created", a, ofItem),
+        itemDeleted: pick("item.deleted", b, ofItem),
+        edgeCreated: pick("edge.created", edge.data.edge.id, ofEdge),
+        edgeDeleted: pick("edge.deleted", edge.data.edge.id, ofEdge),
+      };
+    });
+
+    for (const [name, frame] of Object.entries({
+      "item.created": frames.itemCreated,
+      "item.deleted": frames.itemDeleted,
+      "edge.created": frames.edgeCreated,
+      "edge.deleted": frames.edgeDeleted,
+    })) {
+      expect(frame, `no ${name} frame arrived`).toBeDefined();
+      expect(
+        (frame!.data as { event_type?: unknown }).event_type,
+        `the ${name} frame does not name itself in event_type`,
+      ).toBe(name);
+    }
+  });
+
   it("refuses a wildcard type filter, a type outside the grammar, an unknown edges value and more than ten types", async () => {
     const bearer = { Authorization: `Bearer ${apiKey}` };
     const wildcard = await fetch(`${apiUrl}/events?type=*`, {

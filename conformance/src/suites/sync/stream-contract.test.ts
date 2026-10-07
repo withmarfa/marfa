@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+} from "../../utils/fresh-server.js";
 import type { SseEvent } from "../../utils/sse.js";
 import {
   createTestContext,
@@ -54,7 +59,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanup(ctx);
-});
+  await stopFreshServers();
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function makeNote(body: string): Promise<string> {
   const created = await client.createItem({
@@ -395,4 +401,117 @@ describe("a filtered stream carries the graph", () => {
       "a stream filtered by item type dropped the edge between two items it did deliver, so a filtered client's graph goes stale with nothing to say so",
     ).toBe(true);
   });
+
+  it("sends an edge event under a type filter whatever the types of its ends", async (context) => {
+    const outcome = await withStream(
+      apiUrl,
+      apiKey,
+      { query: [["type", "core.task"]] },
+      async (stream) => {
+        // The first frame is sent once the subscription is attached, so the
+        // writes below are published to a stream that will see them.
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_cursor"),
+          "the frame announcing the stream's position",
+          context.signal,
+        );
+
+        // Both ends are notes, a type the filter excludes.
+        const source = await makeNote("unfiltered-edge-source");
+        const target = await makeNote("unfiltered-edge-target");
+        const edge = await client.createEdge({
+          source_id: source,
+          target_id: target,
+          edge_type: "about",
+        });
+        expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+        trackEdge(ctx, edge.data.edge.id);
+
+        // A task passes the filter and is written after the edge, so its
+        // frame arriving shows the stream was delivering, and that the
+        // frames before it have arrived or were withheld.
+        const sentinel = await client.createItem({
+          type: "core.task",
+          source: ctx.source,
+          properties: { title: "unfiltered-edge-sentinel" },
+        });
+        expect(sentinel.ok, JSON.stringify(sentinel.error)).toBe(true);
+        trackItem(ctx, sentinel.data.item.id);
+        const seen = await collectUntil(
+          stream,
+          (events) => itemIds(events).has(sentinel.data.item.id),
+          `item.created for the sentinel task ${sentinel.data.item.id}`,
+          context.signal,
+        );
+        return {
+          events: seen.events,
+          ends: [source, target],
+          edgeId: edge.data.edge.id,
+        };
+      },
+    );
+
+    // The witness that the filter is on: the notes it excludes were not sent.
+    const delivered = itemIds(outcome.events);
+    for (const note of outcome.ends) {
+      expect(
+        delivered.has(note),
+        `a stream filtered to core.task delivered the note ${note}, so it is not filtering and the assertion below would mean nothing`,
+      ).toBe(false);
+    }
+
+    const created = outcome.events.find(
+      (e) =>
+        e.event === "edge.created" &&
+        (e.data as { edge?: { id?: string } }).edge?.id === outcome.edgeId,
+    );
+    expect(
+      created,
+      "a stream filtered by item type withheld an edge between two items of another type",
+    ).toBeDefined();
+  });
+});
+
+describe("the stream announces where an empty log starts", () => {
+  it(
+    "announces cursor 0 on a log that holds no event",
+    async (context) => {
+      // A server of this test's own, because the shared server's log holds
+      // every other file's events.
+      const fresh = await bootFreshServer("stream-empty-log");
+      const firstFrame = async (): Promise<SseEvent> =>
+        withStream(fresh.apiUrl, fresh.workingKey, {}, async (stream) => {
+          const { events } = await collectUntil(
+            stream,
+            (seen) => seen.length > 0,
+            "the stream's first typed frame",
+            context.signal,
+          );
+          return events[0]!;
+        });
+
+      const empty = await firstFrame();
+      expect(empty.event).toBe("stream_cursor");
+      expect(empty.data).toEqual({ event_type: "stream_cursor", cursor: "0" });
+      expect(empty.id).toBeUndefined();
+
+      // The witness: the zero is the empty log's, and not a value the stream
+      // announces whatever the log holds.
+      const writer = new MarfaClient({
+        baseUrl: fresh.apiUrl,
+        apiKey: fresh.workingKey,
+      });
+      const created = await writer.createItem({
+        type: "core.note",
+        properties: { body: "first-event" },
+      });
+      expect(created.ok, JSON.stringify(created.error)).toBe(true);
+      const afterWrite = await firstFrame();
+      expect(afterWrite.event).toBe("stream_cursor");
+      const cursor = (afterWrite.data as { cursor?: string }).cursor;
+      expect(BigInt(cursor ?? "0") > 0n).toBe(true);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });

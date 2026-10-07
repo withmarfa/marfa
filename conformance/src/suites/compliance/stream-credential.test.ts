@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -10,6 +12,13 @@ import {
 import { createNote, createTask } from "../../generators/items.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 /**
  * An open stream answers to its credential as it stands.
@@ -23,17 +32,22 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+/** For the credentials the shared server cannot make: an app's grant, which
+ *  needs the instance's owner, and a key with a lifetime. */
+let own: FreshServer | undefined;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
     "stream-credential",
   ));
-});
+  own = await bootFreshServer("stream-credential");
+}, FRESH_SERVER_TIMEOUT_MS + 60_000);
 
 afterAll(async () => {
   await cleanup(ctx);
-});
+  await stopFreshServers();
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function task(label: string): Promise<string> {
   const r = await client.createItem(
@@ -190,4 +204,161 @@ describe("a stream answers to its credential as it stands", () => {
       },
     );
   });
+});
+
+const runSqlite = promisify(execFile);
+
+/** Past the restart that sets a key's lifetime, so the key stands when the
+ *  stream opens and lapses a while after. */
+const LIFETIME_MS = 20_000;
+
+describe("a stream answers to a credential only a server of its own can make", () => {
+  const writerOf = (server: FreshServer): MarfaClient =>
+    new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey });
+
+  const noteOn = async (server: FreshServer, body: string): Promise<string> => {
+    const created = await writerOf(server).createItem({
+      type: "core.note",
+      properties: { body },
+    });
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    return created.data.item.id;
+  };
+
+  it(
+    "ends a stream with credential_ended once its key expires",
+    async ({ signal }) => {
+      const server = own!;
+      // No door mints a key with a lifetime, so the stored key is given one
+      // while the server is stopped.
+      const minted = await writerOf(server).createKey({
+        label: "stream-expires",
+        source: "stream-expires",
+        permissions: [],
+        type_permissions: { "core.note": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      const expiresAt = new Date(Date.now() + LIFETIME_MS);
+      await server.restart({
+        whileStopped: async () => {
+          await runSqlite("sqlite3", [
+            server.sqlitePath,
+            `UPDATE api_keys SET expires_at = '${expiresAt.toISOString()}' WHERE id = '${minted.data.id}';`,
+          ]);
+        },
+      });
+
+      const last = await withStream(
+        server.apiUrl,
+        minted.data.key,
+        {},
+        async (stream) => {
+          await collectUntil(
+            stream,
+            (events) => events.some((e) => e.event === "stream_cursor"),
+            "the frame announcing the stream's position",
+            signal,
+          );
+          // The witness: the key reads the stream while it stands.
+          const before = await noteOn(server, "expires-before");
+          const first = await collectUntil(
+            stream,
+            (events) => arrived(events, before),
+            `the note ${before} before the key expires`,
+            signal,
+          );
+          const frame = first.events.find(
+            (e) => (e.data as { item?: { id?: string } }).item?.id === before,
+          );
+          expect(
+            Date.now() < expiresAt.getTime(),
+            "the key expired before the stream was shown to work",
+          ).toBe(true);
+
+          await new Promise((resolve) =>
+            setTimeout(resolve, expiresAt.getTime() - Date.now() + 250),
+          );
+          // A write after the lifetime, so the stream reads its credential
+          // again with a frame to deliver.
+          const after = await noteOn(server, "expires-after");
+          const { events } = await collectUntil(
+            stream,
+            (seen) => seen.some((e) => e.event === "stream_incomplete"),
+            "the stream to say it ended",
+            signal,
+          );
+          const ended = events.find((e) => e.event === "stream_incomplete");
+          expect((ended?.data as { reason?: string }).reason).toBe(
+            "credential_ended",
+          );
+          expect((ended?.data as { cursor?: string }).cursor).toBe(frame?.id);
+          expect(ended?.id).toBeUndefined();
+          expect(arrived(events, after)).toBe(false);
+          return frame!.id!;
+        },
+      );
+
+      const refused = await fetch(`${server.apiUrl}/events`, {
+        headers: {
+          Authorization: `Bearer ${minted.data.key}`,
+          "Last-Event-ID": last,
+        },
+      });
+      expect(refused.status).toBe(401);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a stream with credential_ended when its app's grant is revoked",
+    async ({ signal }) => {
+      const server = own!;
+      const token = await approvedAppToken(server);
+      const authorization = { Authorization: `Bearer ${server.workingKey}` };
+      const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+        headers: authorization,
+      });
+      expect(listed.status).toBe(200);
+      const held = ((await listed.json()) as { data: { id: string }[] }).data;
+      expect(held).toHaveLength(1);
+
+      await withStream(server.apiUrl, token, {}, async (stream) => {
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_cursor"),
+          "the frame announcing the stream's position",
+          signal,
+        );
+        // The witness: the app reads the stream while its grant stands.
+        const before = await noteOn(server, "grant-before");
+        await collectUntil(
+          stream,
+          (events) => arrived(events, before),
+          `the note ${before} before the grant is revoked`,
+          signal,
+        );
+
+        const revoked = await fetch(
+          `${server.apiUrl}/auth/grants/${held[0]!.id}`,
+          { method: "DELETE", headers: authorization },
+        );
+        expect(revoked.status).toBe(204);
+        const after = await noteOn(server, "grant-after");
+
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_incomplete"),
+          "the stream to say it ended",
+          signal,
+        );
+        const ended = events.find((e) => e.event === "stream_incomplete");
+        expect((ended?.data as { reason?: string }).reason).toBe(
+          "credential_ended",
+        );
+        expect(ended?.id).toBeUndefined();
+        expect(arrived(events, after)).toBe(false);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

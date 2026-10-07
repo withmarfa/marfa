@@ -5,6 +5,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
+import { parseSse } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
@@ -107,6 +108,7 @@ describe("a reader that stops reading", () => {
     try {
       // The subscription settles before the writes it has to fall behind on.
       await new Promise((r) => setTimeout(r, 300));
+      const writtenIds: string[] = [];
       let last = "";
       for (let written = 0; written < WRITTEN; written += 10 * BODY.length) {
         const r = await client.bulkItems(
@@ -121,6 +123,7 @@ describe("a reader that stops reading", () => {
         for (const result of r.data.results) {
           if (result.id) {
             trackItem(ctx, result.id);
+            writtenIds.push(result.id);
             last = result.id;
           }
         }
@@ -143,23 +146,49 @@ describe("a reader that stops reading", () => {
       // written did not reach it.
       expect(text).not.toContain(last);
 
-      // Everything unsent is in the log behind that cursor.
-      await withStream(
+      // Every write the reader did not receive is in the log behind that
+      // cursor, and a resume from it sends each one, in order, and nothing at
+      // or below the cursor.
+      const itemOf = (e: { data: unknown }): string | undefined =>
+        (e.data as { item?: { id?: string } }).item?.id;
+      const received = new Set(
+        parseSse(text)
+          .filter((e) => e.event === "item.created")
+          .map(itemOf),
+      );
+      const unsent = writtenIds.filter((id) => !received.has(id));
+      // Both halves of the premise: the reader got some of what was written
+      // and missed the rest.
+      expect(unsent.length).toBeGreaterThan(0);
+      expect(unsent.length).toBeLessThan(writtenIds.length);
+      expect(unsent).toEqual(
+        writtenIds.slice(writtenIds.length - unsent.length),
+      );
+
+      const resumed = await withStream(
         apiUrl,
         apiKey,
         { lastEventId: data.cursor! },
         async (stream) => {
-          await collectUntil(
+          const { events } = await collectUntil(
             stream,
-            (evts) =>
-              evts.some(
-                (e) => (e.data as { item?: { id?: string } }).item?.id === last,
-              ),
+            (evts) => evts.some((e) => itemOf(e) === last),
             `the last write ${last} on a resume from the cursor`,
             signal,
           );
+          return events;
         },
       );
+      const mine = new Set(writtenIds);
+      const delivered = resumed
+        .filter((e) => e.event === "item.created")
+        .map(itemOf)
+        .filter((id): id is string => id !== undefined && mine.has(id));
+      expect(delivered).toEqual(unsent);
+      const cursor = BigInt(data.cursor!);
+      for (const e of resumed.filter((frame) => frame.id !== undefined)) {
+        expect(BigInt(e.id!) > cursor).toBe(true);
+      }
     } finally {
       socket.destroy();
     }
