@@ -889,6 +889,55 @@ describe("a purge says which edges it took", () => {
   });
 });
 
+describe("a purge says which edges it took, a conflicted copy's link among them", () => {
+  it("names the purged original on the edge.deleted of the link to its conflicted copy", async ({
+    signal,
+  }) => {
+    const tag = `copy-link-${ctx.runId}`;
+    const original = await note("linked original", tag);
+    const read = await client.getItem(original);
+    const base = read.data.item.version;
+    expect(
+      (
+        await client.updateItem(original, {
+          properties: { body: "the winner's body" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: "the loser's body" }, version: base },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy, "no conflicted copy was written").toBeTruthy();
+    trackItem(ctx, copy!);
+    const links = await client.listItemEdges(copy!, {
+      edge_type: "derived-from",
+    });
+    expect(links.data.data.map((e) => e.target_id)).toEqual([original]);
+    const link = links.data.data[0]!.id;
+    expect((await client.deleteItem(original)).ok).toBe(true);
+
+    const paths = await framesOf(
+      tag,
+      async () => {
+        expect((await client.purgeItem(original)).ok).toBe(true);
+      },
+      signal,
+    );
+    for (const [path, events] of paths) {
+      const taken = frame(events, "edge.deleted", link);
+      expect(taken, `${path}: edge.deleted for the link`).toBeDefined();
+      expect(taken?.purged_with, path).toBe(original);
+    }
+    expect((await client.getItem(copy!)).status).toBe(200);
+  });
+});
+
 describe("an archive carries neither what a trash took nor its mark", () => {
   it("restores a row a cascade trashed as its own trash, which its parent's restore leaves in the bin", async () => {
     const tag = `archive-${ctx.runId}`;

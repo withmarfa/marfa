@@ -845,4 +845,89 @@ describe("a create that resolves an existing row", () => {
     expect(after.data.item.properties.title).toBe("nothing was here");
     expect(after.data.item.version).toBe(1);
   });
+
+  it("takes a bulk entry's version of zero as the claim that there is no row, in both modes", async () => {
+    const entry = (sourceId: string, title: string, version = 0) => ({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { title, body: "bulk body" },
+      version,
+    });
+
+    for (const mode of ["upsert", "create_only"] as const) {
+      const sourceId = `bulk-zero-${mode}-${randomUUID()}`;
+      const created = await client.bulkItems({
+        mode,
+        items: [entry(sourceId, "nothing was here")],
+      });
+      expect(created.status, mode + JSON.stringify(created.error)).toBe(200);
+      expect(created.data.results[0]?.outcome, mode).toBe("created");
+      const id = created.data.results[0]?.id ?? "";
+      trackItem(ctx, id);
+      const read = await client.getItem(id);
+      expect(read.data.item.version, mode).toBe(1);
+    }
+
+    // Zero is no more than one of the versions a create may name where no
+    // row resolves: the row it makes is at 1 whatever it was handed.
+    const handed = `bulk-handed-${randomUUID()}`;
+    const five = await client.bulkItems([entry(handed, "handed five", 5)]);
+    expect(five.status).toBe(200);
+    expect(five.data.results[0]?.outcome).toBe("created");
+    trackItem(ctx, five.data.results[0]?.id ?? "");
+    const fiveRead = await client.getItem(five.data.results[0]?.id ?? "");
+    expect(fiveRead.data.item.version).toBe(1);
+
+    // A key that names a live row is a version no snapshot covers.
+    const held = `bulk-zero-held-${randomUUID()}`;
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: held,
+      properties: { title: "held", body: "held body" },
+    });
+    expect(seed.status).toBe(201);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const fresh = `bulk-zero-beside-${randomUUID()}`;
+    const entries = [
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: fresh,
+        properties: { title: "beside it", body: "beside body" },
+      },
+      entry(held, "from a writer that read nothing"),
+    ];
+
+    const atomic = await client.bulkItems(entries);
+    expect(atomic.status).toBe(409);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details).toMatchObject({
+      code: "ancestor_unavailable",
+      index: 1,
+    });
+
+    const perEntry = await client.bulkItems({ items: entries, atomic: false });
+    expect(perEntry.status).toBe(200);
+    expect(perEntry.data.results[1]).toMatchObject({
+      outcome: "errored",
+      error: { code: "ancestor_unavailable" },
+    });
+    // The entry beside it landed only on the page that was not atomic.
+    expect(perEntry.data.results[0]?.outcome).toBe("created");
+    trackItem(ctx, perEntry.data.results[0]?.id ?? "");
+
+    const skipped = await client.bulkItems({
+      mode: "create_only",
+      items: [entry(held, "from a writer that read nothing")],
+    });
+    expect(skipped.status).toBe(200);
+    expect(skipped.data.results[0]?.outcome).toBe("skipped");
+
+    const after = await client.getItem(id);
+    expect(after.data.item.properties.title).toBe("held");
+    expect(after.data.item.version).toBe(1);
+  });
 });

@@ -104,6 +104,49 @@ describe("concurrent edge writes", () => {
     }
   });
 
+  it("lands one of two updates naming the same version", async () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const source = await note();
+      const target = await note();
+      const created = await client.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+        properties: { note: "original" },
+      });
+      expect(created.status).toBe(201);
+      trackEdge(ctx, created.data.edge.id);
+      const id = created.data.edge.id;
+
+      const answers = await Promise.all(
+        ["first", "second"].map((text) =>
+          client.updateEdge(id, {
+            properties: { note: text },
+            version: created.data.edge.version,
+          }),
+        ),
+      );
+      const label = `round ${round}`;
+      expect(answers.map((r) => r.status).sort(), label).toEqual([200, 409]);
+      const landed = answers.find((r) => r.ok);
+      const refused = answers.find((r) => !r.ok);
+      expect(refused?.error?.error.code, label).toBe("version_conflict");
+
+      const stored = await client.getEdge(id);
+      expect(stored.data.edge.version, label).toBe(2);
+      expect(stored.data.edge.properties, label).toEqual(
+        landed?.data.edge.properties,
+      );
+      const current = (
+        refused?.error as unknown as {
+          current: { version: number; properties: Record<string, unknown> };
+        }
+      ).current;
+      expect(current.version, label).toBe(2);
+      expect(current.properties, label).toEqual(stored.data.edge.properties);
+    }
+  });
+
   it("stores one edge when two bulk pages carry the same triple", async () => {
     for (const atomic of [true, false]) {
       for (const mode of ["upsert", "create_only"] as const) {
