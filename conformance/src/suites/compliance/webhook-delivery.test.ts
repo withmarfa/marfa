@@ -156,15 +156,16 @@ async function startScriptedReceiver(
   };
 }
 
-/** A subscription to `item.created` on a hook of the receiver's. */
+/** A subscription on a hook of the receiver's, to `item.created` unless told. */
 async function subscribe(
   hook: ScriptedReceiver,
   label: string,
   owner: MarfaClient = client,
+  events: string[] = ["item.created"],
 ): Promise<{ id: string; secret: string }> {
   const created = await owner.createWebhook({
     url: hook.hookUrl(label),
-    events: ["item.created"],
+    events,
   });
   expect(created.status, JSON.stringify(created.error)).toBe(201);
   trackWebhook(ctx, created.data.id, owner);
@@ -444,6 +445,281 @@ describe("outbound webhook delivery", () => {
         (await fetch(hook.hookUrl(target), { method: "POST" })).status,
       ).toBe(200);
       expect(hook.attempts(target)).toHaveLength(1);
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer", async () => {
+    const hook = await startScriptedReceiver((label, n) => ({
+      status:
+        label === "replacement" || (label === "control" && n > 1) ? 200 : 500,
+    }));
+    try {
+      const subs = new Map<string, { id: string }>();
+      for (const label of ["repointed", "off", "deleted", "control"]) {
+        subs.set(label, await subscribe(hook, label));
+      }
+      await makeNote("settled-unsent");
+      for (const [label, sub] of subs) {
+        const row = await deliveryOf(sub.id, (r) => r.attempt === 1);
+        expect(row, label).toMatchObject({
+          status: "pending",
+          status_code: 500,
+        });
+      }
+
+      const repoint = await client.updateWebhook(subs.get("repointed")!.id, {
+        url: hook.hookUrl("replacement"),
+      });
+      expect(repoint.ok).toBe(true);
+      const off = await client.updateWebhook(subs.get("off")!.id, {
+        active: false,
+      });
+      expect(off.ok).toBe(true);
+      expect((await client.deleteWebhook(subs.get("deleted")!.id)).ok).toBe(
+        true,
+      );
+
+      // Past the wait that made each of them due, with the run that retries
+      // the untouched subscription a witness that a due row is attempted.
+      const lastFirst = Math.max(
+        ...["repointed", "off", "deleted", "control"].map(
+          (label) => hook.attempts(label)[0]!.at,
+        ),
+      );
+      await runRetriesUntil(
+        () =>
+          hook.attempts("control").length >= 2 &&
+          Date.now() >= lastFirst + 1500,
+        "the retry of the untouched subscription",
+      );
+
+      for (const [label, reason] of [
+        ["repointed", "The subscription was pointed at another URL."],
+        ["off", "The subscription was turned off."],
+      ] as const) {
+        const row = await deliveryOf(subs.get(label)!.id, () => true);
+        expect(row, label).toMatchObject({
+          status: "canceled",
+          succeeded: false,
+          error: reason,
+          status_code: 500,
+          attempt: 1,
+        });
+      }
+      const gone = await client.listWebhookDeliveries(subs.get("deleted")!.id);
+      expect(gone.status).toBe(404);
+      expect(gone.error?.error.code).toBe("webhook_not_found");
+      for (const label of ["repointed", "off", "deleted"]) {
+        expect(hook.attempts(label), `${label} was sent to again`).toHaveLength(
+          1,
+        );
+      }
+      expect(hook.attempts("replacement")).toHaveLength(0);
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted", async () => {
+    const hook = await startScriptedReceiver((label) => ({
+      status: label === "delivered" ? 200 : label === "failed" ? 400 : 500,
+    }));
+    try {
+      const subs = new Map<string, { id: string }>();
+      for (const label of ["pending", "delivered", "canceled", "failed"]) {
+        subs.set(label, await subscribe(hook, label));
+      }
+      await makeNote("redeliver-states");
+      const rows = new Map<string, WebhookDelivery>();
+      for (const [label, sub] of subs) {
+        rows.set(label, await deliveryOf(sub.id, (r) => r.attempt === 1));
+      }
+      expect(rows.get("pending")?.status).toBe("pending");
+      expect(rows.get("delivered")?.status).toBe("success");
+      expect(rows.get("failed")?.status).toBe("dead_letter");
+      const repoint = await client.updateWebhook(subs.get("canceled")!.id, {
+        url: hook.hookUrl("canceled-elsewhere"),
+      });
+      expect(repoint.ok).toBe(true);
+      rows.set(
+        "canceled",
+        await deliveryOf(
+          subs.get("canceled")!.id,
+          (r) => r.status === "canceled",
+        ),
+      );
+
+      const redeliver = (label: string) =>
+        client.rawRequest<WebhookDelivery>(
+          `/webhooks/${subs.get(label)!.id}/deliveries/${rows.get(label)!.id}/redeliver`,
+          { method: "POST" },
+        );
+      for (const label of ["pending", "delivered", "canceled"]) {
+        const refused = await redeliver(label);
+        expect(refused.status, label).toBe(409);
+        expect(refused.error?.error.code, label).toBe("conflict");
+        const audit = await client.listAudit({
+          action: "webhook.delivery.redeliver",
+          resource_id: rows.get(label)!.id,
+        });
+        expect(audit.data.data, label).toHaveLength(0);
+        expect(
+          (await client.listWebhookDeliveries(subs.get(label)!.id)).data
+            .data[0],
+          label,
+        ).toMatchObject({
+          status: rows.get(label)!.status,
+          attempt: rows.get(label)!.attempt,
+        });
+      }
+
+      // The witness: the same door accepts a delivery that failed for good.
+      const accepted = await redeliver("failed");
+      expect(accepted.status).toBe(202);
+      expect(accepted.data.status).toBe("pending");
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("clears the error a failed attempt recorded when a later attempt succeeds", async () => {
+    const hook = await startScriptedReceiver((_, n) => ({
+      status: n === 1 ? 503 : 200,
+    }));
+    try {
+      const sub = await subscribe(hook, "cleared");
+      await makeNote("cleared");
+      const failed = await deliveryOf(sub.id, (r) => r.attempt === 1);
+      expect(failed).toMatchObject({
+        status: "pending",
+        status_code: 503,
+        error: "HTTP 503",
+      });
+
+      await runRetriesUntil(
+        () => hook.attempts("cleared").length >= 2,
+        "the retry",
+      );
+      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      expect(settled).toMatchObject({
+        id: failed.id,
+        status_code: 200,
+        attempt: 2,
+        error: null,
+      });
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("narrows what a retry carries to the credential as it stands after the event", async () => {
+    const owner = await keyWith("narrowed-extensions", {
+      type_permissions: { "*": "read" },
+      extension_permissions: { "webhook.keep": "read", "webhook.drop": "read" },
+    });
+    let refuse = true;
+    const hook = await startScriptedReceiver(() => ({
+      status: refuse ? 500 : 200,
+    }));
+    try {
+      // The first namespace is written before the subscription, so the one
+      // event it is sent holds both namespaces.
+      const note = await makeNote("narrowed-extensions");
+      expect(
+        (await client.setItemExtension(note, "webhook.keep", { a: 1 })).ok,
+      ).toBe(true);
+      const sub = await subscribe(hook, "narrowed", owner.client, [
+        "metadata.changed",
+      ]);
+      expect(
+        (await client.setItemExtension(note, "webhook.drop", { b: 2 })).ok,
+      ).toBe(true);
+      await waitFor("the first attempt", async () =>
+        hook.attempts("narrowed").length >= 1 ? true : undefined,
+      );
+      const namespacesOf = (attempt: Attempt): string[] =>
+        Object.keys(
+          (JSON.parse(attempt.body) as { metadata: { extensions: object } })
+            .metadata.extensions,
+        ).sort();
+      const [first] = hook.attempts("narrowed") as [Attempt];
+      // The witness: before the narrowing the event carried both.
+      expect(namespacesOf(first)).toEqual(["webhook.drop", "webhook.keep"]);
+      await deliveryOf(sub.id, (r) => r.attempt === 1, owner.client);
+
+      const narrowed = await client.updateKey(owner.id, {
+        extension_permissions: { "webhook.keep": "read" },
+      });
+      expect(narrowed.ok, JSON.stringify(narrowed.error)).toBe(true);
+      refuse = false;
+      await runRetriesUntil(
+        () => hook.attempts("narrowed").length >= 2,
+        "the retry",
+      );
+      const [, retry] = hook.attempts("narrowed") as [Attempt, Attempt];
+      expect(namespacesOf(retry)).toEqual(["webhook.keep"]);
+      const ids = [first, retry].map(
+        (a) => (JSON.parse(a.body) as { delivery_id: string }).delivery_id,
+      );
+      expect(ids[1]).toBe(ids[0]);
+      const settled = await deliveryOf(
+        sub.id,
+        (r) => r.status === "success",
+        owner.client,
+      );
+      expect(settled.id).toBe(ids[0]);
+    } finally {
+      await hook.close();
+    }
+  });
+
+  it("settles a pending delivery unsent when the credential is narrowed away from its type", async () => {
+    const owner = await keyWith("narrowed-types", {
+      type_permissions: { "core.note": "read", "core.task": "read" },
+    });
+    const hook = await startScriptedReceiver((label, n) => ({
+      status: label === "control" && n > 1 ? 200 : 500,
+    }));
+    try {
+      const narrowed = await subscribe(hook, "narrowed-away", owner.client);
+      const control = await subscribe(hook, "control");
+      await makeTask("narrowed-away");
+      const pending = await deliveryOf(
+        narrowed.id,
+        (r) => r.attempt === 1,
+        owner.client,
+      );
+      await deliveryOf(control.id, (r) => r.attempt === 1);
+      expect(pending).toMatchObject({ status: "pending", status_code: 500 });
+
+      const update = await client.updateKey(owner.id, {
+        type_permissions: { "core.note": "read" },
+      });
+      expect(update.ok, JSON.stringify(update.error)).toBe(true);
+      const lastFirst = Math.max(
+        hook.attempts("narrowed-away")[0]!.at,
+        hook.attempts("control")[0]!.at,
+      );
+      await runRetriesUntil(
+        () =>
+          hook.attempts("control").length >= 2 &&
+          Date.now() >= lastFirst + 1500,
+        "the retry of the control subscription",
+      );
+
+      const row = await deliveryOf(narrowed.id, () => true, owner.client);
+      expect(row).toMatchObject({
+        id: pending.id,
+        status: "canceled",
+        succeeded: false,
+        error:
+          "The credential the subscription belongs to may not read this event.",
+        status_code: 500,
+        attempt: 1,
+      });
+      expect(hook.attempts("narrowed-away")).toHaveLength(1);
     } finally {
       await hook.close();
     }
