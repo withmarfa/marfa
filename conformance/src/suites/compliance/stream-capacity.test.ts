@@ -88,4 +88,91 @@ describe("GET /events on an instance that caps its live viewers", () => {
     expect(admitted?.response.status).toBe(200);
     await admitted?.close();
   });
+  it("answers the fault in a request ahead of 503, so a viewer past the cap learns of a fault it can fix", async () => {
+    const first = await openEventStream(server!.apiUrl, server!.workingKey, {
+      connectTimeoutMs: 30_000,
+    });
+    try {
+      expect(first.response.status).toBe(200);
+
+      // The witness: a request with no fault is the one the cap refuses.
+      const clean = await refusedStream([]);
+      expect(clean.response.status).toBe(503);
+
+      const faults: Array<{
+        name: string;
+        query: Array<[string, string]>;
+        header?: Array<[string, string]>;
+        credential: string | undefined;
+        status: number;
+        code: string;
+      }> = [
+        {
+          name: "no credential",
+          query: [],
+          credential: undefined,
+          status: 401,
+          code: "unauthorized",
+        },
+        {
+          name: "a credential that reads no type",
+          query: [],
+          credential: server!.operatorKey,
+          status: 403,
+          code: "type_not_permitted",
+        },
+        {
+          name: "an undeclared query key",
+          query: [["typ", "core.note"]],
+          credential: server!.workingKey,
+          status: 400,
+          code: "validation_error",
+        },
+        {
+          name: "a wildcard type",
+          query: [["type", "*"]],
+          credential: server!.workingKey,
+          status: 400,
+          code: "validation_error",
+        },
+        {
+          name: "an unregistered type",
+          query: [["type", "core.nothing_registers_this"]],
+          credential: server!.workingKey,
+          status: 400,
+          code: "unknown_type",
+        },
+        {
+          name: "an unknown edges value",
+          query: [["edges", "bogus"]],
+          credential: server!.workingKey,
+          status: 400,
+          code: "validation_error",
+        },
+        {
+          name: "a cursor that is not an event id",
+          query: [],
+          header: [["Last-Event-ID", "abc"]],
+          credential: server!.workingKey,
+          status: 400,
+          code: "validation_error",
+        },
+      ];
+      for (const fault of faults) {
+        const headers = new Headers(fault.header);
+        if (fault.credential !== undefined) {
+          headers.set("Authorization", `Bearer ${fault.credential}`);
+        }
+        const response = await fetch(
+          `${server!.apiUrl}/events?${new URLSearchParams(fault.query).toString()}`,
+          { headers },
+        );
+        expect(response.status, fault.name).toBe(fault.status);
+        const body = (await response.json()) as { error: { code: string } };
+        expect(body.error.code, fault.name).toBe(fault.code);
+      }
+    } finally {
+      await first.close();
+    }
+  });
 });
