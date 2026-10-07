@@ -122,15 +122,15 @@ When a credential that may read a blob sends `GET /blobs/{hash}/locations`, the 
 
 ### `stores/upload-locates-disk`
 
-When a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record the disk store as holding them.
+When a credential that may upload sends `POST /blobs` and the server answers `201`, the server MUST list the disk store among the blob's locations, whether or not the server already held the bytes.
 
-**Tests:** `compliance/blob-stores.test.ts › records a new blob's location as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`.
+**Tests:** `compliance/blob-stores.test.ts › records a new blob's location as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `› keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/upload-one-location`
 
 Where only the disk store is attached, when a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record that one location and no other.
 
-**Reason:** with an object store attached, an upload wakes replication and a second copy appears within a second, so one location holds only until then.
+**Reason:** with an object store attached, an upload wakes replication, so a second location soon follows.
 
 **Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`.
 
@@ -160,7 +160,9 @@ While the log holds no copy of a blob, the server MUST answer `GET /blobs/{hash}
 
 ### `stores/no-bytes-not-found`
 
-While no attached store holds the bytes of a blob the instance has registered, the server MUST answer `GET /blobs/{hash}` with `404 blob_not_found`.
+While no attached store holds a recorded copy of a blob the instance has registered, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` with `404 blob_not_found`.
+
+**Reason:** the bytes of a copy struck or dropped can stay in their store until a later run deletes them, and they are not the blob's.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
 
@@ -202,7 +204,7 @@ When a run of `blob-replicate` finds a blob that an attached store lacks and ano
 
 When a run of `blob-replicate` copies bytes that do not hash to the blob's name, the server MUST NOT record a location for the receiving store.
 
-**Reason:** a copy is recorded only after the receiving store has verified the bytes hash to their name.
+**Reason:** the receiving store hashes the bytes it is sent before it names them, so a corrupt copy in one store does not spread to another.
 
 **Tests:** waiting on #1444.
 
@@ -220,7 +222,7 @@ When a run of `blob-replicate` has blobs to copy, the server MUST copy at most `
 
 ### `stores/replicate-byte-bound`
 
-When a run of `blob-replicate` has blobs to copy, the server MUST stop before the blob that would push the bytes it copied past `MARFA_BLOB_REPLICATE_BATCH_BYTES`.
+When a run of `blob-replicate` has copied a blob, the server MUST NOT copy another blob in that run whose size would push the bytes it copied past `MARFA_BLOB_REPLICATE_BATCH_BYTES`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the blob that would push the copied bytes past the bound`.
 
@@ -334,7 +336,7 @@ The `blob-integrity` housekeeping job checks the copies the log claims.
 
 ### `stores/integrity-result`
 
-When the operator key runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, and `bytes`, the bytes it read.
+When the operator key runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, and `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing.
 
 **Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
 
@@ -346,15 +348,15 @@ When a run of `blob-integrity` finds a copy present and intact, the server MUST 
 
 ### `stores/integrity-rehashes-disk`
 
-When a run of `blob-integrity` checks a disk copy, the server MUST find a copy that is missing or whose bytes do not hash to the blob's name, though they are as long as the blob.
+When a run of `blob-integrity` checks a disk copy whose bytes are as long as the blob but do not hash to the blob's name, the server MUST strike the copy.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`.
 
 ### `stores/integrity-asks-object-store`
 
-When a run of `blob-integrity` checks an object-store copy, the server MUST ask the store for the object by name and size, and strike the copy when the store cannot answer for it.
+When a run of `blob-integrity` checks an object-store copy whose object is missing or not as long as the blob, the server MUST strike the copy.
 
-**Reason:** no bytes are fetched, so an object altered to the same size is not found.
+**Reason:** the check asks the store for the object's size and fetches no bytes, so an object altered at the same length is not found.
 
 **Tests:** waiting on #1444.
 
@@ -378,7 +380,7 @@ When a run of `blob-integrity` has struck a copy of a blob that another attached
 
 ### `stores/integrity-order`
 
-When a run of `blob-integrity` takes copies to check, the server MUST take the least recently checked first, those never checked ahead of the rest and in order of hash and then store, across every store rather than one store after another.
+When a run of `blob-integrity` takes copies to check, the server MUST take first the copies never checked and then the least recently checked, breaking ties by hash and then by store id, across every store rather than one store after another.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks no more copies than the batch in one run, least recently checked first and across the stores`.
 
@@ -390,7 +392,7 @@ When a run of `blob-integrity` has copies to check, the server MUST check at mos
 
 ### `stores/integrity-byte-bound`
 
-When a run of `blob-integrity` has copies to check, the server MUST stop before the copy that would push the bytes it read past `MARFA_BLOB_INTEGRITY_BATCH_BYTES`.
+When a run of `blob-integrity` has copies to check, the server MUST stop before the copy whose blob's size would push the run's `bytes` past `MARFA_BLOB_INTEGRITY_BATCH_BYTES`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the copy that would push the bytes read past the bound`.
 
@@ -470,7 +472,7 @@ While a blob's report is not older than `MARFA_BLOB_CLEANUP_GRACE_MS`, the serve
 
 When a run of `blob-orphans` purges a blob, the server MUST answer the blob's reads with `404 blob_not_found`.
 
-**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
+**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `› answers a link to a blob the sweep has purged as an unknown blob`, `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
 
 ### `stores/orphan-purge-unreports`
 
@@ -498,7 +500,7 @@ Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, when the operator key asks to run `
 
 ### `stores/orphan-switched-off-report`
 
-Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0, when the operator key sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
+Where `MARFA_BLOB_CLEANUP_INTERVAL_MS` is 0 on an instance that has never run `blob-orphans`, when the operator key sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
@@ -532,7 +534,9 @@ While an upload of a blob the orphan report names is in flight with a run of `bl
 
 ### `stores/orphan-reference-race`
 
-While a write that names a blob the orphan report names is in flight with a run of `blob-orphans`, the server MUST keep the blob.
+While a run of `blob-orphans` is under way, if a write that names a blob the run found unreferenced commits before the run purges the blob, then the server MUST keep the blob.
+
+**Reason:** the run decides each purge again at the moment it purges, so a reference written after the run's walk still counts. A write that commits after the purge names bytes that are gone.
 
 **Tests:** waiting on #1444.
 
@@ -552,7 +556,9 @@ If a purge is cut short, then the server MUST NOT leave a blob that is listed or
 
 ### `stores/orphan-restore-keeps`
 
-When `POST /restore` finds bytes already stored while a purge is due for them, the server MUST keep the bytes.
+While `POST /restore` of an archive that carries a blob the orphan report names is in flight with a run of `blob-orphans`, if the restore answers `200`, then the server MUST serve the blob's bytes once both have finished.
+
+**Reason:** either order is allowed. The restore lands first and takes the blob off the report, or the run purges the blob and the restore stores its bytes again.
 
 **Tests:** waiting on #1444.
 
@@ -614,7 +620,7 @@ When a queued or in-progress `update_properties` job's patch names a digest no b
 
 ### `stores/reference-digest-anywhere`
 
-When a string in an item in any lifecycle state, a metadata extension, an edge's properties or a version snapshot holds a run of exactly 64 lowercase hexadecimal characters with no further lowercase hexadecimal character on either side, the server MUST count the run as a reference to the blob `sha256:` and that run.
+When a string in an item in any lifecycle state, a metadata extension, an edge's properties or a version snapshot holds a run of exactly 64 lowercase hexadecimal characters with no further lowercase hexadecimal character after it, and either no lowercase hexadecimal character before it or the escape `%3a` straight before it, the server MUST count the run as a reference to the blob `sha256:` and that run.
 
 **Reason:** so a whole value, a `sha256:` link inside text such as a Markdown body, a URL-encoded one in capitals or in lowercase (`sha256%3A…`, `sha256%3a…`), an escaped one and the bare hex that `GET /blobs/{hash}` also serves are all references, whatever else stands beside the run.
 
@@ -622,7 +628,7 @@ When a string in an item in any lifecycle state, a metadata extension, an edge's
 
 ### `stores/reference-run-exact`
 
-When a string holds a run of hexadecimal characters that is 63 characters long, or 65, the server MUST NOT count it as a reference to a blob.
+When a string holds a run of lowercase hexadecimal characters that is 63 characters long, or 65, the server MUST NOT count it as a reference to a blob.
 
 **Tests:** `compliance/blob-rules.test.ts › counts a digest as a reference by its run of lowercase hex, whatever form it is written in`.
 
@@ -644,7 +650,7 @@ When a digest sits in the filter, the tags or another input of a queued or in-pr
 
 If a store cannot delete the bytes of a copy the server dropped, struck or purged, then the server MUST retry the deletion on a later run once the store can.
 
-**Reason:** the dropped or struck copy stays out of the log meanwhile.
+**Reason:** the copy left the location log when it was dropped, struck or purged, so only the retry removes bytes that nothing names.
 
 **Tests:** waiting on #1444.
 
@@ -652,6 +658,6 @@ If a store cannot delete the bytes of a copy the server dropped, struck or purge
 
 If a store keeps failing to delete the bytes of one copy, then the server MUST go on deleting the bytes of other copies, including after a restart.
 
-**Reason:** one failing store deletion must not prevent later healthy cleanup or lose the record that the failed copy's bytes are still to delete. A run that moves on past a failed attempt, and puts a copy queued later behind it, is what keeps the others moving.
+**Reason:** a run deletes a bounded number of copies, so a copy that always fails would otherwise fill every run and leave the bytes of every copy behind it in place.
 
 **Tests:** waiting on #1444.

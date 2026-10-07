@@ -66,7 +66,7 @@ When a credential that may upload sends `POST /blobs` with bytes the server alre
 
 ### `blobs/upload-concurrent`
 
-While several uploads of the same bytes are in flight together, the server MUST answer each with `201`, the one hash and the one recorded `mime_type`.
+While several uploads of the same bytes, each from a credential that may upload, are in flight together, the server MUST answer each with `201`, the one hash and the one recorded `mime_type`.
 
 **Tests:** `correctness/blob-correctness.test.ts › answers every upload of the same bytes sent together with the one hash and the one type`.
 
@@ -180,13 +180,13 @@ The server MUST send every answer that carries a blob's bytes, on `GET` and `HEA
 
 Where an object store holds a blob, when a credential that may read it asks for its link, the server MUST give a link that serves the bytes under the recorded type and `Content-Disposition: attachment; filename="<hex>"`.
 
-**Reason:** a signed link cannot carry the policy or `nosniff`, so it is safe only because the store serves it from its own origin. A bucket must be on a different site from the instance, which `deploy/README.md` says.
+**Reason:** a signed link cannot carry the policy or `nosniff`, so it is safe only because the store serves it from its own origin, which `deploy/README.md` tells an operator to put on a different site from the instance.
 
 **Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`.
 
 ## Ranges
 
-A `Range` is read the same way on `GET /blobs/{hash}`, on `HEAD /blobs/{hash}` and on the link the instance serves.
+In these rules, a read of a blob is `GET` or `HEAD /blobs/{hash}`, or a `GET` or `HEAD` of the link the instance serves.
 
 ### `blobs/range-closed`
 
@@ -428,7 +428,7 @@ A reference is a digest anywhere in a string, as `stores/reference-digest-anywhe
 
 ### `blobs/read-no-type`
 
-If a working key whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob, an unknown blob or no hash at all.
+If a working key or an app's access token whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
 
 **Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth.md` 1), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
 
@@ -450,7 +450,7 @@ If a working key whose type map names only a type nothing registers sends a blob
 
 ### `blobs/read-unreferenced`
 
-While no row references a blob, the server MUST answer `404 blob_not_found` to every working key that reads it on the four reads, the key that uploaded it included.
+While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, the credential that uploaded it included.
 
 **Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
 
@@ -472,7 +472,7 @@ While an item of a type a working key or an access token may read references a b
 
 ### `blobs/lend-earlier-version`
 
-While only an earlier version of an item references a blob, the server MUST answer a working key `404 blob_not_found` on the four reads.
+While only an earlier version of an item references a blob, the server MUST answer a working key `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
 
 **Reason:** the `blob-orphans` housekeeping job keeps such a blob (`stores/orphan-keeps-versions`), so only the read is withheld.
 
@@ -480,13 +480,13 @@ While only an earlier version of an item references a blob, the server MUST answ
 
 ### `blobs/lend-withdrawn`
 
-When a row stops naming a digest, because the item, the edge or the namespace was rewritten without it, deleted or purged, the server MUST stop serving the blob to a credential that read it only through that row.
+When a row stops naming a digest, because an item, an edge or an extension namespace was rewritten without it, the edge or the namespace was deleted, or the item was purged with its edges and namespaces, the server MUST stop serving the blob to a credential that read it only through that row.
 
 **Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `› serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `› serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an edge names through a source in the bin, and stops once the source is purged`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
 
 ### `blobs/lend-edge`
 
-While a working key may read an edge's type by its edge map and may read the type of the edge's source item, in any lifecycle state, the server MUST serve it on the four reads each blob the edge's properties reference through a reference that lends.
+While a working key or an app's access token may read an edge's type by its edge map and may read the type of the edge's source item, in any lifecycle state, the server MUST serve it each blob the edge's properties reference through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
 
 **Reason:** otherwise no working credential can read a blob named only in an edge's properties, and a working key's export archive would leave its bytes out. The target's type is not asked.
 
@@ -494,7 +494,7 @@ While a working key may read an edge's type by its edge map and may read the typ
 
 ### `blobs/lend-edge-unread`
 
-If a working key may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
+If a working key or an app's access token may not read an edge's type by its edge map, or may not read the type of the edge's source item, then the server MUST answer `404 blob_not_found` for a blob that only that edge references.
 
 **Tests:** `compliance/blob-reach.test.ts › serves a blob named only in an edge's properties to a key that reads the edge, and to no other`.
 
@@ -506,7 +506,7 @@ While the source item of an edge is in the bin, the server MUST go on serving a 
 
 ### `blobs/lend-extension`
 
-While a working key may read an extension namespace by its extension map and may read the type of the item it sits on, in any lifecycle state, the server MUST serve it on the four reads each blob the namespace references through a reference that lends.
+While a working key may read an extension namespace by its extension map and may read the type of the item it sits on, in any lifecycle state, the server MUST serve it each blob the namespace references through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
 
 **Reason:** otherwise no working credential can read a blob named only in an extension, and a working key's export archive would leave its bytes out.
 
@@ -520,7 +520,7 @@ If a working key may not read an extension namespace, or may not read the type o
 
 ### `blobs/lend-extension-label`
 
-Where a working key's label is the name of an extension namespace, the server MUST count that namespace as one the key may read, and no other key.
+Where a working key's label is the name of an extension namespace, the server MUST count that namespace as one the key may read, whatever its extension map grants.
 
 **Reason:** a key reads the namespace its own label names beside the namespaces its extension map grants (`keys-and-oauth.md` 21).
 
@@ -546,7 +546,7 @@ When a stale write that keeps both copies of an item copies the item's edges, th
 
 ### `blobs/proof-item`
 
-When a working key or an app's access token writes an item through `POST /items`, `POST /items/bulk`, `PATCH /items/{id}` as a plain update, a stale merge, a keep-both write or a retype, or `POST /items/bulk-actions` with `update_properties`, an upsert onto a natural key included, and the write names a digest the item did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+When a working key or an app's access token writes an item through `POST /items`, `POST /items/bulk`, `PATCH /items/{id}` as a plain update, a stale merge, a keep-both write or a retype, or `POST /items/bulk-actions` with `update_properties`, an upsert onto a natural key included, and the write names a digest the item did not name before and, for a write made against an earlier version, that version did not name, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
 
 **Reason:** a credential that may write an item could otherwise read any blob whose hash it knows by naming it there, which is as good as downloading and uploading the bytes again.
 
@@ -554,7 +554,7 @@ When a working key or an app's access token writes an item through `POST /items`
 
 ### `blobs/proof-folder`
 
-When a working key writes a digest into a folder's settings through `POST /folders` or `PATCH /folders/{id}`, the server MUST make the reference lend only if the key could read the blob as it wrote.
+When a working key or an app's access token writes a digest a folder's settings did not name before through `POST /folders` or `PATCH /folders/{id}`, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
 
 **Reason:** folder settings are a `system.folder`'s properties and count like any other, but a key whose only write is `system.folder` cannot upload (`blobs/upload-needs-write`).
 
@@ -562,7 +562,7 @@ When a working key writes a digest into a folder's settings through `POST /folde
 
 ### `blobs/proof-edge`
 
-When a working key writes an edge's properties through `POST /edges` or `PATCH /edges/{id}` and names a digest the edge did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+When a working key or an app's access token writes an edge's properties through `POST /edges`, `POST /edges/bulk` or `PATCH /edges/{id}` and names a digest the edge did not name before, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
 
 **Reason:** a credential that may write an edge could otherwise read any blob whose hash it knows by naming it there.
 
@@ -570,7 +570,7 @@ When a working key writes an edge's properties through `POST /edges` or `PATCH /
 
 ### `blobs/proof-extension`
 
-When a working key writes an extension namespace through `PUT /items/{id}/extensions/{namespace}` and names a digest the namespace did not name before, the server MUST make the reference lend only if the key had uploaded the bytes or could read the blob as it wrote.
+When a working key or an app's access token writes an extension namespace through `PUT /items/{id}/extensions/{namespace}` and names a digest the namespace did not name before, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
 
 **Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
 
@@ -584,7 +584,7 @@ While an item, an edge or an extension namespace keeps naming a digest that does
 
 ### `blobs/proof-lending-stays`
 
-While an item keeps naming a digest through a reference that lends, the server MUST keep that reference lending through every later write, whoever makes it.
+While an item, an edge or an extension namespace keeps naming a digest through a reference that lends, the server MUST keep that reference lending through every later write, whoever makes it.
 
 **Reason:** a write that keeps a digest decides nothing about it, so a writer that never sent the bytes cannot withdraw what another proved.
 
@@ -608,9 +608,9 @@ When a write made against an earlier version names a digest that version already
 
 ### `blobs/proof-copy-as-stood`
 
-When a stale write that keeps both copies of an item writes the copy, the server MUST give each digest the copy names that the base version named the standing it had on the item.
+When a stale write that keeps both copies of an item writes the copy, the server MUST give each digest the copy names that the item still names the standing it has on the item.
 
-**Reason:** the copy is written from the base, so a digest the base held was proved, or not, by whoever wrote it there.
+**Reason:** a digest the item holds was proved, or not, by whoever wrote it there, and copying it proves nothing. A digest the base version named that the item no longer names is held to `blobs/proof-stale`.
 
 **Tests:** `compliance/blob-reach.test.ts › keeps each digest on a keep-both copy as it stood on the item`.
 
@@ -708,7 +708,7 @@ A file item is an item of `core.file` or of a type that inherits from it.
 
 ### `blobs/file-size-set`
 
-When an item of `core.file`, or of a type that inherits from it, is created or updated through `POST /items`, `PATCH /items/{id}` in either properties mode, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties`, a retype into a file type, a stale write and the keep-both copy it makes, or `POST /restore`, and its `blob_ref` is a reference that lends, the server MUST store `size_bytes` as the stored length of that blob in bytes, whatever size the write carried and none included.
+When an item of `core.file`, or of a type that inherits from it, is created or updated through `POST /items`, `PATCH /items/{id}` in either properties mode, `POST /items/bulk`, `POST /items/bulk-actions` with `update_properties`, a retype into a file type, a stale write and the keep-both copy it makes, or `POST /restore`, and its `blob_ref` is a whole `sha256:` hash whose reference lends, the server MUST store `size_bytes` as the stored length of that blob in bytes, whatever size the write carried and none included.
 
 **Reason:** an app lists files from the items it holds, offline included, and cannot ask the server about each blob to show how big it is. The server measured the bytes when they were uploaded, so every writer, a connector over HTTP included, gets the size with no code of its own, and no write can store a size that disagrees with the bytes. A lending reference means the writer uploaded the bytes or could read them, so the instance holds them whenever a size is set.
 
@@ -716,9 +716,9 @@ When an item of `core.file`, or of a type that inherits from it, is created or u
 
 ### `blobs/file-size-none`
 
-When an item of `core.file`, or of a type that inherits from it, is created or updated and its `blob_ref` is not a reference that lends, the server MUST store no `size_bytes`, whatever size the write carried.
+When an item of `core.file`, or of a type that inherits from it, is created or updated and its `blob_ref` is not a whole `sha256:` hash whose reference lends, the server MUST store no `size_bytes`, whatever size the write carried.
 
-**Reason:** a size set from the bytes would tell a writer that never proved it holds them that the instance does, and a size kept from the write would be a number nobody measured. A `blob_ref` that is not a `sha256:` hash, a hash the instance does not hold and a hash written without its prefix lend nothing.
+**Reason:** a size set from the bytes would tell a writer that never proved it holds them that the instance does, and a size kept from the write would be a number nobody measured. A hash the instance does not hold lends nothing, and the size is read only from a whole hash, so a `blob_ref` written without its prefix gets none even where its reference lends the read.
 
 **Tests:** `compliance/file-size.test.ts › carries none for bytes its writer never sent, where the writer that sent them is told`, `› carries none for bytes not yet uploaded, and has it once the digest is written again with them`, `› carries none for a reference that names no blob the instance could lend, on a create and an update`, `› carries none for bytes its writer never sent, whatever an update of the file says`, `› is set on a restore from an archive that carries another size, and none where the line lent nothing`, `› follows an update that replaces the properties, and is gone once they name no blob`.
 
@@ -730,13 +730,13 @@ When a file item whose `blob_ref` did not lend is written again with the digest 
 
 ### `blobs/file-size-wrong-shape`
 
-If a write to a file item names `size_bytes` as anything but a whole number or null, then the server MUST answer `400 invalid_properties`, on a create, on an update and on a stale write that meets no collision.
+If a write to a file item names `size_bytes` as anything but an integer or null, then the server MUST answer `400 invalid_properties`, on a create, on an update and on a stale write that meets no collision.
 
 **Tests:** `compliance/file-size.test.ts › refuses a size of another shape on a create, an update and a stale write`.
 
 ### `blobs/file-size-stale-no-collision`
 
-When a write made against an earlier version of a file item carries `size_bytes` as a whole number or null, the server MUST NOT name a conflict on `size_bytes`.
+When a write made against an earlier version of a file item carries `size_bytes` as an integer or null, the server MUST NOT name a conflict on `size_bytes`.
 
 **Reason:** the size is the server's to set, so a value the write sent is not the writer's edit. Counted as one, a write built from the writer's own fields would be refused whenever another writer had replaced the bytes since, though the writer changed nothing the other did.
 
@@ -750,6 +750,6 @@ When a write made against an earlier version of a file item replaces the propert
 
 ### `blobs/file-size-stale-merges`
 
-When a write made against an earlier version of a file item carries `size_bytes` as a whole number or null, the server MUST merge the rest of the write as it would without the size.
+When a write made against an earlier version of a file item carries `size_bytes` as an integer or null, the server MUST merge the rest of the write as it would without the size.
 
 **Tests:** `compliance/file-size.test.ts › does not collide on a size it carries as a whole number or null, and merges the rest`, `› does not count a size it leaves out of a whole replacement as a cleared property`.
