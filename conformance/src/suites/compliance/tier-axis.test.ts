@@ -177,6 +177,62 @@ describe("tier axis", () => {
     expect(ids).toContain(feed.data.item.id);
   });
 
+  it("narrows the stats and the search by tier as the listing does", async () => {
+    const word = `tiernarrow${ctx.runId}`;
+    const ids: Record<string, string> = {};
+    for (const tier of ["library", "feed"] as const) {
+      const made = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { title: word, body: `${word} ${tier}` },
+        tier,
+        tags: [word],
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      ids[tier] = made.data.item.id;
+    }
+    const scope = `tags=${encodeURIComponent(word)}`;
+    const stats = async (tier: string) => {
+      const res = await client.rawRequest<Record<string, number>>(
+        `/items/stats?${scope}&tier=${tier}`,
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data;
+    };
+    expect(await stats("all")).toEqual({ active: 2 });
+    expect(await stats("library")).toEqual({ active: 1 });
+    expect(await stats("feed")).toEqual({ active: 1 });
+
+    const found = async (tier: string): Promise<string[]> => {
+      const narrowed = await client.rawRequest<{
+        data: { item: { id: string } }[];
+      }>(`/search?q=${word}&tier=${tier}`);
+      expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+      return narrowed.data.data.map((hit) => hit.item.id).sort();
+    };
+    expect(await found("all")).toEqual([ids.library, ids.feed].sort());
+    expect(await found("library")).toEqual([ids.library]);
+    expect(await found("feed")).toEqual([ids.feed]);
+  });
+
+  it("refuses a tier that is not library, feed or all, on the listing, the stats and the search", async () => {
+    const doors = ["/items?", "/items/stats?", `/search?q=${ctx.runId}&`];
+    for (const door of doors) {
+      // The witness: the sentinel is taken on the same door, so the refusal
+      // below is the value's and not the door's.
+      const taken = await client.rawRequest<unknown>(`${door}tier=all`);
+      expect(taken.status, door).toBe(200);
+      for (const tier of ["both", "Library", "archive"]) {
+        const refused = await client.rawRequest<unknown>(`${door}tier=${tier}`);
+        expect(refused.status, `${door}tier=${tier}`).toBe(400);
+        expect(refused.error?.error.code, `${door}tier=${tier}`).toBe(
+          "validation_error",
+        );
+      }
+    }
+  });
+
   it("credential default_tier stamps tier when client omits", async () => {
     const feedKey = await makeClient("feed-key", "feed");
     const r = await feedKey.createItem({
