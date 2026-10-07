@@ -337,7 +337,7 @@ const bulkActionRoute = createRoute({
         },
       },
       description:
-        '- `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, a `filter` field is empty or blank, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
+        '- `validation_error`: the body or `filter` is malformed or has an undeclared key or an empty field, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
     },
     401: {
       content: {
