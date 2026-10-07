@@ -12,6 +12,8 @@
 #    and unhealthy with the server's message in its log, rather than ending
 #    and being started again, and `docker stop` still ends it with status 0.
 set -euo pipefail
+# Under pipefail, `producer | grep -q` fails when grep matches and exits before
+# the producer has written everything, so a match is read from a here-string.
 
 image=${1:?usage: check-image.sh <image> <sha>}
 sha=${2:?usage: check-image.sh <image> <sha>}
@@ -44,7 +46,7 @@ secrets=(
   -e "MARFA_AUTH_BASE_URL=http://localhost:8600"
 )
 
-port_of() { docker port "$1" 8600/tcp | head -n 1 | sed 's/.*://'; }
+port_of() { docker port "$1" 8600/tcp | sed -n '1s/.*://p'; }
 
 until_true() {
   local what=$1 seconds=$2
@@ -76,7 +78,7 @@ port=$(port_of "$fresh")
 healthy() { curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1; }
 until_true "the container answering /health" 90 healthy
 body=$(curl -fsS "http://127.0.0.1:$port/")
-printf '%s' "$body" | grep -q "\"version\":\"$sha\"" || fail "the root document does not report $sha: $body"
+grep -q "\"version\":\"$sha\"" <<<"$body" || fail "the root document does not report $sha: $body"
 until_true "the image's own health check passing" 60 \
   bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $fresh)\" = healthy ]"
 echo "booted, reports $sha, healthy"
@@ -91,9 +93,9 @@ mkdir -p "$work/data"
 sqlite3 "$work/data/marfa.db" "CREATE TABLE custom_types (id TEXT);"
 chmod -R a+rwX "$work/data"
 docker run -d --name "$refused" -v "$work/data:/data" "${health[@]}" "${secrets[@]}" "$image" >/dev/null
-logged() { docker logs "$refused" 2>&1 | grep -q "stays up, unhealthy"; }
+logged() { grep -q "stays up, unhealthy" <<<"$(docker logs "$refused" 2>&1)"; }
 until_true "the container saying why it will not start" 90 logged
-docker logs "$refused" 2>&1 | grep -q "export it with the build that wrote it" \
+grep -q "export it with the build that wrote it" <<<"$(docker logs "$refused" 2>&1)" \
   || fail "the log does not name the way forward"
 sleep 5
 [ "$(docker inspect --format '{{.State.Running}}' "$refused")" = true ] \
