@@ -7,6 +7,8 @@ mod door;
 mod error;
 mod folders;
 mod output;
+#[cfg(test)]
+mod reference;
 mod remote;
 mod values;
 mod watch;
