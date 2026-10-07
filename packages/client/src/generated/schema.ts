@@ -2941,7 +2941,7 @@ export interface components {
             version?: number;
             /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
             label?: string;
             /** @description What the type is for. */
             description?: string;
@@ -3005,7 +3005,7 @@ export interface components {
             version?: number;
             /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
             parent?: string;
-            /** @description A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier. */
+            /** @description A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier. */
             label?: string;
             /** @description What the type is for. */
             description?: string;

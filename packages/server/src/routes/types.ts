@@ -233,7 +233,7 @@ const typeDefinitionBody = {
     .string()
     .optional()
     .describe(
-      "A name for people to read. Leave it out on `POST /types` and Marfa derives one from the last segment of the identifier.",
+      "A name for people to read. Leave it out and Marfa derives one from the last segment of the identifier.",
     ),
   description: z.string().optional().describe("What the type is for."),
   // Strings rather than the role enum the response carries, because the
@@ -340,6 +340,17 @@ const refuseAsTheValidatorWould = (
     })),
   });
 };
+
+/** Gives a schema naming no label one made from its identifier's last segment. */
+function labelled<T extends { id: string; label?: string }>(schema: T): T {
+  if (!schema.label) {
+    const lastSegment = schema.id.split(".").pop() ?? schema.id;
+    schema.label = lastSegment
+      .replace(/[_-]/g, " ")
+      .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  }
+  return schema;
+}
 
 /** The refusal both authoring doors give a schema the validator refused. */
 function schemaRefusal(errors: SchemaValidationIssue[]): MarfaError {
@@ -882,12 +893,7 @@ export function typeRoutes(storage: Storage) {
 
           const schema = result.data;
 
-          if (!schema.label) {
-            const lastSegment = schema.id.split(".").pop() ?? schema.id;
-            schema.label = lastSegment
-              .replace(/[_-]/g, " ")
-              .replace(/\b\w/g, (ch) => ch.toUpperCase());
-          }
+          labelled(schema);
 
           if (schema.parent) {
             requireParentReach(c, schema.parent);
@@ -940,7 +946,7 @@ export function typeRoutes(storage: Storage) {
             throw schemaRefusal(result.errors);
           }
 
-          const schema = result.data;
+          const schema = labelled(result.data);
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );

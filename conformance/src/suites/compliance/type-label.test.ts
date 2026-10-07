@@ -70,6 +70,33 @@ describe("type label compliance", () => {
     expect(fetched.data.label).toBe(derived);
   });
 
+  it("makes a label from the identifier when a replacement names none", async () => {
+    const typeId = `user.relabel-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: typeId,
+          label: "Given",
+          fields: { value: { type: "number" } },
+        })
+      ).ok,
+    ).toBe(true);
+    // The witness: the label the registration named is the one read back.
+    expect((await client.getType(typeId)).data.label).toBe("Given");
+
+    const replaced = await client.replaceType(typeId, {
+      id: typeId,
+      fields: { value: { type: "number" } },
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    const derived = typeId
+      .split(".")
+      .pop()!
+      .replace(/[_-]/g, " ")
+      .replace(/\b\w/g, (ch) => ch.toUpperCase());
+    expect((await client.getType(typeId)).data.label).toBe(derived);
+  });
+
   it("label appears in type list", async () => {
     const typeId = `user.label-list-${ctx.runId}`;
     const r = await client.registerType({

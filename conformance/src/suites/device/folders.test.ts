@@ -7159,7 +7159,8 @@ describe("what frontmatter says", () => {
   it("takes the display hints of the nearest type that declares any, whole, as the server resolves them", async () => {
     // A subtype naming only a body inherits no title from its parent: the
     // server's read of the type answers the subtype's block alone
-    // (`types.md` 8), so the folder falls back to `title` (`device.md` 47).
+    // (`types/read-display-hints`), so the folder falls back to `title`
+    // (`device.md` 47).
     harness = await folderHarness("folder-partial-hints", {
       settings: { search: { types: ["user.quote"] } },
       catalog: {

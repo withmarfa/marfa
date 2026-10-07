@@ -289,4 +289,21 @@ describe("the version policy a type inherits", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(await history(binned)).toBe(1);
   });
+
+  it("does not thin an item whose type was force-deleted by the policy the type held", async () => {
+    const kept = await register(undefined, { max_versions: 1 });
+    const deleted = await register(undefined, { max_versions: 1 });
+    const items = {
+      kept: await itemWithHistory(kept, 3),
+      deleted: await itemWithHistory(deleted, 3),
+    };
+    const removed = await client.deleteType(deleted, true);
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+
+    await runThinning();
+
+    // The witness: the same policy on a registered type thins in the same run.
+    expect(await history(items.kept)).toBe(1);
+    expect(await history(items.deleted)).toBe(3);
+  });
 });

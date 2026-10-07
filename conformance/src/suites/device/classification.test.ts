@@ -1074,7 +1074,7 @@ describe("the ceiling, and releasing what it stopped", () => {
             });
           }
           // The allow-list's refusal: the same status and code, naming the
-          // list beside the source (`types.md` 18).
+          // list beside the source (`types/source-allowlist`).
           if (sent.source === "listed") {
             return refusal(
               403,

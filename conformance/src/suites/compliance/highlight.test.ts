@@ -88,7 +88,7 @@ describe("core.highlight property-level", () => {
     }
   });
 
-  it("the moment the highlight was made is the system `occurred_at`", async () => {
+  it("the moment the highlight was made is the system occurred_at", async () => {
     const ts = "2026-03-15T10:00:00.000Z";
     const r = await client.createItem({
       type: "core.highlight",
@@ -100,7 +100,7 @@ describe("core.highlight property-level", () => {
     expect(r.data.item.occurred_at).toBe(ts);
   });
 
-  it("has no `highlighted_at` property on item or properties", async () => {
+  it("has no highlighted_at property on item or properties", async () => {
     const r = await client.createItem(createHighlight());
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);

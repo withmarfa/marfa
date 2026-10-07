@@ -232,6 +232,54 @@ If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor 
 
 **Tests:** waiting on #1444.
 
+## Version thinning
+
+The `version-thinning` job removes an item's older snapshots by its type's `version_policy` (`types/version-policy-values`).
+
+### `housekeeping/thinning-policy`
+
+When the `version-thinning` job thins an item's history, the server MUST keep the snapshots the effective `version_policy` of the item's type keeps, as `GET /types/{id}` answers it.
+
+**Reason:** a policy read from the type alone would delete history the policy advertised for the type keeps.
+
+**Tests:** `compliance/version-policy.test.ts › thins an item's history by the policy its type inherits`.
+
+### `housekeeping/thinning-policy-defaults`
+
+When no type in an item's type chain declares a field of `version_policy`, the server MUST take that field from the instance defaults when it thins the item.
+
+**Tests:** waiting on #1444.
+
+### `housekeeping/thinning-minimum`
+
+The server MUST NOT thin an item whose history holds two snapshots or fewer.
+
+**Tests:** `compliance/version-policy.test.ts › never thins an item holding two versions or fewer`.
+
+### `housekeeping/thinning-bin`
+
+The server MUST thin an item in the bin as it thins a live one.
+
+**Tests:** `compliance/version-policy.test.ts › thins an item in the bin as it thins a live one`.
+
+### `housekeeping/thinning-unregistered`
+
+When an item's type is no longer registered, the server MUST NOT thin the item by a `version_policy` the type held.
+
+**Tests:** `compliance/version-policy.test.ts › does not thin an item whose type was force-deleted by the policy the type held`.
+
+### `housekeeping/thinning-unregistered-defaults`
+
+When an item's type is no longer registered, the server MUST thin the item by the instance defaults.
+
+**Tests:** waiting on #1444.
+
+### `housekeeping/thinning-race`
+
+When a type is replaced while the `version-thinning` job thins its items, the server MUST thin each item by the policy as it stands when its snapshots are removed.
+
+**Tests:** waiting on #1444.
+
 ## Restarts and deadlines
 
 No fixture can restart the server yet. Nor can one hold a run past its deadline: the heartbeat and the webhook poll stop waiting for their receivers after 10 seconds, before their deadlines.
