@@ -185,9 +185,12 @@ export function createApp(
 
   // The root answers a page or the description by what the caller asks for,
   // so a cache must not hand one the other's: a refusal included.
-  app.use("/", async (c, next) => {
+  app.use("*", async (c, next) => {
     await next();
-    if (c.req.method === "GET" || c.req.method === "HEAD") {
+    if (
+      c.req.path === "/" &&
+      (c.req.method === "GET" || c.req.method === "HEAD")
+    ) {
       c.res.headers.set("Vary", "Accept");
     }
   });
