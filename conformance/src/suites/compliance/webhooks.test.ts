@@ -451,7 +451,7 @@ describe("outbound webhooks", () => {
     // What `enable_fanout` governs is the outbound call and nothing else. It is
     // off unless the caller says otherwise, because one bulk call writes
     // thousands of rows and a delivery per row per subscriber is not what the
-    // caller asked for. The event log is not conditional on it —
+    // caller asked for. The event log is not conditional on it:
     // `items/bulk-event-log` cites `sync/replay.test.ts` for that half, which
     // is the half a client rebuilding its state depends on.
     const created = await client.createWebhook({

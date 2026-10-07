@@ -90,15 +90,13 @@ describe("the tag bound is enforced where the tags are written", () => {
     );
   });
 
-  // A row can already be over the bound: rows were written through the bulk
-  // doors before those consulted it, and `items.create` still writes tags
-  // verbatim so an archive of such rows stays restorable. Refusing every write
-  // to one would strand it — a merge carrying nothing, which changes nothing,
-  // would answer 400 about a limit the caller never approached.
+  // A row can already be over the bound: `items.create` writes tags unbounded
+  // so an archive of such rows stays restorable. Refusing every write to one
+  // would strand it: a merge carrying nothing, which changes nothing, would
+  // answer 400 about a limit the caller never approached.
   it("leaves a row that is already over the bound writable", async () => {
     // Through `items.create`, the one writer that is deliberately unbounded,
-    // which is now the only way such a row can come about — the same way an
-    // archive restore produces one.
+    // the same way an archive restore produces one.
     const created = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "already over" },
@@ -139,14 +137,12 @@ describe("the tag bound is enforced where the tags are written", () => {
  * at neither layer.
  *
  * The bulk create arm writes tags through `items.create`, which is also the
- * archive restore's writer and must stay unbounded — an archive is a faithful
- * record of rows written before this rule existed, so tightening the store
- * makes those unrestorable. The bound therefore belongs on the route, which is
- * where the single-item create already puts it.
+ * archive restore's writer and must stay unbounded, so an archive holding a
+ * row over the bound stays restorable. The bound therefore belongs on the
+ * route, which is where the single-item create puts it.
  *
- * The bulk update arm writes through `set`, the wholesale replace, which had
- * no check of its own; it does now, so the bound holds wherever that writer is
- * reached rather than only at the doors that remember.
+ * The bulk update arm writes through `set`, the wholesale replace, which holds
+ * the bound itself, so the bound holds wherever that writer is reached.
  *
  * The bulk action's `add` array is the third question — what a caller may
  * *send* — which the store cannot answer, because a hundred and one copies of

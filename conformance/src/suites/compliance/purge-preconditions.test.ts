@@ -1,9 +1,9 @@
 /**
  * The preconditions a purge may carry (`items/purge-version` and
  * `items/bulk-purge-expected-ids`): the version the caller read on
- * `POST /items/{id}/purge`, and the ids a dry run returned on a bulk purge. A purge
- * cannot be undone, so a change made after the person confirmed is refused or
- * left alone, never destroyed unseen.
+ * `POST /items/{id}/purge`, and the ids a dry run returned on a bulk purge.
+ * A purge cannot be undone, so a change made after the person confirmed is
+ * refused or left alone, never destroyed unseen.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";

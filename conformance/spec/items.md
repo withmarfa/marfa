@@ -692,7 +692,7 @@ When a credential sends an `Idempotency-Key` that another credential used, the s
 
 When a signed-in app repeats a request under an `Idempotency-Key` with another access token for the same app and person, the server MUST treat it as the same credential's.
 
-**Tests:** `sync/idempotency-replay.test.ts › holds a key to the app and person across a token refresh`.
+**Tests:** `compliance/idempotency-signed-in.test.ts › holds a key to the app and person across a token refresh`.
 
 ### `items/idempotency-key-length`
 
@@ -1192,7 +1192,7 @@ When the server answers `bulk_atomic_rollback`, the server MUST answer it with t
 
 When the server reads a `POST /items/bulk` page under `atomic: true`, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
 
-**Reason:** a refusal the key can do nothing about is answered whatever the rows hold.
+**Reason:** otherwise a stale entry ahead of it answers `409`, and the caller re-reads a row when the cause is a permission it lacks.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses an atomic page for an entry's source or type before a stale entry ahead of it`.
 
@@ -1644,7 +1644,7 @@ If a write would give an item a non-empty value in its type's `link_field` that 
 
 ### `items/link-every-write`
 
-When the server holds a write to an item's link, the server MUST hold it on `POST /items` and its natural-key upsert, `PATCH /items/{id}` under `merge` or `replace` at any version, a move into the type, each `POST /items/bulk` entry and each item a bulk `update_properties` writes.
+The server MUST hold every write to an item's link to `items/link-taken`, on `POST /items` and its natural-key upsert, `PATCH /items/{id}` under `merge` or `replace` at any version, a move into the type, each `POST /items/bulk` entry and each item a bulk `update_properties` writes.
 
 **Tests:** `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`, `› holds a retype to the type's links and frees the link a row takes away`, `› holds a retype from a type naming no link, and frees the link of a row retyped into one`, `› refuses a bulk entry a link another row holds, on both halves`, `› reports a link another row holds per row of a bulk update_properties`.
 
