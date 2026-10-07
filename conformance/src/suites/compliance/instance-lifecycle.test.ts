@@ -1144,4 +1144,33 @@ describe("starting with a setting outside its rule", () => {
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it(
+    "names only the setting outside its rule, and holds back the cross-field rule until every setting parses",
+    async () => {
+      const [, disagreement, disagreementLine] = disagreeing[0]!;
+      const [name, , value, line] = OUTSIDE[0]!;
+
+      // The witness: the disagreement is reported when it is the only fault.
+      expect(await refusedOverSettings(disagreement)).toEqual([
+        disagreementLine,
+      ]);
+
+      // A setting outside its rule that the comparison does not read.
+      expect(
+        await refusedOverSettings({ ...disagreement, [name]: value }),
+      ).toEqual([line]);
+
+      // One of the two settings the comparison reads.
+      expect(
+        await refusedOverSettings({
+          ...disagreement,
+          VERSION_RECENT_DAYS: "soon",
+        }),
+      ).toEqual([
+        'VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
+      ]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
