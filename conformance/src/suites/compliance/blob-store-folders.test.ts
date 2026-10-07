@@ -182,8 +182,48 @@ describe("the location log on an instance with one disk store", () => {
       // serves them answers as it does for a hash it never saw.
       const download = await operator.downloadBlob(hash);
       expect(download.status).toBe(404);
+      expect(download.error?.error.code).toBe("blob_not_found");
     }
     expect((await locations(hashes.first))[0]!.verified_at).not.toBeNull();
+  });
+});
+
+describe("a blob that lost its last copy", () => {
+  it("answers HEAD as GET does for a blob that lost its last copy", async () => {
+    const bytes = bytesOf("a blob whose last copy goes", 140);
+    const upload = await working.uploadBlob(bytes, "text/plain");
+    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+    const hash = upload.data.hash;
+    const link = (await operator.getBlobUrl(hash)).data.url;
+    expect(new URL(link).host).toBe(new URL(server!.apiUrl).host);
+    const headLink = () => fetch(link, { method: "HEAD" });
+
+    // The witness: every door that reads the bytes answers 200 while the
+    // copy is there, so the 404s below are about the copy.
+    expect((await operator.headBlob(hash)).status).toBe(200);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    expect((await headLink()).status).toBe(200);
+    const served = await fetch(link);
+    expect(served.status).toBe(200);
+    await served.arrayBuffer();
+
+    unlinkSync(diskPath(server!, hash));
+    const struck = await runJob(operator, "blob-integrity");
+    expect(struck.result.struck).toBe(1);
+    expect(await locations(hash)).toEqual([]);
+
+    const download = await operator.downloadBlob(hash);
+    expect(download.status).toBe(404);
+    expect(download.error?.error.code).toBe("blob_not_found");
+    expect((await operator.headBlob(hash)).status).toBe(404);
+    // The link the instance serves reads the same bytes, so it answers the
+    // same.
+    const gone = await fetch(link);
+    expect(gone.status).toBe(404);
+    expect(
+      ((await gone.json()) as { error: { code: string } }).error.code,
+    ).toBe("blob_not_found");
+    expect((await headLink()).status).toBe(404);
   });
 });
 
