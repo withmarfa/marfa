@@ -38,7 +38,7 @@ The server MUST give the `code` of every refusal it answers in the envelope as o
 
 **Reason:** a client branches on the code, so a code outside the table is one no client was told of. The answers under `/auth/*` that are in the sign-in library's own shapes use its own codes, and a page there refuses in plain text.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/error-codes.test.ts › answers every refusal across the published operations with a code from the table`.
 
 ### `errors/html-page`
 
@@ -66,7 +66,7 @@ When the server answers a refusal with the page of `errors/html-page`, the serve
 
 ### `errors/request-id`
 
-The server MUST carry an `X-Request-ID` header on every answer to a path outside `/auth/` and `/.well-known/`, a refusal included.
+The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oauth2/register` and to a path outside `/auth/` and `/.well-known/`, a refusal included.
 
 **Reason:** it is the value a caller quotes to find its request in the server's log.
 
@@ -168,7 +168,7 @@ When the sign-in library answers `POST /auth/oauth2/register` with `415`, the se
 
 **Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries the header.
 
-**Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries neither X-Error-Code nor X-Request-ID, where Marfa's own doors carry both`.
+**Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
 ## An `Idempotency-Key` that cannot be served
 
@@ -263,6 +263,14 @@ If a write cannot get the store's write lock within the instance's busy budget, 
 **Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`.
+
+### `errors/contention-declared`
+
+The server MUST declare `503 write_contention` in its OpenAPI document on every operation that takes a credential and on `POST /auth/oauth2/register`.
+
+**Reason:** a client generated from the document then knows the refusal it must retry.
+
+**Tests:** `compliance/declared-refusals.test.ts › is declared 503 write_contention on every operation that takes a credential, and on registration`.
 
 ### `errors/contention-budget`
 
@@ -543,6 +551,30 @@ When the server sends the error webhook a notification of an unhandled fault in 
 **Reason:** a webhook's receiver is a service the instance's data does not otherwise reach.
 
 **Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to`.
+
+### `errors/report-telemetry`
+
+When the server sends a telemetry collector the log record of an unhandled fault in which a database statement failed, the server MUST carry in it the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+
+**Tests:** `compliance/fault-reports.test.ts › is carried by the log record sent to the telemetry collector, with the statement and the driver's reason and none of the values`.
+
+### `errors/report-span`
+
+When the server records on a request's span the exception of an unhandled fault in which a database statement failed, the server MUST carry in the exception event the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+
+**Tests:** `compliance/fault-reports.test.ts › is carried by the exception event on the request's span, with the statement and the driver's reason and none of the values`.
+
+### `errors/report-tracking`
+
+When the server sends error tracking the exception of an unhandled fault in which a database statement failed, the server MUST carry in it the failed statement, with a placeholder where each value was bound, and the driver's own reason, and no value the statement was bound to.
+
+**Tests:** `compliance/fault-reports.test.ts › is sent to error tracking as an exception with the statement and the driver's reason and none of the values`.
+
+### `errors/report-stream-warning`
+
+When an event stream logs a warning because a database statement failed while it read the head of the log, a catch-up or the credential, the server MUST carry in the warning the failed statement and no value of the credential's.
+
+**Tests:** `compliance/fault-reports.test.ts › names the failed statement and no value of the credential's, for the head of the log, a catch-up and the credential`.
 
 ### `errors/report-reason-withheld`
 
