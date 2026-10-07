@@ -48,6 +48,7 @@ import {
 import { finalizeArchiveItem, writeItem } from "../storage/item-write.js";
 import { finishCopyDeletion } from "../housekeeping/blob-delete.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -940,9 +941,13 @@ async function restoreRows(
 export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  limits: { maxRowBytes: number },
+  limits: { maxRowBytes: number; diskReserveBytes?: number },
 ) {
   const router = createOpenAPIRouter<AppEnv>();
+  const reserve = new DiskReserve(
+    blobs.disk.locator,
+    limits.diskReserveBytes ?? 0,
+  );
 
   router.openapi(restoreArchiveRoute, async (c) => {
     const uploader = blobPrincipal(requireAuth(c), "api_key");
@@ -957,6 +962,10 @@ export function restoreArchiveRoutes(
     // ends: a refusal can land while an entry is still being written, and a
     // blob spool the store moved into place is simply no longer there.
     const spools: string[] = [];
+    const declared = Number(c.req.header("Content-Length"));
+    const place = await reserve.admit(
+      Number.isSafeInteger(declared) ? declared : 0,
+    );
     const mintSpool = (): string => {
       const spool = blobs.disk.spoolPath();
       spools.push(spool);
@@ -966,7 +975,15 @@ export function restoreArchiveRoutes(
       const bodySpool = mintSpool();
       const body = c.req.raw.body;
       if (body) {
-        await pipeline(Readable.fromWeb(body), createWriteStream(bodySpool));
+        try {
+          await pipeline(
+            Readable.fromWeb(body),
+            place.guard(),
+            createWriteStream(bodySpool),
+          );
+        } finally {
+          place.close();
+        }
       }
       if (
         (await stat(bodySpool).then(
@@ -976,7 +993,7 @@ export function restoreArchiveRoutes(
       ) {
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty archive");
       }
-      const archive = await readArchive(bodySpool, mintSpool);
+      const archive = await readArchive(bodySpool, mintSpool, reserve);
       await rm(bodySpool, { force: true });
       const paths = archive.lineFiles;
 
@@ -1063,6 +1080,7 @@ export function restoreArchiveRoutes(
         releaseBlobs();
       }
     } finally {
+      place.close();
       for (const spool of spools) await rm(spool, { force: true });
     }
   });

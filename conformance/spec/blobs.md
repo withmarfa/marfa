@@ -28,7 +28,7 @@ When a credential that may upload sends `POST /blobs` with a body, the server MU
 
 When a credential that may upload sends `POST /blobs` with a body larger than the cap on the body of a JSON write, the server MUST store the whole body.
 
-**Reason:** an upload has no size cap, so the cap on a JSON write does not apply to it. The hash of every byte, and a download at the full length, are what show the body arrived whole.
+**Reason:** an upload has no size cap, so the cap on a JSON write does not apply to it. The room on the volume is its only bound (`blobs/upload-reserve`). The hash of every byte, and a download at the full length, are what show the body arrived whole.
 
 **Tests:** `correctness/blob-correctness.test.ts › stores a body far larger than the JSON cap, whole`.
 
@@ -89,6 +89,28 @@ If a credential that may upload sends `POST /blobs` with an empty body, then the
 The server MUST serve a blob's bytes under the media type recorded first, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, a ranged read and the blob's links.
 
 **Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`, `› answers a HEAD, a ranged read and a link with the type the first upload fixed`, `› serves an image as a download and never inline, on every instance door`, `correctness/blob-correctness.test.ts › stores a body of any non-multipart type as the bytes it is`, `› content-type is preserved on download`.
+
+### `blobs/upload-reserve`
+
+Where an instance keeps a reserve of free space, if a `POST /blobs` declares a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
+
+**Reason:** an upload has no size cap, and the shipped image puts the database on the same volume, so one body can take the room every other write needs. Every write then meets `errors/storage-full`. The reserve is that room, and the instance's `MARFA_DISK_RESERVE_BYTES` sets it.
+
+**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `› takes the same upload and the same restore once the instance holds no reserve`.
+
+### `blobs/upload-reserve-streamed`
+
+Where an instance keeps a reserve of free space, if a `POST /blobs` body that declares no length takes the volume that holds the disk store's folder below the reserve as it arrives, then the server MUST answer `507 insufficient_storage`.
+
+**Reason:** a chunked body declares no length, so only the room it takes as it arrives can refuse it.
+
+**Tests:** waiting on #1444.
+
+### `blobs/upload-reserve-nothing-kept`
+
+When the server answers `POST /blobs` with `507 insufficient_storage`, the server MUST NOT serve the blob on `GET /blobs/{hash}`.
+
+**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
 ## Who may upload a blob
 
@@ -713,6 +735,26 @@ When the operator key sends `POST /restore`, the server MUST make each digest in
 When the operator key sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
 
 **Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
+
+### `blobs/restore-reserve`
+
+Where an instance keeps a reserve of free space, if the operator key sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
+
+**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
+
+### `blobs/restore-reserve-inflated`
+
+Where an instance keeps a reserve of free space, if an entry of the archive in a `POST /restore` takes the volume that holds the disk store's folder below the reserve as it is read, then the server MUST answer `507 insufficient_storage`.
+
+**Reason:** a compressed archive says nothing of the size it expands to, so a body that fits can still inflate past the volume.
+
+**Tests:** waiting on #1444.
+
+### `blobs/restore-reserve-nothing-written`
+
+When the server answers `POST /restore` with `507 insufficient_storage`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
 ## The enrichment sweep
 

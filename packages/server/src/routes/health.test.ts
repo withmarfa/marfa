@@ -107,6 +107,27 @@ describe("GET /health", () => {
     expect(body.components.blob_storage?.status).toBe("ok");
   });
 
+  it("reports the disk degraded below the reserve, where uploads are refused, and ok above it", async () => {
+    const app = (free: number) =>
+      healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(null)),
+        { diskReserveBytes: 4 * DISK_DEGRADED_BELOW_BYTES },
+        okProbes({ availableBytes: () => Promise.resolve(free) }),
+        theOperator,
+      );
+    // Past the fixed line and inside the reserve.
+    const inside = await app(2 * DISK_DEGRADED_BELOW_BYTES).request("/");
+    expect(inside.status).toBe(200);
+    const body = (await inside.json()) as HealthBody;
+    expect(body.components.disk?.status).toBe("degraded");
+    expect(body.status).toBe("degraded");
+    const above = await app(5 * DISK_DEGRADED_BELOW_BYTES).request("/");
+    expect(((await above.json()) as HealthBody).components.disk?.status).toBe(
+      "ok",
+    );
+  });
+
   it("answers degraded instead of hanging when the database probe never returns", async () => {
     const app = healthRoutes(
       buildStorage(() => never),

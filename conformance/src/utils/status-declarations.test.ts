@@ -350,6 +350,7 @@ describe("the status checker", () => {
     expect(report.staleCodes).toEqual([
       "housekeeping_job_running",
       "idempotency_key_in_flight",
+      "insufficient_storage",
       "internal_error",
       "rate_limited",
       "write_contention",

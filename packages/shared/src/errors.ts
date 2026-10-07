@@ -204,6 +204,19 @@ export enum ErrorCode {
    */
   WRITE_CONTENTION = "write_contention",
   /**
+   * The volume the instance writes to has no room for this write: the disk
+   * is full, or the write would leave less free than the instance's
+   * reserve. Nothing of the request was kept, unless the volume turned away
+   * the commit itself, which `details.write_outcome` of `unknown` says.
+   *
+   * `507` and not `503`. A `503` here would read as the instance busy, and
+   * a retry a moment later cannot help; only someone freeing space can.
+   * It is still a `5xx`, so a conforming device keeps the write queued and
+   * tries again rather than dropping it as refused
+   * (`queue-and-verdicts.md` 17).
+   */
+  INSUFFICIENT_STORAGE = "insufficient_storage",
+  /**
    * `PATCH /items/:id` was called with a `source_id` that already belongs
    * to a different item under the caller's stamped `source`. The natural-key
    * uniqueness invariant `(source, source_id)` matches the create-time
@@ -599,6 +612,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 503,
     summary:
       "A write could not get the store's write lock within the busy budget. Retry it unchanged.",
+  },
+  [ErrorCode.INSUFFICIENT_STORAGE]: {
+    status: 507,
+    summary:
+      "The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`.",
   },
   [ErrorCode.SOURCE_ID_CONFLICT]: {
     status: 409,

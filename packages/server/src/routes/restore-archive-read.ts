@@ -17,6 +17,7 @@ import { z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import { HashingTransform } from "../storage/blob-store.js";
+import type { DiskReserve } from "../storage/disk-space.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 /**
@@ -132,11 +133,14 @@ function isFilesystemError(err: unknown): err is NodeJS.ErrnoException {
  *
  * `mintSpool` hands out a spool path and records it, so the caller can
  * remove every spool on every outcome, including one whose entry was still
- * being written when a refusal landed.
+ * being written when a refusal landed. `reserve` stops an entry that inflates
+ * past the room the instance keeps free, which the body's own length cannot
+ * show: a gzip stream says nothing of the size it expands to.
  */
 export async function readArchive(
   body: string,
   mintSpool: () => string,
+  reserve: DiskReserve,
 ): Promise<ReadArchive> {
   // Set from a stream callback, which the compiler cannot follow.
   let manifest = null as ArchiveManifest | null;
@@ -222,35 +226,48 @@ export async function readArchive(
         return;
       }
 
-      const spool = mintSpool();
-      if (blobHash === undefined) {
-        pipeline(
-          stream,
-          new LineLengthGuard(name),
-          createWriteStream(spool),
-        ).then(() => {
-          lineFiles[name as LineFile] = spool;
-          next();
-        }, fail);
-        return;
-      }
-
-      // A blob entry is hashed on the way to its spool; one that does not
-      // hash to its name is left out, as an entry under a name that is no
-      // hash is.
-      const hashing = new HashingTransform();
-      pipeline(stream, hashing, createWriteStream(spool)).then(async () => {
-        if (constantTimeEqual(hashing.digest(), blobHash)) {
-          blobs.push({
-            hash: blobHash,
-            mimeType: "",
-            path: spool,
-            sizeBytes: hashing.bytes,
-          });
-        } else {
-          await rm(spool, { force: true });
+      // The entry's size is in its header, so the room it needs is known
+      // before a byte of it is written.
+      reserve.admit(header.size).then((place) => {
+        const spool = mintSpool();
+        if (blobHash === undefined) {
+          pipeline(
+            stream,
+            new LineLengthGuard(name),
+            place.guard(),
+            createWriteStream(spool),
+          )
+            .then(() => {
+              lineFiles[name as LineFile] = spool;
+              next();
+            }, fail)
+            .finally(() => {
+              place.close();
+            });
+          return;
         }
-        next();
+
+        // A blob entry is hashed on the way to its spool; one that does not
+        // hash to its name is left out, as an entry under a name that is no
+        // hash is.
+        const hashing = new HashingTransform();
+        pipeline(stream, hashing, place.guard(), createWriteStream(spool))
+          .then(async () => {
+            if (constantTimeEqual(hashing.digest(), blobHash)) {
+              blobs.push({
+                hash: blobHash,
+                mimeType: "",
+                path: spool,
+                sizeBytes: hashing.bytes,
+              });
+            } else {
+              await rm(spool, { force: true });
+            }
+            next();
+          }, fail)
+          .finally(() => {
+            place.close();
+          });
       }, fail);
     });
     extract.on("finish", resolve);

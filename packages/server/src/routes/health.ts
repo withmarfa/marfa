@@ -128,7 +128,13 @@ function describe(err: unknown): string {
   return errorReason(err);
 }
 
-async function diskComponent(probes: HealthProbes): Promise<ComponentStatus> {
+async function diskComponent(
+  probes: HealthProbes,
+  reserveBytes: number,
+): Promise<ComponentStatus> {
+  // Below the reserve every upload and restore is refused, so the instance
+  // is no longer fully serving, whatever the fixed line says.
+  const degradedBelow = Math.max(DISK_DEGRADED_BELOW_BYTES, reserveBytes);
   const started = performance.now();
   const latency = () => Math.round(performance.now() - started);
   try {
@@ -147,11 +153,11 @@ async function diskComponent(probes: HealthProbes): Promise<ComponentStatus> {
         error: `${String(available)} bytes available, below ${String(DISK_DOWN_BELOW_BYTES)}`,
       };
     }
-    if (available < DISK_DEGRADED_BELOW_BYTES) {
+    if (available < degradedBelow) {
       return {
         status: "degraded",
         latency_ms: latency(),
-        error: `${String(available)} bytes available, below ${String(DISK_DEGRADED_BELOW_BYTES)}`,
+        error: `${String(available)} bytes available, below ${String(degradedBelow)}`,
       };
     }
     return { status: "ok", latency_ms: latency() };
@@ -176,7 +182,7 @@ async function diskComponent(probes: HealthProbes): Promise<ComponentStatus> {
 export function healthRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  config: Pick<AppConfig, "versionFile" | "placement">,
+  config: Pick<AppConfig, "versionFile" | "placement" | "diskReserveBytes">,
   probes: HealthProbes,
   /** Whether a request's credential is the operator key. Left out, nobody
    *  is, which tells nobody anything. */
@@ -216,7 +222,7 @@ export function healthRoutes(
 
     // Room to write into. Unknown is not down: a volume the probe could not
     // read says so as `degraded`, and only a measured shortage is `down`.
-    components.disk = await diskComponent(probes);
+    components.disk = await diskComponent(probes, config.diskReserveBytes ?? 0);
 
     // Blob storage. The disk store, which every upload lands on, under the
     // same budget: a held disk is a fault this door exists to report.

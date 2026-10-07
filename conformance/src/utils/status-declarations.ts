@@ -105,6 +105,8 @@ export const HARNESS_CODES: Readonly<Record<string, string>> = {
     "the body cap, drawn on the doors whose own chapter says what it means there",
   write_contention:
     "the database's write lock, drawn by holding it from outside the server on the doors `errors/contention` names",
+  insufficient_storage:
+    "a volume the harness cannot fill, drawn on `POST /blobs` and `POST /restore` by a server booted with a reserve no volume can keep",
   internal_error:
     "a fault the server holds no refusal for, which no request provokes; drawn once, on `GET /audit`, by renaming a table in the fixture server's own file",
 };
