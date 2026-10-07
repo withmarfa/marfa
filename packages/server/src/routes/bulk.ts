@@ -85,6 +85,7 @@ import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
 import { authorizeReplay } from "../middleware/replay-authorization.js";
+import { refuseEmptyNarrowingFilter } from "../middleware/empty-narrowing-values.js";
 import { sourceHiddenItemIds } from "../bulk-actions/source-visibility.js";
 import {
   BULK_ACTION_SHAPES,
@@ -336,7 +337,7 @@ const bulkActionRoute = createRoute({
         },
       },
       description:
-        '- `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
+        '- `validation_error`: the body or `filter` is malformed or has an undeclared key or an empty field, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
     },
     401: {
       content: {
@@ -871,6 +872,10 @@ export function bulkRoutes(storage: Storage) {
       // set but every item, and under the match cap it succeeds.
       refuseUnknownFilterKeys(raw.filter, BulkActionFilterShape);
     }
+    // After the unknown keys, so a misspelt one is named as that. A filter
+    // field sent empty is the same silence from the other side: a purge
+    // built from a variable never filled in matches every item.
+    refuseEmptyNarrowingFilter(filter);
 
     // Validate filter fields up-front so a caller with a bad filter gets
     // a 400 before any matching happens.

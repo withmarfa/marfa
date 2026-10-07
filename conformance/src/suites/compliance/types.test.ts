@@ -117,6 +117,51 @@ describe("type registration and listing", () => {
     expect(got).not.toContain(ids.get(lookalike));
   });
 
+  it("selects with a type the types declared under it, as with its own name", async () => {
+    const declared = `acme-${ctx.runId}.meeting`;
+    const registered = await client.registerType({
+      id: declared,
+      parent: "core.event",
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    // The witness: the type's own name does not start with `core.event`, so
+    // only its declared parent can bring the row into either selection.
+    expect(declared.startsWith("core.event")).toBe(false);
+
+    const write = async (type: string, properties: Record<string, unknown>) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties,
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const tag = `selects-declared-${ctx.runId}`;
+    const event = { title: tag, starts_at: "2032-05-10T10:00:00.000Z" };
+    const child = await write(declared, event);
+    const plain = await write("core.event", event);
+    const note = await write("core.note", { title: tag, body: tag });
+
+    const answered = async (type: string): Promise<string[]> => {
+      const r = await client.listItems({
+        type,
+        source: ctx.source,
+        limit: 100,
+      });
+      expect(r.status, `${type}: ${JSON.stringify(r.error)}`).toBe(200);
+      return r.data.data.map((i) => i.id);
+    };
+    for (const type of ["core.event", "core.event.*"]) {
+      const ids = await answered(type);
+      expect(ids, type).toContain(child);
+      expect(ids, type).toContain(plain);
+      expect(ids, type).not.toContain(note);
+    }
+  });
+
   it("declares executable on core.file, which every file type inherits", async () => {
     // A folder keeps a file's executable permission there (`folders.md` 50).
     for (const id of ["core.file", "core.file.image"]) {

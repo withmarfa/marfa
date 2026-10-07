@@ -3097,7 +3097,7 @@ export interface components {
             }[];
             /** @description `true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
             series_errors_truncated?: boolean;
-            /** @description `true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise. */
+            /** @description `true` when a series didn't finish expanding, so `data` may be missing occurrences; `scan.series_unexpanded` counts them. If a series has too many in the window, narrow the window; else narrow by `type` or fix the rules. Absent otherwise. */
             expansion_incomplete?: boolean;
         };
         /** @description One time an event happens. */
@@ -7590,7 +7590,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
+             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key or an empty field, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
              *     - `missing_required_field`: a field the action needs is missing.
              *     - `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.
              *     - `bulk_cap_exceeded`: more items match than `max_items` allows.

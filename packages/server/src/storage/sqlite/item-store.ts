@@ -823,7 +823,7 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // **A row born in the bin is not indexed**, the same rule `transition`
-      // applies on the way in (`search-and-filters.md` 12): a trashed row
+      // applies on the way in (`search-and-filters/search-bin`): a trashed row
       // leaves the index rather than being narrowed out of the query, so it
       // is unmatched under `state=any` and under `state=trashed` alike.
       //

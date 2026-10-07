@@ -243,6 +243,29 @@ describe("a registered type the key may not read is refused on every door", () =
     },
   );
 
+  it("names the level read in the grant of every refusal", async () => {
+    // The level is the one the door asked for: a filter reads, so a key that
+    // writes the type is not offered a write grant it does not need.
+    for (const door of DOORS) {
+      const seen = await door.ask(UNREADABLE, key);
+      expect(seen.status, door.name).toBe(403);
+      expect(seen.grant, door.name).toMatchObject({
+        kind: "type",
+        name: UNREADABLE,
+        level: "read",
+      });
+    }
+    const lookedUp = await ask(key, "POST", "/items/lookup", {
+      type: UNREADABLE,
+      ids: [noteId],
+    });
+    expect(lookedUp.grant).toMatchObject({
+      kind: "type",
+      name: UNREADABLE,
+      level: "read",
+    });
+  });
+
   it("the same type is served to a key that reads it, on every door but the bulk action", async () => {
     // The witness that the refusal is the key's and not the door's.
     for (const door of FILTER_DOORS) {
@@ -290,6 +313,40 @@ describe("a type nothing registers is refused as unknown", () => {
     expect(seen.ids).toEqual([]);
   });
 
+  it("POST /items/bulk-actions selects the rows a type removed with force left behind, by the type's own name", async () => {
+    const removed = `user.removed_${ctx.runId}`;
+    const registered = await client.registerType({
+      id: removed,
+      label: "Removed",
+      version: 0,
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const made = await client.createItem({
+      type: removed,
+      source: ctx.source,
+      properties: {},
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    expect((await client.deleteType(removed, true)).status).toBe(200);
+
+    // The listing refuses the name now that nothing registers it, so the
+    // bulk action is the one door that still reaches the row by it.
+    const listed = await ask(apiKey, "GET", `/items?type=${removed}`);
+    expect(listed.status).toBe(400);
+    expect(listed.code).toBe("unknown_type");
+
+    const selected = await ask(apiKey, "POST", "/items/bulk-actions", {
+      action: "transition",
+      state: "archived",
+      filter: { type: removed, source: ctx.source },
+      dry_run: true,
+    });
+    expect(selected.status).toBe(200);
+    expect(selected.ids).toEqual([made.data.item.id]);
+  });
+
   it("POST /items/bulk-actions refuses an unregistered type the key holds nothing on", async () => {
     const seen = await DOORS[6]!.ask(UNREGISTERED, key);
     expect(seen.status).toBe(403);
@@ -310,6 +367,81 @@ describe("a concrete type selects its descendants, so one is refused only when n
     for (const door of [DOORS[1]!, DOORS[5]!]) {
       expect((await door.ask("core.entity", personKey)).status).toBe(200);
     }
+  });
+
+  it("GET /items/stats counts the readable descendants of a type the key may not read", async () => {
+    const counts = async (as: string): Promise<Record<string, number>> => {
+      const res = await fetch(
+        `${apiUrl}/items/stats?type=core.entity&source=${encodeURIComponent(ctx.source)}&by=type`,
+        { headers: { Authorization: `Bearer ${as}` } },
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as Record<string, number>;
+    };
+    // The owner counts both descendants, so the one the key counts is the
+    // grant narrowing and not a short seed.
+    expect(await counts(apiKey)).toEqual({
+      "core.entity.person": 1,
+      "core.entity.place": 1,
+    });
+    expect(await counts(personKey)).toEqual({ "core.entity.person": 1 });
+  });
+
+  it("GET /occurrences answers the readable subtype of an event type the key may not read", async () => {
+    const subtype = `user.sub_event_${ctx.runId}`;
+    const registered = await client.registerType({
+      id: subtype,
+      parent: "core.event",
+      label: "Sub event",
+      version: 0,
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const made = await client.createItem({
+      type: subtype,
+      source: ctx.source,
+      properties: {
+        title: `unreadable-filter-${ctx.runId}`,
+        starts_at: "2031-06-10T12:00:00.000Z",
+        ends_at: "2031-06-10T13:00:00.000Z",
+      },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+    const reader = await client.createKey({
+      label: "unreadable-type-filter-subtype",
+      source: `${ctx.source}-unreadable-type-filter-subtype`,
+      type_permissions: { [subtype]: "read" },
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    expect(reader.ok).toBe(true);
+    trackKey(ctx, reader.data.id);
+
+    const asked = async (as: string) => {
+      const res = await fetch(
+        `${apiUrl}/occurrences?${WINDOW}&type=core.event`,
+        { headers: { Authorization: `Bearer ${as}` } },
+      );
+      const body = (await res.json()) as {
+        data?: { item?: { id: string } }[];
+      };
+      return {
+        status: res.status,
+        ids: (body.data ?? []).map((o) => o.item?.id),
+      };
+    };
+    // The owner is answered both events, so the one the subtype key is
+    // answered is the grant narrowing and not a window with one event.
+    const owner = await asked(apiKey);
+    expect(owner.status).toBe(200);
+    expect(owner.ids).toEqual(
+      expect.arrayContaining([eventId, made.data.item.id]),
+    );
+    const narrowed = await asked(reader.data.key);
+    expect(narrowed.status).toBe(200);
+    expect(narrowed.ids).toContain(made.data.item.id);
+    expect(narrowed.ids).not.toContain(eventId);
   });
 
   it("refuses the same type to a key that reads nothing under it", async () => {
@@ -342,6 +474,53 @@ describe("a key whose map reaches no type", () => {
   });
 });
 
+describe("a map that reaches no type is refused on every door that takes a type filter", () => {
+  it("answers 403 type_not_permitted whatever the filter names, to a working key and to the operator key", async () => {
+    const minted = await client.createKey({
+      label: "unreadable-type-filter-every-door",
+      source: `${ctx.source}-unreadable-type-filter-every-door`,
+      type_permissions: {},
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const operator = process.env.MARFA_OPERATOR_KEY;
+    expect(operator, "MARFA_OPERATOR_KEY is required").toBeTruthy();
+
+    // The witness: a key that reads some type is answered the wildcard on
+    // each door, and the bulk action the type it reads.
+    for (const door of FILTER_DOORS) {
+      expect((await door.ask("core.*", key)).status, door.name).toBe(200);
+    }
+    expect((await DOORS[6]!.ask("core.task", key)).status).toBe(200);
+    expect(
+      (
+        await ask(key, "POST", "/items/lookup", {
+          type: "core.task",
+          ids: [taskId],
+        })
+      ).status,
+    ).toBe(200);
+
+    for (const as of [minted.data.key, operator ?? ""]) {
+      for (const type of ["core.*", UNREADABLE, "core.entity", UNREGISTERED]) {
+        for (const door of DOORS) {
+          const seen = await door.ask(type, as);
+          expect(seen.status, `${door.name} ${type}`).toBe(403);
+          expect(seen.code, `${door.name} ${type}`).toBe("type_not_permitted");
+        }
+        const lookedUp = await ask(as, "POST", "/items/lookup", {
+          type,
+          ids: [noteId],
+        });
+        expect(lookedUp.status, `lookup ${type}`).toBe(403);
+        expect(lookedUp.code, `lookup ${type}`).toBe("type_not_permitted");
+      }
+    }
+  });
+});
+
 describe("POST /items/lookup refuses a type the key may not read", () => {
   const lookup = (as: string, type: string) =>
     ask(as, "POST", "/items/lookup", { type, ids: [noteId] });
@@ -358,6 +537,70 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
     const served = await lookup(apiKey, UNREADABLE);
     expect(served.status).toBe(200);
     expect(served.ids).toContain(noteId);
+  });
+
+  it("answers 400 for a body it cannot read before it asks whether the key may read the type", async () => {
+    const ids501 = Array.from({ length: 501 }, () => noteId);
+    const bodies: [string, Record<string, unknown>, string][] = [
+      ["no selector", { type: UNREADABLE }, "validation_error"],
+      [
+        "two selectors",
+        {
+          type: UNREADABLE,
+          ids: [noteId],
+          source: ctx.source,
+          source_ids: ["x"],
+        },
+        "validation_error",
+      ],
+      [
+        "source without source_ids",
+        { type: UNREADABLE, source: ctx.source },
+        "validation_error",
+      ],
+      [
+        "more than 500 values",
+        { type: UNREADABLE, ids: ids501 },
+        "validation_error",
+      ],
+      [
+        "a malformed id",
+        { type: UNREADABLE, ids: ["not-an-id"] },
+        "invalid_id",
+      ],
+    ];
+    // The witness: a well-formed body is refused to this key and served to
+    // the owner's, so the grant is what the key lacks and each 400 below
+    // comes before it.
+    const valid = { type: UNREADABLE, ids: [noteId] };
+    expect((await ask(key, "POST", "/items/lookup", valid)).status).toBe(403);
+    expect((await ask(apiKey, "POST", "/items/lookup", valid)).status).toBe(
+      200,
+    );
+    for (const [name, body, code] of bodies) {
+      for (const as of [key, apiKey]) {
+        const seen = await ask(as, "POST", "/items/lookup", body);
+        expect(seen.status, name).toBe(400);
+        expect(seen.code, name).toBe(code);
+      }
+    }
+  });
+
+  it("refuses a wildcard type, which names no one type, to every key", async () => {
+    // The witness: the listings take the same wildcard from the same keys.
+    for (const as of [key, apiKey]) {
+      expect((await ask(as, "GET", "/items?type=core.*")).status).toBe(200);
+    }
+    for (const type of ["core.*", "*"]) {
+      for (const as of [key, apiKey]) {
+        const seen = await ask(as, "POST", "/items/lookup", {
+          type,
+          ids: [taskId],
+        });
+        expect(seen.status, type).toBe(400);
+        expect(seen.code, type).toBe("validation_error");
+      }
+    }
   });
 
   it("answers no tombstones to a key that reads only a type under the one named", async () => {
@@ -445,6 +688,21 @@ describe("a wildcard answers the types it matches that the key may read", () => 
     expect(stream.status).toBe(200);
   });
 
+  it("GET /items/stats answers an object with no counts for a wildcard over types the key reads none of", async () => {
+    const counts = async (as: string): Promise<Record<string, number>> => {
+      const res = await fetch(
+        `${apiUrl}/items/stats?type=core.entity.*&source=${encodeURIComponent(ctx.source)}`,
+        { headers: { Authorization: `Bearer ${as}` } },
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as Record<string, number>;
+    };
+    // The owner counts the person and the place under the same wildcard, so
+    // the empty object is the grant's and not an empty source.
+    expect(await counts(apiKey)).toEqual({ active: 2 });
+    expect(await counts(key)).toEqual({});
+  });
+
   it("GET /occurrences reads a wildcard as a wildcard", async () => {
     const seen = await DOORS[4]!.ask("core.*", key);
     expect(seen.status).toBe(200);
@@ -525,6 +783,113 @@ describe("the registries are not narrowed", () => {
     ).json()) as { data: { id: string }[] };
     expect(edges.data.map((e) => e.id).sort()).toEqual(
       ownerEdges.data.map((e) => e.id).sort(),
+    );
+  });
+});
+
+describe("the event stream reads a type filter as the listings do", () => {
+  it("GET /events streams the readable descendants of a type the key may not read and withholds the rest", async ({
+    signal,
+  }) => {
+    await withStream(
+      apiUrl,
+      personKey,
+      { query: [["type", "core.entity"]] },
+      async (stream) => {
+        expect(stream.response.status).toBe(200);
+        await new Promise((r) => setTimeout(r, 250));
+        // The place is written first and the person after it: the stream
+        // delivers in order, so the person arriving settles that the place
+        // was withheld rather than late.
+        const hidden = await client.createItem({
+          ...createPlace(),
+          source: ctx.source,
+        });
+        expect(hidden.status).toBe(201);
+        trackItem(ctx, hidden.data.item.id);
+        const shown = await client.createItem({
+          ...createPerson(),
+          source: ctx.source,
+        });
+        expect(shown.status).toBe(201);
+        trackItem(ctx, shown.data.item.id);
+        const idOf = (e: { data: unknown }) =>
+          (e.data as { item?: { id?: string } })?.item?.id;
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => idOf(e) === shown.data.item.id),
+          "the readable person to reach the stream",
+          signal,
+        );
+        expect(events.some((e) => idOf(e) === hidden.data.item.id)).toBe(false);
+      },
+    );
+  });
+
+  it("GET /events carries no frame for a wildcard over types the key reads none of", async ({
+    signal,
+  }) => {
+    // The witness: a key that may read the person is streamed it under the
+    // same wildcard, so the person is a frame the stream can carry.
+    await withStream(
+      apiUrl,
+      apiKey,
+      { query: [["type", "core.entity.*"]] },
+      async (reader) => {
+        expect(reader.response.status).toBe(200);
+        await new Promise((r) => setTimeout(r, 250));
+        const person = await client.createItem({
+          ...createPerson(),
+          source: ctx.source,
+        });
+        expect(person.status).toBe(201);
+        trackItem(ctx, person.data.item.id);
+        await collectUntil(
+          reader,
+          (seen) =>
+            seen.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id ===
+                person.data.item.id,
+            ),
+          "the person to reach the key that may read it",
+          signal,
+        );
+      },
+    );
+    await withStream(
+      apiUrl,
+      key,
+      { query: [["type", "core.entity.*,core.task"]] },
+      async (stream) => {
+        expect(stream.response.status).toBe(200);
+        await new Promise((r) => setTimeout(r, 250));
+        // The person matches the wildcard and the key may not read it; the
+        // task is named outright and the key may. The task is written second
+        // and the stream delivers in order, so its arrival settles that the
+        // person was withheld rather than late.
+        const hidden = await client.createItem({
+          ...createPerson(),
+          source: ctx.source,
+        });
+        expect(hidden.status).toBe(201);
+        trackItem(ctx, hidden.data.item.id);
+        const shown = await client.createItem({
+          ...createTask(),
+          source: ctx.source,
+        });
+        expect(shown.status).toBe(201);
+        trackItem(ctx, shown.data.item.id);
+        const idOf = (e: { data: unknown }) =>
+          (e.data as { item?: { id?: string } })?.item?.id;
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => idOf(e) === shown.data.item.id),
+          "the readable task to reach the stream",
+          signal,
+        );
+        expect(events.some((e) => idOf(e) === hidden.data.item.id)).toBe(false);
+      },
     );
   });
 });

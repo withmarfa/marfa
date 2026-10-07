@@ -5,6 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
+  trackKey,
   cleanup,
   getOperatorClient,
 } from "../../utils/setup.js";
@@ -12,9 +13,13 @@ import { itemsArchive } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "recurrence"));
+  ({ ctx, client, apiUrl } = await createTestContext(
+    "compliance",
+    "recurrence",
+  ));
 });
 
 afterAll(async () => {
@@ -83,6 +88,50 @@ describe("a recurring series", () => {
     ]);
   });
 
+  it("gives an occurrence no end when its series states neither an end nor a duration", async () => {
+    const id = await event({
+      starts_at: "2041-05-14T09:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"],
+    });
+    const rows = (
+      await window("2041-05-13T00:00:00Z", "2041-05-30T00:00:00Z")
+    ).filter((o) => o.item.id === id);
+    expect(rows.map((o) => o.starts_at)).toEqual([
+      "2041-05-14T09:00:00.000Z",
+      "2041-05-21T09:00:00.000Z",
+    ]);
+    expect(rows.map((o) => o.ends_at)).toEqual([undefined, undefined]);
+  });
+
+  it("takes its length from its end rather than its duration when it states both", async () => {
+    const id = await event({
+      starts_at: "2041-05-21T09:00:00.000Z",
+      ends_at: "2041-05-21T09:30:00.000Z",
+      duration: 7200,
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"],
+    });
+    const rows = (
+      await window("2041-05-20T00:00:00Z", "2041-06-03T00:00:00Z")
+    ).filter((o) => o.item.id === id);
+    expect(rows.map((o) => o.ends_at)).toEqual([
+      "2041-05-21T09:30:00.000Z",
+      "2041-05-28T09:30:00.000Z",
+    ]);
+  });
+
+  it("advances a series with no timezone in UTC across a clock change", async () => {
+    // Berlin changes clocks on 31 March 2041; a series that names no zone
+    // does not follow it, and the offset its start was written with is only
+    // a spelling of the instant.
+    const id = await event({
+      starts_at: "2041-03-26T09:00:00+01:00",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"],
+    });
+    expect(
+      await startsOf(id, "2041-03-20T00:00:00Z", "2041-04-10T00:00:00Z"),
+    ).toEqual(["2041-03-26T08:00:00.000Z", "2041-04-02T08:00:00.000Z"]);
+  });
+
   it("keeps its local hour across a clock change in its zone", async () => {
     // 09:00 in Berlin on both sides of 31 March 2041.
     const id = await event({
@@ -145,6 +194,97 @@ describe("a value carrying its own instant", () => {
     expect(
       await startsOf(id, "2041-06-01T00:00:00Z", "2041-07-01T00:00:00Z"),
     ).toEqual(["2041-06-04T08:00:00.000Z", "2041-06-06T08:00:00.000Z"]);
+  });
+});
+
+describe("a value carrying no zone of its own", () => {
+  // Tuesdays at 09:00 in Berlin from 26 March 2041: 08:00Z before the clock
+  // change of 31 March and 07:00Z after it.
+  const berlin = {
+    starts_at: "2041-03-26T09:00:00+01:00",
+    timezone: "Europe/Berlin",
+  };
+  const rule = "RRULE:FREQ=WEEKLY;BYDAY=TU";
+
+  it("reads an RDATE in UTC at the instant it names", async () => {
+    const id = await event({
+      ...berlin,
+      recurrence: [`${rule};COUNT=2`, "RDATE:20410329T150000Z"],
+    });
+    expect(
+      await startsOf(id, "2041-03-20T00:00:00Z", "2041-04-10T00:00:00Z"),
+    ).toEqual([
+      "2041-03-26T08:00:00.000Z",
+      "2041-03-29T15:00:00.000Z",
+      "2041-04-02T07:00:00.000Z",
+    ]);
+  });
+
+  it("reads an EXDATE and an RDATE with no zone in the series' zone", async () => {
+    // Read as UTC, 09:00 on 2 April would miss the occurrence at 07:00Z and
+    // 15:00 on 3 April would land two hours late.
+    const id = await event({
+      ...berlin,
+      recurrence: [
+        `${rule};COUNT=3`,
+        "EXDATE:20410402T090000",
+        "RDATE:20410403T150000",
+      ],
+    });
+    expect(
+      await startsOf(id, "2041-03-20T00:00:00Z", "2041-04-20T00:00:00Z"),
+    ).toEqual([
+      "2041-03-26T08:00:00.000Z",
+      "2041-04-03T13:00:00.000Z",
+      "2041-04-09T07:00:00.000Z",
+    ]);
+  });
+
+  it("ends a series at an UNTIL with no zone, read in the series' zone", async () => {
+    const until = async (value: string) => {
+      const id = await event({
+        ...berlin,
+        recurrence: [`${rule};UNTIL=${value}`],
+      });
+      return startsOf(id, "2041-03-20T00:00:00Z", "2041-04-20T00:00:00Z");
+    };
+    // The third meeting is 09:00 in Berlin on 9 April, 07:00Z. Read as UTC,
+    // the second's UNTIL would still let it through.
+    expect(await until("20410409T090000")).toHaveLength(3);
+    expect(await until("20410409T085959")).toHaveLength(2);
+  });
+
+  it("removes the occurrence on the day a date-only EXDATE names, in the series' zone", async () => {
+    // 08:00 in Tokyo is 23:00Z the day before, so the local 6 June is the
+    // occurrence on 5 June in UTC.
+    const id = await event({
+      starts_at: "2041-06-04T08:00:00+09:00",
+      timezone: "Asia/Tokyo",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=5", "EXDATE;VALUE=DATE:20410606"],
+    });
+    expect(
+      await startsOf(id, "2041-06-01T00:00:00Z", "2041-06-20T00:00:00Z"),
+    ).toEqual([
+      "2041-06-03T23:00:00.000Z",
+      "2041-06-04T23:00:00.000Z",
+      "2041-06-06T23:00:00.000Z",
+      "2041-06-07T23:00:00.000Z",
+    ]);
+  });
+
+  it("adds the occurrence at the series' own time of day on the day a date-only RDATE names", async () => {
+    const id = await event({
+      starts_at: "2041-06-04T08:00:00+09:00",
+      timezone: "Asia/Tokyo",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=2", "RDATE;VALUE=DATE:20410610"],
+    });
+    expect(
+      await startsOf(id, "2041-06-01T00:00:00Z", "2041-06-20T00:00:00Z"),
+    ).toEqual([
+      "2041-06-03T23:00:00.000Z",
+      "2041-06-04T23:00:00.000Z",
+      "2041-06-09T23:00:00.000Z",
+    ]);
   });
 });
 
@@ -228,6 +368,45 @@ describe("a whole-day series", () => {
       ["2041-03-30T23:00:00.000Z", "2041-03-31T22:00:00.000Z"],
     ]);
   });
+
+  it("refuses a rule that repeats by hours, minutes or seconds, and takes one that repeats by days", async () => {
+    const create = (extra: Record<string, unknown>, rule: string) =>
+      client.createItem({
+        type: "core.event",
+        source: ctx.source,
+        properties: {
+          title: `whole-day rule ${ctx.runId}`,
+          starts_at: "2041-03-24",
+          timezone: "Europe/Berlin",
+          recurrence: [rule],
+          ...extra,
+        },
+      });
+    for (const rule of [
+      "RRULE:FREQ=HOURLY;COUNT=3",
+      "RRULE:FREQ=MINUTELY;COUNT=3",
+      "RRULE:FREQ=SECONDLY;COUNT=3",
+      "RRULE:FREQ=DAILY;BYHOUR=9;COUNT=3",
+      "RRULE:FREQ=DAILY;BYMINUTE=30;COUNT=3",
+      "RRULE:FREQ=DAILY;BYSECOND=15;COUNT=3",
+    ]) {
+      // The witness for each: the same rule on an event that is not whole-day
+      // is taken, so the whole-day flag is what the refusal is for.
+      const timed = await create({ all_day: false }, rule);
+      expect(timed.status, `${rule}: ${JSON.stringify(timed.error)}`).toBe(201);
+      trackItem(ctx, timed.data.item.id);
+
+      const refused = await create({ all_day: true }, rule);
+      expect(refused.status, rule).toBe(400);
+      expect(refused.error?.error.code, rule).toBe("invalid_properties");
+      expect(fields(refused.error?.error.details), rule).toEqual([
+        "recurrence",
+      ]);
+    }
+    const daily = await create({ all_day: true }, "RRULE:FREQ=DAILY;COUNT=3");
+    expect(daily.status, JSON.stringify(daily.error)).toBe(201);
+    trackItem(ctx, daily.data.item.id);
+  });
 });
 
 describe("a whole-day event, single or repeating", () => {
@@ -277,6 +456,171 @@ describe("a whole-day event, single or repeating", () => {
         await span(id, "2046-01-14T12:00:00Z", "2046-01-17T00:00:00Z"),
       ).toEqual([["2046-01-15T00:00:00.000Z", "2046-01-16T00:00:00.000Z"]]);
     }
+  });
+
+  async function bothPlaced(
+    properties: Record<string, unknown>,
+  ): Promise<string[][][]> {
+    const single = await event(properties);
+    const series = await event({ ...properties, ...repeating });
+    const out: string[][][] = [];
+    for (const id of [single, series]) {
+      out.push(await span(id, "2046-02-01T00:00:00Z", "2046-04-30T00:00:00Z"));
+    }
+    return out;
+  }
+
+  it("places a whole-day event named by an instant on the day it falls on in its zone", async () => {
+    // Each instant is a different calendar day in its zone than in UTC, so a
+    // reading by the UTC day or by the offset it was written with places the
+    // day elsewhere.
+    for (const [zone, startsAt, from, to] of [
+      [
+        "America/New_York",
+        "2046-02-11T02:00:00.000Z",
+        "2046-02-10T05:00:00.000Z",
+        "2046-02-11T05:00:00.000Z",
+      ],
+      [
+        "Asia/Tokyo",
+        "2046-02-10T20:00:00.000Z",
+        "2046-02-10T15:00:00.000Z",
+        "2046-02-11T15:00:00.000Z",
+      ],
+      [
+        undefined,
+        "2046-02-11T01:30:00+02:00",
+        "2046-02-10T00:00:00.000Z",
+        "2046-02-11T00:00:00.000Z",
+      ],
+    ] as const) {
+      const placed = await bothPlaced({
+        all_day: true,
+        starts_at: startsAt,
+        ...(zone === undefined ? {} : { timezone: zone }),
+      });
+      expect(placed, `${String(zone)}`).toEqual([[[from, to]], [[from, to]]]);
+    }
+  });
+
+  it("ends a whole-day event at midnight of the day its end names", async () => {
+    // The end is a bare date or an instant that falls on that day in Berlin.
+    const midnights = [
+      ["2046-03-09T23:00:00.000Z", "2046-03-11T23:00:00.000Z"],
+    ];
+    for (const endsAt of ["2046-03-12", "2046-03-12T10:00:00+01:00"]) {
+      expect(
+        await bothPlaced({
+          all_day: true,
+          starts_at: "2046-03-10",
+          ends_at: endsAt,
+          timezone: "Europe/Berlin",
+        }),
+        endsAt,
+      ).toEqual([midnights, midnights]);
+    }
+  });
+
+  it("covers the days a whole-day event's duration reaches, rounded up, when it states no end", async () => {
+    for (const [duration, days] of [
+      [172_800, 2],
+      [172_801, 3],
+      [90_000, 2],
+    ] as const) {
+      const first = "2046-03-09T23:00:00.000Z";
+      const end = new Date(Date.parse(first) + days * 86_400_000).toISOString();
+      expect(
+        await bothPlaced({
+          all_day: true,
+          starts_at: "2046-03-10",
+          duration,
+          timezone: "Europe/Berlin",
+        }),
+        String(duration),
+      ).toEqual([[[first, end]], [[first, end]]]);
+    }
+  });
+
+  it("places a whole-day event as one day long when its end names its start day or an earlier one", async () => {
+    const oneDay = [["2046-04-09T22:00:00.000Z", "2046-04-10T22:00:00.000Z"]];
+    for (const endsAt of ["2046-04-10", "2046-04-08"]) {
+      expect(
+        await bothPlaced({
+          all_day: true,
+          starts_at: "2046-04-10",
+          ends_at: endsAt,
+          timezone: "Europe/Berlin",
+        }),
+        endsAt,
+      ).toEqual([oneDay, oneDay]);
+    }
+    // The witness: an end one day later is what makes it two, so the day
+    // above is not the only length a whole-day event is given.
+    const [single] = await bothPlaced({
+      all_day: true,
+      starts_at: "2046-04-10",
+      ends_at: "2046-04-12",
+      timezone: "Europe/Berlin",
+    });
+    expect(single).toEqual([
+      ["2046-04-09T22:00:00.000Z", "2046-04-11T22:00:00.000Z"],
+    ]);
+  });
+
+  it("places a whole-day event as one day long when its duration is under a day", async () => {
+    const oneDay = [["2046-04-09T22:00:00.000Z", "2046-04-10T22:00:00.000Z"]];
+    for (const duration of [0, 3_600, 86_399]) {
+      expect(
+        await bothPlaced({
+          all_day: true,
+          starts_at: "2046-04-10",
+          duration,
+          timezone: "Europe/Berlin",
+        }),
+        String(duration),
+      ).toEqual([oneDay, oneDay]);
+    }
+  });
+
+  it("places a moved whole-day occurrence by its own days, in a window holding its slot and in one that does not", async () => {
+    // Mondays in Berlin; the second is moved to the Sunday week after.
+    const series = await event({
+      all_day: true,
+      starts_at: "2046-05-07",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const moved = await event({
+      all_day: true,
+      starts_at: "2046-05-20",
+      timezone: "Europe/Berlin",
+      original_starts_at: "2046-05-13T22:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    const ownDays = [["2046-05-19T22:00:00.000Z", "2046-05-20T22:00:00.000Z"]];
+
+    const both = await window("2046-05-05T00:00:00Z", "2046-05-25T00:00:00Z");
+    expect(
+      both
+        .filter((o) => o.item.id === moved)
+        .map((o) => [o.starts_at, o.ends_at]),
+    ).toEqual(ownDays);
+    // The slot it left is not shown beside it.
+    expect(
+      both.filter((o) => o.item.id === series).map((o) => o.starts_at),
+    ).toEqual(["2046-05-06T22:00:00.000Z", "2046-05-20T22:00:00.000Z"]);
+
+    const alone = await window("2046-05-19T23:00:00Z", "2046-05-20T01:00:00Z");
+    expect(
+      alone
+        .filter((o) => o.item.id === moved)
+        .map((o) => [o.starts_at, o.ends_at]),
+    ).toEqual(ownDays);
   });
 });
 
@@ -339,6 +683,202 @@ describe("the window", () => {
     ).toEqual(["2042-08-27T10:00:00.000Z"]);
   });
 
+  it("includes an event with no length where it starts, from inclusive and to exclusive", async () => {
+    const point = await event({ starts_at: "2041-08-12T10:00:00.000Z" });
+    const ids = async (from: string, to: string) =>
+      (await window(from, to)).map((o) => o.item.id);
+    // The witness: a window one millisecond past the start holds it.
+    expect(
+      await ids("2041-08-12T09:00:00.000Z", "2041-08-12T10:00:00.001Z"),
+    ).toContain(point);
+    expect(
+      await ids("2041-08-12T10:00:00.000Z", "2041-08-12T11:00:00.000Z"),
+    ).toContain(point);
+    expect(
+      await ids("2041-08-12T09:00:00.000Z", "2041-08-12T10:00:00.000Z"),
+    ).not.toContain(point);
+  });
+
+  it("ends an event that states no end at its start plus its duration", async () => {
+    const hour = await event({
+      starts_at: "2041-08-13T10:00:00.000Z",
+      duration: 3600,
+    });
+    const ids = async (from: string, to: string) =>
+      (await window(from, to)).map((o) => o.item.id);
+    expect(
+      await ids("2041-08-13T10:59:59.000Z", "2041-08-13T12:00:00.000Z"),
+    ).toContain(hour);
+    expect(
+      await ids("2041-08-13T11:00:00.000Z", "2041-08-13T12:00:00.000Z"),
+    ).not.toContain(hour);
+  });
+
+  it("matches a moved occurrence to its series whatever their types, and answers only the type named", async () => {
+    const declared = `rec-${ctx.runId}.meeting`;
+    const registered = await client.registerType({
+      id: declared,
+      parent: "core.event",
+      fields: {},
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const typed = async (type: string, properties: Record<string, unknown>) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: { title: `recurrence ${ctx.runId}`, ...properties },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const link = async (series: string, moved: string) => {
+      const edge = await client.createEdge({
+        source_id: series,
+        target_id: moved,
+        edge_type: "parent-of",
+      });
+      expect(edge.status).toBe(201);
+    };
+    const filtered = async (from: string, to: string, type?: string) => {
+      const r = await client.listOccurrences({ from, to, type });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data.data as Row[];
+    };
+
+    // A core.event series whose moved occurrence is of the declared type.
+    const plainSeries = await typed("core.event", {
+      starts_at: "2053-03-04T10:00:00.000Z",
+      ends_at: "2053-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const typedMove = await typed(declared, {
+      starts_at: "2053-03-12T10:00:00.000Z",
+      ends_at: "2053-03-12T11:00:00.000Z",
+      original_starts_at: "2053-03-11T10:00:00.000Z",
+    });
+    await link(plainSeries, typedMove);
+    // A series of the declared type whose moved occurrence is a core.event.
+    const typedSeries = await typed(declared, {
+      starts_at: "2054-03-04T10:00:00.000Z",
+      ends_at: "2054-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const plainMove = await typed("core.event", {
+      starts_at: "2054-03-12T10:00:00.000Z",
+      ends_at: "2054-03-12T11:00:00.000Z",
+      original_starts_at: "2054-03-11T10:00:00.000Z",
+    });
+    await link(typedSeries, plainMove);
+
+    // The witness: unfiltered, each series shows two slots and its move.
+    for (const [from, to, series, moved] of [
+      ["2053-03-01T00:00:00Z", "2053-03-20T00:00:00Z", plainSeries, typedMove],
+      ["2054-03-01T00:00:00Z", "2054-03-20T00:00:00Z", typedSeries, plainMove],
+    ] as const) {
+      const rows = await filtered(from, to);
+      expect(rows.filter((o) => o.item.id === series)).toHaveLength(2);
+      expect(rows.filter((o) => o.item.id === moved)).toHaveLength(1);
+    }
+
+    // Filtered to the declared type, the move keeps its series and slot.
+    const first = await filtered(
+      "2053-03-01T00:00:00Z",
+      "2053-03-20T00:00:00Z",
+      declared,
+    );
+    expect(first.filter((o) => o.item.id === plainSeries)).toEqual([]);
+    const move = first.filter((o) => o.item.id === typedMove);
+    expect(move).toHaveLength(1);
+    expect(move[0]?.series_id).toBe(plainSeries);
+    expect(move[0]?.replaces).toBe("2053-03-11T10:00:00.000Z");
+
+    // And the series it answers still leaves the slot its move took.
+    const second = await filtered(
+      "2054-03-01T00:00:00Z",
+      "2054-03-20T00:00:00Z",
+      declared,
+    );
+    expect(second.filter((o) => o.item.id === plainMove)).toEqual([]);
+    expect(
+      second
+        .filter((o) => o.item.id === typedSeries)
+        .map((o) => o.starts_at)
+        .sort(),
+    ).toEqual(["2054-03-04T10:00:00.000Z", "2054-03-18T10:00:00.000Z"]);
+  });
+
+  it("carries series_id and replaces on a moved occurrence in a window that holds only its new time", async () => {
+    const series = await event({
+      starts_at: "2047-03-04T10:00:00.000Z",
+      ends_at: "2047-03-04T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    });
+    const moved = await event({
+      starts_at: "2047-05-14T10:00:00.000Z",
+      ends_at: "2047-05-14T11:00:00.000Z",
+      original_starts_at: "2047-03-11T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+
+    // The witness: the series is live, and a window holding the slot it
+    // left shows nothing there.
+    const first = await window("2047-03-04T00:00:00Z", "2047-03-05T00:00:00Z");
+    expect(first.filter((o) => o.series_id === series)).toHaveLength(1);
+    const slot = await window("2047-03-11T00:00:00Z", "2047-03-12T00:00:00Z");
+    expect(slot.filter((o) => o.series_id === series)).toEqual([]);
+
+    // The window holds the new time and no slot of the series.
+    const rows = await window("2047-05-13T00:00:00Z", "2047-05-15T00:00:00Z");
+    expect(rows.filter((o) => o.series_id === series)).toHaveLength(1);
+    const shown = rows.filter((o) => o.item.id === moved);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2047-05-14T10:00:00.000Z");
+    expect(shown[0]?.series_id).toBe(series);
+    expect(shown[0]?.replaces).toBe("2047-03-11T10:00:00.000Z");
+  });
+
+  it("carries series_id and replaces on a moved occurrence in a window that holds both times", async () => {
+    const series = await event({
+      starts_at: "2048-08-03T10:00:00.000Z",
+      ends_at: "2048-08-03T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"],
+    });
+    const moved = await event({
+      starts_at: "2048-08-12T10:00:00.000Z",
+      ends_at: "2048-08-12T11:00:00.000Z",
+      original_starts_at: "2048-08-10T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+
+    const rows = await window("2048-08-01T00:00:00Z", "2048-08-25T00:00:00Z");
+    const shown = rows.filter((o) => o.item.id === moved);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2048-08-12T10:00:00.000Z");
+    expect(shown[0]?.series_id).toBe(series);
+    expect(shown[0]?.replaces).toBe("2048-08-10T10:00:00.000Z");
+    // The slot it left shows nothing, and the series still shows its others.
+    expect(
+      rows
+        .filter((o) => o.series_id === series && o.item.id === series)
+        .map((o) => o.starts_at),
+    ).toEqual([
+      "2048-08-03T10:00:00.000Z",
+      "2048-08-17T10:00:00.000Z",
+      "2048-08-24T10:00:00.000Z",
+    ]);
+  });
+
   it("refuses a window longer than 400 days, and one holding more than 5000 occurrences", async () => {
     const long = await client.listOccurrences({
       from: "2043-01-01T00:00:00Z",
@@ -363,6 +903,53 @@ describe("the window", () => {
     expect(full.status).toBe(400);
     expect(full.error?.error.code).toBe("validation_error");
     expect(full.error?.error.details?.max_occurrences).toBe(5000);
+  });
+
+  it("takes a window of exactly 400 days and refuses one a millisecond longer", async () => {
+    const from = Date.parse("2060-01-01T00:00:00.000Z");
+    const to = (days: number, extraMs = 0) =>
+      new Date(from + days * 86_400_000 + extraMs).toISOString();
+    const taken = await client.listOccurrences({
+      from: new Date(from).toISOString(),
+      to: to(400),
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+
+    const refused = await client.listOccurrences({
+      from: new Date(from).toISOString(),
+      to: to(400, 1),
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details?.max_days).toBe(400);
+  });
+
+  it("takes a window holding exactly 5000 occurrences and refuses one holding 5001", async () => {
+    // Under the ceiling a single series has, and in a year no other fixture
+    // writes to.
+    for (const [hour, count] of [
+      ["00", 1800],
+      ["01", 1800],
+      ["02", 1400],
+    ] as const) {
+      await event({
+        starts_at: `2047-03-01T${hour}:00:00.000Z`,
+        recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(count)}`],
+      });
+    }
+    const query = {
+      from: "2047-03-01T00:00:00Z",
+      to: "2047-03-03T00:00:00Z",
+    };
+    const taken = await client.listOccurrences(query);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    expect(taken.data.data).toHaveLength(5000);
+
+    await event({ starts_at: "2047-03-02T12:00:00.000Z" });
+    const refused = await client.listOccurrences(query);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details?.max_occurrences).toBe(5000);
   });
 });
 
@@ -390,6 +977,64 @@ describe("what a write may store", () => {
     [
       "a rule that cannot be read",
       { recurrence: ["RRULE:INTERVAL=2"] },
+      "recurrence",
+    ],
+    [
+      "an EXRULE",
+      { recurrence: ["RRULE:FREQ=DAILY;COUNT=3", "EXRULE:FREQ=WEEKLY"] },
+      "recurrence",
+    ],
+    [
+      "an RDATE period",
+      {
+        recurrence: ["RDATE;VALUE=PERIOD:20410201T090000Z/PT1H"],
+      },
+      "recurrence",
+    ],
+    [
+      "COUNT and UNTIL together",
+      { recurrence: ["RRULE:FREQ=DAILY;COUNT=3;UNTIL=20410301T000000Z"] },
+      "recurrence",
+    ],
+    [
+      "an unknown rule part",
+      { recurrence: ["RRULE:FREQ=DAILY;BYFORTNIGHT=2"] },
+      "recurrence",
+    ],
+    [
+      "a numbered weekday on a weekly rule",
+      { recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=2TU"] },
+      "recurrence",
+    ],
+    [
+      "a day of the month on a weekly rule",
+      { recurrence: ["RRULE:FREQ=WEEKLY;BYMONTHDAY=15"] },
+      "recurrence",
+    ],
+    [
+      "a day of the year on a daily rule",
+      { recurrence: ["RRULE:FREQ=DAILY;BYYEARDAY=100"] },
+      "recurrence",
+    ],
+    [
+      "a week of the year on a monthly rule",
+      { recurrence: ["RRULE:FREQ=MONTHLY;BYWEEKNO=10"] },
+      "recurrence",
+    ],
+    [
+      "a rule that counts more than one occurrence and names no date that exists",
+      {
+        recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;COUNT=2"],
+      },
+      "recurrence",
+    ],
+    ["a duration below zero", { duration: -1 }, "duration"],
+    [
+      "a rule with no start to unfold from",
+      {
+        starts_at: undefined,
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=3"],
+      },
       "recurrence",
     ],
     ["a length no instant can hold", { duration: 1e13 }, "duration"],
@@ -527,12 +1172,103 @@ describe("what a write may store", () => {
     trackItem(ctx, archivedId);
   });
 
+  it("takes the nearest rule each of those refusals turns away", async () => {
+    // One step inside each refusal above: the same rule with the one part
+    // that was refused changed or removed.
+    for (const recurrence of [
+      ["RRULE:FREQ=DAILY;COUNT=3"],
+      ["RRULE:FREQ=DAILY;UNTIL=20410301T000000Z"],
+      ["RRULE:FREQ=DAILY;COUNT=3", "RDATE:20410201T090000Z"],
+      ["RRULE:FREQ=MONTHLY;BYDAY=2TU"],
+      ["RRULE:FREQ=MONTHLY;BYMONTHDAY=15"],
+      ["RRULE:FREQ=YEARLY;BYYEARDAY=100"],
+      ["RRULE:FREQ=YEARLY;BYWEEKNO=10"],
+      ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;COUNT=1"],
+    ]) {
+      await event({ starts_at: "2041-01-15T09:00:00.000Z", recurrence });
+    }
+    await event({ starts_at: "2041-01-15T09:00:00.000Z", duration: 0 });
+  });
+
+  it("refuses a recurrence over 40,000 characters in all and takes one of exactly 40,000", async () => {
+    // Blank padding is read as nothing, so the characters counted are the
+    // only thing that differs. The count is of every line together.
+    const lines = (padding: number) => [
+      " ".repeat(padding) + "RRULE:FREQ=DAILY;COUNT=2",
+      " ".repeat(20_000) + "EXDATE:20410201T090000Z",
+    ];
+    const exact = 40_000 - ("RRULE:FREQ=DAILY;COUNT=2".length + 20_000 + 23);
+    expect(lines(exact).join("")).toHaveLength(40_000);
+    await event({
+      starts_at: "2041-01-15T09:00:00.000Z",
+      recurrence: lines(exact),
+    });
+
+    const refused = await client.createItem({
+      type: "core.event",
+      source: ctx.source,
+      properties: {
+        title: `refused ${ctx.runId}`,
+        starts_at: "2041-01-15T09:00:00.000Z",
+        recurrence: lines(exact + 1),
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused.error?.error.details)).toEqual(["recurrence"]);
+  });
+
   it("takes an ordinary series, a fixed-offset zone and a leap day", async () => {
     await event({
       starts_at: "2044-02-29T09:00:00.000Z",
       timezone: "Etc/GMT+5",
       recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29"],
     });
+  });
+});
+
+describe("a series with more occurrences in the window than it may unfold", () => {
+  const MAY_UNFOLD = 2000;
+
+  it("says expansion_incomplete when a series has more occurrences in the window than it may unfold", async () => {
+    const read = async (from: string, to: string) => {
+      const r = await client.listOccurrences({ from, to });
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return r.data as unknown as {
+        data: Row[];
+        expansion_incomplete?: boolean;
+        series_errors?: { item_id: string }[];
+        scan: { series_unexpanded: number };
+      };
+    };
+
+    // The witness: a series with exactly as many as it may unfold is
+    // unfolded whole and drawn no error.
+    const atLimit = await event({
+      starts_at: "2049-03-01T00:00:00.000Z",
+      recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(MAY_UNFOLD)}`],
+    });
+    const whole = await read("2049-03-01T00:00:00Z", "2049-03-04T00:00:00Z");
+    expect(whole.data.filter((o) => o.series_id === atLimit)).toHaveLength(
+      MAY_UNFOLD,
+    );
+    expect(
+      (whole.series_errors ?? []).filter((e) => e.item_id === atLimit),
+    ).toEqual([]);
+
+    // One more is left out whole, named, counted, and the answer says it
+    // is short of it.
+    const pastLimit = await event({
+      starts_at: "2049-01-01T00:00:00.000Z",
+      recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(MAY_UNFOLD + 1)}`],
+    });
+    const cut = await read("2049-01-01T00:00:00Z", "2049-01-04T00:00:00Z");
+    expect(cut.data.filter((o) => o.series_id === pastLimit)).toEqual([]);
+    expect(
+      (cut.series_errors ?? []).filter((e) => e.item_id === pastLimit),
+    ).toHaveLength(1);
+    expect(cut.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
+    expect(cut.expansion_incomplete).toBe(true);
   });
 });
 
@@ -567,6 +1303,93 @@ describe("a rule too costly to unfold", () => {
       expect(partial.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
     } finally {
       await client.deleteItem(costly);
+    }
+  });
+});
+
+describe("a moved occurrence whose series the credential may not read", () => {
+  it("names no series a moved occurrence belongs to when the series is not readable", async () => {
+    const current = await client.getConfig();
+    expect(current.status, JSON.stringify(current.error)).toBe(200);
+    const originalConfig = current.data as Record<string, unknown>;
+
+    const writer = async (label: string): Promise<MarfaClient> => {
+      const minted = await client.createKey({
+        label,
+        source: `${ctx.source}-${label}`,
+        permissions: [],
+        type_permissions: { "*": "write" },
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const write = async (
+      as: MarfaClient,
+      properties: Record<string, unknown>,
+    ): Promise<string> => {
+      const r = await as.createItem({
+        type: "core.event",
+        properties: { title: `hidden series ${ctx.runId}`, ...properties },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+
+    const hiding = await writer("hidden-series");
+    const admitted = await writer("moved-occurrence");
+    const series = await write(hiding, {
+      starts_at: "2051-03-03T10:00:00.000Z",
+      ends_at: "2051-03-03T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"],
+    });
+    const moved = await write(admitted, {
+      starts_at: "2051-03-12T10:00:00.000Z",
+      ends_at: "2051-03-12T11:00:00.000Z",
+      original_starts_at: "2051-03-10T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+
+    const read = async (): Promise<Row[]> =>
+      window("2051-03-01T00:00:00Z", "2051-04-01T00:00:00Z");
+    const own = (rows: Row[]) =>
+      rows.filter((o) => o.item.id === moved || o.item.id === series);
+
+    try {
+      // The witness: with no filter the exception carries its series and the
+      // slot it left, and the series unfolds, so what is missing below is the
+      // filter's doing.
+      const before = own(await read());
+      const shown = before.filter((o) => o.item.id === moved);
+      expect(shown).toHaveLength(1);
+      expect(shown[0]?.series_id).toBe(series);
+      expect(shown[0]?.replaces).toBe("2051-03-10T10:00:00.000Z");
+      expect(before.filter((o) => o.item.id === series)).toHaveLength(3);
+
+      const set = await client.updateConfig({
+        enforcement: {
+          source_filter: {
+            types: ["core.event"],
+            sources: [`${ctx.source}-moved-occurrence`],
+          },
+        },
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+
+      const after = own(await read());
+      expect(after.map((o) => o.item.id)).toEqual([moved]);
+      expect(after[0]?.starts_at).toBe("2051-03-12T10:00:00.000Z");
+      expect(after[0]).not.toHaveProperty("series_id");
+      expect(after[0]).not.toHaveProperty("replaces");
+    } finally {
+      const restored = await client.updateConfig(originalConfig);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     }
   });
 });

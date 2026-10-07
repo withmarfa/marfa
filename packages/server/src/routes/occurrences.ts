@@ -97,8 +97,8 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   MarfaError,
   ErrorCode,
-  matchesTypeFilter,
-  typeMatchesPattern,
+  resolveEnforcement,
+  typeAnswersSubtreeFilter,
 } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -118,6 +118,7 @@ import {
   RecurrenceExpansionStopped,
 } from "../events/expand-recurrence.js";
 import { instantColumnValues } from "../storage/instant-columns.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -415,8 +416,8 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-/** Types whose items this route reads: those declaring the event shape. */
-const EVENT_TYPES = ["core.event"] as const;
+/** The type whose items this route reads: the one declaring the event shape. */
+const EVENT_TYPE = "core.event";
 
 /** Rows read so far by one request, summed across its passes. Reported
  *  on the response rather than compared against anything: what the read
@@ -427,6 +428,14 @@ interface ScanBudget {
 
 /** The storage-side narrowing one pass applies on top of type and state. */
 type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
+
+/** What every pass reads: the `type` the request names, else the event
+ *  type, narrowed by the credential and the instance's source filter as
+ *  `GET /items` narrows a listing. */
+type EventScanScope = Pick<
+  ItemFilters,
+  "type" | "allowed_types" | "excluded_types" | "source_filter"
+>;
 
 /**
  * What the window pass keeps from a row.
@@ -456,37 +465,37 @@ interface WindowSeed {
  */
 async function scanEvents<T>(
   storage: Storage,
-  types: readonly string[],
+  scope: EventScanScope,
   budget: ScanBudget,
   narrowing: EventScanNarrowing,
   project: (item: Item) => T | undefined,
 ): Promise<T[]> {
   const kept: T[] = [];
-  for (const type of types) {
-    let cursor: string | undefined;
-    do {
-      const page = await storage.items.list({
-        type,
-        state: "active",
-        limit: EVENT_PAGE_SIZE,
-        ...narrowing,
-        ...(cursor !== undefined ? { cursor } : {}),
-      });
-      budget.scanned += page.data.length;
-      for (const item of page.data) {
-        const projected = project(item);
-        if (projected !== undefined) kept.push(projected);
-      }
-      cursor = page.next_cursor ?? undefined;
-      // Between pages for the same reason the expansion yields between
-      // batches. On a driver that answers over a socket the await above
-      // already returns the loop; on an embedded one it does not, and a
-      // walk of tens of thousands of rows is then a single stretch of
-      // synchronous reads and JSON parsing with every other request on
-      // the process behind it.
-      if (cursor !== undefined) await yieldToEventLoop();
-    } while (cursor !== undefined);
-  }
+  let cursor: string | undefined;
+  do {
+    const page = await storage.items.list({
+      ...scope,
+      state: "active",
+      limit: EVENT_PAGE_SIZE,
+      ...narrowing,
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    for (const item of page.data) {
+      // A `type` filter may reach past the event types; only they unfold.
+      if (!typeAnswersSubtreeFilter(item.type, EVENT_TYPE)) continue;
+      budget.scanned += 1;
+      const projected = project(item);
+      if (projected !== undefined) kept.push(projected);
+    }
+    cursor = page.next_cursor ?? undefined;
+    // Between pages for the same reason the expansion yields between
+    // batches. On a driver that answers over a socket the await above
+    // already returns the loop; on an embedded one it does not, and a
+    // walk of tens of thousands of rows is then a single stretch of
+    // synchronous reads and JSON parsing with every other request on
+    // the process behind it.
+    if (cursor !== undefined) await yieldToEventLoop();
+  } while (cursor !== undefined);
   return kept;
 }
 
@@ -645,11 +654,11 @@ function overlapsWindow(
  */
 export async function gatherSeriesSeeds(
   storage: Storage,
-  types: readonly string[],
+  type: string,
 ): Promise<RecurrenceSeries[]> {
   const scanned = await scanEvents(
     storage,
-    types,
+    { type },
     { scanned: 0 },
     { hasProperty: "recurrence" },
     projectSeries,
@@ -869,7 +878,7 @@ const OccurrencesResponseSchema = z
       .boolean()
       .optional()
       .describe(
-        "`true` when a series' expansion didn't finish, so `data` may be missing its occurrences; `scan.series_unexpanded` counts those series. A narrower window doesn't help: narrow by `type` or fix the rules. Absent otherwise.",
+        "`true` when a series didn't finish expanding, so `data` may be missing occurrences; `scan.series_unexpanded` counts them. If a series has too many in the window, narrow the window; else narrow by `type` or fix the rules. Absent otherwise.",
       ),
   })
   .describe(
@@ -1050,60 +1059,47 @@ export function occurrenceRoutes(
     // `assertTypeFilter`.
     assertTypeFilter(c, query.type);
 
-    // The caller's own type permissions still decide what is readable;
-    // this route narrows to event types on top of that rather than
-    // instead of it.
-    // `getTypeFilter` returns the credential's permission patterns and the
-    // exclusions that carve into them, not concrete type ids, so the
-    // narrowing goes through the same predicate the SSE stream uses rather
-    // than a membership test.
-    const typeFilter = getTypeFilter(c);
-    const named = query.type;
-    const wanted = (
-      named !== undefined
-        ? EVENT_TYPES.filter((t) => typeMatchesPattern(t, named))
-        : EVENT_TYPES
-    ).filter((t) => matchesTypeFilter(t, typeFilter));
-    if (wanted.length === 0) {
-      // Every count here is scoped to what this request read, and it
-      // read nothing, so the zeros are true rather than a claim about
-      // the rest. `scan.series_errors` says the same on every other
-      // path: a request is told about the rules it read and no others.
-      return c.json(
-        {
-          data: [],
-          next_cursor: null,
-          window: { from: from.toISOString(), to: to.toISOString() },
-          scan: {
-            events_read: 0,
-            occurrences: 0,
-            max_occurrences: MAX_OCCURRENCES,
-            series_errors: 0,
-            max_series_errors: MAX_SERIES_ERRORS,
-            unproductive_iterations: 0,
-            max_unproductive_iterations: maxUnproductiveIterations,
-            series_unexpanded: 0,
-          },
-        },
-        200,
-      );
-    }
-
     // Three passes, because the calendar is three different questions
     // and only one of them is about the window. Each keeps its own
     // projection of a row and never the row: see the note at the top of
     // this file for why that is what makes an unbounded scan safe.
     const budget: ScanBudget = { scanned: 0 };
+    const typeFilter = getTypeFilter(c);
+    const enforcement = resolveEnforcement(
+      await readInstanceConfig(storage.settings),
+      c.get("apiKey"),
+    );
+    const scope: EventScanScope = {
+      type: EVENT_TYPE,
+      allowed_types: typeFilter.allowed,
+      excluded_types: typeFilter.excluded,
+      source_filter: enforcement.source_filter,
+    };
 
     // Series. Unwindowed by necessity — a rule written years ago
     // produces occurrences in any window, so the window says nothing
     // about which rules matter.
+    // The series and exception passes read every event type, because an
+    // exception and its series may be of different types and must still be
+    // matched; a `type` filter decides only what is answered.
+    const typeOf = new Map<string, string>();
+    const noting =
+      <T>(project: (item: Item) => T | undefined) =>
+      (item: Item): T | undefined => {
+        typeOf.set(item.id, item.type);
+        return project(item);
+      };
+    const answered = (id: string): boolean => {
+      if (query.type === undefined) return true;
+      const type = typeOf.get(id);
+      return type !== undefined && typeAnswersSubtreeFilter(type, query.type);
+    };
     const seriesScan = await scanEvents(
       storage,
-      wanted,
+      scope,
       budget,
       { hasProperty: "recurrence" },
-      projectSeries,
+      noting(projectSeries),
     );
 
     // Exceptions. Unwindowed for the opposite reason — an exception
@@ -1112,10 +1108,10 @@ export function occurrenceRoutes(
     // a ghost back on the calendar at a slot nobody is at.
     const exceptionSeeds = await scanEvents(
       storage,
-      wanted,
+      scope,
       budget,
       { hasProperty: "original_starts_at" },
-      projectException,
+      noting(projectException),
     );
 
     // Standalone events, narrowed to the window in SQL against the
@@ -1123,10 +1119,10 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      wanted,
+      { ...scope, type: query.type ?? EVENT_TYPE },
       budget,
       { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
-      projectWindow,
+      noting(projectWindow),
     );
 
     // Batched, because the per-item form issued one query per exception
@@ -1261,6 +1257,9 @@ export function occurrenceRoutes(
     for (const scanned of seriesScan) {
       if (seenSeries.has(scanned.id)) continue;
       seenSeries.add(scanned.id);
+      // Named on an exception the filter answers, but neither unfolded nor
+      // reported: the filter leaves its own occurrences out.
+      if (!answered(scanned.id)) continue;
 
       // Reported whether or not there is a series behind it, and before
       // the ceiling below, because reading a row's rule cost nothing the
@@ -1334,12 +1333,34 @@ export function occurrenceRoutes(
         if (occurrence.replaces !== undefined) {
           consumedExceptions.add(occurrence.item_id);
         }
+        if (!answered(occurrence.item_id)) continue;
         appendPending({
           starts_at: occurrence.starts_at,
           ends_at: occurrence.ends_at,
           item_id: occurrence.item_id,
           series_id: seed.id,
           replaces: occurrence.replaces,
+        });
+      }
+    }
+
+    // A stored exception names its series and the slot it replaced whether
+    // or not this window holds that slot, so an exception shown at its own
+    // time carries both even where the expansion above never reached it.
+    // Only a series the scan read is named: an edge can point at a row this
+    // credential may not read.
+    const exceptionSlots = new Map<
+      string,
+      { series_id: string; replaces: string }
+    >();
+    for (const [seriesId, exceptions] of exceptionsBySeries) {
+      if (!seenSeries.has(seriesId)) continue;
+      for (const exception of exceptions) {
+        const slot = Date.parse(exception.original_starts_at);
+        if (Number.isNaN(slot)) continue;
+        exceptionSlots.set(exception.id, {
+          series_id: seriesId,
+          replaces: new Date(slot).toISOString(),
         });
       }
     }
@@ -1371,6 +1392,7 @@ export function occurrenceRoutes(
             ? toInstantString(seed.ends_at, seed.ends_at)
             : undefined,
         item_id: seed.id,
+        ...exceptionSlots.get(seed.id),
       });
     }
 

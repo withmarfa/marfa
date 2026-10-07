@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createSecondClient,
+  createTestContext,
+  trackItem,
+  cleanup,
+} from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -160,5 +165,81 @@ describe("pagination correctness", () => {
     const page = await client.search("Pagination", { limit: 2 });
     expect(page.ok).toBe(true);
     expect(page.data.data.length).toBe(2);
+  });
+});
+
+describe("the page limit", () => {
+  const LISTING_MAX = 200;
+  const SEARCH_MAX = 100;
+  let word: string;
+  let wide: MarfaClient;
+  let wideSource: string;
+
+  beforeAll(async () => {
+    // A source of its own, so the rows the other cases count are left alone.
+    wide = await createSecondClient(ctx, "wide");
+    wideSource = `${ctx.source}-wide`;
+    word = `limitbounds${ctx.runId}`;
+    const seeded = await wide.bulkItems({
+      items: Array.from({ length: LISTING_MAX + 1 }, (_, i) => ({
+        type: "core.note",
+        source: wideSource,
+        properties: { title: word, body: `${word} ${String(i)}` },
+      })),
+    });
+    expect(seeded.status, JSON.stringify(seeded.error)).toBe(200);
+    expect(seeded.data.counts.created).toBe(LISTING_MAX + 1);
+    for (const result of seeded.data.results) trackItem(ctx, String(result.id));
+  });
+
+  it("takes a limit of 200 and refuses 201 and 0, on the listing", async () => {
+    const path = (limit: number) =>
+      `/items?source=${encodeURIComponent(wideSource)}&limit=${String(limit)}`;
+    // More rows are held than the largest page, so a page of 200 is the limit
+    // honored and not the listing running out.
+    const widest = await wide.rawRequest<{
+      data: unknown[];
+      next_cursor: string | null;
+    }>(path(LISTING_MAX));
+    expect(widest.status, JSON.stringify(widest.error)).toBe(200);
+    expect(widest.data.data).toHaveLength(LISTING_MAX);
+    expect(widest.data.next_cursor).not.toBeNull();
+
+    const narrowest = await wide.rawRequest<{ data: unknown[] }>(path(1));
+    expect(narrowest.status).toBe(200);
+    expect(narrowest.data.data).toHaveLength(1);
+
+    for (const limit of [LISTING_MAX + 1, 0]) {
+      const refused = await wide.rawRequest<unknown>(path(limit));
+      expect(refused.status, `limit ${String(limit)}`).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.errors).toMatchObject([
+        { path: "limit" },
+      ]);
+    }
+  });
+
+  it("takes a limit of 100 and refuses 101 and 0, on the search", async () => {
+    const path = (limit: number) => `/search?q=${word}&limit=${String(limit)}`;
+    const widest = await wide.rawRequest<{
+      data: unknown[];
+      next_cursor: string | null;
+    }>(path(SEARCH_MAX));
+    expect(widest.status, JSON.stringify(widest.error)).toBe(200);
+    expect(widest.data.data).toHaveLength(SEARCH_MAX);
+    expect(widest.data.next_cursor).not.toBeNull();
+
+    const narrowest = await wide.rawRequest<{ data: unknown[] }>(path(1));
+    expect(narrowest.status).toBe(200);
+    expect(narrowest.data.data).toHaveLength(1);
+
+    for (const limit of [SEARCH_MAX + 1, 0]) {
+      const refused = await wide.rawRequest<unknown>(path(limit));
+      expect(refused.status, `limit ${String(limit)}`).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.errors).toMatchObject([
+        { path: "limit" },
+      ]);
+    }
   });
 });

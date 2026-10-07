@@ -7,9 +7,10 @@ import { createNote } from "../../generators/items.js";
 /**
  * What a door answers when the caller names no state.
  *
- * `search-and-filters.md` 2 says the listing grammar's default is the
- * active state, 12 says a search takes the same default, and 16 says the
- * export door alone departs from it. Three doors, two answers, and the
+ * A listing's default is the active state (`items/bin-hidden`,
+ * `items/archived-hidden`), a search takes the same default
+ * (`search-and-filters/state-search-default`), and an export departs from
+ * it (`search-and-filters/export-state-default`). Three doors, two answers, and the
  * divergence is deliberate: a listing and a search answer what the reader
  * is working with, while the archive an export writes is what a restore
  * reads back, so dropping archived rows from it would lose them on the

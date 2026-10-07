@@ -99,9 +99,7 @@ pub(crate) fn narrow_by_type(
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
-    // An empty filter is no filter, as `?type=` is on the server.
-    let Some(declared) = declared.filter(|declared| !declared.is_empty() && *declared != "*")
-    else {
+    let Some(declared) = declared.filter(|declared| *declared != "*") else {
         return Ok(());
     };
     if !crate::hydrate::type_pattern(declared)? {
@@ -276,6 +274,21 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ids(&conn, filters, Sort::default()).len(), 4);
+    }
+
+    #[test]
+    fn an_empty_type_is_refused_as_the_server_refuses_it() {
+        let conn = seeded();
+        let catalog = Catalog::load(&conn).unwrap();
+        let filters = ListFilters {
+            r#type: Some(String::new()),
+            ..Default::default()
+        };
+        let refused = list(&conn, &catalog, &filters, Sort::default()).unwrap_err();
+        assert!(matches!(
+            refused,
+            crate::error::CoreError::Validation { ref code, .. } if code == "validation_error"
+        ));
     }
 
     #[test]

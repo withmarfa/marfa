@@ -75,31 +75,26 @@ export function tarGz(files: ArchiveFile[]): Uint8Array {
 }
 
 /**
- * The named member of a `tar.gz` the server produced, as text.
+ * Every member of a `tar.gz` the server produced, in the order the archive
+ * carries them, as `{ name, body }`.
  *
- * The writer above exists because one precondition cannot be exported; this
- * reader exists because one assertion cannot be made over HTTP. The archive
- * manifest is a wire artifact the server emits and no route echoes, so the
- * only way to hold it to anything is to open the bytes.
- *
- * Same USTAR subset as the writer, read rather than written: a 512-byte
- * header, an octal size at offset 124, the body padded to the next block.
- * Entries the archive carries that this is not asked for are skipped by
- * size, and a name that never appears answers null so the caller can say so
- * rather than reading a member it did not ask for.
+ * The archive is a wire artifact no route echoes, so the only way to hold it
+ * to anything is to open the bytes. Same USTAR subset as the writer, read
+ * rather than written: a 512-byte header, an octal size at offset 124, the
+ * body padded to the next block.
  */
-export function readTarGzEntry(
+export function listTarGzEntries(
   archive: Uint8Array,
-  name: string,
-): string | null {
+): { name: string; body: Buffer }[] {
   const tar = gunzipSync(Buffer.from(archive));
+  const entries: { name: string; body: Buffer }[] = [];
   let offset = 0;
   while (offset + BLOCK <= tar.length) {
     const header = tar.subarray(offset, offset + BLOCK);
     // Two zero blocks close the archive, and one is enough to stop on: a
     // header whose name field is empty is the end of the entries.
-    const entry = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
-    if (entry === "") return null;
+    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
+    if (name === "") break;
     // The size field is eleven octal digits and a terminator, but the
     // terminator is a NUL in one legal spelling and a space in another, and
     // either may be left-padded with spaces. Cutting at the first space
@@ -112,16 +107,27 @@ export function readTarGzEntry(
     const size = parseInt(field.replace(/\0.*$/, "").trim(), 8);
     if (!Number.isInteger(size) || size < 0) {
       throw new Error(
-        `tar entry ${entry} has an unreadable size field: ${JSON.stringify(field)}`,
+        `tar entry ${name} has an unreadable size field: ${JSON.stringify(field)}`,
       );
     }
     const body = offset + BLOCK;
-    if (entry === name) {
-      return tar.subarray(body, body + size).toString("utf8");
-    }
+    entries.push({ name, body: tar.subarray(body, body + size) });
     offset = body + Math.ceil(size / BLOCK) * BLOCK;
   }
-  return null;
+  return entries;
+}
+
+/**
+ * The named member of a `tar.gz` the server produced, as text. A name that
+ * never appears answers null so the caller can say so rather than reading a
+ * member it did not ask for.
+ */
+export function readTarGzEntry(
+  archive: Uint8Array,
+  name: string,
+): string | null {
+  const found = listTarGzEntries(archive).find((entry) => entry.name === name);
+  return found ? found.body.toString("utf8") : null;
 }
 
 /** One `items.ndjson` line: the row, and the metadata layer beside it. */

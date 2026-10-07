@@ -14,12 +14,14 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
   blobHash,
   itemsArchive,
+  listTarGzEntries,
   readTarGzEntry,
   tarGz,
 } from "../../utils/archive.js";
@@ -27,10 +29,17 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   getOperatorClient,
+  trackEdgeType,
   trackItem,
   trackKey,
+  trackType,
   cleanup,
 } from "../../utils/setup.js";
+import {
+  baselineEventId,
+  collectUntil,
+  withStream,
+} from "../../utils/stream.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -546,5 +555,441 @@ describe("restore", () => {
     const res = await scoped.restoreArchive(archiveBytes);
     expect(res.status).toBe(403);
     expect(res.error?.error.code).toBe("forbidden");
+  });
+});
+
+/** The archive with one member replaced or added, every other as it was. */
+function withEntry(
+  archive: Uint8Array,
+  name: string,
+  body: string,
+): Uint8Array {
+  const entries = listTarGzEntries(archive).map((entry) => ({
+    name: entry.name,
+    body: entry.name === name ? body : entry.body,
+  }));
+  if (!entries.some((entry) => entry.name === name)) {
+    entries.push({ name, body });
+  }
+  return tarGz(entries);
+}
+
+describe("a body that is no archive", () => {
+  /** An archive of one note that would restore, so a refusal can be told from
+   *  an empty restore by the row it did not write. */
+  function oneNote(): { id: string; archive: Uint8Array; padding: number } {
+    const id = uuidv7();
+    // Random bytes the gzip stream cannot shrink, so there is a middle to damage.
+    const padding = 256 * 1024;
+    const archive = tarGz([
+      ...listTarGzEntries(
+        itemsArchive([
+          {
+            id,
+            type: "core.note",
+            source: ctx.source,
+            properties: { body: "a row an unreadable body must not write" },
+          },
+        ]),
+      ).map((entry) => ({ name: entry.name, body: entry.body })),
+      { name: "padding.bin", body: new Uint8Array(randomBytes(padding)) },
+    ]);
+    return { id, archive, padding };
+  }
+
+  it("refuses an empty body, and takes an archive of nothing", async () => {
+    const refused = await operator.restoreArchive(new Uint8Array(0));
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // The witness: an archive that carries no row is not an empty body.
+    const nothing = await operator.restoreArchive(itemsArchive([]));
+    expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
+    expect(nothing.data).toMatchObject({ imported: 0, duplicates: 0 });
+  });
+
+  it("refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving", async () => {
+    const whole = oneNote();
+    const gz = Buffer.from(whole.archive);
+    const middle = Math.floor(gz.length / 2);
+    const damaged = Buffer.from(gz);
+    randomBytes(64).copy(damaged, middle);
+    const bodies: [string, Uint8Array][] = [
+      ["bytes that are not gzip", new Uint8Array(randomBytes(4096))],
+      [
+        "a gzip stream of text that is no tar",
+        new Uint8Array(gzipSync(Buffer.from("not a tar ".repeat(200)))),
+      ],
+      ["a gzip stream cut short", new Uint8Array(gz.subarray(0, middle))],
+      ["a gzip stream with bytes overwritten", new Uint8Array(damaged)],
+    ];
+
+    // The witness: the whole archive restores and writes its row.
+    const restored = await operator.restoreArchive(whole.archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data.imported).toBe(1);
+    trackItem(ctx, whole.id);
+    expect((await client.getItem(whole.id)).status).toBe(200);
+    expect((await client.deleteItem(whole.id)).ok).toBe(true);
+    expect((await client.purgeItem(whole.id)).ok).toBe(true);
+    expect((await client.getItem(whole.id)).status).toBe(404);
+
+    for (const [what, body] of bodies) {
+      const refused = await operator.restoreArchive(body);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("validation_error");
+      expect((await client.getItem(whole.id)).status, what).toBe(404);
+      const health = await client.rawRequest<{ status: string }>("/health");
+      expect(health.status, `${what}: the server stopped answering`).toBe(200);
+    }
+    const after = await operator.restoreArchive(whole.archive);
+    expect(after.ok, JSON.stringify(after.error)).toBe(true);
+    expect(after.data.imported).toBe(1);
+  });
+});
+
+describe("what a restore answers", () => {
+  const edgeType = (id: string) => ({
+    id,
+    cardinality: "many-to-many",
+    source_type_constraints: ["*"],
+    target_type_constraints: ["*"],
+    cascade_on_delete: "orphan",
+    property_schema: {},
+    written_at: "source",
+  });
+
+  /** A type, an edge type, a blob, two notes and an edge between them. */
+  function carrying(ids: { type: string; edgeType: string }) {
+    const a = uuidv7();
+    const b = uuidv7();
+    const edgeId = uuidv7();
+    const bytes = new Uint8Array(randomBytes(48));
+    const hash = blobHash(bytes);
+    const base = itemsArchive(
+      [a, b].map((id) => ({
+        id,
+        type: ids.type,
+        source: ctx.source,
+        properties: { label: `answer ${id}`, blob: hash },
+      })),
+      [{ data: bytes, mime_type: "application/octet-stream" }],
+      [
+        {
+          id: ids.type,
+          label: "Answer",
+          version: 1,
+          fields: { label: { type: "string" }, blob: { type: "string" } },
+        },
+      ],
+    );
+    const edges = (extra: Record<string, unknown>[] = []) =>
+      [
+        { id: edgeId, source_id: a, target_id: b, edge_type: ids.edgeType },
+        ...extra,
+      ]
+        .map((edge) => `${JSON.stringify({ edge })}\n`)
+        .join("");
+    const types = `${JSON.stringify({
+      type: {
+        id: ids.type,
+        label: "Answer",
+        version: 1,
+        fields: { label: { type: "string" }, blob: { type: "string" } },
+      },
+    })}\n${JSON.stringify({ edge_type: edgeType(ids.edgeType) })}\n`;
+    const archive = (extraEdges: Record<string, unknown>[] = []) =>
+      withEntry(
+        withEntry(base, "edges.ndjson", edges(extraEdges)),
+        "types.ndjson",
+        types,
+      );
+    return { a, b, edgeId, hash, archive };
+  }
+
+  it("answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat", async () => {
+    const ids = {
+      type: `user.restoreanswer${ctx.runId}`,
+      edgeType: `restoreanswer.${ctx.runId}`,
+    };
+    const rows = carrying(ids);
+    trackItem(ctx, rows.a);
+    trackItem(ctx, rows.b);
+    trackType(ctx, ids.type);
+    trackEdgeType(ctx, ids.edgeType);
+
+    const first = await operator.restoreArchive(rows.archive());
+    expect(first.ok, JSON.stringify(first.error)).toBe(true);
+    expect(Object.keys(first.data).sort()).toEqual(
+      [
+        "blobs_imported",
+        "duplicates",
+        "edge_types_registered",
+        "edge_types_skipped",
+        "edges_imported",
+        "edges_skipped",
+        "edges_skipped_reasons",
+        "imported",
+        "types_registered",
+        "types_skipped",
+      ].sort(),
+    );
+    expect(first.data).toEqual({
+      imported: 2,
+      duplicates: 0,
+      edges_imported: 1,
+      edges_skipped: 0,
+      edges_skipped_reasons: {},
+      blobs_imported: 1,
+      types_registered: 1,
+      types_skipped: 0,
+      edge_types_registered: 1,
+      edge_types_skipped: 0,
+    });
+    await expectMatchesSchema("POST", "/restore", 200, first.data);
+
+    // The same archive again, with an edge naming a row it does not carry and
+    // one naming no kind of edge.
+    const again = await operator.restoreArchive(
+      rows.archive([
+        {
+          id: uuidv7(),
+          source_id: rows.a,
+          target_id: uuidv7(),
+          edge_type: ids.edgeType,
+        },
+        { id: uuidv7(), source_id: rows.a, target_id: rows.b },
+      ]),
+    );
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(again.data).toEqual({
+      imported: 0,
+      duplicates: 2,
+      edges_imported: 0,
+      edges_skipped: 3,
+      edges_skipped_reasons: {
+        already_present: 1,
+        endpoint_missing: 1,
+        malformed: 1,
+      },
+      blobs_imported: 1,
+      types_registered: 0,
+      types_skipped: 1,
+      edge_types_registered: 0,
+      edge_types_skipped: 1,
+    });
+    await expectMatchesSchema("POST", "/restore", 200, again.data);
+  });
+
+  it("refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing", async () => {
+    const ids = {
+      type: `user.restoreconflict${ctx.runId}`,
+      edgeType: `restoreconflict.${ctx.runId}`,
+    };
+    const held = carrying(ids);
+    trackItem(ctx, held.a);
+    trackItem(ctx, held.b);
+    trackType(ctx, ids.type);
+    trackEdgeType(ctx, ids.edgeType);
+    const taken = await operator.restoreArchive(held.archive());
+    expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
+
+    // The same two ids, defined another way, beside a type nothing holds.
+    const fresh = {
+      type: `user.restorefresh${ctx.runId}`,
+      id: uuidv7(),
+    };
+    const types = [
+      {
+        type: {
+          id: ids.type,
+          label: "Answer",
+          version: 1,
+          fields: { label: { type: "integer" } },
+        },
+      },
+      { edge_type: { ...edgeType(ids.edgeType), cardinality: "one-to-one" } },
+      {
+        type: {
+          id: fresh.type,
+          label: "Fresh",
+          version: 1,
+          fields: { label: { type: "string" } },
+        },
+      },
+    ];
+    const redefining = withEntry(
+      itemsArchive([
+        {
+          id: fresh.id,
+          type: fresh.type,
+          source: ctx.source,
+          properties: { label: "a row of a type the archive registers" },
+        },
+      ]),
+      "types.ndjson",
+      types.map((line) => `${JSON.stringify(line)}\n`).join(""),
+    );
+    const refused = await operator.restoreArchive(redefining);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
+    expect(refused.error?.error.details?.conflicting_ids).toEqual(
+      expect.arrayContaining([ids.type, ids.edgeType]),
+    );
+    expect((await client.getType(fresh.type)).status).toBe(404);
+    expect((await client.getItem(fresh.id)).status).toBe(404);
+    const held_ = await client.getType(ids.type);
+    expect(held_.data.fields).toEqual({
+      label: { type: "string" },
+      blob: { type: "string" },
+    });
+  });
+});
+
+describe("a restore refused after it began", () => {
+  it("leaves no row, type, edge type, blob, event or audit record behind when a later row is refused", async () => {
+    const ids = {
+      type: `user.restorerollback${ctx.runId}`,
+      edgeType: `restorerollback.${ctx.runId}`,
+    };
+    const bytes = new Uint8Array(randomBytes(64));
+    const hash = blobHash(bytes);
+    const notes = Array.from({ length: 10 }, () => uuidv7());
+    const event = uuidv7();
+    const archive = (rule: string) => {
+      const base = itemsArchive(
+        [
+          ...notes.map((id) => ({
+            id,
+            type: ids.type,
+            source: ctx.source,
+            properties: { label: `before the refusal ${id}`, blob: hash },
+          })),
+          {
+            id: event,
+            type: "core.event",
+            source: ctx.source,
+            properties: {
+              title: "the row that is refused",
+              starts_at: "2041-01-15T09:00:00.000Z",
+              recurrence: [rule],
+            },
+          },
+        ],
+        [{ data: bytes, mime_type: "application/octet-stream" }],
+        [
+          {
+            id: ids.type,
+            label: "Rollback",
+            version: 1,
+            fields: { label: { type: "string" }, blob: { type: "string" } },
+          },
+        ],
+      );
+      return withEntry(
+        base,
+        "types.ndjson",
+        [
+          {
+            type: {
+              id: ids.type,
+              label: "Rollback",
+              version: 1,
+              fields: { label: { type: "string" }, blob: { type: "string" } },
+            },
+          },
+          {
+            edge_type: {
+              id: ids.edgeType,
+              cardinality: "many-to-many",
+              source_type_constraints: ["*"],
+              target_type_constraints: ["*"],
+              cascade_on_delete: "orphan",
+              property_schema: {},
+              written_at: "source",
+            },
+          },
+        ]
+          .map((line) => `${JSON.stringify(line)}\n`)
+          .join(""),
+      );
+    };
+
+    const { eventId, markerId } = await baselineEventId(
+      apiUrl,
+      fileKey,
+      async () => {
+        const marker = await client.createItem(
+          createNote({ source: ctx.source }),
+        );
+        expect(marker.ok).toBe(true);
+        return marker.data.item.id;
+      },
+    );
+    trackItem(ctx, markerId);
+    const idsOf = (events: { data?: unknown }[]) =>
+      events.map(
+        (e) => (e.data as { item?: { id?: string } } | undefined)?.item?.id,
+      );
+
+    const refused = await operator.restoreArchive(
+      archive("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"),
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    for (const id of [...notes, event]) {
+      expect((await client.getItem(id)).status, id).toBe(404);
+    }
+    expect((await client.getType(ids.type)).status).toBe(404);
+    expect(
+      (await client.listEdgeTypes()).data.data.map((e) => e.id),
+    ).not.toContain(ids.edgeType);
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
+    expect(
+      (await client.listAudit({ resource_id: ids.type })).data.data,
+    ).toEqual([]);
+
+    // A write after the refusal settles the event stream: its own event
+    // arriving means everything the restore had announced would have too.
+    const after = await client.createItem(createNote({ source: ctx.source }));
+    expect(after.ok).toBe(true);
+    trackItem(ctx, after.data.item.id);
+    await withStream(apiUrl, fileKey, { lastEventId: eventId }, async (s) => {
+      const { events } = await collectUntil(
+        s,
+        (seen) => idsOf(seen).includes(after.data.item.id),
+        "the write that follows a refused restore",
+      );
+      for (const id of [...notes, event]) {
+        expect(idsOf(events), id).not.toContain(id);
+      }
+    });
+
+    // The witness: the same archive with a rule it can unfold restores every
+    // row, registration and blob, announces them and audits the type.
+    const taken = await operator.restoreArchive(
+      archive("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28"),
+    );
+    expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
+    for (const id of [...notes, event]) trackItem(ctx, id);
+    trackType(ctx, ids.type);
+    trackEdgeType(ctx, ids.edgeType);
+    expect(taken.data).toMatchObject({
+      imported: 11,
+      types_registered: 1,
+      edge_types_registered: 1,
+      blobs_imported: 1,
+    });
+    expect(
+      (await client.listAudit({ resource_id: ids.type })).data.data.length,
+    ).toBeGreaterThan(0);
+    await withStream(apiUrl, fileKey, { lastEventId: eventId }, async (s) => {
+      const { events } = await collectUntil(
+        s,
+        (seen) => notes.every((id) => idsOf(seen).includes(id)),
+        "the notes a restore announces",
+      );
+      expect(idsOf(events)).toEqual(expect.arrayContaining(notes));
+    });
   });
 });

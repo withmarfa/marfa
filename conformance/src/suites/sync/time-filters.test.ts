@@ -322,6 +322,117 @@ describe("the catch-up window, at both ends", () => {
     ).not.toContain(earlier.id);
   });
 
+  it("keeps an edge listing's updated_after inclusive, which the catch-up depends on", async () => {
+    const [a, b, c, d] = await Promise.all(
+      ["a", "b", "c", "d"].map((label) =>
+        client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `edge-updated-after-${label}` },
+        }),
+      ),
+    );
+    for (const r of [a, b, c, d]) {
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+    }
+
+    const seeded: { id: string; at: number }[] = [];
+    for (const [source, target] of [
+      [a, b],
+      [a, c],
+      [a, d],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id: source.data.item.id,
+        target_id: target.data.item.id,
+        edge_type: "about",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+      const at = Date.parse(edge.data.edge.updated_at ?? "");
+      expect(Number.isNaN(at)).toBe(false);
+      seeded.push({ id: edge.data.edge.id, at });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const [earlier, onBound, later] = seeded;
+    expect(new Set(seeded.map((row) => row.at)).size).toBe(3);
+
+    const page = await client.rawRequest<{
+      data?: { id: string }[];
+      next_cursor?: string | null;
+    }>(
+      `/edges?limit=500&updated_after=${encodeURIComponent(
+        new Date(onBound.at).toISOString(),
+      )}`,
+    );
+    expect(
+      page.ok,
+      `the catch-up bound was refused: ${JSON.stringify(page.error)}`,
+    ).toBe(true);
+    expect(
+      page.data.next_cursor,
+      "the page was truncated, so a row missing from it proves nothing about the bound",
+    ).toBeNull();
+    const ids = (page.data.data ?? []).map((row) => row.id);
+
+    expect(
+      ids,
+      "an edge whose modification time is exactly the cursor was dropped: this is the catch-up losing every edge that shares a bulk write's instant",
+    ).toContain(onBound.id);
+    expect(ids).toContain(later.id);
+    expect(
+      ids,
+      "an edge modified before the cursor came back, so the bound is being dropped",
+    ).not.toContain(earlier.id);
+  });
+
+  it("refuses updated_after beside a sort or direction it does not order by, and takes the order it implies", async () => {
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "updated-after-order-seed" },
+    });
+    expect(seed.ok).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+    const bound = encodeURIComponent(seed.data.item.updated_at ?? "");
+    const scope = `source=${encodeURIComponent(ctx.source)}&updated_after=${bound}`;
+
+    // The witness: the order the bound implies, named or not, answers the row.
+    for (const order of [
+      "",
+      "&sort=updated_at",
+      "&sort=updated_at&direction=asc",
+      "&direction=asc",
+    ]) {
+      const taken = await client.rawRequest<{ data: { id: string }[] }>(
+        `/items?${scope}${order}`,
+      );
+      expect(taken.status, order).toBe(200);
+      expect(taken.data.data.map((row) => row.id)).toContain(seed.data.item.id);
+    }
+
+    for (const order of [
+      "&sort=created_at",
+      "&sort=occurred_at",
+      "&sort=properties.body",
+      "&direction=desc",
+      "&sort=updated_at&direction=desc",
+    ]) {
+      const refused = await client.rawRequest<unknown>(
+        `/items?${scope}${order}`,
+      );
+      expect(refused.status, order).toBe(400);
+      expect(refused.error?.error.code, order).toBe("validation_error");
+    }
+
+    // The upper bound leaves the order alone, so it takes any sort.
+    const closing = await client.rawRequest<unknown>(
+      `/items?source=${encodeURIComponent(ctx.source)}&updated_before=${bound}&sort=created_at&direction=desc`,
+    );
+    expect(closing.status, JSON.stringify(closing.error)).toBe(200);
+  });
+
   it("bounds an edge listing by updated_before, exclusively", async () => {
     const [a, b, c, d] = await Promise.all(
       ["a", "b", "c", "d"].map((label) =>

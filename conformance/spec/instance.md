@@ -124,7 +124,7 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 0.
 
-**Reason:** an archive is read only by the build that wrote it, and the format stays at version 0 until the first public release (`search-and-filters.md` 27).
+**Reason:** an archive is read only by the build that wrote it, and the format stays at version 0 until the first public release (`search-and-filters/restore-version`).
 
 **Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`.
 
@@ -276,7 +276,7 @@ If the disk store refuses to look for a blob, then the server MUST answer the `b
 
 If the write that the `database_write` probe makes is refused with `write_contention`, then the server MUST answer the `database_write` component as `degraded`, not `down`.
 
-**Reason:** a lock held past the busy budget is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters.md` 70).
+**Reason:** a lock held past the busy budget is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters/restore-writers-wait`).
 
 **Tests:** `compliance/health.test.ts › answers 200 and degraded while the write is refused, and ok once the lock is released`.
 
@@ -358,7 +358,7 @@ When a request that carries a credential the instance does not hold sends `GET /
 
 ## Upgrading
 
-Until the first public release nothing upgrades a database in place (`search-and-filters.md` 27). An owner who runs a build over a database another build wrote is told so before anything is changed.
+Until the first public release nothing upgrades a database in place (`search-and-filters/restore-version`). An owner who runs a build over a database another build wrote is told so before anything is changed.
 
 ### `instance/upgrade-refuses-retired-tables`
 
@@ -530,7 +530,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it while the
 
 While the server runs an archive export, an archive restore, an NDJSON export, a bulk action, the blob orphan sweep, version thinning or the retirement of inactive grants, the server MUST answer `GET /health` in a time that does not grow with the number of items the job covers.
 
-**Reason:** the database driver runs each statement synchronously behind a promise, so a job that never hands the process to other requests stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. `search-and-filters.md` 65, 75 and 78 state the turns a restore and an export give. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
+**Reason:** the database driver runs each statement synchronously behind a promise, so a job that never hands the process to other requests stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
 **Tests:** waiting on #1444.
 

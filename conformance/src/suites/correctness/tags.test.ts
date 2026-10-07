@@ -89,6 +89,81 @@ describe("tags", () => {
     expect(ids).not.toContain(r2.data.item.id);
   });
 
+  it("narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named", async () => {
+    const word = `tagsboth${ctx.runId}`;
+    const red = `red-${ctx.runId}`;
+    const blue = `blue-${ctx.runId}`;
+    const seed = async (tags: string[]): Promise<string> => {
+      const made = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title: word, body: `${word} ${tags.join(" ")}` },
+          tags,
+        }),
+      );
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      return made.data.item.id;
+    };
+    const both = await seed([red, blue]);
+    const onlyRed = await seed([red]);
+    const onlyBlue = await seed([blue]);
+
+    const pair = `${encodeURIComponent(red)},${encodeURIComponent(blue)}`;
+    const scope = `source=${encodeURIComponent(ctx.source)}`;
+    const ids = async (path: string): Promise<string[]> => {
+      const page = await client.rawRequest<{
+        data: ({ id: string } | { item: { id: string } })[];
+      }>(path);
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return page.data.data
+        .map((row) => ("item" in row ? row.item.id : row.id))
+        .sort();
+    };
+
+    // One tag answers the two rows that carry it, so the pair below narrows
+    // by the second tag and not by a tag the rows lack.
+    expect(
+      await ids(`/items?${scope}&tags=${encodeURIComponent(red)}`),
+    ).toEqual([both, onlyRed].sort());
+    expect(await ids(`/items?${scope}&tags=${pair}`)).toEqual([both]);
+    expect(
+      await ids(`/search?q=${word}&tags=${encodeURIComponent(red)}`),
+    ).toEqual([both, onlyRed].sort());
+    expect(await ids(`/search?q=${word}&tags=${pair}`)).toEqual([both]);
+
+    const count = async (tags: string): Promise<Record<string, number>> => {
+      const stats = await client.rawRequest<Record<string, number>>(
+        `/items/stats?${scope}&tags=${tags}`,
+      );
+      expect(stats.status, JSON.stringify(stats.error)).toBe(200);
+      return stats.data;
+    };
+    expect(await count(encodeURIComponent(blue))).toEqual({ active: 2 });
+    expect(await count(pair)).toEqual({ active: 1 });
+
+    // The bulk-action filter takes the tags as a list and holds them to the
+    // same rule.
+    const selected = async (tags: string[]): Promise<string[]> => {
+      const res = await client.rawRequest<{ ids: string[] }>(
+        "/items/bulk-actions",
+        {
+          method: "POST",
+          body: {
+            action: "transition",
+            state: "archived",
+            dry_run: true,
+            filter: { source: ctx.source, tags },
+          },
+        },
+      );
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data.ids.sort();
+    };
+    expect(await selected([blue])).toEqual([both, onlyBlue].sort());
+    expect(await selected([red, blue])).toEqual([both]);
+  });
+
   it("tags persist across getItem calls", async () => {
     const r = await client.createItem(
       createNote({ source: ctx.source, tags: ["persist-test"] }),

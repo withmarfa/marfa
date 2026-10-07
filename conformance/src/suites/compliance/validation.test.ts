@@ -6,9 +6,14 @@ import { createNote, generateId } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "validation"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "validation",
+  ));
 });
 
 afterAll(async () => {
@@ -184,6 +189,102 @@ describe("validation edge cases", () => {
     }
   });
 
+  it("takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search", async () => {
+    const withLength = (length: number): string => {
+      const head = 'properties.body eq "';
+      return `${head}${"x".repeat(length - head.length - 1)}"`;
+    };
+    expect(withLength(2048)).toHaveLength(2048);
+    for (const door of ["/items?", "/search?q=note&"]) {
+      const largest = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(withLength(2048))}`,
+      );
+      expect(largest.status, `${door} 2048`).toBe(200);
+      const smallest = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(withLength(2049))}`,
+      );
+      expect(smallest.status, `${door} 2049`).toBe(400);
+      expect(smallest.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("takes a filter of 10 conditions and refuses one of 11, on the listing and the search", async () => {
+    const note = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "ten", body: `tenconditions${ctx.runId}` },
+      }),
+    );
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    trackItem(ctx, note.data.item.id);
+    const joined = (count: number, logical: "AND" | "OR"): string =>
+      Array.from({ length: count }, () => `source eq "${ctx.source}"`).join(
+        ` ${logical} `,
+      );
+    for (const logical of ["AND", "OR"] as const) {
+      for (const door of ["/items?", `/search?q=tenconditions${ctx.runId}&`]) {
+        const largest = await client.rawRequest<{
+          data: ({ id: string } | { item: { id: string } })[];
+        }>(`${door}filter=${encodeURIComponent(joined(10, logical))}`);
+        expect(largest.status, `${door} ${logical} 10`).toBe(200);
+        // The witness that the ten were read and not skipped: the row is
+        // answered under them.
+        expect(
+          largest.data.data.map((r) => ("item" in r ? r.item.id : r.id)),
+        ).toContain(note.data.item.id);
+
+        const smallest = await client.rawRequest<unknown>(
+          `${door}filter=${encodeURIComponent(joined(11, logical))}`,
+        );
+        expect(smallest.status, `${door} ${logical} 11`).toBe(400);
+        expect(smallest.error?.error.code).toBe("validation_error");
+      }
+    }
+  });
+
+  it("refuses a filter that mixes AND with OR, on the listing and the search", async () => {
+    const only = (logical: "AND" | "OR") =>
+      `type eq "core.note" ${logical} state eq "active" ${logical} source eq "${ctx.source}"`;
+    const mixed = `type eq "core.note" AND state eq "active" OR source eq "${ctx.source}"`;
+    for (const door of ["/items?", "/search?q=note&"]) {
+      // The witness: each logical operator on its own is taken.
+      for (const logical of ["AND", "OR"] as const) {
+        const taken = await client.rawRequest<unknown>(
+          `${door}filter=${encodeURIComponent(only(logical))}`,
+        );
+        expect(taken.status, `${door} ${logical}`).toBe(200);
+      }
+      const refused = await client.rawRequest<unknown>(
+        `${door}filter=${encodeURIComponent(mixed)}`,
+      );
+      expect(refused.status, door).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+  });
+
+  it("refuses a filter that uses OR beside an edge shorthand, which joins it with AND", async () => {
+    const target = generateId();
+    const shorthand = `edge[about]=${target}`;
+    const or = `type eq "core.note" OR type eq "core.bookmark"`;
+    const and = `type eq "core.note" AND state eq "active"`;
+    // The witness: an OR filter alone and an AND filter with the shorthand
+    // are both taken, so the refusal is the pair's.
+    const alone = await client.rawRequest<unknown>(
+      `/items?filter=${encodeURIComponent(or)}`,
+    );
+    expect(alone.status).toBe(200);
+    const withAnd = await client.rawRequest<unknown>(
+      `/items?${shorthand}&filter=${encodeURIComponent(and)}`,
+    );
+    expect(withAnd.status, JSON.stringify(withAnd.error)).toBe(200);
+
+    const refused = await client.rawRequest<unknown>(
+      `/items?${shorthand}&filter=${encodeURIComponent(or)}`,
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  });
+
   it("refuses an edge shorthand value carrying a backslash, and still takes a quote", async () => {
     // The witness: a value the shorthand quotes without trouble.
     const quoted = await client.listItems({ edge: { about: 'a"b' } });
@@ -198,6 +299,232 @@ describe("validation edge cases", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses an empty q and a q holding a NUL as validation_error, and names a q that is absent as missing", async () => {
+    // The witness: a word is taken, so each refusal below is the query's.
+    const taken = await client.rawRequest<unknown>("/search?q=note");
+    expect(taken.status).toBe(200);
+
+    const absent = await client.rawRequest<unknown>("/search");
+    expect(absent.status).toBe(400);
+    expect(absent.error?.error.code).toBe("missing_required_field");
+
+    for (const q of ["", "%00", "note%00"]) {
+      const refused = await client.rawRequest<unknown>(`/search?q=${q}`);
+      expect(refused.status, `q=${q}`).toBe(400);
+      expect(refused.error?.error.code, `q=${q}`).toBe("validation_error");
+    }
+  });
+
+  it("refuses an empty type, source, tags or filter rather than reading everything", async () => {
+    const window = "from=2031-01-01T00:00:00Z&to=2031-01-02T00:00:00Z";
+    const filter = encodeURIComponent('properties.body eq "x"');
+    // Every door that declares a narrowing key, with a value each takes.
+    const doors: { path: string; key: string; value: string }[] = [
+      { path: "/items", key: "type", value: "core.note" },
+      { path: "/items", key: "source", value: ctx.source },
+      { path: "/items", key: "tags", value: "kept" },
+      { path: "/items", key: "filter", value: filter },
+      { path: "/items/stats", key: "type", value: "core.note" },
+      { path: "/items/stats", key: "source", value: ctx.source },
+      { path: "/items/stats", key: "tags", value: "kept" },
+      { path: "/items/stats", key: "filter", value: filter },
+      { path: "/search?q=note", key: "type", value: "core.note" },
+      { path: "/search?q=note", key: "tags", value: "kept" },
+      { path: "/search?q=note", key: "filter", value: filter },
+      { path: `/occurrences?${window}`, key: "type", value: "core.event" },
+      { path: "/export", key: "type", value: "core.note" },
+      { path: "/export", key: "source", value: ctx.source },
+      { path: "/events", key: "type", value: "core.note" },
+    ];
+    const ask = async (path: string, query: string) => {
+      const response = await fetch(
+        `${apiUrl}${path}${path.includes("?") ? "&" : "?"}${query}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      // A stream that opened never ends, so the status is read and the body closed.
+      if (response.status === 200) {
+        await response.body?.cancel();
+        return { status: response.status, body: undefined };
+      }
+      return {
+        status: response.status,
+        body: (await response.json()) as {
+          error: { code: string; details?: { empty_parameters?: string[] } };
+        },
+      };
+    };
+
+    // What narrows nothing: no value, blanks, and a list of blank entries.
+    const nothing: Record<string, string[]> = {
+      type: ["", "%20", ",", ",%20,"],
+      source: ["", "%20"],
+      tags: ["", "%20", ",", ",%20,"],
+      filter: ["", "%20"],
+    };
+
+    for (const { path, key, value } of doors) {
+      const where = `${path} ${key}`;
+      // The witness: the same request with a value is answered.
+      expect((await ask(path, `${key}=${value}`)).status, where).toBe(200);
+
+      for (const empty of nothing[key] ?? []) {
+        const refused = await ask(path, `${key}=${empty}`);
+        expect(refused.status, `${where}=${empty}`).toBe(400);
+        expect(refused.body?.error.code, `${where}=${empty}`).toBe(
+          "validation_error",
+        );
+        expect(
+          refused.body?.error.details?.empty_parameters,
+          `${where}=${empty}`,
+        ).toEqual([key]);
+      }
+    }
+  });
+
+  it("refuses an empty or blank type, source, tags or filter in a bulk-action filter", async () => {
+    const tag = `bulk-blank-${ctx.runId}`;
+    const made = await client.createItem(
+      createNote({ source: ctx.source, tags: [tag] }),
+    );
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const dryRun = (filter: Record<string, unknown>) =>
+      client.bulkAction({
+        action: "update_tier",
+        tier: "library",
+        dry_run: true,
+        filter,
+      } as never);
+    const matched = (r: { data: unknown }) => (r.data as { ids: string[] }).ids;
+
+    // The witnesses: a filter naming nothing reads every row this key can
+    // write, so the refusals below are of what would have been read, and each
+    // field with a real value is taken.
+    const everything = await dryRun({});
+    expect(everything.status, JSON.stringify(everything.error)).toBe(200);
+    expect(matched(everything)).toContain(made.data.item.id);
+    for (const filter of [
+      { type: "core.note" },
+      { source: ctx.source },
+      { tags: [tag] },
+      { filter: 'properties.title eq "Test Note"' },
+    ]) {
+      const taken = await dryRun(filter);
+      expect(taken.status, JSON.stringify(filter)).toBe(200);
+      expect(matched(taken), JSON.stringify(filter)).toContain(
+        made.data.item.id,
+      );
+    }
+
+    // What narrows nothing: no value, blanks, and a list with no real entry.
+    const nothing: Record<string, unknown[]> = {
+      type: ["", " "],
+      source: ["", " "],
+      tags: [[], [""], [" "], ["", " "]],
+      filter: ["", " "],
+    };
+    for (const [field, values] of Object.entries(nothing)) {
+      for (const value of values) {
+        const where = `${field}=${JSON.stringify(value)}`;
+        const refused = await dryRun({ [field]: value });
+        expect(refused.status, where).toBe(400);
+        expect(refused.error?.error.code, where).toBe("validation_error");
+        expect(
+          (
+            refused.error?.error.details as
+              { empty_parameters?: string[] } | undefined
+          )?.empty_parameters,
+          where,
+        ).toEqual([`filter.${field}`]);
+      }
+    }
+  });
+
+  it("refuses an empty narrowing value before a missing required one, and after an undeclared key", async () => {
+    type Refusal = {
+      status: number;
+      code: string | undefined;
+      details: Record<string, unknown> | undefined;
+    };
+    const refusal = (r: {
+      status: number;
+      error?: { error: { code: string; details?: Record<string, unknown> } };
+    }): Refusal => ({
+      status: r.status,
+      code: r.error?.error.code,
+      details: r.error?.error.details,
+    });
+
+    // A read door answers the empty value before the one it is missing. The
+    // witness beside each: the same request with a value for `type` is
+    // refused for the missing one, so the empty value is what the first
+    // answer is naming.
+    for (const [path, missing] of [
+      ["/search", "q"],
+      ["/occurrences", "from"],
+    ] as const) {
+      const named = refusal(
+        await client.rawRequest<unknown>(`${path}?type=core.note`),
+      );
+      expect(named.status, path).toBe(400);
+      expect(named.code, path).toBe("missing_required_field");
+      expect(named.details, path).toMatchObject({ field: missing });
+
+      const empty = refusal(await client.rawRequest<unknown>(`${path}?type=`));
+      expect(empty.status, path).toBe(400);
+      expect(empty.code, path).toBe("validation_error");
+      expect(empty.details?.empty_parameters, path).toEqual(["type"]);
+    }
+
+    const action = (extra: Record<string, unknown>) =>
+      client.bulkAction({
+        action: "update_tier",
+        tier: "library",
+        dry_run: true,
+        ...extra,
+      } as never);
+
+    // The witness: an empty `filter.type` alone is refused for being empty.
+    const alone = refusal(await action({ filter: { type: "" } }));
+    expect(alone.status).toBe(400);
+    expect(alone.code).toBe("validation_error");
+    expect(alone.details?.empty_parameters).toEqual(["filter.type"]);
+
+    // An undeclared key of the request, or of the filter, is named first.
+    const body = refusal(await action({ filter: { type: "" }, dryrun: true }));
+    expect(body.status).toBe(400);
+    expect(body.code).toBe("validation_error");
+    expect(body.details?.unknown_body_fields).toEqual(["dryrun"]);
+    expect(body.details).not.toHaveProperty("empty_parameters");
+
+    const filter = refusal(await action({ filter: { type: "", bogus: 1 } }));
+    expect(filter.status).toBe(400);
+    expect(filter.code).toBe("validation_error");
+    expect(filter.details?.unknown_filter_fields).toEqual(["bogus"]);
+    expect(filter.details).not.toHaveProperty("empty_parameters");
+
+    // The empty value is refused ahead of the handler's own checks of the action.
+    const lacking = refusal(
+      await client.bulkAction({
+        action: "update_tags",
+        dry_run: true,
+        filter: { type: "" },
+      } as never),
+    );
+    expect(lacking.status).toBe(400);
+    expect(lacking.details?.empty_parameters).toEqual(["filter.type"]);
+    const withType = refusal(
+      await client.bulkAction({
+        action: "update_tags",
+        dry_run: true,
+        filter: { type: "core.note" },
+      } as never),
+    );
+    expect(withType.status).toBe(400);
+    expect(withType.details?.empty_parameters).toBeUndefined();
   });
 
   it("accepts quotes, ampersands and parentheses in a search query", async () => {

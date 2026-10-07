@@ -60,7 +60,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
  * What an operator can do about a database this build will not open: nothing
  * is upgraded in place, so the data goes forward in an archive taken by the
  * build that wrote the file. Before the first public release an archive is
- * read only by the build that wrote it (`search-and-filters.md` 27), so the
+ * read only by the build that wrote it (`search-and-filters/restore-version`), so the
  * sentence says that the restore can refuse, and that the file is the
  * writing build's either way.
  */

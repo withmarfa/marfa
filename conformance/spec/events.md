@@ -1048,7 +1048,7 @@ When a credential is narrowed away from the type of an event whose delivery is p
 
 ## The delivery record
 
-`GET /webhooks/{id}/deliveries` lists a subscription's deliveries. Its paging is the paging every list shares, in `search-and-filters.md` 10.
+`GET /webhooks/{id}/deliveries` lists a subscription's deliveries. Its paging is the paging every list shares, in `search-and-filters/page-envelope`.
 
 ### `events/record-status`
 

@@ -1,439 +1,1651 @@
-# Search, export, occurrences and the filter grammar
+# Search, filters, lookup, export and restore
 
-## The listing grammar
+The query grammar the listing operations share, the full-text search, the counts, the lookup by link, natural key or id, the pages every list answers, and the export and restore of an instance. How a recurring event unfolds and what a calendar window holds is `occurrences.md`.
 
-Every listing door shares one grammar. `GET /items` is the reference; `GET /edges`, `GET /export` and the bulk-action filter take the same keys where the rows have the same axes.
+## A query key an operation does not declare
 
-1. `type` narrows to a type and its subtree; a well-formed type nothing registered answers `400 unknown_type` rather than an empty page, on every door but the bulk-action filter (57). `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`.
-2. `state` narrows to one lifecycle state; the default is the active state, which the export door alone departs from (statement 16); `state=any` reads every state in one pass; a value outside the enum answers `400 validation_error`. Both are the same on the listing, the search and the export doors, which resolve the parameter through one rule — with one difference the index imposes rather than the grammar: a trashed row leaves the full-text index on the write that trashes it, so no state value reaches it through a search (statement 12). `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `sync/catchup.test.ts › reads across every lifecycle state in one pass`, `compliance/state-default.test.ts › a listing that names no state answers the active state`, `› a named state and the sentinel still reach every row`, `› refuses a state that is not a state, on every door that reads items`, `compliance/export.test.ts › refuses an unknown state filter`, `correctness/trash.test.ts › deleted item is hidden from default queries`.
-3. `source` narrows to rows stamped with that source, and a source filter on the instance configuration narrows the same way. `correctness/tags.test.ts › filtering by tags=[favorite] returns tagged items and excludes others`, `compliance/schema-enforcement.test.ts › narrows reads to listed sources`, `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
-4. `tags` narrows to rows carrying every named tag. `correctness/tags.test.ts › filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
-5. `tier` is `library`, `feed` or `all`; omitted returns both. `compliance/tier-axis.test.ts › default query omitting tier returns both library and feed items`, `› tier=library returns library items only`, `› tier=feed returns feed items only`, `› tier=all returns both library and feed items`.
-6. `occurred_after` and `occurred_before` bound the item's own time, `occurred_at` falling back to `created_at`, both bounds exclusive of an item sitting exactly on them; `sort=occurred_at` orders by the same expression and never affects `created_at` ordering. `compliance/occurred-at.test.ts › occurred_after filter uses COALESCE(occurred_at, created_at)`, `› occurred_before filter uses COALESCE(occurred_at, created_at)`, `› both bounds exclude an item sitting exactly on them`, `› COALESCE ordering: sort=occurred_at uses occurred_at then created_at`, `› occurred_at does not affect created_at ordering`, `compliance/export.test.ts › filters by date range on the item's own time`. Comparison literals for the system fields `created_at`, `updated_at` and `occurred_at` inside `filter=` use the same UTC normalization as query bounds, for `eq`, `neq`, `gt`, `gte`, `lt` and `lte`, on listing and search alike; a non-timestamp or non-string comparison literal is refused `400 validation_error`. Text operators `contains` and `starts_with` still match text fragments. `compliance/canonical-time.test.ts › normalizes filter timestamps on listing and search`, `› refuses invalid time comparisons while retaining text operators`.
-7. `updated_after` bounds an item or edge listing by modification time, which moves on any write including a tag, and is **inclusive**: `updated_at` ties across a bulk write, so a strict comparison would drop every row sharing a resuming client's cursor. `updated_before` closes the same window at the top and is exclusive like every other bound. `sync/catchup.test.ts › sees a tag written after the boundary, not just a property change`, `sync/time-filters.test.ts › narrows an edge listing by modification time`, `› keeps updated_after inclusive, which the catch-up depends on`, `› bounds an item listing by updated_before, exclusively`, `› bounds an edge listing by updated_before, exclusively`.
-8. WHEN a request carries a query key that its door does not declare, the server MUST refuse it `400 validation_error`, naming each such key in `details.unknown_parameters`, and MUST NOT answer as though the key had not been sent. A bulk-action filter field the filter does not declare is refused the same way, in `details.unknown_filter_fields`. This holds on every door the instance serves, except the three kinds below, whatever the door answers and whether or not it declares a query of its own: a door that declares none refuses every key. On `GET /events` in copy mode, the copy stream's own refusal of any key but `edges` and `copy` (`read-views/copy-query-refused`) comes after the credential and the standing rule like the refusal of any other key.
+Every operation declares the query keys it takes. The rules here hold for all of them, the item listing and the search among them.
 
-   The keys a door declares are the query parameters the document lists for it. Two further spellings are accepted. The server MUST ignore a key starting with `_`, which is the caller's own. `GET /items` and `GET /items/stats`, and no other door, MUST accept `edge[<type>]` and `backref[<type>]` for any type, because the type is part of the key.
+### `search-and-filters/undeclared-key`
 
-   The refusal comes after the credential and the door's own standing rule (`keys-and-oauth.md` 16): a bare request still answers `401`, and a credential the door turns away still answers `403`, whatever its query holds. It comes before the request's other validation.
+When a request carries a query key that its operation does not declare, the server MUST answer `400 validation_error` naming each such key in `details.unknown_parameters`.
 
-   Three kinds of door take a query that is not this server's to declare, and are outside the rule: `POST /inbound/{token}`, which records the sender's query string as it arrived; the discovery documents under `/.well-known/` and `/auth/.well-known/`; and the browser pages and OAuth protocol endpoints under `/auth/`, which a redirect reaches carrying the OAuth flow's own parameters, `POST /auth/oauth2/register` excepted.
+**Reason:** the validator drops a key it does not declare, so a misspelled bound answers the whole set and cannot be told from a filter that matched every row. A rule that holds on some operations leaves the caller to find out which, by being wrong once.
 
-   Reason: the validator drops a key it does not declare, so a misspelled bound answers the whole set and cannot be told from a filter that matched every row. On the bulk-action door the whole set is the match set. A rule that holds on some doors leaves the caller to find out which, by being wrong once.
+**Tests:** `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`, `› names a misspelled key on the event stream rather than opening it unfiltered`, `sync/time-filters.test.ts › honors the item listing's own-time bound and refuses a name it does not declare`, `correctness/edges/edges-list.test.ts › refuses an unknown query key and an unknown edge id`, `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`, `compliance/connectors.test.ts › refuses a query key the runs listing does not declare`, `compliance/inbound-webhooks.test.ts › refuses a query key the listing does not declare, rather than answering unfiltered`, `compliance/item-stats.test.ts › refuses a query key it does not declare, naming it`, `compliance/envelope.test.ts › refuses an offset query key`.
 
-   Tests: `sync/time-filters.test.ts › honors the item listing's own-time bound and refuses a name it does not declare`, `› refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row`, `compliance/bulk.test.ts › refuses a filter field it does not declare, naming it`, `correctness/edges/edges-list.test.ts › refuses an unknown query key and an unknown edge id`, `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`, `compliance/connectors.test.ts › refuses a query key the runs listing does not declare`, `compliance/inbound-webhooks.test.ts › refuses a query key the listing does not declare, rather than answering unfiltered`, `compliance/item-stats.test.ts › refuses a query key it does not declare, naming it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`, `› is refused after the credential, so a bare request still answers 401`, `› names a misspelled key on the event stream rather than opening it unfiltered`, `› answers a copy stream request with a stray key 401, then 403 for a key that reads no type`.
+### `search-and-filters/undeclared-key-401`
 
-9. `edge[<type>]=<id>` narrows to items with that outbound edge, as does the full form `filter=edge[<type>] eq "<id>"`. A number in a `filter` expression that no double holds is refused `400 validation_error`, on `GET /search` as on `GET /items`, rather than compared as infinity. With a numeric filter literal, numeric JSON properties compare as finite doubles for `eq`, `neq`, `gt`, `gte`, `lt` and `lte`, using the same values the API returns. Distinct integer spellings that round to the same double compare equal, and equality agrees with both inclusive range comparisons. Numeric equality does not convert text, arrays, objects, missing properties or null into numbers. This rule holds on the listing and search. `compliance/numeric-property-filters.test.ts › witnesses every seeded row on both doors before filtering`, `› compares numeric properties as finite doubles on the listing and search`, `› does not turn text, arrays, objects, missing or null properties into numeric equality matches`. `correctness/edges/edges-query.test.ts › edge[about]=<id> shorthand returns items with outbound about edge to id`, `› filter=edge[X] eq "Y" full form returns the same set`, `compliance/validation.test.ts › refuses a filter number no double holds, on the listing and the search`.
-10. `limit` caps a page and `cursor` continues it: a page carries its rows under `data` and an opaque `next_cursor`; walking to the end delivers every row exactly once; the last page answers `next_cursor: null`. **A cursor continues the page it came from and nothing else**: replayed under another ordering of the same listing, or on another listing, it is refused `400 validation_error` rather than honored against a column that happens to compare, because every ordering compares an ISO timestamp or a property value and the wrong one answers a page that is simply not the next page. `correctness/pagination.test.ts › basic pagination: limit restricts result count and signals more`, `› cursor continuation delivers every item exactly once`, `› cursor is opaque and enables next page retrieval`, `› the last page answers next_cursor: null`, `› refuses a cursor issued by another listing or ordering`, `correctness/edges/edges-list.test.ts › paginates with a cursor and delivers every edge once`, `correctness/edges/edges-backrefs.test.ts › paginates via cursor across many inbound edges`.
-11. A key's type permissions narrow every listing and search to the types it can read; `none` hides a type from a listing as well as from a write; an unlisted type is denied without a wildcard; `core.*` reaches the namespace. `compliance/type-scoped-access.test.ts › scoped key list filtering only returns permitted types`, `› unlisted types are implicitly denied (no wildcard)`, `› namespace wildcard grants access to all types in the namespace`, `compliance/type-permissions.test.ts › none permission hides the type from a listing, not only from a write`, `› wildcard pattern matches all types in namespace`.
+If a request to an operation that takes a credential carries an undeclared query key and no credential, then the server MUST answer `401`.
 
-### A type filter and the credential's reach
+**Reason:** the refusal of the key comes after the credential check, so a bare request answers `401` whatever its query holds.
 
-50. WHEN a `type` filter names a registered concrete type and the credential may read neither it nor any type under it, the server MUST refuse the request `403 type_not_permitted`, with `details.grant` naming the type and the level asked, on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and each entry of `GET /events`'s `type` list.
+**Tests:** `compliance/declared-refusals.test.ts › is refused after the credential, so a bare request still answers 401`.
 
-    Reason: an empty page answers "nothing here" about a type that is registered, so it tells a caller nothing it can act on, while the write doors already answer the same credential and the same type `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types/registry-open`): an unregistered type is already told from a registered one (1). An item named by id keeps answering as a missing one when its type is unreadable, because there the caller named a row and not a type.
+### `search-and-filters/undeclared-key-403`
 
-    Tests: `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› the same type is served to a key that reads it, on every door but the bulk action`, `› GET /events holds each entry of a list to the rule`, `› refuses the same type to a key that reads nothing under it`.
+If a credential that the operation's standing rule turns away sends an undeclared query key, then the server MUST answer the `403` it answers without the key.
 
-51. WHEN a concrete `type` filter names a type the credential may not read and the credential may read a type under it, the server MUST answer the types under it that the credential may read, and MUST NOT refuse the request.
+**Reason:** the refusal of the key comes after the standing rule (`keys-and-oauth.md` 16), so a credential that reaches no type learns nothing about the keys an operation declares.
 
-    Reason: a concrete type selects its subtree (1), so refusing would withhold rows the credential is entitled to; the refusal in 50 is for a filter that reaches nothing readable.
+**Tests:** `compliance/declared-refusals.test.ts › answers a copy stream request with a stray key 401, then 403 for a key that reads no type`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › answers the readable descendants on every door`.
+### `search-and-filters/undeclared-key-first`
 
-52. WHEN a credential that reads some type sends a wildcard `type` filter, the server MUST answer the types the wildcard matches that the credential may read, and MUST NOT refuse it for the types it matches that the credential may not read.
+If a request carries an undeclared query key and a value that its operation also refuses, then the server MUST answer `400 validation_error` naming the undeclared key in `details.unknown_parameters`.
 
-    Reason: a wildcard names a set, so the readable part of it is a complete answer, and a refusal would turn a client that asks for `core.*` into one that has to know its own grant first. `GET /search` once refused a wildcard its credential read only part of, while `GET /items` answered it.
+**Reason:** the key is named before the rest of the query is judged, so the caller learns which part of the request is wrong first.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`.
+**Tests:** `compliance/declared-refusals.test.ts › names an undeclared key before it looks at the rest of the query`.
 
-53. WHEN a wildcard `type` filter matches no type that a credential reading some type may read, the server MUST answer an empty page, a stats object with no counts or a stream with no frames of those types.
+### `search-and-filters/underscore-key`
 
-    Reason: nothing is a correct answer to "everything under this root", as it is for a root nothing is registered under (1).
+The server MUST ignore a query key that starts with `_`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › a wildcard over types the key reads none of is an empty page, not a refusal`.
+**Reason:** such a key is the caller's own, so a client can tag a request without the server refusing it.
 
-54. WHEN a credential's type map reaches no type, the server MUST refuse every door that takes a `type` filter `403 type_not_permitted`, whatever the filter names, a wildcard included.
+**Tests:** `compliance/declared-refusals.test.ts › ignores a key starting with an underscore on doors beyond the item listing, the event stream included`.
 
-    Reason: an empty answer there would say the instance holds nothing for the credential to read rather than that it may read nothing (`keys-and-oauth.md` 1).
+### `search-and-filters/shorthand-accepted`
 
-    Tests: `compliance/unreadable-type-filter.test.ts › a key whose map reaches no type is refused a wildcard too`.
+The server MUST accept `edge[<edge type>]` and `backref[<edge type>]` for any edge type as query keys of `GET /items` and `GET /items/stats`.
 
-55. WHEN the `filter.type` of `POST /items/bulk-actions` names a registered or unregistered type the credential may read neither nor any type under it, the server MUST refuse the request `403 type_not_permitted`.
+**Reason:** the edge type is part of the key, so no list of declared keys can name it.
 
-    Reason: the door selects a type's subtree as the listings do (1), so it is held to the rule in 50 and 51, and the grant decides whether or not the type is registered.
+**Tests:** `compliance/declared-refusals.test.ts › accepts an edge shorthand on GET /items and GET /items/stats and on no other door`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› POST /items/bulk-actions refuses an unregistered type the key holds nothing on`, `› answers the readable descendants on every door`.
+### `search-and-filters/shorthand-elsewhere`
 
-56. WHEN the `filter.type` of `POST /items/bulk-actions` names a type the credential may read and not write, the server MUST narrow the action to nothing and MUST NOT refuse it.
+If a request to any other operation carries an `edge[<edge type>]` or `backref[<edge type>]` key, then the server MUST answer `400 validation_error` naming it in `details.unknown_parameters`.
 
-    Reason: the action is narrowed to what the credential may write, so a key that reads every type and writes none matches nothing whatever the filter names. The refusal in 55 is about reading a type, which is what a filter asks of one.
+**Tests:** `compliance/declared-refusals.test.ts › accepts an edge shorthand on GET /items and GET /items/stats and on no other door`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › narrows a type the key reads and does not write to nothing, rather than refusing it`.
+### `search-and-filters/undeclared-key-exempt`
 
-57. The `filter.type` of `POST /items/bulk-actions` MUST NOT be refused `400 unknown_type` for naming a type nothing registers.
+The server MUST NOT refuse as undeclared a query key sent to `POST /inbound/{token}`, to a discovery document under `/.well-known/` or `/auth/.well-known/`, or to a browser page or an OAuth protocol endpoint under `/auth/`, `POST /auth/oauth2/register` excepted.
 
-    Reason: the door takes no wildcard, so the type's own name is the only way to select the rows a type removed with `force` left behind, to purge them.
+**Reason:** a sender's query string belongs to the sender, and a redirect reaches the browser pages carrying the OAuth flow's own parameters.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the rows a removed type kept`.
+**Tests:** `compliance/declared-refusals.test.ts › takes a query on the doors that are not this server's to declare, and still refuses one on the client registration door`.
 
-58. WHEN `POST /items/lookup` names a registered `type` and the credential may read neither it nor any type under it, the server MUST refuse the request `403 type_not_permitted` and MUST NOT answer an empty page.
+### `search-and-filters/undeclared-key-register`
 
-    Reason: an empty answer would say the keys named nothing (26). The descendant rule is the one in 51, so the door asks the same question as the listings.
+If a request to `POST /auth/oauth2/register` carries an undeclared query key, then the server MUST answer `400 validation_error` naming it in `details.unknown_parameters`.
 
-    Tests: `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`.
+**Tests:** `compliance/declared-refusals.test.ts › takes a query on the doors that are not this server's to declare, and still refuses one on the client registration door`.
 
-59. WHEN `POST /items/lookup` answers a credential that may read a type under `type` and not `type` itself, the server MUST answer `tombstones` as an empty list.
+## A filter with nothing in it
 
-    Reason: the tombstones record what purges left under `type`, so they are answered only to a credential that may read `type` itself.
+### `search-and-filters/empty-narrowing`
 
-    Tests: `compliance/unreadable-type-filter.test.ts › answers no tombstones to a key that reads only a type under the one named`.
+If a credential that the operation admits sends `GET /items`, `GET /items/stats`, `GET /search`, `GET /occurrences`, `GET /export` or `GET /events` with a `type`, `source`, `tags` or `filter` key that the operation declares, holding no value, only blanks, or, for `type` and `tags`, a list of blank entries, then the server MUST answer `400 validation_error` naming each such key in `details.empty_parameters`.
 
-### A null literal
+**Reason:** a filter with no value narrows nothing and would answer everything the operation can read, so a client that built its query from a variable it never filled in would read everything while believing it had narrowed.
 
-88. WHEN a `filter` expression compares a field with a `null` literal, after any operator that takes a value, the server MUST refuse it `400 validation_error`, and where the field is a property or an edge the message MUST name `not_exists` as the way to ask for an absent value. A `null` inside double quotes is the text.
+**Tests:** `compliance/validation.test.ts › refuses an empty type, source, tags or filter rather than reading everything`.
 
-    Reason: a comparison with null is never true, so `eq null` would answer an empty page with no error, and a bulk action selecting by it would silently select nothing. `not_exists` asks the question the caller means and answers the rows whose property is absent or null (the same `IS NULL` test it applies to a missing key), and `exists` the rows that hold a value. A system field always exists, so its refusal names no presence test.
+### `search-and-filters/empty-narrowing-first`
 
-    Tests: `compliance/null-filter.test.ts › is not needed: not_exists asks for a property that is absent or null, and exists for one that has a value`, `› is refused 400 on every operator, naming not_exists where a property can be absent`, `› is refused on a system field, an edge and tags, and still read as text when quoted`, `packages/shared/src/query-parser.test.ts › refuses a null literal on every operator, naming not_exists where absence can be asked`.
+If a credential that the operation admits sends `GET /search` or `GET /occurrences` with an empty narrowing value and without a parameter the operation requires, then the server MUST answer the empty value's `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
+
+### `search-and-filters/empty-narrowing-bulk`
+
+If the `filter` of `POST /items/bulk-actions` carries `type`, `source`, `tags` or `filter` with no value or with only blanks, or carries `tags` as an empty list or a list of blank entries, then the server MUST answer `400 validation_error` naming each such field as `filter.<field>` in `details.empty_parameters`.
+
+**Reason:** a filter field with no value narrows nothing, so an action built from a variable that was never filled in would match every item the credential may write.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty or blank type, source, tags or filter in a bulk-action filter`.
+
+### `search-and-filters/empty-narrowing-bulk-order`
+
+If a credential that the operation admits sends `POST /items/bulk-actions`, other than a `purge` without `confirm: "PURGE"`, with an empty `filter` field and a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's `400 validation_error`, naming it in `details.unknown_body_fields` or `details.unknown_filter_fields` and naming nothing in `details.empty_parameters`.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
+
+### `search-and-filters/empty-narrowing-bulk-before-action`
+
+If a credential that the operation admits sends `POST /items/bulk-actions` with an empty `filter` field and an `update_tags` naming neither `add` nor `remove`, then the server MUST answer the empty field's `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
+
+## The type filter
+
+A `type` names a type and every type under it, as `types/listing-subtree` says of a listing. A wildcard ends in `.*`.
+
+### `search-and-filters/type-subtree`
+
+When `GET /items/stats`, `GET /search`, `GET /export`, `GET /events` or `POST /items/bulk-actions` names a `type`, the server MUST apply it to that type and every type under it.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers the readable descendants on every door`, `› GET /items/stats counts the readable descendants of a type the key may not read`, `› GET /events streams the readable descendants of a type the key may not read and withholds the rest`, `correctness/persistence.test.ts › type-filtered search only returns matching types`.
+
+### `search-and-filters/type-wildcard`
+
+When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` or `GET /events` ends in `.*`, the server MUST select the items of the type named by the part before `.*`, of every type whose name starts with that part and a dot, and of every type declared under it.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`, `compliance/types.test.ts › selects with a type the types declared under it, as with its own name`.
+
+### `search-and-filters/type-unknown`
+
+If a credential that reaches some type sends a `type` filter naming a well-formed concrete type that nothing registers, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and each entry of the `type` list of `GET /events`.
+
+**Reason:** an empty page is the one answer a client cannot tell from a quiet instance, so a mistyped name, a type registered under another handle and a type deleted since the client last read the registry would all read as nothing here. A wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`).
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+
+### `search-and-filters/type-bulk-unregistered`
+
+If the `filter.type` of `POST /items/bulk-actions` names a type that nothing registers, then the server MUST select the rows that carry that type name rather than refuse the request `400 unknown_type`.
+
+**Reason:** the operation takes no wildcard, so the type's own name is the only way to select the rows that a type removed with `force` left behind, in order to purge them.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the rows a removed type kept`, `› POST /items/bulk-actions selects the rows a type removed with force left behind, by the type's own name`.
+
+### `search-and-filters/type-unreadable`
+
+If a `type` filter names a registered type that the credential may not read, and no type under it that the credential may read, then the server MUST answer `403 type_not_permitted` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences`, each entry of the `type` list of `GET /events` and the `filter.type` of `POST /items/bulk-actions`.
+
+**Reason:** an empty page would say nothing here about a type that is registered, which tells a caller nothing it can act on, while a write of the same type by the same credential is already answered `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types/registry-open`). An item named by id keeps answering as a missing one when its type is unreadable (`items/get-missing`), because there the caller named a row and not a type.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› the same type is served to a key that reads it, on every door but the bulk action`, `› GET /events holds each entry of a list to the rule`, `› refuses the same type to a key that reads nothing under it`.
+
+### `search-and-filters/type-unreadable-grant`
+
+When the server refuses a `type` filter `403 type_not_permitted` for the type it names, the server MUST name that type and the level `read` in `details.grant`.
+
+**Reason:** a filter reads, so a credential that writes the type is not offered a write grant it does not need.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › names the level read in the grant of every refusal`, `› $name answers 403 type_not_permitted naming the type`.
+
+### `search-and-filters/type-bulk-unreadable`
+
+If the `filter.type` of `POST /items/bulk-actions` names a type that nothing registers, and the credential may read neither it nor any type under it, then the server MUST answer `403 type_not_permitted`.
+
+**Reason:** the operation selects a type's subtree as the listings do, so the grant decides whether or not the type is registered.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions refuses an unregistered type the key holds nothing on`.
+
+### `search-and-filters/type-bulk-read-only`
+
+When the `filter.type` of `POST /items/bulk-actions` names a type that the credential may read and may not write, the server MUST narrow the match set to nothing rather than refuse the request.
+
+**Reason:** the action is narrowed to what the credential may write, so a key that reads every type and writes none matches nothing whatever the filter names. The refusal in `search-and-filters/type-unreadable` is about reading a type, which is what a filter asks of one.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › narrows a type the key reads and does not write to nothing, rather than refusing it`.
+
+### `search-and-filters/type-descendant-readable`
+
+When a concrete `type` filter names a type that the credential may not read, and the credential may read a type under it, the server MUST answer the items of the types under it that the credential may read rather than refuse the request.
+
+**Reason:** a concrete type selects its subtree, so refusing would withhold rows that the credential is entitled to. The refusal in `search-and-filters/type-unreadable` is for a filter that reaches nothing readable.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers the readable descendants on every door`, `› GET /items/stats counts the readable descendants of a type the key may not read`, `› GET /occurrences answers the readable subtype of an event type the key may not read`, `› GET /events streams the readable descendants of a type the key may not read and withholds the rest`.
+
+### `search-and-filters/type-wildcard-readable`
+
+When a credential that may read some type sends a wildcard `type` filter, the server MUST answer the items of the types it matches that the credential may read, whatever else it matches.
+
+**Reason:** a wildcard names a set, so the readable part of it is a complete answer, and a refusal would turn a client that asks for `core.*` into one that has to know its own grant first.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`.
+
+### `search-and-filters/type-wildcard-none`
+
+When a wildcard `type` filter matches no type that a credential reaching some type may read, the server MUST answer as it answers a filter that matches no row: an empty page, a counts object with no count, or a stream with no frame of those types.
+
+**Reason:** nothing is a correct answer to everything under this root, as it is for a root under which nothing is registered.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › a wildcard over types the key reads none of is an empty page, not a refusal`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /events carries no frame for a wildcard over types the key reads none of`.
+
+### `search-and-filters/type-map-none`
+
+If a credential whose type map reaches no type sends a request to an operation that takes a `type` filter, or to `POST /items/lookup`, then the server MUST answer `403 type_not_permitted`, whatever the filter names, a wildcard and a type that nothing registers included.
+
+**Reason:** an empty answer would say that the instance holds nothing for the credential to read, rather than that it may read nothing (`keys-and-oauth.md` 1).
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 type_not_permitted whatever the filter names, to a working key and to the operator key`, `› a key whose map reaches no type is refused a wildcard too`.
+
+### `search-and-filters/type-map-narrows`
+
+When a credential's type map names the types it may read, the server MUST leave out of every listing and search the items of every other type.
+
+**Reason:** a type the credential may not read is not shown to it in a set, as it is not shown by id. `keys-and-oauth.md` 1 states what the map grants.
+
+**Tests:** `compliance/type-scoped-access.test.ts › scoped key list filtering only returns permitted types`, `› search results filtered by scoped permissions`, `› unlisted types are implicitly denied (no wildcard)`, `› namespace wildcard grants access to all types in the namespace`, `compliance/type-permissions.test.ts › none permission hides the type from a listing, not only from a write`, `› wildcard pattern matches all types in namespace`.
+
+## State, source, tags and tier
+
+The listing leaves out what is not `active` when it names no `state`: `items/bin-hidden` and `items/archived-hidden` state it, and `items/bin-listed` states what `state=trashed` and `state=any` reach.
+
+### `search-and-filters/state-named`
+
+When `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state`, the server MUST select only the rows in that state.
+
+**Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every row`, `› a search that names no state answers the active state`, `compliance/export.test.ts › filters by state`, `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+
+### `search-and-filters/state-search-default`
+
+When `GET /search` names no `state`, the server MUST match only rows in the `active` state.
+
+**Reason:** a search never answers a row that a listing hides, because that would be two answers to one question.
+
+**Tests:** `compliance/state-default.test.ts › a search that names no state answers the active state`.
+
+### `search-and-filters/state-search-any`
+
+When `GET /search` names `state=any`, the server MUST match the rows of every lifecycle state but `trashed`.
+
+**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`.
+
+### `search-and-filters/search-bin`
+
+The server MUST NOT match a row in the bin on `GET /search`, whatever `state` the search names.
+
+**Reason:** the index holds no row in the bin, so `state=trashed` and `state=any` alike leave it unmatched, however the row came to be there.
+
+**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`.
+
+### `search-and-filters/state-invalid`
+
+If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state` that is neither a lifecycle state nor `any`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a typo in a filter must not be served as a successful selection.
+
+**Tests:** `compliance/state-default.test.ts › refuses a state that is not a state, on every door that reads items`, `compliance/export.test.ts › refuses an unknown state filter`, `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`.
+
+### `search-and-filters/source-narrows`
+
+When `GET /items`, `GET /items/stats`, `GET /export` or `POST /items/bulk-actions` names a `source`, the server MUST select only the rows stamped with that source.
+
+**Tests:** `compliance/source-narrowing.test.ts › GET /items answers only the rows stamped with the source named`, `› GET /items/stats counts only the rows stamped with the source named`, `› GET /export carries only the rows stamped with the source named`, `› POST /items/bulk-actions selects only the rows stamped with the source named`.
+
+### `search-and-filters/source-not-in-search`
+
+If `GET /search` carries `source`, then the server MUST answer `400 validation_error` naming `source` in `details.unknown_parameters`.
+
+**Reason:** a search declares no `source`, so the key is refused rather than dropped, which would answer every source.
+
+**Tests:** `compliance/source-narrowing.test.ts › GET /search refuses a source, which it does not declare, rather than answering every source`.
+
+### `search-and-filters/tags-every`
+
+When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names tags, the server MUST select only the rows that carry every tag named.
+
+**Tests:** `correctness/tags.test.ts › narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named`, `› filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
+
+### `search-and-filters/tier-narrows`
+
+When `GET /items`, `GET /items/stats` or `GET /search` names `tier=library` or `tier=feed`, the server MUST select only the rows in that tier.
+
+**Tests:** `compliance/tier-axis.test.ts › tier=library returns library items only`, `› tier=feed returns feed items only`, `› narrows the stats and the search by tier as the listing does`.
+
+### `search-and-filters/tier-both`
+
+When `GET /items`, `GET /items/stats` or `GET /search` names `tier=all` or names no `tier`, the server MUST select the rows of both tiers.
+
+**Tests:** `compliance/tier-axis.test.ts › default query omitting tier returns both library and feed items`, `› tier=all returns both library and feed items`, `› narrows the stats and the search by tier as the listing does`.
+
+### `search-and-filters/tier-invalid`
+
+If `GET /items`, `GET /items/stats` or `GET /search` names a `tier` that is not `library`, `feed` or `all`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/tier-axis.test.ts › refuses a tier that is not library, feed or all, on the listing, the stats and the search`.
+
+## Time bounds
+
+An item's own time is its `occurred_at`, or its `created_at` where it has none.
+
+### `search-and-filters/own-time-bounds`
+
+When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occurred_before`, the server MUST bound the rows by their own time.
+
+**Tests:** `compliance/occurred-at.test.ts › occurred_after filter uses COALESCE(occurred_at, created_at)`, `› occurred_before filter uses COALESCE(occurred_at, created_at)`, `› GET /search bounds a search by the item's own time and excludes an item sitting exactly on either bound`, `› GET /export bounds an export by the item's own time and excludes an item sitting exactly on either bound`, `compliance/canonical-time.test.ts › stores own time in UTC and orders and bounds it by instant`, `compliance/export.test.ts › filters by date range on the item's own time`.
+
+### `search-and-filters/own-time-exclusive`
+
+When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occurred_before`, the server MUST leave out an item whose own time is exactly the bound.
+
+**Reason:** the row sitting on a bound is the row that tells an exclusive bound from an inclusive one.
+
+**Tests:** `compliance/occurred-at.test.ts › both bounds exclude an item sitting exactly on them`, `› GET /search bounds a search by the item's own time and excludes an item sitting exactly on either bound`, `› GET /export bounds an export by the item's own time and excludes an item sitting exactly on either bound`.
+
+### `search-and-filters/own-time-sort`
+
+When `GET /items` names `sort=occurred_at`, the server MUST order the items by their own time.
+
+**Tests:** `compliance/occurred-at.test.ts › COALESCE ordering: sort=occurred_at uses occurred_at then created_at`, `compliance/canonical-time.test.ts › stores own time in UTC and orders and bounds it by instant`.
+
+### `search-and-filters/own-time-created-sort`
+
+The server MUST NOT let an item's `occurred_at` change the order of a `GET /items` listing sorted by `created_at`.
+
+**Tests:** `compliance/occurred-at.test.ts › occurred_at does not affect created_at ordering`.
+
+### `search-and-filters/bound-not-instant`
+
+If `GET /items` or `GET /items/stats` names `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, or `GET /export` names `occurred_after` or `occurred_before`, with a value that is not an instant, then the server MUST answer `400 validation_error`.
+
+**Reason:** the export streams, so a bound refused after the response began would hand the caller an empty body under a success status.
+
+**Tests:** `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`, `compliance/export.test.ts › refuses a bound that is not an instant, on both output formats`.
+
+### `search-and-filters/updated-after`
+
+When `GET /items` names `updated_after`, the server MUST list only the items whose `updated_at` is at or after it.
+
+**Reason:** the bound is inclusive because `updated_at` ties across a bulk write, so a strict bound would drop every row sharing the instant of a resuming client's cursor. A tag moves `updated_at` as a property does (`items/tag-updated-at`).
+
+**Tests:** `sync/time-filters.test.ts › keeps updated_after inclusive, which the catch-up depends on`, `sync/catchup.test.ts › sees a tag written after the boundary, not just a property change`.
+
+### `search-and-filters/updated-after-order`
+
+If `GET /items` names `updated_after` with a `sort` other than `updated_at` or a `direction` other than `asc`, then the server MUST answer `400 validation_error`.
+
+**Reason:** the bound orders the listing by `updated_at` and then id, ascending, which is the only order a catch-up cursor can advance through, so honoring one half of a contradicting request would answer a page that cannot be resumed.
+
+**Tests:** `sync/time-filters.test.ts › refuses updated_after beside a sort or direction it does not order by, and takes the order it implies`.
+
+### `search-and-filters/updated-before`
+
+When `GET /items` names `updated_before`, the server MUST list only the items whose `updated_at` is before it.
+
+**Tests:** `sync/time-filters.test.ts › bounds an item listing by updated_before, exclusively`.
+
+## What a listing adds and what it leaves out
+
+### `search-and-filters/include-edges`
+
+When `GET /items` names `include=edges`, the server MUST add to each item its outbound edges, keyed by edge type, each block a page of `data` and `next_cursor`.
+
+**Reason:** `edges/hydrate` states the blocks of an item read, and `POST /items/lookup` hydrates its rows the same way.
+
+**Tests:** `compliance/links.test.ts › hydrates edges on a lookup as the listing does`, `compliance/envelope.test.ts › carries each hydrated edge block as a page`.
+
+### `search-and-filters/system-named-type`
+
+When `GET /items` names a `type` in the `system.` namespace, the server MUST list the items of that type that the credential may read.
+
+**Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves `system.*` items out of a listing does not apply to it.
+
+**Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`.
+
+## The filter expression
+
+`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, and `POST /items/bulk-actions` takes one inside its filter. An edge term in an expression is `edges.md`'s (`edges/filter-edge`, `edges/filter-edge-full`).
+
+### `search-and-filters/filter-max-length`
+
+The server MUST take a `filter` of 2,048 characters on `GET /items` and `GET /search`.
+
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
+
+### `search-and-filters/filter-over-length`
+
+If a `filter` on `GET /items` or `GET /search` is longer than 2,048 characters, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`.
+
+### `search-and-filters/filter-max-conditions`
+
+The server MUST take a `filter` of 10 conditions joined by `AND`, or joined by `OR`, on `GET /items` and `GET /search`.
+
+**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`.
+
+### `search-and-filters/filter-over-conditions`
+
+If a `filter` on `GET /items` or `GET /search` holds more than 10 conditions, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › takes a filter of 10 conditions and refuses one of 11, on the listing and the search`.
+
+### `search-and-filters/filter-mixed-logic`
+
+If a `filter` on `GET /items` or `GET /search` joins conditions with both `AND` and `OR`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/validation.test.ts › refuses a filter that mixes AND with OR, on the listing and the search`.
+
+### `search-and-filters/filter-or-shorthand`
+
+If `GET /items` carries an `edge[<edge type>]` or `backref[<edge type>]` key and a `filter` that uses `OR`, then the server MUST answer `400 validation_error`.
+
+**Reason:** the server joins a shorthand to the `filter` with `AND`, so the two cannot form one expression.
+
+**Tests:** `compliance/validation.test.ts › refuses a filter that uses OR beside an edge shorthand, which joins it with AND`.
+
+### `search-and-filters/shorthand-backslash`
+
+If the value of an `edge[<edge type>]` or `backref[<edge type>]` key carries a backslash, then the server MUST answer `400 validation_error`.
+
+**Reason:** the filter grammar reads `\"` as a quote and every other backslash literally, so a backslash cannot be quoted. One before the closing quote would run the value on into the next clause, where it would be read as filter syntax. An item id never carries one.
+
+**Tests:** `compliance/validation.test.ts › refuses an edge shorthand value carrying a backslash, and still takes a quote`.
+
+### `search-and-filters/shorthand-quote`
+
+When the value of an `edge[<edge type>]` key carries a double quote, the server MUST take the quote as part of the value, which matches no item.
+
+**Tests:** `compliance/validation.test.ts › refuses an edge shorthand value carrying a backslash, and still takes a quote`.
+
+### `search-and-filters/filter-number-range`
+
+If a `filter` on `GET /items`, `GET /items/stats` or `GET /search` compares with a number that no double holds, then the server MUST answer `400 validation_error`.
+
+**Reason:** a number no double holds would be compared as infinity.
+
+**Tests:** `compliance/validation.test.ts › refuses a filter number no double holds, on the listing and the search`, `compliance/item-stats.test.ts › refuses what the listing refuses in a filter: a state outside the enum, a bound that is not an instant and a number no double holds`.
+
+### `search-and-filters/filter-numeric`
+
+When a `filter` on `GET /items` or `GET /search` compares a numeric JSON property with a number using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare it as a finite double, with the value the API returns.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › witnesses every seeded row on both doors before filtering`, `› compares numeric properties as finite doubles on the listing and search`.
+
+### `search-and-filters/filter-numeric-spellings`
+
+When distinct spellings of an integer round to the same double, the server MUST compare them equal in a numeric `filter`, with `eq` agreeing with both inclusive range comparisons.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › compares numeric properties as finite doubles on the listing and search`.
+
+### `search-and-filters/filter-numeric-only`
+
+The server MUST NOT turn text, an array, an object, a missing property or `null` into a number when a numeric `filter` compares with `eq`.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, arrays, objects, missing or null properties into numeric equality matches`.
+
+### `search-and-filters/filter-null-refused`
+
+If a `filter` compares a field with a `null` literal after an operator that takes a value, then the server MUST answer `400 validation_error`.
+
+**Reason:** a comparison with null is never true, so `eq null` would answer an empty page with no error, and a bulk action selecting by it would silently select nothing.
+
+**Tests:** `compliance/null-filter.test.ts › is refused 400 on every operator, naming not_exists where a property can be absent`, `› is refused on a system field, an edge and tags, and still read as text when quoted`.
+
+### `search-and-filters/filter-null-hint`
+
+When the server refuses a comparison of a property with `null`, the server MUST name `not_exists` in the message as the way to ask for an absent value.
+
+**Reason:** `not_exists` asks the question the caller means and answers the rows whose property is absent or null, and `exists` the rows that hold a value. A system field always exists, so a refusal about one names no presence test.
+
+**Tests:** `compliance/null-filter.test.ts › is refused 400 on every operator, naming not_exists where a property can be absent`.
+
+### `search-and-filters/filter-not-exists`
+
+When a `filter` applies `not_exists` to a property, the server MUST select the rows whose property is absent or null, and `exists` the rows whose property holds a value.
+
+**Tests:** `compliance/null-filter.test.ts › is not needed: not_exists asks for a property that is absent or null, and exists for one that has a value`.
+
+### `search-and-filters/filter-null-quoted`
+
+When a `filter` compares a field with `"null"` inside double quotes, the server MUST compare it as text.
+
+**Tests:** `compliance/null-filter.test.ts › is refused on a system field, an edge and tags, and still read as text when quoted`.
+
+### `search-and-filters/filter-time-instant`
+
+When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with a timestamp literal using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare it as the instant it names, however it is spelled.
+
+**Tests:** `compliance/canonical-time.test.ts › normalizes filter timestamps on listing and search`, `› compares filter timestamps with neq, gt, lt and lte as instants, on listing and search`.
+
+### `search-and-filters/filter-time-refused`
+
+If a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with `eq`, `neq`, `gt`, `gte`, `lt` or `lte` against a literal that is not a timestamp or is not text, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/canonical-time.test.ts › refuses a time comparison with a literal that is not a timestamp, on every operator, naming validation_error`, `› refuses invalid time comparisons while retaining text operators`.
+
+### `search-and-filters/filter-time-text`
+
+When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with `contains` or `starts_with`, the server MUST match text fragments.
+
+**Tests:** `compliance/canonical-time.test.ts › refuses invalid time comparisons while retaining text operators`.
+
+## Sorting by a property
+
+### `search-and-filters/sort-property`
+
+When `GET /items` names `sort=properties.<field>`, the server MUST order the rows by the scalar value each stores in that property, whatever the row's type and whether the `type` filter is concrete, a wildcard or absent.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks numeric properties whatever the type filter`, `› walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-ascending`
+
+When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order, an empty string being a value and numeric text remaining text.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-descending`
+
+When `GET /items` sorts by a property descending, the server MUST reverse the scalar order, including the order between numbers and strings.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-missing`
+
+When `GET /items` sorts by a property, the server MUST put the rows whose property is missing, null, an object or an array after every scalar, in either direction.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-ties`
+
+When `GET /items` sorts by a property, the server MUST order rows with equal values, numerically equal booleans and numbers and the whole null tail included, by item ID ascending in both directions.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-cursor`
+
+When a client follows `next_cursor` through a `GET /items` listing sorted by a property, the server MUST deliver every matching row once, across type boundaries, scalar kinds and ties.
+
+**Reason:** the cursor keeps the scalar kind of the value it stopped at.
+
+**Tests:** `correctness/property-sort-pagination.test.ts › walks numeric properties whatever the type filter`, `› walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+## Pages and limits
+
+The rows of one page and the key that continues them are in `search-and-filters/page-envelope`.
+
+### `search-and-filters/limit-listing`
+
+When `GET /items` names a `limit` from 1 to 200, the server MUST answer a page of at most that many items.
+
+**Tests:** `correctness/pagination.test.ts › takes a limit of 200 and refuses 201 and 0, on the listing`, `› basic pagination: limit restricts result count and signals more`.
+
+### `search-and-filters/limit-listing-refused`
+
+If `GET /items` names a `limit` above 200 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `correctness/pagination.test.ts › takes a limit of 200 and refuses 201 and 0, on the listing`.
+
+### `search-and-filters/limit-search`
+
+When `GET /search` names a `limit` from 1 to 100, the server MUST answer a page of at most that many hits.
+
+**Tests:** `correctness/pagination.test.ts › takes a limit of 100 and refuses 101 and 0, on the search`, `› search respects limit parameter`.
+
+### `search-and-filters/limit-search-refused`
+
+If `GET /search` names a `limit` above 100 or below 1, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `correctness/pagination.test.ts › takes a limit of 100 and refuses 101 and 0, on the search`.
+
+### `search-and-filters/cursor-continues`
+
+When a client sends back the `next_cursor` of a page of `GET /items`, the server MUST answer the page that follows it, so that walking to the end delivers every row exactly once.
+
+**Tests:** `correctness/pagination.test.ts › cursor continuation delivers every item exactly once`, `› cursor is opaque and enables next page retrieval`.
+
+### `search-and-filters/cursor-last-page`
+
+When a page of `GET /items` holds the last row, the server MUST answer `next_cursor` `null`.
+
+**Tests:** `correctness/pagination.test.ts › the last page answers next_cursor: null`.
+
+### `search-and-filters/cursor-other-listing`
+
+If a `GET /items` request sends a `cursor` that another listing or another ordering issued, then the server MUST answer `400 validation_error`.
+
+**Reason:** every ordering compares an ISO timestamp or a property value, so the wrong cursor would answer a page that is simply not the next page.
+
+**Tests:** `correctness/pagination.test.ts › refuses a cursor issued by another listing or ordering`.
 
 ## Search
 
-12. `GET /search?q=` matches full text over searchable fields and tags, read, matched and ranked as 42 to 49 and 87 state. An item identifier alone is not searchable content and does not affect relevance; it matches only if it also appears in an indexed field or tag. `compliance/fts-searchable.test.ts › matches searchable content and tags without matching an item identifier alone`. Search ranks results with `relevance_score`, filters by `type`, takes the listing grammar's state default so a search never answers a row a listing hides, takes its `state=any` sentinel so a caller can read across states here too, and honors `limit` exactly when more rows match. It pages by `cursor` like every list: `next_cursor` continues the ranking, the walk to `null` delivers every hit once, and a cursor another listing or another search issued, or one that does not parse, is refused `400 validation_error`. The ranking is read at most 10,000 rows deep. The sentinel reaches every state the index holds, which is every state but `trashed`: a trashed row is removed from the index rather than narrowed out of the query, so it is unmatched under `any` and under `state=trashed` alike. `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`, `› type-filtered search only returns matching types`, `correctness/pagination.test.ts › search respects limit parameter`, `compliance/state-default.test.ts › a search that names no state answers the active state`, `› a search reads across states under the sentinel, except the bin`, `compliance/envelope.test.ts › walks to a null cursor, delivering every hit once`, `› refuses a cursor another listing issued, and one it cannot read`, `› refuses a cursor minted for another search`, `› refuses an offset query key`.
-13. A field declared `searchable: false` is not matched. `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`.
-14. Results are narrowed by the key's type permissions. `compliance/type-scoped-access.test.ts › search results filtered by scoped permissions`.
-15. `q` is required: `400 missing_required_field`. A query with quotes, ampersands and parentheses is accepted. `correctness/persistence.test.ts › refuses a search with no query`, `compliance/validation.test.ts › accepts quotes, ampersands and parentheses in a search query`.
+`GET /search?q=` matches full text. A device matches the same way, by `device.md` 123 to 145.
 
-## Export
+### `search-and-filters/search-q-required`
 
-16. `GET /export` streams NDJSON, one line per item with its metadata and an edge line for each edge between exported items after the item lines, sending each line as it reads it rather than building the body first, under the listing grammar (`type`, `state`, `source`, `occurred_after`, `occurred_before`) and the key's type permissions, and each line's metadata carries only the extension namespaces the key may read (`keys-and-oauth.md` 21). It takes the grammar's keys but not its state default: a caller naming no state is answered every state except `trashed`, because the archive this door writes is what a restore reads back and a copy that dropped archived rows would lose them on the round trip. `compliance/export.test.ts › filters by type`, `› filters by date range on the item's own time`, `› filters by state`, `› respects type permissions on a scoped key`, `› carries an edge line behind the item lines it joins`, `› refuses a bound that is not an instant, on both output formats`, `compliance/state-default.test.ts › an export that names no state carries archived rows`, `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`, `load/export-stream.test.ts › measures time-to-first-record separately from full drain`.
-17. `format` is closed: `ndjson` (the default) and `archive`, with anything else refused `400 validation_error` rather than served as the default. `compliance/export.test.ts › refuses a format outside the two it offers`.
-18. `GET /export?format=archive` answers a gzip archive (`Content-Type: application/gzip`) of the same selection, its rows' extensions narrowed as the NDJSON lines are, so an archive restores only the namespaces the key that wrote it may read. Its manifest comes first and carries the selection's counts and blob list, so the whole selection is read before the body is sent. The blobs it carries are those the blob doors would serve the credential exporting (`blobs/export-carries-served`). `POST /restore` accepts the archive back with the operator key, answering counts `imported`, `duplicates`, `blobs_imported`, `edges_imported` and `edges_skipped`: items keep their ids, tags, extensions and the edges between them in both directions, and a `(source, source_id)` pair already present is reported as a duplicate, as is a row whose link another row of its type holds (`items/link-taken`); a working key is refused `403`. The archive carries no tombstones (`items/tombstone`), so an archive restored into a new instance starts without them. A type the archive registers is held to its `link_field` as `POST /types` holds one (`types/link-gained`): where two rows a forced delete left under the identifier share a value there, the restore is refused `409 link_taken` and writes nothing (67). `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› requires the operator key`, `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`, `› stops a restore registering a link the rows a forced delete left share`.
-19. `POST /restore` takes an archive of any size the volume has room for beside the instance's reserve (`blobs/restore-reserve`): the body streams to the disk store's spool as an upload's does, outside the request cap every JSON body sits under (`compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large` is the cap), so an archive carrying a blob larger than the cap restores, and the blob answers byte for byte on `GET /blobs/{hash}` under the type the manifest names; an entry whose bytes do not hash to its name is left out and counted in `blobs_imported` no more than it is stored. `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`.
-20. A row the archive records in a state its type's lifecycle cannot produce (`revoked` for a canonical type, `trashed` for a `system.*` type, or a value that is no state) refuses the whole archive `400 validation_error` naming the row, before anything is written, the rows ahead of it included; the same canonical rows in states the lifecycle contains restore, each in the state recorded. `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
+If `GET /search` carries no `q`, then the server MUST answer `400 missing_required_field`.
 
-## Occurrences
+**Tests:** `correctness/persistence.test.ts › refuses a search with no query`, `compliance/validation.test.ts › refuses an empty q and a q holding a NUL as validation_error, and names a q that is absent as missing`.
 
-21. `GET /occurrences?from&to` expands `core.event` items into the occurrences that overlap the window (`occurrences.md` 9), ordered by `starts_at` ascending regardless of write order, with the window echoed and a scan summary; both `from` and `to` are required and the window must be ordered (`400 missing_required_field`, `400 validation_error`); no credential answers `401`. `compliance/occurrences.test.ts › expands events inside the window and excludes those outside it`, `› orders the window by starts_at ascending, not by write order`, `› refuses a missing or inverted window`, `› refuses a request with no credential`.
+### `search-and-filters/search-q-empty`
 
-22. A row the archive records with a `source` no credential can hold — one carrying the reserved prefix `oauth:` — refuses the whole archive `400 validation_error` naming the row, before anything is written, the rows ahead of it included. The restore is the one door that copies `source` verbatim, and the key doors refuse that prefix as a key's own source and as one it claims (`keys-and-oauth.md` 34), so without this the restore would be the way around that gate: a row planted through it would read ever after as written by an authority that never existed. The same rows under an ordinary source restore. **An archive that legitimately records one is unrestorable**, and deliberately: nothing in this build writes such a row, so an archive carrying one was either built by hand or exported from an instance running something this one is not, and neither is a thing to restore silently. `compliance/restore-archive.test.ts › refuses an archive recording a source no credential can hold, and writes nothing`.
+If `GET /search` carries a `q` that is empty, then the server MUST answer `400 validation_error`.
 
-23. **`POST /restore` refuses a property no type declares wherever `POST /items` would**, which is where the strict-mode lever names the row's type: `400 invalid_properties` with `details.code` `unknown_property`. A refused row refuses the whole restore, which writes nothing (67): no type or edge-type registration, blob row, item, edge, event or audit record remains. Native `routes/restore-strictness.test.ts` and `housekeeping/external-audit.test.ts` exercise rolled-back preparation beside refused restored rows. The store validates loosely whatever the lever says, so a door that writes through it asks above it or not at all, and a property that lands reads back ever after undeclared and unmarked under the type's current version. With the lever off the door takes it, because the lever belongs to the type and not to the door. `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› default-off accepts through the restore door as it does through the create door`.
+**Reason:** only an absent `q` is a missing field, and a `q` of blanks is not empty: it matches nothing (`search-and-filters/search-no-word`). A `q` holding a NUL character is refused by `items/search-nul`.
 
-24. **The item write doors ask the lever, and ask it of the properties the caller sent.** `POST /items`, `POST /items/bulk` on both halves of an upsert, `PATCH /items/{id}`, `POST /restore` and `POST /items/bulk-actions` with `update_properties` reach one function, so a property no type declares is refused `400 invalid_properties` with `details.code` `unknown_property` wherever the lever names the row's type, and the row the refusal names is not written. The bulk door reports it as that entry's `errored` outcome carrying its index, so a page refuses the row rather than the page. The bulk-action job reports it as that row's entry in the job's `errors`, naming the row by its `id` where the bulk door carries the entry's `index`, with `code` `invalid_properties` and `details.code` `unknown_property`, and goes on to the next row, so a filter matching rows of several types writes the rows of the types the lever does not name. The job asks when it writes the row rather than when it was queued, as every other door asks when it writes, so a lever set while the job waits holds for it, and asks it for the credential that queued the job as that credential stands then: a job whose queuing credential is gone writes nothing more (`items/job-credential-lost`). The properties the caller sent rather than the merge they land in: the lever refuses a caller introducing an undeclared property, and measuring the merge would instead freeze every row that already carries one from before the lever was set. What is refused is an undeclared key and nothing else: a patch naming only declared properties is taken whatever the type requires elsewhere, because a missing required field is the store's refusal and carries the store's reason. With the lever off every door takes the property and serves it back. `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property through the bulk door, on both halves of an upsert`, `› strict-on rejects the same unknown property through the update door`, `› default-off accepts through the bulk and update doors as it does through the create door`, `› takes a patch naming only declared properties, whatever else the type requires`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
+**Tests:** `compliance/validation.test.ts › refuses an empty q and a q holding a NUL as validation_error, and names a q that is absent as missing`.
 
-25. **Every list and every search answers one envelope**: the rows under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key, on all twenty-four published doors that answer a set, on each hydrated edge block of an item and on an item's hydrated history. `GET /auth/grants`, which the document does not publish, answers the same envelope. A door that takes no cursor answers its whole set, and answers `null`. Two doors carry a sibling about the answer rather than the page: `GET /blobs/stores` its `min_copies`, and `GET /occurrences` its `window`, its `scan` and, when there are any, its diagnostics. Five answers carry rows and stand outside the envelope because none pages a set: `POST /connectors/{id}/deliveries/handled` answers the deliveries it marked under `data` and no cursor, the ones the caller named; `POST /connectors/{id}/agreements/lookup` answers the agreements of the rows the caller named under `data` and no cursor; `POST /items/bulk-get` answers `items`, and `metadata` beside it when `include` carries `metadata`, and no cursor, fetching the ids the caller names with nothing left to continue, and each of its `metadata` entries names its item by `item_id`; `POST /items/lookup` answers `data` and `tombstones` beside it, and no cursor, for the same reason (26); an item's `neighbors` is a list of that one item's far ends rather than a page, capped across every edge type together rather than per block, so `neighbors_truncated` answers `true` when the far ends pass the cap even though every edge block is whole, with exactly the cap hydrated, and the blocks still name every far end the list left out; at or below the cap it answers `false`, with every far end hydrated. The cap is 100 far ends. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. On every door that takes a cursor, the page that holds the last row answers `null` even when the rows fill it exactly, so a walk never ends on an empty page it was sent to. `compliance/envelope.test.ts › one envelope for every list and search`, `› names twenty-four doors, every one the document publishes as a page`, `› answers a null cursor from every door that takes none`, `› answers GET /auth/grants, which the document does not publish, in the same envelope`, `› carries each hydrated edge block as a page`, `› carries an item's hydrated history as a page`, `› hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`, `› flags neighbors_truncated one past the cap, hydrating exactly the cap`, `compliance/full-last-page.test.ts › a full last page answers a null cursor`, `› covers every door that takes a cursor`, `compliance/edge-permissions.test.ts › pages to the end of the listing though whole pages are dropped`, `compliance/inbound-webhooks.test.ts › keeps the first mark, and marks nothing when an id is not the connector's`, `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `compliance/bulk-get.test.ts › returns the requested items by id`, `› hydrates metadata when include carries metadata`, `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`.
+### `search-and-filters/search-q-punctuation`
 
-## Lookup
+The server MUST take a `q` that holds quotes, ampersands and parentheses.
 
-26. **`POST /items/lookup` finds rows by link, by natural key or by id, in every state.** The body names a `type`, exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values, and may ask `include: ["edges"]`; the answer is `{ data, tombstones }`. By `links`, the rows of exactly `type` holding them (`items/link-taken`), which `type` must name a `link_field` for or the lookup is refused `400 validation_error`; by `source` and `source_ids`, the rows holding those natural keys whatever their type, so a row retyped since it was written is found; by `ids`, the rows with those ids, whatever their type, trashed rows included where `POST /items/bulk-get` leaves them out (`items/bulk-get`). Every state is answered, the bin included, and rows come back in the order the request named their keys, each once. A `system.*` row is left out whatever the key holds, a folder's `system.folder` among them, and so is a row whose type the key's map cannot read, and a key whose map reaches no type is refused `403 type_not_permitted` rather than answered empty. `tombstones` answers what purges left under `type` for the links or natural keys named (`items/tombstone` and `items/tombstone-own-type`), in the order named, none by `ids`, and a key that may not read `type` is answered as 58 and 59 say. `include: ["edges"]` hydrates each row's outbound edges as `GET /items?include=edges` does, held to the same permissions. A body naming no `type` is refused `400 missing_required_field`; one naming no selector or two, `source` without `source_ids` or the reverse, more than 500 values, an empty value, `source` among them, a malformed `type`, or a key the door does not declare, `400 validation_error`; a malformed id `400 invalid_id`; an unregistered type `400 unknown_type`. `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› answers by link only the rows of the type named`, `› looks rows up by natural key whatever their type`, `› looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `› hydrates edges on a lookup as the listing does`, `› leaves out a row the key may not read, and refuses a key that may not read the type`, `› refuses a lookup naming no selector, two, or more than 500 values`, `› answers tombstones in the order named`, `› keeps each tombstone to its type, read and moved`.
+**Tests:** `compliance/validation.test.ts › accepts quotes, ampersands and parentheses in a search query`.
 
-## An archive between builds
+### `search-and-filters/search-matches`
 
-27. **Until the first public release, an archive is read only by the build that wrote it.** The archive format stays at version 0 (`instance.md`), and that number promises nothing between builds: what a restore into any other build does with an archive is outside the contract, whether it takes the archive or not. A manifest naming any version but 0 is refused whole `400 validation_error`, before anything is written, with a message saying the same. Nothing is stated about archives after the first public release. `compliance/restore-archive.test.ts › refuses an archive at another format version, saying it is read only by the build that wrote it`.
+When `GET /search` carries a `q`, the server MUST answer the items whose searchable text or tags match it, and no other item.
+
+**Tests:** `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`.
+
+### `search-and-filters/search-id-not-text`
+
+The server MUST NOT match an item on its identifier alone.
+
+**Reason:** an identifier is not searchable content, so it matches only where it also appears in an indexed field or a tag.
+
+**Tests:** `compliance/fts-searchable.test.ts › matches searchable content and tags without matching an item identifier alone`.
+
+### `search-and-filters/search-score`
+
+The server MUST carry on each hit of `GET /search` a positive `relevance_score`, higher for a hit ranked better and equal for hits of equal rank.
+
+**Reason:** the score is relative to the rows of the index it ranks in, so it compares hits only within one search.
+
+**Tests:** `compliance/search-matching.test.ts › scores a hit by its rank and gives the better hit the higher score`.
+
+### `search-and-filters/search-cursor`
+
+When a client sends back the `next_cursor` of a page of `GET /search` with the same query, the server MUST continue the ranking, so that walking to `null` delivers every hit once.
+
+**Tests:** `compliance/envelope.test.ts › walks to a null cursor, delivering every hit once`.
+
+### `search-and-filters/search-cursor-refused`
+
+If a `GET /search` request sends a `cursor` that another listing issued, that another search issued, or that does not parse, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/envelope.test.ts › refuses a cursor another listing issued, and one it cannot read`, `› refuses a cursor minted for another search`.
+
+### `search-and-filters/search-depth`
+
+When a page of `GET /search` holds the 10,000th row of the ranking, the server MUST answer `next_cursor` of `null`.
+
+**Reason:** the server reads the ranking at most 10,000 rows deep, so a search is narrowed rather than paged past that depth.
+
+**Tests:** `compliance/search-depth.test.ts › stops paging a search at its 10,000th row`.
+
+### `search-and-filters/search-stem`
+
+The server MUST reduce every word of the indexed text and of a query to its stem, so that `run` followed by another word matches `running` and `runs` and not `runner`.
+
+**Reason:** a person searching with the word they remember expects its other forms.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-fold-case`
+
+The server MUST match a word in the indexed text and in a query whatever its case.
+
+**Tests:** `compliance/search-matching.test.ts › folds case in the text and in the query`.
+
+### `search-and-filters/search-fold-diacritics`
+
+The server MUST match a word in the indexed text and in a query whatever its diacritics.
+
+**Tests:** `compliance/search-matching.test.ts › folds diacritics in the text and in the query`.
+
+### `search-and-filters/search-split`
+
+The server MUST split words of the indexed text and of a query at anything that is not a letter or a digit, and keep a digit inside its word.
+
+**Tests:** `compliance/search-matching.test.ts › splits words at anything that is not a letter or a digit, and keeps a digit inside its word`.
+
+### `search-and-filters/search-all-words`
+
+When a query is not wholly inside double quotes, the server MUST match only the rows in which every whitespace-separated word of it matches, in any order and in any column.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-last-prefix`
+
+When a query is not wholly inside double quotes, the server MUST match its last word as the start of a word.
+
+**Reason:** the person is still typing the last word.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-earlier-whole`
+
+When a query is not wholly inside double quotes, the server MUST match every word of it but the last as a whole stem.
+
+**Reason:** a prefix on every word would match `marshland` for `marsh landscape`, and the person has finished the earlier words.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-phrase`
+
+When a query begins and ends with a double quote and holds at least one character between them, the server MUST match the text between them as a phrase, with its words adjacent and in order.
+
+**Reason:** a phrase is how a person asks for words that belong together.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-phrase-whole`
+
+When a query begins and ends with a double quote and holds at least one character between them, the server MUST match the last word of the phrase as a whole stem and not as a prefix.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-quote-text`
+
+When a double quote in a query is not the first and the last character of a phrase, the server MUST read it as text.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-trim`
+
+When a query has whitespace or byte-order marks around it, the server MUST ignore them.
+
+**Reason:** a pasted query carries them, and they must not change whether it is a phrase or what it matches.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-syntax-text`
+
+The server MUST read an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word of a query as words to match, and never as search syntax.
+
+**Reason:** a query is typed by a person, and one that a search engine read as syntax would be refused or would answer a different question.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/search-no-word`
+
+When a query holds no word, the server MUST answer an empty page without an error.
+
+**Tests:** `compliance/search-matching.test.ts › matches nothing, without an error, for a query with no word in it`, `› $name: $query`.
+
+### `search-and-filters/index-fields`
+
+While a row is not in the bin, the server MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/index-order`
+
+When a query is a phrase, the server MUST match it against the string properties of a row beyond the four core ones joined in the order of their names, and against its tags joined in byte order.
+
+**Reason:** two indexes that join the text in the same order answer the same phrase.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/index-undeclared`
+
+The server MUST NOT match a property that the row's type does not declare.
+
+**Reason:** a thumbnail's base64 or an undeclared property is not text a person wrote to be found.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/index-not-string`
+
+The server MUST NOT match a value that is not a string.
+
+**Tests:** `compliance/fts-searchable.test.ts › does not hold a value that is not a string, though the same text is found in a string`.
+
+### `search-and-filters/index-unregistered`
+
+When the type of a row is not registered, the server MUST match the row by its `title`, `body`, `description`, `name` and tags alone.
+
+**Tests:** `compliance/fts-searchable.test.ts › keeps the four core properties and the tags of a row whose type was removed with force`.
+
+### `search-and-filters/index-type-change`
+
+When a type is registered, replaced, or deleted with `force`, the server MUST match each row not in the bin of that type and of each type that inherits from it by what the type then marks searchable.
+
+**Reason:** what a row contributes to the index is decided when it is written, so without this a row would keep answering by the fields its type had until the row is next written, and a field marked `searchable: false` would stay matched.
+
+**Tests:** `compliance/fts-searchable.test.ts › rows already stored follow a change to what their type marks searchable`, `› indexes the rows of a type that inherits again when its parent changes what it marks searchable`.
+
+### `search-and-filters/rank-bm25`
+
+The server MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, best first.
+
+**Reason:** a device ranks by the same measure (`device.md` 138), so the two orders agree where they rank the same rows.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
+
+### `search-and-filters/rank-ties`
+
+The server MUST order hits of equal rank by item identifier, ascending.
+
+**Reason:** an unordered tie is two answers to one query.
+
+**Tests:** `compliance/search-matching.test.ts › $name: $query`.
+
+### `search-and-filters/excerpt-words`
+
+When a hit's text matches the query, the server MUST carry in `snippet_html` an excerpt of at most 32 words.
+
+**Tests:** `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`.
+
+### `search-and-filters/excerpt-column`
+
+The server MUST draw the excerpt of a hit from the column that matches it best.
+
+**Reason:** an excerpt drawn from the title alone shows a title with nothing marked for a match in the body, which is most matches, and is empty where the title is.
+
+**Tests:** `compliance/search-matching.test.ts › marks the match in the column that holds it, not only in the title`.
+
+### `search-and-filters/excerpt-mark`
+
+The server MUST wrap each matched word of an excerpt in `<mark>` and `</mark>`.
+
+**Tests:** `compliance/search-matching.test.ts › marks the match in the column that holds it, not only in the title`, `› excerpts a match in a long text, marked and cut`.
+
+### `search-and-filters/excerpt-cut`
+
+When an excerpt cuts the text, the server MUST write `...` where it is cut.
+
+**Tests:** `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`.
+
+### `search-and-filters/excerpt-escaped`
+
+The server MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`.
+
+**Reason:** an app shows the excerpt as HTML, and a row's text is what a person or a source wrote, never markup for that app to render.
+
+**Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
+
+### `search-and-filters/excerpt-markup`
+
+The server MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</mark>`, each pair opened before it closes.
+
+**Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
 
 ## Counting
 
-28. **`GET /items/stats` counts the rows a listing matches.** It takes every filter `GET /items` takes (statements 1 to 9), with the same meaning and the same refusals, and answers the matching rows grouped by `by`: per lifecycle state by default, per type under `by=type`. Paging and ordering are not filters, so `limit`, `cursor`, `sort` and `direction` are refused as undeclared, and `include` takes `system` alone, which counts the `system.*` items left out by default, as the listing leaves them out. One default differs: naming no `state` counts every state, because the default answer is the breakdown across them. The listing's own count for the same filters is therefore the `active` bucket, the bucket of the state it names, or the sum under `state=any`. `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+`GET /items/stats` counts the rows a listing matches.
+
+### `search-and-filters/stats-counts-listing`
+
+When `GET /items/stats` names the filters of a `GET /items` listing, the server MUST count the rows that listing matches.
+
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+
+### `search-and-filters/stats-group`
+
+The server MUST group the counts of `GET /items/stats` by lifecycle state, or by type when the request names `by=type`.
+
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+
+### `search-and-filters/stats-every-state`
+
+When `GET /items/stats` names no `state`, the server MUST count the rows of every state, the bin included.
+
+**Reason:** the default answer is the breakdown across the states, so the listing's own default of `active` does not apply.
+
+**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `› answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`, `compliance/state-default.test.ts › a named state and the sentinel still reach every row`.
+
+### `search-and-filters/stats-equals-listing`
+
+When `GET /items/stats` and `GET /items` name the same filters, the server MUST count as many rows in the bucket of the named state, or in the `active` bucket where none is named, as the listing lists, and under `state=any` as many as the sum of the buckets.
+
+**Tests:** `compliance/item-stats.test.ts › answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`.
+
+### `search-and-filters/stats-no-paging`
+
+If `GET /items/stats` carries `limit`, `cursor`, `sort` or `direction`, then the server MUST answer `400 validation_error` naming each in `details.unknown_parameters`.
+
+**Reason:** paging and ordering are not filters, and a count has no page.
+
+**Tests:** `compliance/item-stats.test.ts › refuses a limit, a cursor, a sort and a direction as keys it does not declare, naming each`.
+
+### `search-and-filters/stats-system`
+
+When `GET /items/stats` names `include=system`, the server MUST count the `system.*` items that the credential may read.
+
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+
+### `search-and-filters/stats-system-default`
+
+When `GET /items/stats` names neither `include=system` nor a `type` in the `system.` namespace, the server MUST leave the `system.*` items out of its counts.
+
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+
+### `search-and-filters/stats-include-other`
+
+If `GET /items/stats` names an `include` other than `system`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+
+## Lookup
+
+`POST /items/lookup` finds rows by link, by natural key or by id.
+
+### `search-and-filters/lookup-answer`
+
+When the server takes a `POST /items/lookup` request, the server MUST answer `200` with `data` and `tombstones` and no other key.
+
+**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`.
+
+### `search-and-filters/lookup-by-link`
+
+When `POST /items/lookup` names a `type` and `links`, the server MUST answer the rows of exactly that type that hold them.
+
+**Reason:** a link is one row's within its type (`items/link-taken`), so a subtype's row holding the same value is not found.
+
+**Tests:** `compliance/links.test.ts › answers by link only the rows of the type named`, `› looks rows up by link in every state, and refuses links for a type naming none`.
+
+### `search-and-filters/lookup-by-key`
+
+When `POST /items/lookup` names `source` and `source_ids`, the server MUST answer the rows holding those natural keys, whatever their type.
+
+**Reason:** a row retyped since it was written is still found.
+
+**Tests:** `compliance/links.test.ts › looks rows up by natural key whatever their type`.
+
+### `search-and-filters/lookup-by-id`
+
+When `POST /items/lookup` names `ids`, the server MUST answer the rows with those ids, whatever their type.
+
+**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+
+### `search-and-filters/lookup-every-state`
+
+When `POST /items/lookup` finds a row, the server MUST answer it in whatever state it holds, the bin included.
+
+**Reason:** a lookup asks whether a key is held, and a row in the bin still holds it. `POST /items/bulk-get` leaves the bin out (`items/bulk-get`).
+
+**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› looks rows up by natural key whatever their type`, `› looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+
+### `search-and-filters/lookup-order`
+
+The server MUST answer the rows of `POST /items/lookup` in the order the request named their keys, each row once.
+
+**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+
+### `search-and-filters/lookup-system-left-out`
+
+The server MUST leave out of the rows of `POST /items/lookup` a `system.*` row, whichever key names it.
+
+**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `› leaves out a system row that holds a natural key a lookup names`.
+
+### `search-and-filters/lookup-unreadable-left-out`
+
+The server MUST leave out of the rows of `POST /items/lookup` a row whose type the credential's type map cannot read.
+
+**Tests:** `compliance/links.test.ts › leaves out a row the key may not read, and refuses a key that may not read the type`.
+
+### `search-and-filters/lookup-tombstones`
+
+When `POST /items/lookup` names links or natural keys, the server MUST answer under `tombstones` what purges left under `type` for those keys, in the order named.
+
+**Reason:** `items/tombstone` states what a purge leaves, and `items/tombstone-own-type` that a tombstone is answered only under the type it was recorded under.
+
+**Tests:** `compliance/links.test.ts › leaves a tombstone for a purged row's link and natural key`, `› answers tombstones in the order named`, `› keeps each tombstone to its type, read and moved`.
+
+### `search-and-filters/lookup-tombstones-subtype`
+
+When `POST /items/lookup` answers a credential that may read a type under `type` and not `type` itself, the server MUST answer `tombstones` as an empty list.
+
+**Reason:** the tombstones record what purges left under `type`, so they are answered only to a credential that may read `type` itself.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers no tombstones to a key that reads only a type under the one named`.
+
+### `search-and-filters/lookup-source-filter`
+
+When `POST /items/lookup` names `ids`, or `source` and `source_ids`, the server MUST answer a row that the `enforcement.source_filter` holding for the credential leaves out of `GET /items`.
+
+**Reason:** a lookup names the rows it wants, as a read by id does (`types/source-filter-by-id`), so a row left out would read as a row that does not exist.
+
+**Tests:** `compliance/schema-enforcement.test.ts › answers a row the instance's source filter leaves out of listings, as a read by key`.
+
+### `search-and-filters/lookup-edges`
+
+When `POST /items/lookup` names `include: ["edges"]`, the server MUST add to each row its outbound edges as `GET /items?include=edges` does.
+
+**Tests:** `compliance/links.test.ts › hydrates edges on a lookup as the listing does`.
+
+### `search-and-filters/lookup-type-unreadable`
+
+If `POST /items/lookup` names a registered `type` and the credential may read neither it nor any type under it, then the server MUST answer `403 type_not_permitted`.
+
+**Reason:** an empty page would say that the keys named nothing. A type under `type` that the credential may read is held to `search-and-filters/type-descendant-readable`.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`, `compliance/links.test.ts › leaves out a row the key may not read, and refuses a key that may not read the type`.
+
+### `search-and-filters/lookup-body-first`
+
+If a `POST /items/lookup` body is one that the server refuses `400`, then the server MUST answer the `400` before it asks whether the credential may read `type`.
+
+**Reason:** the order of checks is the body's shape, then the type's registration, then the credential's reach, so a refused body answers the same to every credential.
+
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers 400 for a body it cannot read before it asks whether the key may read the type`.
+
+### `search-and-filters/lookup-no-type`
+
+If a `POST /items/lookup` body names no `type`, then the server MUST answer `400 missing_required_field`.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`.
+
+### `search-and-filters/lookup-no-selector`
+
+If a `POST /items/lookup` body names no selector, names two, names `source` without `source_ids` or the reverse, or carries an empty value or a key the operation does not declare, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`.
+
+### `search-and-filters/lookup-values-cap`
+
+When a `POST /items/lookup` body names at most 500 values, the server MUST answer them.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`.
+
+### `search-and-filters/lookup-over-cap`
+
+If a `POST /items/lookup` body names more than 500 values, then the server MUST answer `400 validation_error` with `details.cap` of 500 and `details.provided` of the count named.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`.
+
+### `search-and-filters/lookup-links-no-field`
+
+If a `POST /items/lookup` body names `links` for a `type` that names no `link_field`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› refuses a lookup naming no selector, two, or more than 500 values`.
+
+### `search-and-filters/lookup-bad-id`
+
+If a `POST /items/lookup` body names an id that is malformed, then the server MUST answer `400 invalid_id`.
+
+**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `compliance/unreadable-type-filter.test.ts › answers 400 for a body it cannot read before it asks whether the key may read the type`.
+
+### `search-and-filters/lookup-bad-type`
+
+If a `POST /items/lookup` body names a `type` that is malformed, a wildcard included, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`, `compliance/unreadable-type-filter.test.ts › refuses a wildcard type, which names no one type, to every key`.
+
+### `search-and-filters/lookup-unknown-type`
+
+If a `POST /items/lookup` body names a well-formed `type` that nothing registers, then the server MUST answer `400 unknown_type`.
+
+**Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`, `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`.
+
+## Pages
+
+Every list and every search answers the same envelope. A hydrated block of edges is a page of the same shape (`edges/hydrate`), and so is an item's history (`versions/include-first-page`).
+
+### `search-and-filters/page-envelope`
+
+When a list or a search answers, the server MUST carry the rows under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key but a sibling that the operation's own rule names.
+
+**Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys` and the `min_copies` of `GET /blobs/stores`.
+
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-four doors, every one the document publishes as a page`.
+
+### `search-and-filters/page-whole-set`
+
+When a list takes no `cursor`, the server MUST answer its whole set with `next_cursor` `null`.
+
+**Tests:** `compliance/envelope.test.ts › answers a null cursor from every door that takes none`.
+
+### `search-and-filters/page-grants`
+
+The server MUST answer `GET /auth/grants` in the envelope of a list, though the API document does not publish it.
+
+**Tests:** `compliance/envelope.test.ts › answers GET /auth/grants, which the document does not publish, in the same envelope`.
+
+### `search-and-filters/page-full-last`
+
+When the rows of a page fill it exactly and it holds the last row, the server MUST answer `next_cursor` `null` on every operation that takes a cursor.
+
+**Reason:** a walk then never ends on an empty page it was sent to. A page can still be short or empty with a cursor to follow, so a walk stops on `null` and never on a short page (`edges/read-list-short`).
+
+**Tests:** `compliance/full-last-page.test.ts › %s answers null when the rows fill the page exactly`, `› covers every door that takes a cursor`.
+
+## Export
+
+`GET /export` answers the items the credential may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. The operator key reads no content, so it is refused (`blobs/export-operator-refused`).
+
+### `search-and-filters/export-lines`
+
+When `GET /export` names no `format`, the server MUST answer NDJSON with one line per item, carrying the item and its metadata.
+
+**Tests:** `compliance/export.test.ts › filters by type`, `› filters by state`, `› carries on each row only the extension namespaces the key may read, on both output formats`.
+
+### `search-and-filters/export-edge-lines`
+
+When `GET /export` answers items, the server MUST follow the item lines with a line for each edge between the exported items.
+
+**Reason:** `edges/read-export` and `edges/read-export-ends` state which edges are left out.
+
+**Tests:** `compliance/export.test.ts › carries an edge line behind the item lines it joins`.
+
+### `search-and-filters/export-type-map`
+
+The server MUST leave out of an export the items of every type that the credential's type map may not read.
+
+**Tests:** `compliance/export.test.ts › respects type permissions on a scoped key`.
+
+### `search-and-filters/export-extensions`
+
+When `GET /export` answers a row, the server MUST carry on it only the extension namespaces that the credential may read, in both formats.
+
+**Reason:** an archive restores only the namespaces that the key which wrote it may read. `keys-and-oauth.md` 21 states what a credential may read of an extension.
+
+**Tests:** `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`.
+
+### `search-and-filters/export-format`
+
+If `GET /export` names a `format` other than `ndjson` or `archive`, then the server MUST answer `400 validation_error`.
+
+**Reason:** a format that the server does not offer must not be served as the default.
+
+**Tests:** `compliance/export.test.ts › refuses a format outside the two it offers`.
+
+### `search-and-filters/export-state-default`
+
+When `GET /export` names no `state`, the server MUST carry the rows of every state but `trashed`.
+
+**Reason:** the archive this operation writes is what a restore reads back, so a default that dropped archived rows would lose them on the round trip. The bin is the one thing a copy leaves behind.
+
+**Tests:** `compliance/state-default.test.ts › an export that names no state carries archived rows`, `compliance/export.test.ts › carries archived rows and leaves out the bin when an archive names no state`.
+
+### `search-and-filters/export-state-any`
+
+When `GET /export` names `state=any`, the server MUST carry every row it holds, the bin included, in both formats.
+
+**Tests:** `compliance/export.test.ts › carries every row it holds, the bin included, when it names state=any, on both formats`.
+
+### `search-and-filters/export-state-trashed`
+
+When `GET /export` names `state=trashed`, the server MUST carry only the rows in the bin, in both formats.
+
+**Tests:** `compliance/export.test.ts › carries only the rows in the bin when it names state=trashed, on both formats`.
+
+### `search-and-filters/archive-media-type`
+
+When `GET /export` names `format=archive`, the server MUST answer a gzip archive with `Content-Type: application/gzip`.
+
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
+
+### `search-and-filters/archive-same-selection`
+
+When `GET /export?format=archive` names the filters of an NDJSON export, the server MUST select the rows that export selects.
+
+**Tests:** `compliance/export.test.ts › carries every row it holds, the bin included, when it names state=any, on both formats`, `› carries only the rows in the bin when it names state=trashed, on both formats`, `› refuses a bound that is not an instant, on both output formats`.
+
+### `search-and-filters/archive-entries`
+
+The server MUST open an archive with its `manifest.json`, then `items.ndjson`, `edges.ndjson` and `types.ndjson`, and then a `blobs/<hash>` entry for each blob.
+
+**Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest.
+
+**Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
+
+### `search-and-filters/archive-manifest`
+
+The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and the counts of the items, edges, blobs, types and edge types the archive holds.
+
+**Reason:** `instance/archive-version` and `instance/id-in-archive` state the version and the instance's name in the manifest.
+
+**Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
+
+### `search-and-filters/archive-manifest-blobs`
+
+The server MUST list in the manifest of an archive each blob it carries, with its MIME type and its size in bytes.
+
+**Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
+
+### `search-and-filters/archive-only`
+
+The server MUST hold nothing in an archive but `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` and the `blobs/` entries.
+
+**Reason:** an archive carries no keys, no webhooks, no configuration and no tombstones, though an instance holds them.
+
+**Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, items, edges, types and blobs`.
+
+### `search-and-filters/archive-types`
+
+The server MUST carry in the types of an archive every type and edge type registered on the instance beside the ones the build ships, whatever the selection and whatever the credential may read.
+
+**Reason:** the registrations are the instance's own and not the selected rows', so a restore into a new instance gets the types its rows need.
+
+**Tests:** `compliance/export.test.ts › carries every registered type and edge type in an archive, whatever its selection and credential reach`.
+
+### `search-and-filters/archive-history`
+
+When `GET /export?format=archive` carries an item, the server MUST carry with it every stored snapshot below the item's current version that `search-and-filters/archive-history-reach` admits, however many pages of history they fill.
+
+**Reason:** one page of history is not complete history.
+
+**Tests:** `compliance/archive-history.test.ts › carries every stored snapshot below an item's version, across more than one page of history`.
+
+### `search-and-filters/archive-history-reach`
+
+When `GET /export?format=archive` carries a snapshot, the server MUST carry it only if the credential may read the type that snapshot had.
+
+**Reason:** a current grant on a type does not grant access to an item's earlier type.
+
+**Tests:** `compliance/archive-history.test.ts › carries only the snapshots the exporting key may read under the type each had`.
+
+### `search-and-filters/archive-history-bytes`
+
+When a snapshot that an archive carries names a blob, the server MUST carry the blob's bytes if and only if the credential could read that blob through the blob operations.
+
+**Reason:** a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs/lend-earlier-version`).
+
+**Tests:** `compliance/archive-history.test.ts › carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and no others`.
+
+### `search-and-filters/archive-selection-read`
+
+The server MUST count in the manifest of an archive exactly the items and edges its line files hold, whatever is written after the response headers arrive.
+
+**Reason:** the selection is read before the headers are sent, because a tar header carries each entry's size, so a write after them can change neither the line files nor the counts.
+
+**Tests:** `compliance/export.test.ts › counts every row the archive holds in its manifest when the headers arrive`.
+
+### `search-and-filters/archive-row-as-read`
+
+When a row is written after the headers of `GET /export?format=archive` have arrived, the server MUST carry the row as it stood before that write.
+
+**Reason:** the archive is the selection as it stood when its headers arrived.
+
+**Tests:** `compliance/export.test.ts › carries a row as it stood when the export read it, whatever is written to it after the headers`.
+
+### `search-and-filters/archive-no-later-item`
+
+When an item is created after the headers of `GET /export?format=archive` have arrived, the server MUST NOT carry it.
+
+**Tests:** `compliance/export.test.ts › does not carry an item created after the headers arrived`.
+
+### `search-and-filters/archive-edge-before`
+
+When an edge between two carried items exists before `GET /export?format=archive` begins, the server MUST carry the edge.
+
+**Tests:** `compliance/export.test.ts › carries an edge created before the export began, and not one created after its headers arrived`.
+
+### `search-and-filters/archive-no-later-edge`
+
+When an edge is created after the headers of `GET /export?format=archive` have arrived, the server MUST NOT carry it.
+
+**Tests:** `compliance/export.test.ts › carries an edge created before the export began, and not one created after its headers arrived`.
+
+### `search-and-filters/archive-restorable`
+
+While `GET /export?format=archive` reads its selection, the server MUST keep a write that lands between two of its pages from making the archive unrestorable.
+
+**Reason:** the export does not hold the server for the whole selection, so a write can land between pages.
+
+**Tests:** waiting on #1444.
+
+### `search-and-filters/archive-spool-ended`
+
+When a `GET /export?format=archive` response ends, whether the archive was read whole or the client left, the server MUST leave nothing of the export on disk.
+
+**Reason:** the export keeps what it has read in the `tmp` folder of the disk store, and a copy of the instance's content that nobody will read must not stay there.
+
+**Tests:** `compliance/export-spool.test.ts › leaves nothing in the spool once the whole archive has been read`, `› leaves nothing in the spool once the client has left`.
+
+### `search-and-filters/archive-spool-fault`
+
+If a read fails while `GET /export?format=archive` is answering, then the server MUST leave nothing of the export on disk.
+
+**Tests:** waiting on #1444.
+
+### `search-and-filters/archive-spool-start`
+
+When the process starts, the server MUST remove whatever an export that a stopped process was writing left on disk.
+
+**Reason:** a process that is stopped during an export cannot remove its own copy.
+
+**Tests:** `compliance/export-spool.test.ts › keeps the spool of an export a stopped process was writing until the next start, and then clears it`.
+
+### `search-and-filters/archive-failed-read`
+
+If a read fails after the body of `GET /export?format=archive` has begun, then the server MUST end the response with an error and not with a clean end.
+
+**Reason:** the status and headers are sent before the first byte, so the failure shows only as a connection cut short and a gzip stream with no end, which is an archive that nobody mistakes for a complete one.
+
+**Tests:** waiting on #1444.
 
 ## Restore
 
-29. The archive's `manifest.json` is held to the fields the restore reads: `version`, the number `0`, and `blobs`, an object whose every entry carries a string `mime_type` and a non-negative integer `size_bytes`. A manifest missing or mistyping any of them refuses the whole archive `400 validation_error`, the message naming each field and `details.errors` carrying each as a dotted `path`, before anything is written; the same archive under a well-formed manifest restores. A manifest naming another version is refused for its version (27) rather than its shape, since another version is free to lay its fields out differently. Fields the restore does not read, the writer's counts and provenance among them, are not asked about. `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
+`POST /restore` takes an archive that `GET /export?format=archive` wrote, with the operator key, and answers counts of what it wrote and skipped.
 
-## Edge shorthands
+### `search-and-filters/restore-operator`
 
-30. **An `edge[<type>]` or `backref[<type>]` shorthand value carrying a backslash is refused `400 validation_error`.** The filter grammar reads `\"` as a quote and every other backslash literally, so a backslash cannot be quoted: one before the closing quote would run the value on into the next clause, where it would be read as filter syntax. An item id never carries one. A double quote in the value is quoted and matches nothing. `compliance/validation.test.ts › refuses an edge shorthand value carrying a backslash, and still takes a quote`.
+If a working key sends `POST /restore`, then the server MUST answer `403 forbidden`.
 
-## Property ordering
+**Reason:** running the instance is fenced outside the permission model, so a credential holding write on every type is still not the operator key.
 
-31. **`GET /items?sort=properties.<field>` orders by each row's stored scalar value, independently of its type.** A concrete type filter, a wildcard and no type filter apply the same ordering. Ascending, numbers and booleans share numeric order (`false` equals `0`, `true` equals `1`), followed by strings in binary lexical order; an empty string is a value and numeric text remains text. Descending reverses the scalar order, including the order between numbers and strings. Missing fields, explicit nulls, objects and arrays all follow every scalar, in either direction. Equal values, including numerically equal booleans and numbers and the entire null tail, order by item id ascending in both directions. A cursor preserves the scalar kind, so a walk to `next_cursor: null` delivers every matching row once, including across type and kind boundaries and inside ties. `correctness/property-sort-pagination.test.ts › walks numeric properties whatever the type filter`, `› walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+**Tests:** `compliance/restore-archive.test.ts › requires the operator key`.
 
-## Archived row scalars
+### `search-and-filters/restore-roundtrip`
 
-32. **An archived item or edge's present `version` is a positive safe integer, from 1 through 9007199254740991 inclusive, and a present item `tier` is `library` or `feed`.** A different value, including zero, a fractional or unsafe number, a string or null, refuses the whole archive `400 validation_error`, naming the offending row and field, before type registrations, blob placement, items, metadata, edges or events are written. A valid row ahead of the invalid one is not written either. These checks apply even when a row would otherwise be counted as a duplicate or an edge skipped. Omitted versions retain the restore's default of 1, and an omitted canonical item tier defaults to `library`; a valid recorded version or tier is preserved. Zero can be a write precondition but is never a stored version (`versions/create-claim-none`). `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`, `› refuses invalid %s even when the row already exists`, `› refuses an invalid edge version even when its endpoint is missing`, `› restores $name without changing their meaning`.
+When the operator key sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
 
-## Complete archive restoration
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
 
-33. When an operator restores an archive produced by the same server build, the server MUST accept its item, edge, type-registration and edge-type-registration counts without a separate restore count limit.
+### `search-and-filters/restore-counts`
 
-    Reason: an export that the same build cannot restore is not a usable backup. Resource protection is independent of the number of rows an export carries.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered` and `edge_types_skipped`, each for the kind of thing it counts.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › restores an actual export with $items items and $edges edges`; `packages/server/src/routes/archive-type-registrations.test.ts › restores more than 200 %s registered and exported through their routes`.
+**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`.
 
-34. When an archive creates an item or edge, the server MUST preserve its recorded `created_at` and `updated_at` instants in canonical UTC millisecond form and its current `version` exactly.
+### `search-and-filters/restore-edge-skips`
 
-    Reason: restored dates describe the original record, and canonical UTC values remain comparable with list filters and cursors. Resetting a version can make an old write precondition match unrelated content.
+When `POST /restore` skips an edge because the instance already holds it, because an endpoint is missing or because the line is malformed, the server MUST count it in `edges_skipped_reasons` under `already_present`, `endpoint_missing` or `malformed` respectively.
 
-    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`, `› reconstructs edges between restored items, in both directions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves item and edge dates after metadata writes, with matching stored event frames`; `packages/server/src/routes/archive-restore-version.test.ts › brings items and edges back at the version they were archived at`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps restored %s discoverable by instant-based date filters`.
+**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
-35. When exporting an archive, the server MUST include every stored snapshot below each selected item's recorded current version that the exporting credential can read under that snapshot's historical type permissions.
+### `search-and-filters/restore-items-kept`
 
-    Reason: a current type grant does not grant access to an item's earlier type, and one page of history is not complete history. A concurrent write may snapshot the selected current version after selection; that snapshot belongs to the next version and cannot be included beside the selected row.
+When `POST /restore` writes an item, the server MUST keep its id, its tags and its extensions.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › preserves every snapshot across history pages and leaves duplicate live history untouched`, `› exports snapshots by their historical type permissions`, `› fences exported history below the selected row's version during a concurrent patch`.
+**Tests:** `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`.
 
-36. When restoring an item's archived history, the server MUST preserve each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at` exactly, without validating historical properties against the current type schema.
+### `search-and-filters/restore-edges-kept`
 
-    Reason: changing a type schema does not rewrite the past.
+When `POST /restore` writes the edges between restored items, the server MUST keep them in both directions.
 
-    Tests: `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › keeps historical properties after the current type changes their shape`; `packages/server/src/storage/archive-history-storage.test.ts › stores every historical field exactly without requiring the historical type's current schema`.
+**Tests:** `compliance/export-roundtrip.test.ts › reconstructs edges between restored items, in both directions`.
 
-37. When a readable archived snapshot references a blob, the archive MUST include its bytes if and only if the exporting credential could read that blob through the blob doors.
+### `search-and-filters/restore-duplicate`
 
-    Reason: a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs/lend-earlier-version`).
+When an archived item holds an id or a natural key that a row on the instance already holds, or a link that a row of its type already holds, the server MUST count it in `duplicates`.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › carries readable bytes referenced only by selected history without widening blob access`.
+**Reason:** a link is one row's within its type (`items/link-taken`).
 
-38. When an archived item is counted as a duplicate, the restore MUST leave the existing item's row, metadata and history unchanged.
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
 
-    Reason: replaying a backup must not overwrite work made since the backup.
+### `search-and-filters/restore-duplicate-kept`
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › leaves an existing item and its live history unchanged on repeated restores`; `packages/server/src/routes/export-roundtrip.test.ts › re-restoring the same archive changes nothing and counts duplicates`.
+When `POST /restore` counts an archived item as a duplicate, the server MUST leave the existing item's row, tags, extensions and history as they are.
 
-39. If an archive contains an invalid present item or edge date, or malformed history, the restore MUST refuse the whole archive with `400 validation_error` before writing rows, including when a row would otherwise be duplicated or skipped.
+**Reason:** replaying a backup must not overwrite work made since the backup.
 
-    History shape: each snapshot is an object with a valid unique snapshot ID across the archive, the enclosing item's ID, a positive safe integer version below the current item version and unique within that item's history, object properties, a type identifier, a `library` or `feed` tier, valid `created_at` and `occurred_at` instants, and a string or null `source_id`. History, when present, is an array. Present row dates are valid instants. Validation uses the ordinary instant rules. Current row dates use canonical UTC millisecond form; historical snapshot dates retain their archived spelling.
+**Tests:** `compliance/archive-history.test.ts › leaves an existing row, its tags, its extensions and its history alone when the archive's copy is a duplicate`.
 
-    Reason: a malformed later row must not leave a partially restored archive.
+### `search-and-filters/restore-link-held`
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › refuses malformed item %s before any row writes`, `› refuses malformed edge %s even when its endpoints are missing`, `› refuses history with $name before writing valid rows ahead of it`, `› refuses duplicate history %s values before row writes`.
+If an archive registers a type with a `link_field` in which two rows that a forced delete left share a value, then the server MUST answer `409 link_taken`.
 
-40. If a snapshot being restored has an ID already held by existing history, the restore MUST refuse the row transaction with `409 conflict` without changing the existing history.
+**Reason:** a type that an archive registers is held to its `link_field` as `POST /types` holds one (`types/link-gained`).
 
-    Reason: a history collision is not a duplicate current item and cannot overwrite another item's past.
+**Tests:** `compliance/links.test.ts › stops a restore registering a link the rows a forced delete left share`.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › refuses a snapshot ID already held by unrelated history without treating it as a duplicate item`.
+### `search-and-filters/restore-type-conflict`
 
-41. If a row write fails during archive restoration, the server MUST roll back every item, metadata, history, edge and event write the restore made.
+If an archive registers a type or an edge type that the instance holds differently, then the server MUST answer `409 conflict` naming each in `details.conflicting_ids`.
 
-    Reason: snapshot restoration is part of restoring the item that owns it. The registrations and blob rows roll back with them (67).
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing`.
 
-    Tests: `packages/server/src/routes/archive-complete-roundtrip.test.ts › rolls back items, metadata, history and events when a later edge insert fails`, `› rolls back earlier snapshots and row writes when a native history insert fails`.
+### `search-and-filters/restore-core-edge-type`
 
-Archive scope: keys, webhooks, configuration and tombstones are not carried. Trashed items are carried only when selected explicitly, such as with `state=any` (16). An archive remains format 0 and is supported only by the build that wrote it (27).
+If an archive carries a core edge type, then the server MUST answer `409 conflict`.
 
-## How a query matches
+**Tests:** `compliance/declared-refusals.test.ts › cannot be deleted, and cannot be redefined by an archive`.
 
-The server and a device index the same text and read a query the same way, so a query finds a row a device holds offline exactly when it finds that row online, and orders the hits the same where both rank the same rows. The server's rules are the reference and the device's follow them.
+### `search-and-filters/restore-nothing`
 
-42. The server and a device MUST each reduce every word of the indexed text and of a query to its stem, folding case and diacritics and splitting words at anything that is not a letter or a digit, so that "run" followed by another word matches "running" and "runs" and not "runner".
+When `POST /restore` takes an archive that carries no row, the server MUST answer `200` with `imported` of 0.
 
-    Reason: a person searching with the word they remember expects its other forms, and a device that matched whole words only would lose a row the server finds.
+**Reason:** an archive of nothing is not an empty body.
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`, `› excerpts a match in a long text, marked and cut`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
 
-43. WHEN a query is not wholly inside double quotes, the server and a device MUST require every whitespace-separated word of it to match, in any order and in any column, MUST match the last word as the start of a word, and MUST match every other word as a whole stem.
+### `search-and-filters/restore-empty-body`
 
-    Reason: the person is still typing the last word and has finished the earlier ones. A prefix on every word would match "marshland" for "marsh landscape", which the server does not.
+If the body of `POST /restore` is empty, then the server MUST answer `400 validation_error`.
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
 
-44. WHEN a query begins and ends with a double quote and holds at least one character between them, the server and a device MUST match the text between them as a phrase: its words adjacent and in order, the last one as a whole stem and not as a prefix. Any other double quote in a query MUST be text.
+### `search-and-filters/restore-not-archive`
 
-    Reason: a phrase is how a person asks for words that belong together.
+If the body of `POST /restore` is not a gzip-compressed tar, or its compressed stream breaks partway, then the server MUST answer `400 validation_error`.
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Reason:** a damaged backup is an ordinary input and not a fault in the server.
 
-45. The server and a device MUST read every character of a query as text to match: an operator word, a column name before a colon, a star, a leading minus and a double quote inside a word are words, never search syntax. A query with no word in it MUST match nothing.
+**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving`.
 
-    Reason: a query is typed by a person, and one that a search engine read as syntax would be refused or would answer a different question.
+### `search-and-filters/restore-keeps-serving`
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+When the server refuses a body of `POST /restore` that it cannot read, the server MUST go on answering other requests.
 
-46. For each row not in the bin, the index MUST hold its `title`, `body`, `description` and `name` where each is a string, every other string field its type declares or inherits, and its tags, each field's text in its own column, the extra fields joined by a space in field-name order and the tags in byte order. It MUST NOT hold a field its type declares as a string with `searchable: false`, a property its type does not declare, or a value that is not a string. Where a type redeclares an inherited field, the nearest declaration decides. A row whose type is not registered MUST be indexed by its four core properties and its tags alone.
+**Reason:** the process is every client's server, and a file that one operator sends must not stop it.
 
-    Reason: the fields a person marked private stay unmatched, and a thumbnail's base64 or an undeclared property is not text a person wrote to be found.
+**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving`.
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`; `compliance/fts-searchable.test.ts › field with searchable:false is excluded from full-text matches`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`; `packages/server/src/storage/search-indexing.test.ts › what a change to a type does to rows already stored`.
+### `search-and-filters/restore-version`
 
-47. WHEN a type is registered, replaced or deleted with `force`, the server MUST index again, in the same transaction, every row not in the bin of that type and of each type that inherits from it, and a device MUST index again every row it holds when it takes a changed catalog.
+If the `manifest.json` of an archive names a `version` other than 0, then the server MUST answer `400 validation_error` with a message saying that the archive is read only by the build that wrote it.
 
-    Reason: what a row contributes to the index is decided when it is written, so without this a row keeps answering by the fields its type had until the row is next written, and a field marked `searchable: false` stays matched.
+**Reason:** a version of 0 promises nothing between builds, so what a restore into another build does with an archive is outside the contract. Nothing is stated about archives after the first public release.
 
-    Tests: `compliance/fts-searchable.test.ts › rows already stored follow a change to what their type marks searchable`; `device/search-live.test.ts › holds a changed type's searchable fields against rows it already holds`; `packages/server/src/storage/search-indexing.test.ts › what a change to a type does to rows already stored`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive at another format version, saying it is read only by the build that wrote it`.
 
-48. The server and a device MUST order hits by BM25 over the title, body, description, name, extra and tags columns at equal weight, best first, and MUST order hits of equal rank by item identifier, ascending. `relevance_score` MUST be the absolute value of the BM25 score.
+### `search-and-filters/restore-manifest`
 
-    Reason: two indexes that hold the same rows then rank them alike. Weighting the title above the body would be a ranking the server does not have, and an unordered tie is two answers to one query. BM25 is relative to the rows of the index it ranks in, so a device that holds a slice of the instance scores, and so can order, by that slice: its scores and its order equal the server's only where the rows they hold are the same, and which of the rows it holds it finds is the same either way.
+If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them or an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
-    Tests: `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`; `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
+**Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 
-49. Each hit MUST carry an excerpt of at most 32 words from the column that matches it best, with each matched word wrapped in `<mark>` and `</mark>` and `...` where the text is cut.
+**Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
 
-    Reason: an excerpt drawn from the title alone shows a title with nothing marked for a match in the body, which is most matches, and is empty where the title is.
+### `search-and-filters/restore-state`
 
-    Tests: `compliance/search-matching.test.ts › excerpts a match in a long text, marked and cut`, `› marks the match in the column that holds it, not only in the title`; `device/search-live.test.ts › excerpts a match as the server does, from the column that holds it`.
+If an archive records a row in a state that its type's lifecycle cannot produce, such as `revoked` for a canonical type, `trashed` for a `system.*` type or a value that is no state, then the server MUST answer `400 validation_error` naming the row.
 
-## How an excerpt is written
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
-87. The server and a device MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`, and whose only markup is pairs of `<mark>` and `</mark>`, each pair opened before it closes, marking where the query matched.
+### `search-and-filters/restore-state-kept`
 
-    Reason: an app shows the excerpt as HTML, and a row's text is what a person or a source wrote, never markup for that app to render.
+When `POST /restore` takes a canonical row in a state that its lifecycle contains, the server MUST write the row in the state recorded.
 
-    Tests: `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`; `device/search-live.test.ts › escapes the row's text in an excerpt as the server does`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
-## Restore bounds
+### `search-and-filters/restore-source`
 
-60. When an archive carries an entry under a name the restore does not read, the server MUST step past the entry without holding it in memory.
+If an archive records a row with a `source` that no credential can hold, which is one that starts with the reserved prefix `oauth:`, then the server MUST answer `400 validation_error` naming the row.
 
-    Reason: an archive is a file anyone can hand an operator, and a small compressed entry can expand to more memory than the server has.
+**Reason:** the restore is the one operation that copies `source` verbatim, and the key operations refuse that prefix (`keys-and-oauth.md` 34), so without this refusal a row planted through the restore would read ever after as written by an authority that never existed. An archive that legitimately records one is unrestorable, and deliberately.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › steps past a 600 MB entry it does not read without holding it`; `compliance/restore-archive.test.ts › steps past an entry it does not read`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a source no credential can hold, and writes nothing`.
 
-61. If an archive's `manifest.json` or `types.ndjson`, or one line of its `items.ndjson` or `edges.ndjson`, is larger than 67,108,864 bytes (64 MiB), the server MUST refuse the whole archive with `400 validation_error`, naming the entry, before writing anything.
+### `search-and-filters/restore-scalars`
 
-    Reason: the restore parses each of these whole, so this limit and the one row it holds at a time (71) bound the memory a restore takes, beside the ids of the items and snapshots it has written, which it keeps so that edges resolve and snapshot ids stay unique. The line files are otherwise read a line at a time, so an archive of any number of rows restores (33).
+If an archive records a `version` of an item or an edge that is not a positive safe integer, or a `tier` of an item that is not `library` or `feed`, then the server MUST answer `400 validation_error` naming the row and the field.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a line longer than the most it reads at once, and writes nothing`; `compliance/restore-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
+**Tests:** `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`.
 
-62. If an archive carries `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` or a `blobs/` entry more than once, the server MUST refuse the whole archive with `400 validation_error`, naming the entry, before writing anything.
+### `search-and-filters/restore-scalars-held`
 
-    Reason: a repeated entry has no single meaning, and reading both would let a later copy add rows the first one never listed.
+When an archive records an invalid `version` or `tier` for a row that the instance already holds, or for an edge whose endpoint is missing, the server MUST still refuse the archive.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses an archive carrying a name it reads twice, and writes nothing`; `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
+**Tests:** `compliance/archive-scalars.test.ts › refuses invalid %s even when the row already exists`, `› refuses an invalid edge version even when its endpoint is missing`.
 
-63. If an archive body is not a gzip-compressed tar, or its compressed stream breaks partway, the server MUST refuse it with `400 validation_error` before writing anything.
+### `search-and-filters/restore-scalars-kept`
 
-    Reason: a damaged backup is an ordinary input, not a fault in the server.
+When `POST /restore` writes an item or an edge, the server MUST keep the `version` and the item's `tier` that the archive records, and write `1` and `library` where it records none.
 
-    Tests: `packages/server/src/routes/restore-archive.test.ts › refuses a body the gzip reader cannot parse and stays up`; `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a body whose gzip stream breaks partway, leaving no spool`.
+**Reason:** zero can be a write precondition but is never a stored version (`versions/create-claim-none`), and resetting a version can make an old write precondition match unrelated content.
 
-64. When an archive restore commits, the server MUST commit its type and edge-type registrations, blob rows, items, metadata, history, edges, events and audit records together.
+**Tests:** `compliance/archive-scalars.test.ts › restores $name without changing their meaning`.
 
-    Reason: an owner who gives up on a restore must not hold types or rows they did not ask for, which only one commit for all of them can promise (67).
+### `search-and-filters/restore-dates`
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no registration, row or event when it fails after registering the archive's types`; `packages/server/src/housekeeping/external-audit.test.ts › rolls back archive preparation with restored items and events`.
+If an archive records a `created_at` or `updated_at` of an item or an edge that is not an instant, then the server MUST answer `400 validation_error` naming the row and the field.
 
-65. While an archive restore writes, the server MUST give other requests a turn of the event loop after at most 100 lines or 4 MiB of the archive's line files, whichever comes first, counting lines it skips or counts as duplicates as well as lines it writes.
+**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`, `› refuses an edge whose date is malformed even when an endpoint is missing`.
 
-    Reason: a restore of a large archive takes long enough that a server answering nothing in the meantime fails its health checks, and a few large rows take as long as many small ones.
+### `search-and-filters/restore-dates-utc`
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between batches inside its transaction`, `› gives the event loop a turn over lines it skips as well as rows it writes`, `› holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
+When `POST /restore` writes a row, the server MUST write its `created_at` and `updated_at` as the instants they name, in UTC to the millisecond.
 
-66. When the server refuses an archive whose body it cannot read, it MUST keep serving other requests.
+**Reason:** canonical UTC values remain comparable with the filters and cursors of a listing.
 
-    Reason: the process is every client's server, and a file one operator sends must not stop it.
+**Tests:** `compliance/archive-history.test.ts › writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them`.
 
-    Tests: `packages/server/src/routes/restore-archive.test.ts › refuses a body the gzip reader cannot parse and stays up`.
+### `search-and-filters/restore-history-shape`
 
-67. If an archive restore is refused, fails or is interrupted, the server MUST leave none of the registrations, rows, events or audit records it wrote, in the database or in the types other requests read.
+If an archive records history that is not an array of snapshots, each an object with a valid snapshot ID, the item's own ID, object properties, a type identifier, a `library` or `feed` tier, `created_at` and `occurred_at` instants, and a `source_id` that is a string or null, then the server MUST answer `400 validation_error` naming the row and the field.
 
-    Reason: the owner can run the same restore again, and a half-restored instance holds types and rows nobody asked for.
+**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no registration, row or event when it fails after registering the archive's types`, `› leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup`; `packages/server/src/routes/restore-strictness.test.ts › rolls back blob registration with the restored rows, and takes back the bytes it placed`.
+### `search-and-filters/restore-history-version`
 
-68. If an archive restore does not commit, the server MUST remove the blob bytes it placed that no row names: at once when the restore fails or is refused, and through its copy cleanup when the process stopped before the restore ended. The copy cleanup removes a batch on each run of `blob-replicate`, by default up to 100 each minute (`MARFA_BLOB_REPLICATE_BATCH`, `MARFA_BLOB_REPLICATE_INTERVAL_MS`), and of `blob-integrity`, by default up to 500 each hour.
+If an archive records a snapshot whose `version` is not a positive safe integer below the item's version, or repeats one of the same item's history, then the server MUST answer `400 validation_error` naming the row and the field.
 
-    Reason: the bytes are written before the transaction opens, which nothing can roll back, so a record committed before them names them for removal, and the restore's own transaction clears it.
+**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
 
-    Tests: `packages/server/src/routes/restore-strictness.test.ts › rolls back blob registration with the restored rows, and takes back the bytes it placed`; `packages/server/src/routes/archive-restore-bounds.test.ts › leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup`.
+### `search-and-filters/restore-history-id`
 
-69. While an archive restore writes, the server MUST NOT show its rows, registrations or events to other requests.
+If an archive records a snapshot ID that repeats another snapshot's of the archive, the same item's or another's, then the server MUST answer `400 validation_error` naming the row and the field.
 
-    Reason: a reader that saw part of a restore would see rows a failed restore then takes away.
+**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
+### `search-and-filters/restore-malformed-held`
 
-70. While an archive restore writes, if another request has to write and waits for the restore longer than the write budget, the server MUST refuse that request with `503 write_contention`.
+When an archive records a malformed date or history for a row that the instance already holds, the server MUST still refuse the archive.
 
-    Reason: the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`).
+**Tests:** `compliance/archive-history.test.ts › refuses a malformed date or history even when the row is one the instance already holds`.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
+### `search-and-filters/restore-history-exact`
 
-71. While an archive restore writes or tells subscribers about its events, the server MUST hold no more of the archive's content in memory than the line it is reading, the edges it has written since its last turn (at most 100 lines or 4 MiB of them, 65), and, once it has committed, one page of its events: the events that start within 8 MiB of the page's first byte, so at most 8 MiB and one more event.
+When `POST /restore` writes an item's history, the server MUST keep each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at` exactly, and its dates as the archive spelled them.
 
-    Reason: an archive's rows together can be larger than the memory the server has. Each row is itself no larger than a write door takes (74).
+**Tests:** `compliance/archive-history.test.ts › restores each snapshot field for field into an instance that has never seen the item`, `› writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them`.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds no restored row's content in memory, before or after it commits, and gives a large row a turn of its own`.
+### `search-and-filters/restore-history-shape-free`
 
-72. When an archive restore commits, the server MUST tell subscribers about its events in event-log order, ahead of the events of any write committed after it.
+The server MUST NOT hold a restored snapshot's properties to the current shape of its type.
 
-    Reason: a subscriber that receives a later event first moves its cursor past events it never saw.
+**Reason:** changing a type's schema does not rewrite the past.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › tells live subscribers every restored event once it commits, in id order and ahead of the next write`.
+**Tests:** `compliance/archive-history.test.ts › restores a snapshot the type's current shape would refuse, as it was`.
 
-73. When the server cleans up after an archive restore that did not commit, it MUST NOT remove blob bytes a committed row names.
+### `search-and-filters/restore-snapshot-held`
 
-    Reason: content addressing means another request can be told the same bytes are stored while the restore runs, and the cleanup and that request take the same per-hash lock.
+If an archive records a snapshot ID that existing history already holds, then the server MUST answer `409 conflict`.
 
-    Tests: `packages/server/src/routes/restore-archive.test.ts › never takes back bytes an upload was told are stored meanwhile`, `› leaves the purge record naming the bytes it found on disk, for the sweep to finish`.
+**Reason:** a history collision is not a duplicate current item and cannot overwrite another item's past.
 
-74. If an archived item's properties, the properties of any of its earlier versions, or an archived edge's properties are larger than the largest request body the bulk write doors take (`MARFA_MAX_BULK_REQUEST_BYTES`, 16 MiB by default), the server MUST refuse the whole archive with `413 request_too_large`, naming the row and the field, before writing anything.
+**Tests:** `compliance/archive-history.test.ts › refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was`.
 
-    Reason: a restore is not a way to plant a row the write doors would refuse, and the rest of the server sizes its work on rows the write doors took. A line may still be larger than one row, since it carries the item's history, so the line limit (61) stays.
+### `search-and-filters/restore-strict`
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › refuses a row whose properties are larger than any write door takes, as the write door does, and writes nothing`.
+Where `enforcement.strict_mode` names the type of an archived row, if the row sets a property that no type declares, then the server MUST answer `400 invalid_properties`.
 
-75. While an archive restore's events are told to subscribers after its commit, the server MUST give the event loop a turn between pages of events it reads back.
+**Reason:** a restore is not a way to plant a row that `POST /items` would refuse. `types/strict-mode` states the lever and `types/strict-mode-code` the code it carries.
 
-    Reason: the database driver reads synchronously, so a long read-back would otherwise hold every other request.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`.
 
-    Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › gives the event loop a turn between the pages it reads back after the commit`.
+### `search-and-filters/restore-strict-off`
 
-## Archive export bounds
+Where `enforcement.strict_mode` does not name the type of an archived row, the server MUST take a property that no type declares and serve it back.
 
-76. WHEN `GET /export?format=archive` is requested, the server MUST read the whole selection into the disk store's spool before it sends the first byte of the archive.
+**Tests:** `compliance/schema-enforcement.test.ts › default-off accepts through the restore door as it does through the create door`.
 
-    Reason: a tar header carries each entry's size, so the line files and the manifest are complete before their first byte, and the manifest comes first so the whole selection is read before the body is sent (18).
+### `search-and-filters/restore-blob-size`
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › writes the manifest first, then the line files, then the blobs, each as long as it said`, `› carries more blobs than a page, each once, in the manifest and the tar`, `› restores an archive of nothing`.
+Where the volume has room for an archive beside the instance's reserve (`blobs/restore-reserve`), the server MUST restore it even when it is larger than the request cap that every JSON body sits under.
 
-77. While `GET /export?format=archive` reads and writes, the server MUST NOT hold in memory more than one page of rows and the chunk of a blob it is sending.
+**Reason:** the body streams to disk as an upload's does, so an archive that carries a blob larger than the cap restores.
 
-    Reason: kept in memory, the selection grew with the instance, and 20,000 items took several hundred megabytes. The ids of the exported items and the digests of the blobs they name are kept in the spool too, so that the edges and the manifest need no set that grows with the instance.
+**Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`, `compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large`.
 
-    Tests: `packages/server/src/routes/export-spool.test.ts › keeps sets of strings, answers which it holds and walks them in order`, `› holds more strings than one statement binds`; `packages/server/src/routes/export-archive-stream.test.ts › carries more blobs than a page, each once, in the manifest and the tar`.
+### `search-and-filters/restore-blob-bytes`
 
-78. While `GET /export?format=archive` reads its selection, the server MUST give other requests a turn between pages of at most 200 rows.
+When `POST /restore` takes a blob that the archive carries, the server MUST answer its bytes on `GET /blobs/{hash}` byte for byte, under the type that the manifest names.
 
-    Reason: the pages are read from a driver that runs each statement synchronously, so an export that reads them in one go stops the server for as long as the selection is large (`instance/long-job-health`).
+**Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › between pages of items and between pages of edges`; `packages/server/src/routes/long-jobs-health.test.ts › answers within the bound during an archive export of 20,000 items`.
+### `search-and-filters/restore-blob-hash`
 
-79. WHEN a `GET /export?format=archive` response ends, whether the archive is complete, the client has left or a read has failed, the server MUST remove everything the export kept in the spool.
+When an entry of an archive holds bytes that do not hash to its name, the server MUST leave the entry out and not count it in `blobs_imported`.
 
-    Reason: the spool holds the instance's content, and a copy nobody will read is left behind otherwise. A server that is stopped during an export cannot remove it; it stays until the next start, which clears the spool.
+**Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › holds the spool while it writes and removes it when the body ends`, `› with the spool removed when the client leaves while the tar is being written`, `› with the spool removed when the client leaves while the selection is read`, `› with an error and the spool removed when reading the selection fails`.
+### `search-and-filters/restore-unread-entry`
 
-80. WHEN the client of `GET /export?format=archive` leaves before the body begins, the server MUST stop reading the selection.
+When an archive carries an entry under a name that the restore does not read, the server MUST restore the rest of the archive and leave the entry unread.
 
-    Reason: the selection is read before the first byte, which on a large instance takes long enough for a client to give up, and nobody is left to read what is read after.
+**Reason:** an archive is a file that anyone can hand an operator, and a small compressed entry can expand to more memory than the server has.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › with the spool removed when the client leaves while the selection is read`.
+**Tests:** `compliance/restore-archive.test.ts › steps past an entry it does not read`.
 
-81. IF a read fails after the body of `GET /export?format=archive` has begun, the server MUST end the response with an error and not with a clean end.
+### `search-and-filters/restore-text-cap`
 
-    Reason: the status and headers are sent before the first byte, so the failure can only show as a connection cut short and a gzip stream with no end, which is an archive no one mistakes for a complete one.
+If the `manifest.json`, the `types.ndjson`, or a line of the `items.ndjson` or `edges.ndjson` of an archive is larger than 64 MiB, then the server MUST answer `400 validation_error` naming the entry.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › cut short, never complete-looking, when a blob cannot be read once the body has begun`.
+**Reason:** the restore parses each of these whole, so this limit bounds the memory a restore takes. The line files are otherwise read a line at a time, so an archive of any number of rows restores.
 
-82. WHILE `GET /export?format=archive` reads, a write that lands between two of its pages MUST NOT make the archive unrestorable.
+**Tests:** `compliance/restore-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
 
-    Reason: the export no longer holds the server for the whole selection, so a write can land between pages. Each page of items is read together with its metadata, digests and history; the history of an item is the snapshots strictly below the version the export selected (35); and an edge is written only if both its endpoints are items the archive carries.
+### `search-and-filters/restore-entry-twice`
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`; `packages/server/src/routes/archive-complete-roundtrip.test.ts › fences exported history below the selected row's version during a concurrent patch`.
+If an archive carries `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` or a `blobs/` entry more than once, then the server MUST answer `400 validation_error` naming the entry.
 
-83. WHEN a row is written after `GET /export?format=archive` has read the page that holds it, the server MUST carry the row as it stood when the export read that page.
+**Reason:** a repeated entry has no single meaning, and reading both would let a later copy add rows that the first never listed.
 
-    Reason: the archive is a copy of the instance as it moved and not at one instant.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`.
+### `search-and-filters/restore-no-count-limit`
 
-84. WHEN an item is created after `GET /export?format=archive` began, the server MUST NOT carry it.
+When the operator key restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
 
-    Reason: the export reads items newest first, and an item created after it began is dated after every page, so the export never reaches it.
+**Reason:** an export that the same build cannot restore is not a usable backup.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › restores an archive of an instance written to between its pages`.
+**Tests:** `compliance/archive-limits.test.ts › restores an archive of more than 5,000 items, 20,000 edges, 200 types and 200 edge types, as one the same build wrote`.
 
-85. WHEN an edge is created before `GET /export?format=archive` has read its first page of edges, and both of its endpoints are items the archive carries, the server MUST carry the edge.
+### `search-and-filters/restore-row-at-cap`
 
-    Reason: the export reads every page of items before its first page of edges, so an edge created while the items were read is among the newest edges and the export reaches it.
+When an archived item's properties, those of one of its earlier versions, or an archived edge's properties are exactly as large as the largest body the bulk write operations take, the server MUST restore the row.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › carries an edge created while the items were read, and not one created once its edges were read`.
+**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing`.
 
-86. WHEN an edge is created after `GET /export?format=archive` has read its first page of edges, the server MUST NOT carry it.
+### `search-and-filters/restore-row-over-cap`
 
-    Reason: the export reads edges newest first, and an edge created after it began reading them is dated after every page, so the export never reaches it.
+If an archived item's properties, those of one of its earlier versions, or an archived edge's properties are larger than the largest body the bulk write operations take, then the server MUST answer `413 request_too_large` naming the row and the field in `details`.
 
-    Tests: `packages/server/src/routes/export-archive-stream.test.ts › carries an edge created while the items were read, and not one created once its edges were read`.
+**Reason:** a restore is not a way to plant a row that the write operations would refuse, and the cap is `MARFA_MAX_BULK_REQUEST_BYTES` (`items/bulk-body-cap`).
+
+**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing`.
+
+### `search-and-filters/restore-refused-nothing`
+
+If the server refuses an archive, then the server MUST leave no row, history, type, edge type, blob, event or audit record that the restore wrote.
+
+**Reason:** the registrations, the blob bytes and the rows commit together or not at all, so an owner who gives up on a restore does not hold types or rows they did not ask for and can run the same restore again.
+
+**Tests:** `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`, `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`, `compliance/archive-history.test.ts › refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was`.
+
+### `search-and-filters/restore-failed-nothing`
+
+If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, blob, event or audit record that the restore wrote.
+
+**Tests:** waiting on #1444.
+
+### `search-and-filters/restore-stopped-nothing`
+
+If the process stops while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote, and remove the blob bytes it placed that no row names.
+
+**Reason:** the bytes are written before the transaction opens, which nothing can roll back, so the copy cleanup of `blob-replicate` and `blob-integrity` removes them.
+
+**Tests:** waiting on #1444.
+
+### `search-and-filters/restore-announced`
+
+When a restore commits, the server MUST announce the items it wrote on the event stream.
+
+**Tests:** `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`.
+
+### `search-and-filters/restore-announced-order`
+
+When a restore commits, the server MUST tell subscribers about its events in event-log order, ahead of the events of any write committed after it.
+
+**Reason:** a subscriber that received a later event first would move its cursor past events it never saw (`events/live-no-repeat`).
+
+**Tests:** `compliance/restore-concurrent.test.ts › tells subscribers about its events in log order, ahead of the events of any write committed after it`.
+
+### `search-and-filters/restore-hidden`
+
+While a restore writes, the server MUST NOT show its rows, registrations or events to other requests.
+
+**Reason:** a reader that saw part of a restore would see rows that a failed restore then takes away.
+
+**Tests:** waiting on #1444.
+
+### `search-and-filters/restore-writers-wait`
+
+While a restore writes, if another request has to write and waits for the restore longer than the instance's busy budget, then the server MUST answer that request `503 write_contention`.
+
+**Reason:** the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`), whose `details.budget_ms` names the budget (`errors/contention-budget`).
+
+**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the busy budget, and nothing else`.
+
+### `search-and-filters/restore-bytes-kept`
+
+When the server removes the blob bytes of a restore that did not commit, the server MUST NOT remove bytes that a committed row names.
+
+**Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
+
+**Tests:** waiting on #1444.
