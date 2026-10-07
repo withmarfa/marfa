@@ -452,11 +452,11 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 ## The docs site
 
-107. WHEN `marfa docs` reads the documentation, the command MUST send each request to the docs site, which is the address in `MARFA_DOCS_URL` where that is set and not empty and `https://docs.marfa.so` otherwise, whatever `MARFA_API_URL` holds: a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
+107. WHEN `marfa docs` reads the documentation, the command MUST send each request to the docs site, which is the address in `MARFA_DOCS_URL` where that is set to more than white space and `https://docs.marfa.so` otherwise, whatever `MARFA_API_URL` holds: a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
 
 **Reason:** the docs site is not a Marfa instance. The command needs no server, store or key, so an agent can read the docs before it has any of them.
 
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`, `commands::docs::tests::the_topics_are_read_from_their_own_door`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
+**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_search_asks_the_site_with_the_query_encoded_and_no_credential`, `commands::docs::tests::the_topics_are_read_from_their_own_address`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
 
 108. WHEN `marfa docs` sends a request to the docs site, the command MUST send no credential, whatever `MARFA_API_KEY` holds.
 
@@ -482,7 +482,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`. Core `commands::docs::tests::a_site_that_is_not_listening_is_unreachable`, `commands::docs::tests::a_site_that_answers_with_a_server_fault_or_nothing_useful_is_unreachable`.
 
-112. WHEN `marfa docs` is given a page by its path, with or without a leading or trailing slash, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
+112. WHEN `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the command MUST read the one page at `/<path>.md`.
 
 **Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`. Core `commands::docs::tests::every_way_to_name_a_page_is_one_path`, `commands::docs::tests::a_page_is_read_from_its_markdown_address_whichever_way_it_is_named`.
 
@@ -510,7 +510,7 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 117. IF the docs site answers more than five redirects in a row to one request of `marfa docs`, THEN the command MUST exit 3 with `docs_unreachable`.
 
-**Reason:** the command follows redirects up to that, in case the docs site moves a page, because it sends no credential for a redirect to carry to another host. More than five is a loop, which is the site failing. A working copy follows no redirect from a server (42).
+**Reason:** more than five redirects in a row is a loop, which is the site failing.
 
 **Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`, `commands::docs::tests::a_sixth_redirect_in_a_row_is_the_site_failing`.
 
@@ -524,15 +524,21 @@ A body is read here by the rule a folder reads a Markdown file's body by (`folde
 
 **Tests:** `device/contract.test.ts › refuses --url and --key on docs with usage, sending nothing`. Core `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
 
-120. IF the page `marfa docs` is given, once a leading or trailing slash, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, THEN the command MUST exit 1 with `invalid` and send no request.
+120. IF the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, THEN the command MUST exit 1 with `invalid` and send no request.
 
 **Reason:** a path outside that set could leave the docs site's pages or carry another request in its name.
 
 **Tests:** `device/contract.test.ts › refuses a docs page path it does not accept with invalid, sending nothing`. Core `commands::docs::tests::a_name_that_is_not_a_path_is_refused_before_anything_is_sent`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
 
-121. IF `MARFA_DOCS_URL` is set and not empty, and is not an `http` or `https` address with a host and no query or fragment, THEN the command MUST exit 1 with `invalid` and send no request.
+121. IF `MARFA_DOCS_URL` is set to more than white space, and is not an `http` or `https` address with a host and no query or fragment, THEN the command MUST exit 1 with `invalid` and send no request.
 
 **Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`. Core `commands::docs::tests::the_address_must_be_http_or_https`, `tests/docs.rs::the_command_line_is_checked_before_anything_is_sent`.
+
+122. WHEN the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the command MUST follow it.
+
+**Reason:** the docs site may move a page, and the command sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (42).
+
+**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`. Core `commands::docs::tests::up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for`.
 
 ## What the real server cannot be made to produce
 

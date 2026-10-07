@@ -522,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn the_topics_are_read_from_their_own_door() {
+    fn the_topics_are_read_from_their_own_address() {
         let door = Door::open(vec![json(PAGES)]);
         let site = Site::at(&door.url).unwrap();
         let value = site.topics().unwrap();
