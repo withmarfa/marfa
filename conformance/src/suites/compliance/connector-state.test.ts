@@ -803,11 +803,26 @@ describe("what a connector keeps on the instance", () => {
       expect(refused.status, what).toBe(400);
       expect(refused.error?.error.code, what).toBe("validation_error");
     }
-    for (const [what, body] of [
-      ["no process", { set: [{ item_id: row.id, waiting: true, record: {} }] }],
+    for (const [what, field, body] of [
+      [
+        "no process",
+        "process",
+        { set: [{ item_id: row.id, waiting: true, record: {} }] },
+      ],
+      [
+        "an entry with no item_id",
+        "item_id",
+        { process, set: [{ waiting: true, record: {} }] },
+      ],
       [
         "an entry with no waiting",
+        "waiting",
         { process, set: [{ item_id: row.id, record: {} }] },
+      ],
+      [
+        "an entry with no record",
+        "record",
+        { process, set: [{ item_id: row.id, waiting: true }] },
       ],
     ] as const) {
       const refused = await mine.client.rawRequest<unknown>(
@@ -816,6 +831,10 @@ describe("what a connector keeps on the instance", () => {
       );
       expect(refused.status, what).toBe(400);
       expect(refused.error?.error.code, what).toBe("missing_required_field");
+      expect(
+        String(refused.error?.error.details?.["field"]).split(".").at(-1),
+        what,
+      ).toBe(field);
     }
     expect(await found(mine, [row.id, second.id])).toEqual([]);
 
@@ -873,6 +892,106 @@ describe("what a connector keeps on the instance", () => {
     ]);
     expect(read.status).toBe(200);
     expect(read.data.data.map((r) => r.record)).toEqual([atCap]);
+  });
+
+  it("refuses an item id outside 1 to 200 characters in a batch of agreements, and takes one at both ends", async () => {
+    const mine = await connector("agreement-item-id");
+    const process = await holding(mine);
+    const row = await note();
+    const write = (body: Record<string, unknown>) =>
+      mine.client.rawRequest<unknown>(`/connectors/${mine.id}/agreements`, {
+        method: "POST",
+        body: { process, ...body },
+      });
+    const entry = (item_id: string) => ({
+      item_id,
+      waiting: true,
+      record: {},
+    });
+
+    for (const id of ["", "i".repeat(201)]) {
+      const label = `${String(id.length)} characters`;
+      // A row the key can hold sits in each batch, so a batch refused whole
+      // leaves it without an agreement.
+      for (const [where, body] of [
+        ["set", { set: [entry(row.id), entry(id)] }],
+        ["clear", { set: [entry(row.id)], clear: [id] }],
+      ] as const) {
+        const refused = await write(body);
+        expect(refused.status, `${where}: ${label}`).toBe(400);
+        expect(refused.error?.error.code, `${where}: ${label}`).toBe(
+          "validation_error",
+        );
+      }
+    }
+    expect(await found(mine, [row.id])).toEqual([]);
+
+    // The ends, which name no stored row, are skipped rather than refused.
+    for (const id of ["i", "i".repeat(200)]) {
+      const cleared = "j".repeat(id.length);
+      const taken = await write({ set: [entry(id)], clear: [cleared] });
+      expect(taken.status, String(id.length)).toBe(200);
+      expect(taken.data).toEqual({
+        written: 0,
+        cleared: 0,
+        skipped: [id, cleared],
+      });
+    }
+    expect((await write({ set: [entry(row.id)] })).status).toBe(200);
+    expect(await found(mine, [row.id])).toEqual([row.id]);
+  });
+
+  it("refuses a process outside 1 to 100 characters on a write of agreements, whether or not it holds the connector", async () => {
+    const mine = await connector("agreement-process");
+    const row = await note();
+    const batch = { set: [{ item_id: row.id, waiting: true, record: {} }] };
+    const write = (process: string) =>
+      mine.client.rawRequest<unknown>(`/connectors/${mine.id}/agreements`, {
+        method: "POST",
+        body: { process, ...batch },
+      });
+
+    const longest = "p".repeat(100);
+    await holding(mine, longest);
+    for (const process of ["", "p".repeat(101)]) {
+      const refused = await write(process);
+      expect(refused.status, String(process.length)).toBe(400);
+      expect(refused.error?.error.code, String(process.length)).toBe(
+        "validation_error",
+      );
+    }
+    expect(await found(mine, [row.id])).toEqual([]);
+
+    // The witness: the process that holds the connector, at the longest a
+    // process may be, is taken, and one that does not is told it is fenced.
+    const fenced = await write("q".repeat(100));
+    expect(fenced.status).toBe(409);
+    expect(fenced.error?.error.code).toBe("connector_held");
+    expect((await write(longest)).status).toBe(200);
+    expect(await found(mine, [row.id])).toEqual([row.id]);
+  });
+
+  it("refuses an item id outside 1 to 200 characters in a lookup, and takes one at both ends", async () => {
+    const mine = await connector("lookup-item-id");
+    const row = await note();
+    for (const id of ["", "i".repeat(201)]) {
+      const refused = await mine.client.lookupConnectorAgreements(mine.id, [
+        row.id,
+        id,
+      ]);
+      expect(refused.status, String(id.length)).toBe(400);
+      expect(refused.error?.error.code, String(id.length)).toBe(
+        "validation_error",
+      );
+    }
+    for (const id of ["i", "i".repeat(200)]) {
+      const taken = await mine.client.lookupConnectorAgreements(mine.id, [
+        row.id,
+        id,
+      ]);
+      expect(taken.status, String(id.length)).toBe(200);
+      expect(taken.data.data).toEqual([]);
+    }
   });
 
   it("refuses a top-level body field the hold, the state and the find doors do not declare", async () => {

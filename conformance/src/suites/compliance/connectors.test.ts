@@ -197,6 +197,82 @@ describe("registration", () => {
     expect((await client.deleteConnector(first.data.id)).status).toBe(200);
   });
 
+  it("clears the description when a key registers again without one", async () => {
+    const first = await client.registerConnector({
+      name: `${ctx.runId} described`,
+      description: "reads a mailbox",
+    });
+    expect(first.status).toBe(201);
+    const kept = await client.registerConnector({
+      name: `${ctx.runId} described`,
+      description: "reads two mailboxes",
+    });
+    expect(kept.data.description).toBe("reads two mailboxes");
+
+    const bare = await client.registerConnector({
+      name: `${ctx.runId} described`,
+    });
+    expect(bare.status).toBe(200);
+    expect(bare.data.id).toBe(first.data.id);
+    expect(bare.data.description).toBeNull();
+    expect(
+      (await client.getConnector(first.data.id)).data.description,
+    ).toBeNull();
+    expect((await client.deleteConnector(first.data.id)).status).toBe(200);
+  });
+
+  it("lists none of a removed registration's runs under the next one its key makes", async () => {
+    const old = await register(client, `${ctx.runId} before removal`);
+    const at = new Date().toISOString();
+    for (const outcome of ["succeeded", "failed"] as const) {
+      const run = await client.reportConnectorRun(old.data.id, {
+        outcome,
+        started_at: at,
+        finished_at: at,
+      });
+      expect(run.status).toBe(201);
+    }
+    expect(
+      (await client.listConnectorRuns(old.data.id)).data.data,
+    ).toHaveLength(2);
+    expect((await client.deleteConnector(old.data.id)).status).toBe(200);
+
+    const next = await client.registerConnector({
+      name: `${ctx.runId} after removal`,
+    });
+    expect(next.status).toBe(201);
+    expect(next.data.id).not.toBe(old.data.id);
+    expect(next.data.last_run).toBeNull();
+    const listed = await client.listConnectorRuns(next.data.id);
+    expect(listed.status).toBe(200);
+    expect(listed.data.data).toEqual([]);
+    const gone = await getOperatorClient().listConnectorRuns(old.data.id);
+    expect(gone.status).toBe(404);
+    expect((await client.deleteConnector(next.data.id)).status).toBe(200);
+  });
+
+  it("carries no hold over from a removed registration to the next one its key makes", async () => {
+    const old = await register(client, `${ctx.runId} held before removal`);
+    const holder = `${ctx.runId}-holder`;
+    expect((await client.holdConnector(old.data.id, holder)).status).toBe(200);
+    // The witness: while the registration stands, another process is kept
+    // out by the hold.
+    const kept = await client.holdConnector(old.data.id, `${holder}-other`);
+    expect(kept.status).toBe(409);
+    expect(kept.error?.error.code).toBe("connector_held");
+    expect((await client.deleteConnector(old.data.id)).status).toBe(200);
+
+    const next = await client.registerConnector({
+      name: `${ctx.runId} held after removal`,
+    });
+    expect(next.status).toBe(201);
+    expect(next.data.hold_expires_at).toBeNull();
+    const taken = await client.holdConnector(next.data.id, `${holder}-other`);
+    expect(taken.status).toBe(200);
+    expect(taken.data.renewed).toBe(false);
+    expect((await client.deleteConnector(next.data.id)).status).toBe(200);
+  });
+
   it("answers 404 for an unknown connector, where a registered one answers", async () => {
     const real = await register(client, `${ctx.runId} real`);
     expect((await client.getConnector(real.data.id)).status).toBe(200);
@@ -493,6 +569,79 @@ describe("heartbeats and runs", () => {
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
     ).toHaveLength(3);
+    expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
+  });
+
+  it("names a missing outcome as missing_required_field, where a wrong one is a validation_error", async () => {
+    const mine = await register(client, `${ctx.runId} run outcome`);
+    const at = new Date().toISOString();
+    const times = { started_at: at, finished_at: at };
+    const missing = await client.rawRequest<unknown>(
+      `/connectors/${mine.data.id}/runs`,
+      { method: "POST", body: times },
+    );
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.code).toBe("missing_required_field");
+    expect(missing.error?.error.details?.["field"]).toBe("outcome");
+
+    // The witnesses: a wrong outcome is told otherwise, and a right one is taken.
+    const wrong = await client.rawRequest<unknown>(
+      `/connectors/${mine.data.id}/runs`,
+      { method: "POST", body: { ...times, outcome: "skipped" } },
+    );
+    expect(wrong.status).toBe(400);
+    expect(wrong.error?.error.code).toBe("validation_error");
+    expect(
+      (
+        await client.reportConnectorRun(mine.data.id, {
+          ...times,
+          outcome: "succeeded",
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (await client.listConnectorRuns(mine.data.id)).data.data,
+    ).toHaveLength(1);
+    expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
+  });
+
+  it("refuses a run time whose UTC year is outside 0000 to 9999, and takes the first and last instants", async () => {
+    const mine = await register(client, `${ctx.runId} run years`);
+    const report = (started_at: string, finished_at: string) =>
+      client.reportConnectorRun(mine.data.id, {
+        outcome: "succeeded",
+        started_at,
+        finished_at,
+      });
+
+    const ends = await report(
+      "0000-01-01T00:00:00Z",
+      "9999-12-31T23:59:59.999Z",
+    );
+    expect(ends.status).toBe(201);
+    expect(ends.data.started_at).toBe("0000-01-01T00:00:00.000Z");
+    expect(ends.data.finished_at).toBe("9999-12-31T23:59:59.999Z");
+
+    // An offset moves the instant a minute past either end of the range, and
+    // the same offsets in the middle of it are taken.
+    const middle = await report(
+      "2026-10-05T18:00:00+00:01",
+      "2026-10-05T18:00:00.999-00:01",
+    );
+    expect(middle.status).toBe(201);
+    const before = "0000-01-01T00:00:00+00:01";
+    const after = "9999-12-31T23:59:59.999-00:01";
+    for (const [what, started, finished] of [
+      ["a start before year 0", before, "0000-01-01T00:00:00Z"],
+      ["a finish after year 9999", "0000-01-01T00:00:00Z", after],
+    ] as const) {
+      const refused = await report(started, finished);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("validation_error");
+    }
+    expect(
+      (await client.listConnectorRuns(mine.data.id)).data.data,
+    ).toHaveLength(2);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
