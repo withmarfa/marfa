@@ -98,6 +98,8 @@ afterAll(async () => {
  * seconds' delay and exceptions on a longer one.
  */
 const COLLECTOR_BUDGET_MS = 60_000;
+/** A stream re-reads its credential every 30 seconds. */
+const HEARTBEAT_BUDGET_MS = 45_000;
 const COLLECTOR_TEST_TIMEOUT_MS = COLLECTOR_BUDGET_MS + 15_000;
 
 /** The server's own log, which its state directory holds. */
@@ -397,5 +399,145 @@ describe("an unhandled fault in which a statement failed", () => {
       expect(JSON.stringify(trackedErrors)).not.toContain(marker);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
+  );
+});
+
+describe("a warning about an event stream that cannot be read", () => {
+  function sql(text: string): void {
+    withInstanceDatabase(server!.sqlitePath, (db) => {
+      db.exec(text);
+    });
+  }
+
+  /** The `[events]` warnings in the server's log. */
+  function eventWarnings(): string[] {
+    return serverLog()
+      .split("\n")
+      .filter((text) => text.startsWith("[events] closing the stream"));
+  }
+
+  function openStream(headers: Record<string, string> = {}): Promise<Response> {
+    return fetch(`${server!.apiUrl}/events`, {
+      headers: {
+        Authorization: `Bearer ${server!.workingKey}`,
+        Accept: "text/event-stream",
+        ...headers,
+      },
+    });
+  }
+
+  /** What a stream sent until it ended, which a stream that failed does on its own. */
+  async function readToEnd(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+  ): Promise<string> {
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return text;
+      text += decoder.decode(value);
+    }
+  }
+
+  it(
+    "names the failed statement and no value of the credential's, for the head of the log, a catch-up and the credential",
+    async () => {
+      // The witness: a stream is served while the log and the keys are there,
+      // and says where it is.
+      const served = await openStream();
+      expect(served.status).toBe(200);
+      const reader = served.body!.getReader();
+      const first = await reader.read();
+      expect(new TextDecoder().decode(first.value)).toContain(": connected");
+      await reader.cancel();
+
+      // The head of the log cannot be read.
+      const known = new Set(eventWarnings());
+      sql("ALTER TABLE event_log RENAME TO event_log_gone");
+      let headStream: string;
+      try {
+        headStream = await readToEnd((await openStream()).body!.getReader());
+      } finally {
+        sql("ALTER TABLE event_log_gone RENAME TO event_log");
+      }
+      expect(headStream).not.toContain("stream_cursor");
+      const head = await until("the head's warning", () =>
+        eventWarnings().find((text) => !known.has(text)),
+      );
+      expect(head).toContain("the event-log head could not be read");
+      expect(head).toContain("SELECT MAX(id) AS max FROM event_log");
+
+      // A catch-up fails after the head was read. The log's sequence is moved
+      // up so that the cursor is a number nothing else in the statement is,
+      // and a view in place of the table answers the head and not the rows.
+      sql("UPDATE sqlite_sequence SET seq = 7391850 WHERE name = 'event_log'");
+      const created = await fetch(`${server!.apiUrl}/items`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${server!.workingKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "core.note",
+          properties: { body: "after the cursor" },
+        }),
+      });
+      expect(created.status).toBe(201);
+      sql(
+        "ALTER TABLE event_log RENAME TO event_log_gone; CREATE VIEW event_log AS SELECT id, created_at FROM event_log_gone",
+      );
+      let catchUp: string;
+      try {
+        catchUp = await readToEnd(
+          (await openStream({ "Last-Event-ID": "7391850" })).body!.getReader(),
+        );
+      } finally {
+        sql(
+          "DROP VIEW event_log; ALTER TABLE event_log_gone RENAME TO event_log",
+        );
+      }
+      expect(catchUp).toContain('"reason":"replay_failed"');
+      const replay = await until("the catch-up's warning", () =>
+        eventWarnings().find((text) => text.includes("the catch-up could not")),
+      );
+      expect(replay).toContain(
+        'from "event_log" where "event_log"."id" > CAST(? AS INTEGER)',
+      );
+      expect(replay).toContain("limit ?)");
+      expect(replay).not.toContain("params");
+
+      // The credential cannot be read again at the stream's next heartbeat.
+      const current = await fetch(`${server!.apiUrl}/keys/current`, {
+        headers: { Authorization: `Bearer ${server!.workingKey}` },
+      });
+      const { id: keyId } = (await current.json()) as { id: string };
+      const live = await openStream();
+      expect(live.status).toBe(200);
+      const liveReader = live.body!.getReader();
+      await liveReader.read();
+      sql("ALTER TABLE api_keys RENAME TO api_keys_gone");
+      let ended: string;
+      try {
+        ended = await readToEnd(liveReader);
+      } finally {
+        sql("ALTER TABLE api_keys_gone RENAME TO api_keys");
+      }
+      expect(ended).toContain('"reason":"live_delivery_failed"');
+      const credential = await until(
+        "the credential's warning",
+        () =>
+          eventWarnings().find((text) =>
+            text.includes("the credential could not be read again"),
+          ),
+        HEARTBEAT_BUDGET_MS,
+      );
+      expect(credential).toContain(
+        'from "api_keys" where ("api_keys"."id" = ?',
+      );
+      expect(credential).not.toContain("params");
+      expect(credential).not.toContain(keyId);
+      expect(credential).not.toContain(server!.workingKey);
+    },
+    HEARTBEAT_BUDGET_MS + 30_000,
   );
 });
