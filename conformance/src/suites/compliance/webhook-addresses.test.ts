@@ -53,6 +53,56 @@ describe("webhook addresses", () => {
     }
   });
 
+  it("refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address", async () => {
+    for (const url of [
+      "http://[fc00::1]/hook",
+      "http://[fd12:3456:789a::1]/hook",
+      "http://100.64.0.1/hook",
+      "http://0.0.0.0/hook",
+      "http://[::]/hook",
+      "http://224.0.0.1/hook",
+    ]) {
+      const refused = await working.createWebhook({
+        url,
+        events: ["item.created"],
+      });
+      expect(refused.status, url).toBe(400);
+      expect(refused.error?.error.code, url).toBe("validation_error");
+    }
+  });
+
+  it("refuses to point a subscription at an address that is not public, leaving the stored url", async () => {
+    // A name is not resolved at registration, so this one is accepted and
+    // never reached.
+    const stored = "http://receiver.invalid/hook/stored";
+    const created = await working.createWebhook({
+      url: stored,
+      events: ["item.deleted"],
+    });
+    expect(created.status).toBe(201);
+    try {
+      for (const url of [
+        receiver.url,
+        "http://10.0.0.1/hook",
+        "http://[::ffff:127.0.0.1]/hook",
+      ]) {
+        const refused = await working.updateWebhook(created.data.id, { url });
+        expect(refused.status, url).toBe(400);
+        expect(refused.error?.error.code, url).toBe("validation_error");
+        expect((await working.getWebhook(created.data.id)).data.url).toBe(
+          stored,
+        );
+      }
+      // The witness: a public name is accepted on the same door.
+      const accepted = await working.updateWebhook(created.data.id, {
+        url: "http://receiver.invalid/hook/moved",
+      });
+      expect(accepted.status).toBe(200);
+    } finally {
+      await working.deleteWebhook(created.data.id);
+    }
+  });
+
   it("sends nothing to a name that resolves to loopback, and records why", async () => {
     const port = new URL(receiver.url).port;
     const created = await working.createWebhook({
