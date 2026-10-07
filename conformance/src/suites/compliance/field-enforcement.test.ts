@@ -95,12 +95,11 @@ describe("client-supplied verbatim fields (preserved without validation)", () =>
 
 describe("a field the wire does not declare", () => {
   it("device: no such field ships, and a body naming one stores nothing", async () => {
-    // **Stripped rather than refused, and that is the create door's rule
-    // rather than this field's.** The create body is `z.object`, so Zod
-    // drops a key it does not declare; `PATCH /items/{id}` is
-    // `z.strictObject` and refuses one (`items.md` 47). No decided line
-    // moves the create door, so this name sits where any other name the
-    // door never knew sits.
+    // **Stripped rather than refused, and that is the create door's rule rather
+    // than this field's.** The create body is `z.object`, so Zod drops a key it
+    // does not declare; `PATCH /items/{id}` is `z.strictObject` and refuses one
+    // (`items/update-undeclared-key`). No decided line moves the create door,
+    // so this name sits where any other name the door never knew sits.
     const label = "random-device-xyz-\u{1F3B2}";
     const r = await client.createItem({
       ...createNote(),

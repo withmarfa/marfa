@@ -2934,7 +2934,7 @@ fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &M
 
 /// `row` with the properties `sent` names first, in the order sent, then the
 /// rest as the row holds them: the order the server answers a whole edit
-/// made at the row's version in (`items.md` 46).
+/// made at the row's version in (`items/property-order-replace`).
 fn in_sent_order(row: &Map<String, Value>, sent: &Map<String, Value>) -> Map<String, Value> {
     let mut ordered: Map<String, Value> = sent
         .keys()

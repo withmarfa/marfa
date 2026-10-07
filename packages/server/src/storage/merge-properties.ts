@@ -57,8 +57,9 @@ export function mergeUpdateProperties(
 
 /**
  * A created item's properties in the order every read answers them
- * (`items.md` 46): the fields the type declares, in the order its read lists
- * them, then every other property in the order the write sent it.
+ * (`items/property-order-create`): the fields the type declares, in the order
+ * its read lists them, then every other property in the order the write sent
+ * it.
  *
  * Validation answers the fields every type takes ahead of the type's own,
  * which no read of the type lists, so the order is taken from the type and the

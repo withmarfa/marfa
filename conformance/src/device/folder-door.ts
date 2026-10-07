@@ -33,8 +33,8 @@ export interface DoorRow {
   tags?: string[];
   tier?: "library" | "feed";
   /** The row's own time as the server stores it, UTC at millisecond
-   *  precision, where a write named one (`items.md` 6); unset, it is the
-   *  row's `created_at`. */
+   *  precision, where a write named one (`items/occurred-at-utc`); unset, it
+   *  is the row's `created_at` (`items/occurred-at-default`). */
   occurred_at?: string;
   /** `archived`, where a transition moved it there. */
   state?: string;
@@ -58,9 +58,9 @@ export interface DoorCreate {
 }
 
 /**
- * A time as the server stores it (`items.md` 6): a date, or a date and time
- * with or without an offset, read as UTC where it names none, at millisecond
- * precision.
+ * A time as the server stores it (`items/occurred-at-utc` and
+ * `items/occurred-at-zoneless`): a date, or a date and time with or without an
+ * offset, read as UTC where it names none, at millisecond precision.
  */
 export function storedTime(sent: string): string {
   const zoned = /(Z|[+-]\d\d:?\d\d)$/.test(sent) || !sent.includes("T");
@@ -79,7 +79,8 @@ export interface DoorDecision {
 
 /**
  * The item doors a folder's drain reaches, deciding as the real server does
- * (`items.md` 4, 5; `versions.md` 10, 18).
+ * (`items/natural-key-upsert`, `items/natural-key-id-mismatch` and
+ * `items/source-unclaimed`; `versions.md` 10, 18).
  *
  * A folder fixture scripts its server with this rather than with fixed
  * answers, because what a folder does depends on what the server decides:
@@ -105,7 +106,8 @@ export class FolderDoor {
     /** Whether the credential's key claims a source other than its own. */
     readonly claims: (source: string) => boolean = () => true,
     /** Whether the credential may read a type, which decides what a
-     *  natural key resolving a row of it may learn (`items.md` 5). */
+     *  natural key resolving a row of it may learn
+     *  (`items/natural-key-unreadable`). */
     readonly reads: (type: string) => boolean = () => true,
     /** Whether the refusal for such a row names its id and type, which the
      *  real server never does. A fixture asserting a folder learns nothing
@@ -139,9 +141,10 @@ export class FolderDoor {
         ? undefined
         : this.keyed(sent.source, sent.source_id);
     // An id the door already holds, where no natural key resolves a row, is a
-    // repeat of a create it performed: acknowledged with the row as it
-    // stands, and nothing written (`items.md` 3). A repeat naming a row of
-    // another type is refused `id_reused`, which the door does not model.
+    // repeat of a create it performed: acknowledged with the row as it stands,
+    // and nothing written (`items/create-repeat` and
+    // `items/create-repeat-silent`). A repeat naming a row of another type is
+    // refused `id_reused`, which the door does not model.
     const repeated = sent.id === undefined ? undefined : this.rows.get(sent.id);
     if (
       incumbent === undefined &&
@@ -298,7 +301,7 @@ export class FolderDoor {
     }
     const sentProperties = sent.properties ?? {};
     // Under replace the body is the row's whole properties, so a field it
-    // leaves out is one it clears (`items.md` 22).
+    // leaves out is one it clears (`items/update-replace`).
     const replace = sent.properties_mode === "replace";
     const moves = {
       ...(sent.retype === true && sent.type !== undefined

@@ -672,7 +672,7 @@ When the server replays an answer, the server MUST NOT perform or announce the w
 
 If a credential sends an `Idempotency-Key` it used with another request, differing in method, path, query as written or body text, then the server MUST answer `422 idempotency_key_reused`.
 
-**Tests:** `sync/idempotency.test.ts › refuses a key that names a different request rather than serving it`, `compliance/declared-refusals.test.ts › a key names one request › is refused 422 on every idempotent write door when sent with another request`, `compliance/folders.test.ts › refuses 422 a key sent again with another request on each folder door`, `compliance/bulk.test.ts › refuses a different request under a key already used`.
+**Tests:** `sync/idempotency.test.ts › refuses a key that names a different request rather than serving it`, `compliance/declared-refusals.test.ts › is refused 422 on every idempotent write door when sent with another request`, `compliance/folders.test.ts › refuses 422 a key sent again with another request on each folder door`, `compliance/bulk.test.ts › refuses a different request under a key already used`.
 
 ### `items/idempotency-contract`
 
@@ -858,7 +858,7 @@ When `GET /items/{id}` names an archived item the key may read, the server MUST 
 
 If a write other than a restore, a transition or a purge names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors.md` 12).
 
-**Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › a write to an item in the bin says so › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
+**Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
 ### `items/delete-version`
 
@@ -866,13 +866,13 @@ When `DELETE /items/{id}` names a `version` the item no longer holds, the server
 
 **Reason:** a queued delete cannot remove an edit it never saw.
 
-**Tests:** `compliance/write-refusal-details.test.ts › a delete may name the version it read › refuses a stale one as a stale write carrying nothing to merge, and trashes nothing`.
+**Tests:** `compliance/write-refusal-details.test.ts › refuses a stale one as a stale write carrying nothing to merge, and trashes nothing`.
 
 ### `items/delete-unconditional`
 
 When `DELETE /items/{id}` names no `version`, the server MUST move the item to the bin as it stands.
 
-**Tests:** `compliance/write-refusal-details.test.ts › a delete may name the version it read › deletes unconditionally where no version is named`.
+**Tests:** `compliance/write-refusal-details.test.ts › deletes unconditionally where no version is named`.
 
 ### `items/version-parameter`
 

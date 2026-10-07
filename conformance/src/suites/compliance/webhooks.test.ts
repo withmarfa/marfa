@@ -448,11 +448,11 @@ describe("outbound webhooks", () => {
   });
 
   it("calls out for a bulk write only when the call asks for fan-out", async () => {
-    // What `enable_fanout` governs is the outbound call and nothing else.
-    // It is off unless the caller says otherwise, because one bulk call
-    // writes thousands of rows and a delivery per row per subscriber is
-    // not what the caller asked for. The event log is not conditional on
-    // it — `items.md` 32 cites `sync/replay.test.ts` for that half, which
+    // What `enable_fanout` governs is the outbound call and nothing else. It is
+    // off unless the caller says otherwise, because one bulk call writes
+    // thousands of rows and a delivery per row per subscriber is not what the
+    // caller asked for. The event log is not conditional on it —
+    // `items/bulk-event-log` cites `sync/replay.test.ts` for that half, which
     // is the half a client rebuilding its state depends on.
     const created = await client.createWebhook({
       url: receiver.hookUrl("fanout"),

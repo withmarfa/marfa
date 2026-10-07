@@ -225,11 +225,11 @@ export function allowedTypesCondition(
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 /**
- * A file row's `size_bytes` made the server's (`stampedFileSize`), written
- * in the transaction that wrote the row, once its reference index has
- * decided whether `blob_ref` lends. A create passes `arrange` to keep a
- * size it adds where a read answers it (`items.md` 46). Answers what the
- * row now holds.
+ * A file row's `size_bytes` made the server's (`stampedFileSize`), written in
+ * the transaction that wrote the row, once its reference index has decided
+ * whether `blob_ref` lends. A create passes `arrange` to keep a size it adds
+ * where a read answers it (`items/property-order-create`). Answers what the row
+ * now holds.
  */
 async function keepFileSize(
   tx: SqliteTx,

@@ -14,9 +14,10 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A row a device writes shows its properties in the order the server answers
- * them (`items.md` 46), before the server has answered and after: run against
- * a real server and the real binary, through an offline create, a merging
- * edit, a whole edit and the drains that send them.
+ * them (`items/property-order-create`, `items/property-order-merge` and
+ * `items/property-order-replace`), before the server has answered and after:
+ * run against a real server and the real binary, through an offline create, a
+ * merging edit, a whole edit and the drains that send them.
  */
 
 let client: MarfaClient;

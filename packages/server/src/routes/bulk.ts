@@ -663,7 +663,7 @@ export function bulkRoutes(storage: Storage) {
       // whatever rows the store holds. Left to the per-entry pass, a stale
       // entry ahead of it would answer first, as a `409`, and the caller
       // would re-read the row over a refusal whose cause is a permission it
-      // lacks (`items.md` 31).
+      // lacks (`items/bulk-atomic-gates-first`).
       if (atomic) {
         const enforcement = resolveEnforcement(
           await readInstanceConfig(storage.settings),

@@ -73,8 +73,8 @@ impl SliceTier {
 
     /// The tier a create naming none is sent at. A slice of both sends
     /// `library`, the tier the server gives a row nothing names one for
-    /// (`items.md` 7), since the create has to name one for the copy to show
-    /// it where the server will put it.
+    /// (`items/tier-new`), since the create has to name one for the copy to
+    /// show it where the server will put it.
     pub fn create_tier(self) -> Tier {
         match self {
             SliceTier::Library | SliceTier::All => Tier::Library,
