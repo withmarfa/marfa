@@ -590,6 +590,11 @@ export function createApp(
       // Marfa extension: advertise the named permission bundles so clients
       // can render / request the bundled consent without hard-coding the
       // scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.
+      // The provider finds the apps to notify of a browser session's end
+      // through the tokens bound to it, and an app's tokens are stored with no
+      // session, so no app is told. Saying so keeps the document honest.
+      payload.backchannel_logout_supported = false;
+      payload.backchannel_logout_session_supported = false;
       payload.marfa_permission_bundles =
         config.permissionBundles ?? getPermissionBundles();
       const headers = new Headers(upstream.headers);

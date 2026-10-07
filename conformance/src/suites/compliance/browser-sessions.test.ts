@@ -439,4 +439,17 @@ describe("a browser session ending", () => {
     expect((await post("/auth/sign-out", live)).status).toBe(200);
     await expectAppsConnected(await signIn());
   });
+
+  it("advertises no back-channel logout, since no app is notified of a browser ending", async () => {
+    for (const path of [
+      "/auth/.well-known/openid-configuration",
+      "/auth/.well-known/oauth-authorization-server",
+    ]) {
+      const response = await fetch(`${server!.apiUrl}${path}`);
+      expect(response.status).toBe(200);
+      const document = (await response.json()) as Record<string, unknown>;
+      expect(document.backchannel_logout_supported).toBe(false);
+      expect(document.backchannel_logout_session_supported).toBe(false);
+    }
+  });
 });

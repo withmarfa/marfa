@@ -10,7 +10,6 @@ interface CredentialRequest {
   active: boolean;
   failure?: { error: unknown };
   operations: Set<Promise<unknown>>;
-  notifications: Set<Promise<void>>;
   clientIp: string | null;
   revoke?: { clientId: string; userId: string };
   phase?: CredentialPersistencePhase;
@@ -35,7 +34,6 @@ export async function withCredentialRequest<T>(
     ...input,
     active: true,
     operations: new Set(),
-    notifications: new Set(),
   };
   return credentialRequest.run(scope, async () => {
     try {
@@ -47,7 +45,6 @@ export async function withCredentialRequest<T>(
         await scope.phase.finish(
           result instanceof Response ? result : new Response(null),
         );
-      await Promise.all(scope.notifications);
       return result;
     } catch (error) {
       while (scope.operations.size)

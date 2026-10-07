@@ -5,7 +5,7 @@ import {
   credentialRequest,
 } from "./credential-adapter.js";
 
-/** Run the provider's session-deletion hooks inside the credential phase, so a session's end and its audit commit together. */
+/** Run the provider's session-deletion `before` hook inside the credential phase, so a session's end and its audit commit together. */
 export function withSessionEndAudit<T extends BetterAuthPlugin>(
   plugin: T,
   storage: Storage,

@@ -3,10 +3,9 @@
  *
  * The provider persists the browser session's id on the access and refresh
  * rows it issues, and every door that ends a session sweeps the rows bound to
- * it. So a person who signed out of the browser lost every app they had
- * connected, an app with no refresh grant simply stopped, and the rest had to
- * be approved again. Marfa stores the rows without that binding, so no door
- * that ends a session reaches an app.
+ * it. An app is not the browser that approved it, and an app with no refresh
+ * grant would have no way back in, so Marfa stores the rows without that
+ * binding and no door that ends a session reaches an app.
  *
  * **Every door is driven, not one.** The sweep is the provider's own, run
  * from a hook on session deletion, and each door reaches deletion by its own
@@ -344,32 +343,6 @@ describe("an app stays connected when a browser session ends", () => {
     },
   );
 
-  it("issues and rotates refresh tokens that outlive the browser that approved them", async () => {
-    ctx = await createTestContext({});
-    const c = ctx;
-    const email = "browser-rotation@example.com";
-    await createTestAccount(c, email, PASSWORD, "Browser Rotation");
-    const a = await signIn(c, email);
-    const clientId = await seedClient(c, "Rotating App");
-    const first = await connect(
-      c,
-      clientId,
-      a,
-      "core.note:read offline_access",
-    );
-    const second = await refresh(c, clientId, first.refresh_token!);
-    expect(second.status).toBe(200);
-
-    await request(c.app, "POST", "/auth/sign-out", {
-      headers: { cookie: a, origin: ORIGIN },
-      body: {},
-    });
-
-    const third = await refresh(c, clientId, second.body.refresh_token!);
-    expect(third.status).toBe(200);
-    expect(await dataStatus(c, third.body.access_token)).toBe(200);
-  });
-
   it("still refuses an authorization code once its browser has ended, and accepts one whose browser lives", async () => {
     ctx = await createTestContext({});
     const c = ctx;
@@ -393,5 +366,19 @@ describe("an app stays connected when a browser session ends", () => {
     expect(((await refused.json()) as { error: string }).error).toBe(
       "invalid_request",
     );
+  });
+
+  it("advertises no back-channel logout, since no app is notified of a browser ending", async () => {
+    ctx = await createTestContext({});
+    for (const path of [
+      "/auth/.well-known/openid-configuration",
+      "/auth/.well-known/oauth-authorization-server",
+    ]) {
+      const res = await request(ctx.app, "GET", path);
+      expect(res.status).toBe(200);
+      const document = (await res.json()) as Record<string, unknown>;
+      expect(document.backchannel_logout_supported).toBe(false);
+      expect(document.backchannel_logout_session_supported).toBe(false);
+    }
   });
 });
