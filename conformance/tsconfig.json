@@ -13,6 +13,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  // The server's settings schema is imported by path, and its error handler reads a
+  // global that only instrumentation.ts declares.
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "../packages/server/src/instrumentation.ts"
+  ],
   "exclude": ["node_modules"]
 }
