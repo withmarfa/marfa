@@ -10,10 +10,14 @@
  * two agents, never collide.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
+ *   tsx scripts/marfa-server.ts refused [--state <dir>]
+ *
+ * `refused` boots the same server on a state directory and waits for it to end
+ * instead of for `/health`: for a boot that is meant to be refused.
  *
  * The state directory holds the SQLite file, the blob folder, the server log,
- * the pid and the env file. It defaults to `.marfa-state` in the working
- * directory. `down` stops the server and then removes those five, so the
+ * the pid, the exit record and the env file. It defaults to `.marfa-state` in
+ * the working directory. `down` stops the server and then removes them, so the
  * next `up` is a fresh instance: a database that outlives the bucket it was
  * pointed at registers a second object store on the next boot. The directory
  * itself stays, because `garage/` sits inside it and is the garage script's.
@@ -22,9 +26,10 @@
  * database of a server it has just stopped.
  *
  * The server starts through `tsx` directly rather than the package's `dev`
- * script, which is watch mode and belongs to a person at a keyboard.
+ * script, which is watch mode and belongs to a person at a keyboard, under
+ * `run-server.mjs`, which writes how the server ended to `server.exit`.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -51,6 +56,13 @@ import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 const HEALTH_BUDGET_MS = 180_000;
 const HEALTH_POLL_MS = 250;
 const SHUTDOWN_BUDGET_MS = 20_000;
+/** How long a boot meant to be refused may take to end. */
+const REFUSAL_BUDGET_MS = 60_000;
+
+const RUN_SERVER = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "run-server.mjs",
+);
 
 /**
  * The server this boots is the one in the checkout this file is in, found
@@ -60,7 +72,7 @@ const SHUTDOWN_BUDGET_MS = 20_000;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
-  command: "up" | "down" | "status";
+  command: "up" | "down" | "status" | "refused";
   state: string;
   port?: number;
 }
@@ -73,9 +85,14 @@ export interface BootOptions {
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
-  if (command !== "up" && command !== "down" && command !== "status") {
+  if (
+    command !== "up" &&
+    command !== "down" &&
+    command !== "status" &&
+    command !== "refused"
+  ) {
     throw new Error(
-      "usage: marfa-server.ts up [--state <dir>] [--port <n>] | down [--state <dir>] | status [--state <dir>]",
+      "usage: marfa-server.ts up [--state <dir>] [--port <n>] | down [--state <dir>] | status [--state <dir>] | refused [--state <dir>]",
     );
   }
   const args: Args = { command, state: resolve(".marfa-state") };
@@ -99,6 +116,7 @@ function paths(state: string) {
   return {
     log: resolve(state, "server.log"),
     pid: resolve(state, "server.pid"),
+    exit: resolve(state, "server.exit"),
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
@@ -173,9 +191,38 @@ function alive(pid: number): boolean {
   }
 }
 
-async function waitForHealth(url: string, log: string): Promise<void> {
+/** The tail of the server's log, with the one-time secret taken out. */
+function logTail(log: string): string {
+  return existsSync(log)
+    ? redactBootstrapSecret(
+        readFileSync(log, "utf8").split("\n").slice(-40).join("\n"),
+      )
+    : "(no log written)";
+}
+
+/** How the server ended, as the supervisor recorded it. */
+function describeExit(exitFile: string): string {
+  return existsSync(exitFile)
+    ? readFileSync(exitFile, "utf8")
+    : "(no exit record)";
+}
+
+/**
+ * Waits for `/health` to answer, and gives up the moment the server ends,
+ * so a boot that was refused is reported as that and not after the budget.
+ */
+async function waitForHealth(
+  url: string,
+  p: ReturnType<typeof paths>,
+  ended: () => boolean,
+): Promise<void> {
   const deadline = Date.now() + HEALTH_BUDGET_MS;
   while (Date.now() < deadline) {
+    if (ended()) {
+      throw new Error(
+        `the server ended before it answered ${url}/health: ${describeExit(p.exit)}. Log tail:\n${logTail(p.log)}`,
+      );
+    }
     try {
       const response = await fetch(`${url}/health`, {
         signal: AbortSignal.timeout(5_000),
@@ -186,13 +233,8 @@ async function waitForHealth(url: string, log: string): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
-  const tail = existsSync(log)
-    ? redactBootstrapSecret(
-        readFileSync(log, "utf8").split("\n").slice(-40).join("\n"),
-      )
-    : "(no log written)";
   throw new Error(
-    `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${tail}`,
+    `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${logTail(p.log)}`,
   );
 }
 
@@ -214,7 +256,17 @@ async function mint(url: string, secret: string) {
   return body as Parameters<typeof chooseCredentials>[0];
 }
 
-export async function bootServer(args: BootOptions): Promise<void> {
+/** A server started and not yet known to be up. */
+interface Started {
+  child: ChildProcess;
+  url: string;
+  /** Where in the log this boot begins. */
+  logOffset: number;
+  /** Whether the supervisor has ended, which it does when the server does. */
+  ended: () => boolean;
+}
+
+async function startServer(args: BootOptions): Promise<Started> {
   const p = paths(args.state);
   const existing = readPid(p.pid);
   if (existing !== undefined && alive(existing)) {
@@ -287,10 +339,21 @@ export async function bootServer(args: BootOptions): Promise<void> {
   // already bootstrapped would otherwise re-read the first boot's secret and
   // spend a mint the server has already consumed.
   const logOffset = existsSync(p.log) ? statSync(p.log).size : 0;
+  rmSync(p.exit, { force: true });
   const logFd = openSync(p.log, "a");
+  // The supervisor leads the group and the server joins it, so the group's
+  // id is still the pid file's and a signal to the group still reaches the
+  // server; what the supervisor adds is the server's exit status.
   const child = spawn(
-    tsxBinary(),
-    ["--import", "./src/instrumentation.ts", "src/index.ts"],
+    process.execPath,
+    [
+      RUN_SERVER,
+      p.exit,
+      tsxBinary(),
+      "--import",
+      "./src/instrumentation.ts",
+      "src/index.ts",
+    ],
     {
       cwd: resolve(REPO_ROOT, "packages/server"),
       env,
@@ -301,13 +364,23 @@ export async function bootServer(args: BootOptions): Promise<void> {
   if (child.pid === undefined) {
     throw new Error("failed to spawn the server");
   }
+  let ended = false;
+  child.once("exit", () => {
+    ended = true;
+  });
   writeFileSync(p.pid, `${String(child.pid)}\n`);
   child.unref();
   console.log(
     `[marfa-server] started pid ${String(child.pid)} on ${url}; log at ${p.log}`,
   );
+  return { child, url, logOffset, ended: () => ended };
+}
 
-  await waitForHealth(url, p.log);
+export async function bootServer(args: BootOptions): Promise<void> {
+  const p = paths(args.state);
+  const { url, logOffset, ended } = await startServer(args);
+
+  await waitForHealth(url, p, ended);
 
   const secret = readBootstrapSecret(
     readFileSync(p.log).subarray(logOffset).toString("utf8"),
@@ -344,6 +417,33 @@ export async function bootServer(args: BootOptions): Promise<void> {
   maskInActions(credentials.apiKey, credentials.operatorKey);
   writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs, p.statusLogs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
+}
+
+/**
+ * Starts the server on a state directory it is meant to refuse and waits for
+ * it to end. No credential is minted and `/health` is never asked: the
+ * server's exit record and log are the answer, and are read from the state
+ * directory afterwards. A server that is still up when the budget ends is
+ * stopped and reported, since a refusal that never came is a failure of the
+ * fixture's premise.
+ */
+export async function bootRefused(args: BootOptions): Promise<void> {
+  const p = paths(args.state);
+  const { child, ended } = await startServer(args);
+  const deadline = Date.now() + REFUSAL_BUDGET_MS;
+  while (!ended() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
+  }
+  if (!ended()) {
+    await stopServer(args);
+    throw new Error(
+      `the server did not end within ${String(REFUSAL_BUDGET_MS)}ms, so the boot was not refused. Log tail:\n${logTail(p.log)}`,
+    );
+  }
+  child.unref();
+  console.log(
+    `[marfa-server] the server ended: ${describeExit(p.exit)}; log at ${p.log}`,
+  );
 }
 
 export async function stopServer(args: BootOptions): Promise<void> {
@@ -386,7 +486,7 @@ export async function stopServer(args: BootOptions): Promise<void> {
 
 /**
  * Removes what one instance left behind: the database, the disk store, the
- * env file and the log.
+ * env file, the log and the exit record.
  *
  * **A stopped server's database outliving its bucket is a second store.**
  * A store's id comes from a marker the store itself holds rather than from
@@ -412,6 +512,7 @@ function clearState(state: string): void {
     `${p.db}-shm`,
     p.env,
     p.log,
+    p.exit,
     p.blobs,
     p.statusLogs,
   ]) {
@@ -472,6 +573,7 @@ if (
 ) {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "up") await bootServer(args);
+  else if (args.command === "refused") await bootRefused(args);
   else if (args.command === "down") {
     await stopServer(args);
     await refuseToClearUnderALiveServer(args.state);
