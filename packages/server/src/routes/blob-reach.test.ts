@@ -47,6 +47,8 @@ function sweeper(): TextEnrichmentSweeper {
     maxBlobBytes: 20 * 1024 * 1024,
     maxTextChars: DEFAULT_MAX_STRING_LENGTH,
     maxAttempts: 3,
+    maxInflatedBytes: 64 * 1024 * 1024,
+    maxMemoryBytes: 256 * 1024 * 1024,
   });
 }
 

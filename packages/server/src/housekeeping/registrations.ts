@@ -393,6 +393,8 @@ export function registerHousekeepingJobs(
       maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
       maxTextChars: config.enrichmentMaxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
       maxAttempts: config.enrichmentMaxAttempts ?? 3,
+      maxInflatedBytes: config.enrichmentMaxInflatedBytes ?? 64 * 1024 * 1024,
+      maxMemoryBytes: config.enrichmentMaxMemoryBytes ?? 256 * 1024 * 1024,
     });
     housekeeping.register({
       name: "enrichment-sweep",

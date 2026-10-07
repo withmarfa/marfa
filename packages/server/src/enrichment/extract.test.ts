@@ -12,7 +12,14 @@ import type { OcrEngine } from "./ocr.js";
 const fixture = (name: string): Promise<Buffer> =>
   readFile(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)));
 
-const OPTS = { maxTextChars: DEFAULT_MAX_STRING_LENGTH, ocr: null };
+const OPTS = {
+  maxTextChars: DEFAULT_MAX_STRING_LENGTH,
+  ocr: null,
+  office: {
+    maxInflatedBytes: 64 * 1024 * 1024,
+    maxMemoryBytes: 256 * 1024 * 1024,
+  },
+};
 
 /** Records what it was handed so a test can prove the dispatch reached OCR. */
 class FakeOcr implements OcrEngine {
