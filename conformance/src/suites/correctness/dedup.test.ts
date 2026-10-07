@@ -48,6 +48,98 @@ describe("deduplication", () => {
     expect(r2.data.item.properties.body).toBe("second version");
   });
 
+  it("applies a create naming the id and the natural key of one row as an upsert onto it", async () => {
+    const sourceId = `dedup-both-${generateId()}`;
+    const id = generateId();
+    const body = (text: string) =>
+      createNote({
+        id,
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: text },
+      });
+
+    const first = await client.createItem(body("sent"));
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    trackItem(ctx, id);
+    expect(first.data.item.version).toBe(1);
+
+    // The repeat with nothing between: an upsert, not an acknowledgement.
+    const repeat = await client.createItem(body("sent"));
+    expect(repeat.status, JSON.stringify(repeat.error)).toBe(200);
+    expect(repeat.data.item.id).toBe(id);
+    expect(repeat.data.item.version).toBe(2);
+    expect(repeat.data).not.toHaveProperty("acknowledged");
+
+    // An edit made at version 1 is overwritten by the repeat's properties.
+    const edited = await client.updateItem(id, {
+      properties: { body: "edited" },
+      version: 2,
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    expect(edited.data.item.properties.body).toBe("edited");
+
+    // The contrast: a repeat naming only the id is acknowledged with the row
+    // as it stands, and keeps the edit.
+    const acknowledged = await client.createItem(
+      createNote({
+        id,
+        source: ctx.source,
+        properties: { body: "sent" },
+      }),
+    );
+    expect(acknowledged.status).toBe(200);
+    expect(acknowledged.data.acknowledged).toBe(true);
+    expect(acknowledged.data.item.properties.body).toBe("edited");
+    expect(acknowledged.data.item.version).toBe(edited.data.item.version);
+
+    const overwritten = await client.createItem(body("sent"));
+    expect(overwritten.status, JSON.stringify(overwritten.error)).toBe(200);
+    expect(overwritten.data).not.toHaveProperty("acknowledged");
+    expect(overwritten.data.item.properties.body).toBe("sent");
+    expect(overwritten.data.item.version).toBe(edited.data.item.version + 1);
+    const read = await client.getItem(id);
+    expect(read.data.item.properties.body).toBe("sent");
+  });
+
+  it("merges a natural-key upsert's properties over the row's, and keeps its tags unless it names them", async () => {
+    const sourceId = `dedup-merge-${generateId()}`;
+    const upsert = (properties: Record<string, unknown>, tags?: string[]) =>
+      client.createItem(
+        createNote({
+          source: ctx.source,
+          source_id: sourceId,
+          properties,
+          ...(tags === undefined ? {} : { tags }),
+        }),
+      );
+
+    const first = await upsert({ title: "kept", body: "old" }, ["a"]);
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    trackItem(ctx, first.data.item.id);
+    const id = first.data.item.id;
+
+    const second = await upsert({ body: "new" });
+    expect(second.status, JSON.stringify(second.error)).toBe(200);
+    expect(second.data.item.id).toBe(id);
+    expect(second.data.item.properties).toEqual({
+      title: "kept",
+      body: "new",
+    });
+    expect(second.data.metadata.tags).toEqual(["a"]);
+
+    const third = await upsert({ body: "new" }, ["b"]);
+    expect(third.status, JSON.stringify(third.error)).toBe(200);
+    expect(third.data.metadata.tags).toEqual(["b"]);
+
+    const read = await client.rawRequest<{
+      item: { properties: Record<string, unknown> };
+      metadata: { tags: string[] };
+    }>(`/items/${id}?include=metadata`);
+    expect(read.data.metadata.tags).toEqual(["b"]);
+    expect(read.data.item.properties).toEqual({ title: "kept", body: "new" });
+  });
+
   it("lands concurrent creates of one natural key on one row", async () => {
     // Two devices sharing a claim, or a connector retrying in parallel: every
     // send is answered as the upsert, and none is refused. Several rounds,

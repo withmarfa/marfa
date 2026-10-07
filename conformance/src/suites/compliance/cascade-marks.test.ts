@@ -321,6 +321,39 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
+  it("announces item.deleted with its mark for each row a transition into the bin takes", async ({
+    signal,
+  }) => {
+    const tag = `transition-mark-${ctx.runId}`;
+    const parent = await note("parent", tag);
+    const child = await note("child", tag);
+    const grandchild = await note("grandchild", tag);
+    await edge(parent, child, "parent-of");
+    await edge(child, grandchild, "parent-of");
+
+    const paths = await framesOf(
+      tag,
+      async () => {
+        const moved = await client.transitionItem(parent, "trashed");
+        expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+      },
+      signal,
+    );
+    for (const [path, events] of paths) {
+      for (const taken of [child, grandchild]) {
+        const deleted = frame(events, "item.deleted", taken)?.item;
+        expect(deleted, `${path}: item.deleted for ${taken}`).toBeDefined();
+        expect(deleted?.trashed_by_cascade, `${path}: ${taken}`).toBe(true);
+        expect(deleted?.trashed_with, `${path}: ${taken}`).toBe(parent);
+      }
+      // The row moved is announced as a state change, and carries no mark.
+      const own = frame(events, "item.state_changed", parent);
+      expect(own, `${path}: item.state_changed for ${parent}`).toBeDefined();
+      expect(own?.item).not.toHaveProperty("trashed_with");
+      expect(own?.item).not.toHaveProperty("trashed_by_cascade");
+    }
+  });
+
   it("answers the marks on POST /items/lookup, to each reader as it may be told", async () => {
     const tag = `lookup-${ctx.runId}`;
     const root = await task(tag);

@@ -352,6 +352,26 @@ describe("item versioning", () => {
     }
   });
 
+  it("moves a row's tier on an update", async () => {
+    const r = await client.createItem(
+      createNote({ source: ctx.source, tier: "library" }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    expect(r.data.item.tier).toBe("library");
+
+    const moved = await client.updateItem(r.data.item.id, {
+      tier: "feed",
+      version: r.data.item.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.tier).toBe("feed");
+    expect(moved.data.item.version).toBe(r.data.item.version + 1);
+
+    const read = await client.getItem(r.data.item.id);
+    expect(read.data.item.tier).toBe("feed");
+  });
+
   it("merges a stale write on an item field nobody else changed", async () => {
     // The witness for the case above, and the rule it must not break:
     // `versions.md` 11 merges a stale write whose changed fields did not

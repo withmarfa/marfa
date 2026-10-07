@@ -314,6 +314,149 @@ describe("type-scoped permissions", () => {
     expect(purgedNote.status).toBe(200);
   });
 
+  it("refuses a read-only key a purge of a live row, 403 type_not_permitted", async () => {
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(note.ok && bookmark.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    trackItem(ctx, bookmark.data.item.id);
+
+    const keyResp = await client.createKey({
+      label: "purge-live-read-only",
+      source: `${ctx.source}-purge-live-read-only`,
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const purged = await scopedClient.purgeItem(bookmark.data.item.id);
+    expect(purged.status).toBe(403);
+    expect(purged.error?.error.code).toBe("type_not_permitted");
+    expect((await client.getItem(bookmark.data.item.id)).ok).toBe(true);
+
+    // The witness: the same key, asked to purge a live row of a type it
+    // writes, is let past the type gate and refused for the row's state.
+    const own = await scopedClient.purgeItem(note.data.item.id);
+    expect(own.status).toBe(400);
+    expect(own.error?.error.code).toBe("invalid_transition");
+  });
+
+  it("answers 404 item_not_found to a purge of a row whose type the key cannot read", async () => {
+    const live = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    const binned = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(live.ok && binned.ok && note.ok).toBe(true);
+    for (const created of [live, binned, note]) {
+      trackItem(ctx, created.data.item.id);
+    }
+    expect((await client.deleteItem(binned.data.item.id)).ok).toBe(true);
+    expect((await client.deleteItem(note.data.item.id)).ok).toBe(true);
+
+    const keyResp = await client.createKey({
+      label: "purge-hidden-type",
+      source: `${ctx.source}-purge-hidden-type`,
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    for (const [label, id] of [
+      ["a live row", live.data.item.id],
+      ["a trashed row", binned.data.item.id],
+    ] as const) {
+      const purged = await scopedClient.purgeItem(id);
+      expect(
+        [purged.status, purged.error?.error.code],
+        `${label} of a type the key cannot read`,
+      ).toEqual([404, "item_not_found"]);
+    }
+    expect((await client.getItem(live.data.item.id)).ok).toBe(true);
+    expect(
+      (await client.restoreItem(binned.data.item.id)).ok,
+      "a refused purge destroyed the row",
+    ).toBe(true);
+
+    // The witness: the same key purges a trashed row of a type it reads.
+    const purgedNote = await scopedClient.purgeItem(note.data.item.id);
+    expect(purgedNote.status).toBe(200);
+  });
+
+  it("refuses a retype into a type the key may not write", async () => {
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/retype", body: "Kept" },
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    const writable = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/retype-ok", body: "Kept" },
+    });
+    expect(writable.ok).toBe(true);
+    trackItem(ctx, writable.data.item.id);
+
+    const mint = async (
+      label: string,
+      type_permissions: Record<string, string>,
+    ): Promise<MarfaClient> => {
+      const minted = await client.createKey({
+        label,
+        source: `${ctx.source}-${label}`,
+        type_permissions,
+      });
+      expect(minted.ok).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const readsNotes = await mint("retype-reads-notes", {
+      "core.bookmark": "write",
+      "core.note": "read",
+    });
+
+    const refused = await readsNotes.updateItem(bookmark.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: bookmark.data.item.version,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("type_not_permitted");
+    const kept = await client.getItem(bookmark.data.item.id);
+    expect(kept.data.item.type).toBe("core.bookmark");
+    expect(kept.data.item.version).toBe(bookmark.data.item.version);
+
+    // The witness: a key that writes the destination moves a row the same
+    // way, so the refusal above is the grant on the type entered.
+    const writesNotes = await mint("retype-writes-notes", {
+      "core.bookmark": "write",
+      "core.note": "write",
+    });
+    const moved = await writesNotes.updateItem(writable.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: writable.data.item.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.note");
+  });
+
   it("a key without items.purge cannot purge", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);
