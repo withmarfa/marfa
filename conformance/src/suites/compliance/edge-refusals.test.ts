@@ -253,6 +253,62 @@ describe("PATCH /edges/{id} versions and grants", () => {
     expect(landed.data.edge.version).toBe(current + 1);
   });
 
+  it("answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy", async () => {
+    const a = await makeItem("shape-a");
+    const b = await makeItem("shape-b");
+    const created = await makeEdge(a, b, "about", { note: "original" });
+    const advanced = await client.updateEdge(created.id, {
+      properties: { note: "winner" },
+      version: created.version,
+    });
+    expect(advanced.status).toBe(200);
+
+    for (const version of [0, created.version]) {
+      const label = `version ${String(version)}`;
+      const stale = await client.updateEdge(created.id, {
+        properties: { note: "loser" },
+        version,
+      });
+      expect(stale.status, label).toBe(409);
+      expect(stale.headers.get("x-error-code"), label).toBe("version_conflict");
+      const body = stale.error as unknown as Record<string, unknown> & {
+        error: { code: string; status: number };
+        current: { id: string };
+      };
+      expect(body.error.code, label).toBe("version_conflict");
+      expect(body.error.status, label).toBe(409);
+      expect(body.current, label).toEqual(advanced.data.edge);
+      for (const absent of ["ancestor", "conflicting_fields", "merge_policy"]) {
+        expect(body, `${label}: ${absent}`).not.toHaveProperty(absent);
+      }
+    }
+  });
+
+  it("names version in details.field where an update names none, and asks for it before it looks for the edge", async () => {
+    const a = await makeItem("field-a");
+    const b = await makeItem("field-b");
+    const created = await makeEdge(a, b);
+
+    for (const id of [created.id, UNKNOWN_ID]) {
+      const refused = await client.rawRequest(`/edges/${id}`, {
+        method: "PATCH",
+        body: { properties: { note: "no version named" } },
+      });
+      expect(refused.status, id).toBe(400);
+      expect(refused.error?.error.code, id).toBe("missing_required_field");
+      expect(refused.error?.error.details?.field, id).toBe("version");
+    }
+
+    // The witness: the unknown id is refused as unknown once it names a
+    // version, so the 400 above came first.
+    const unknown = await client.updateEdge(UNKNOWN_ID, {
+      properties: { note: "x" },
+      version: 1,
+    });
+    expect(unknown.status).toBe(404);
+    expect(unknown.error?.error.code).toBe("edge_not_found");
+  });
+
   it("refuses an update and a delete from a key that reads the edge but may not write its type", async () => {
     const a = await makeItem("grant-a");
     const b = await makeItem("grant-b");

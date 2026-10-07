@@ -212,6 +212,24 @@ describe("the folder door", () => {
     expect(change.error?.error.code).toBe("invalid_transition");
   });
 
+  it("moves the folder's version by one on a revoke, which writes revoked_at beside the state", async () => {
+    const { id, version } = await folder();
+    expect(version).toBe(1);
+
+    const revoked = await client.revokeFolder(id);
+    expect(revoked.status).toBe(200);
+    expect(revoked.data.item.version).toBe(2);
+    expect(typeof revoked.data.item.properties.revoked_at).toBe("string");
+
+    const read = await client.getItem(id);
+    expect(read.status).toBe(200);
+    expect(read.data.item).toMatchObject({ state: "revoked", version: 2 });
+    const history = await client.getVersions(id);
+    expect(history.status, JSON.stringify(history.error)).toBe(200);
+    expect(history.data.data.map((v) => v.version)).toEqual([1]);
+    expect(history.data.data[0]?.properties.revoked_at).toBeUndefined();
+  });
+
   it("admits a key minted with write on system.folder alone, and refuses one whose map does not grant it", async () => {
     // The witness: a key holding exactly the grant passes every door.
     const exact = await keyWith("folder-writer", { "system.folder": "write" });

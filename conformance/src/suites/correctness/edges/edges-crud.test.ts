@@ -108,6 +108,89 @@ describe("edges CRUD", () => {
     });
   }
 
+  it("creates an edge at version 1 through a bulk page, an inline edge list and a folder", async () => {
+    const folder = await makeFolder();
+    const target = await makeItem();
+    const readEdges = async (id: string, edgeType: string) => {
+      const listed = await client.listItemEdges(id, { edge_type: edgeType });
+      expect(listed.status).toBe(200);
+      for (const edge of listed.data.data) trackEdge(ctx, edge.id);
+      return listed.data.data;
+    };
+
+    for (const mode of ["upsert", "create_only"] as const) {
+      const source = await makeItem();
+      const paged = await client.bulkEdges({
+        mode,
+        edges: [
+          { source_id: source, target_id: target, edge_type: "references" },
+          {
+            source_id: source,
+            target_id: folder,
+            edge_type: "in-folder",
+            properties: { path: "bulk.md" },
+          },
+        ],
+      });
+      expect(paged.status, mode).toBe(200);
+      expect(
+        paged.data.results.map((r) => r.outcome),
+        mode,
+      ).toEqual(["created", "created"]);
+      const held = [
+        ...(await readEdges(source, "references")),
+        ...(await readEdges(source, "in-folder")),
+      ];
+      expect(
+        held.map((edge) => [edge.edge_type, edge.version]),
+        mode,
+      ).toEqual([
+        ["references", 1],
+        ["in-folder", 1],
+      ]);
+    }
+
+    const inline = await client.createItem(
+      createNote({ source: ctx.source, edges: { references: [target] } }),
+    );
+    expect(inline.status, JSON.stringify(inline.error)).toBe(201);
+    trackItem(ctx, inline.data.item.id);
+    expect(
+      (await readEdges(inline.data.item.id, "references")).map(
+        (edge) => edge.version,
+      ),
+    ).toEqual([1]);
+
+    const patched = await makeItem();
+    const edited = await client.updateItem(patched, {
+      version: 1,
+      edges: { references: [target] },
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    expect(
+      (await readEdges(patched, "references")).map((edge) => edge.version),
+    ).toEqual([1]);
+
+    const bulkItem = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: `inline-edge-${ctx.runId}`,
+          properties: { title: "Bulk", body: "Inline edge" },
+          edges: { references: [target] },
+        },
+      ],
+    });
+    expect(bulkItem.status, JSON.stringify(bulkItem.error)).toBe(200);
+    const bulkId = bulkItem.data.results[0]?.id;
+    expect(bulkId).toBeTruthy();
+    trackItem(ctx, bulkId ?? "");
+    expect(
+      (await readEdges(bulkId ?? "", "references")).map((edge) => edge.version),
+    ).toEqual([1]);
+  });
+
   it("refuses a stale edge update, under current and not under edge", async () => {
     // The edge door's `version_conflict`, held to the same envelope as the
     // item door's. Edges have no per-version history, so there is no

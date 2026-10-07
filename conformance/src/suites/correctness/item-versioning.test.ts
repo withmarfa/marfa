@@ -9,7 +9,12 @@ import type {
   StaleVersionResponse,
   TestContext,
 } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackEdge,
+  trackItem,
+  cleanup,
+} from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -1777,6 +1782,144 @@ describe("item versioning", () => {
         ),
       ).toEqual([1]);
     }
+  });
+
+  it("writes no edge when an edges-only update is stale", async () => {
+    const r = await client.createItem(createNote({ source: ctx.source }));
+    expect(r.ok).toBe(true);
+    const id = r.data.item.id;
+    trackItem(ctx, id);
+    const target = await client.createItem(createNote({ source: ctx.source }));
+    expect(target.ok).toBe(true);
+    trackItem(ctx, target.data.item.id);
+    const advanced = await client.updateItem(id, {
+      properties: { title: "Moved on" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    const edges = { references: [target.data.item.id] };
+
+    const stale = await client.updateItem(id, { version: 1, edges });
+    expect(stale.status).toBe(409);
+    const held = await client.listItemEdges(id, { edge_type: "references" });
+    expect(held.status).toBe(200);
+    expect(held.data.next_cursor).toBeNull();
+    expect(held.data.data).toEqual([]);
+
+    // The witness: at the current version the same body writes the edge,
+    // so the empty list above is a refusal that wrote nothing and not a
+    // listing that cannot show an edge.
+    const fresh = await client.updateItem(id, { version: 2, edges });
+    expect(fresh.status).toBe(200);
+    expect(fresh.data.item.version).toBe(2);
+    const after = await client.listItemEdges(id, { edge_type: "references" });
+    expect(after.data.data.map((edge) => edge.target_id)).toEqual([
+      target.data.item.id,
+    ]);
+  });
+
+  it("moves updated_at on a transition, a delete and a restore, where it leaves the version", async () => {
+    const tag = `transition-updated-at-${ctx.runId}`;
+    const made = await client.createItem(
+      createNote({ source: ctx.source, tags: [tag] }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+
+    const stamp = async (): Promise<number> => {
+      // A listing, since the read of one row does not answer a row in the bin.
+      const read = await client.listItems({ tags: [tag], state: "any" });
+      expect(read.status).toBe(200);
+      expect(read.data.data.map((item) => item.id)).toEqual([id]);
+      const item = read.data.data[0];
+      expect(item?.version).toBe(1);
+      return Date.parse(item?.updated_at ?? "");
+    };
+    // Waits for the clock to pass the last stamp, so a change that is
+    // stamped at all is stamped later and the comparison cannot tie.
+    const move = async (act: () => Promise<{ ok: boolean }>): Promise<void> => {
+      const before = await stamp();
+      while (Date.now() <= before) await new Promise((r) => setTimeout(r, 1));
+      expect((await act()).ok).toBe(true);
+      expect(await stamp()).toBeGreaterThan(before);
+    };
+
+    await move(() => client.transitionItem(id, "archived"));
+    await move(() => client.transitionItem(id, "active"));
+    await move(() => client.deleteItem(id));
+    await move(() => client.restoreItem(id));
+    await move(async () => {
+      const bulk = await client.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: { tags: [tag] },
+      });
+      expect(bulk.status, JSON.stringify(bulk.error)).toBe(202);
+      const job = await client.pollBulkActionToTerminal(
+        (bulk.data as BulkActionJob).id,
+      );
+      expect(job.result?.succeeded).toBe(1);
+      return { ok: true };
+    });
+
+    // The witness: a write to a field stamps it too, so the checks above
+    // are of a stamp that does move.
+    const before = await stamp();
+    while (Date.now() <= before) await new Promise((r) => setTimeout(r, 1));
+    const written = await client.updateItem(id, {
+      properties: { title: "Written" },
+      version: 1,
+    });
+    expect(written.ok).toBe(true);
+    expect(Date.parse(written.data.item.updated_at ?? "")).toBeGreaterThan(
+      before,
+    );
+  });
+
+  it("leaves the version and the history of a row a cascade trashed and restored as they were", async () => {
+    const tag = `cascade-version-${ctx.runId}`;
+    const make = async (): Promise<string> => {
+      const r = await client.createItem(
+        createNote({ source: ctx.source, tags: [tag] }),
+      );
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const parent = await make();
+    const child = await make();
+    const linked = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(linked.ok, JSON.stringify(linked.error)).toBe(true);
+    trackEdge(ctx, linked.data.edge.id);
+    const moved = await client.updateItem(child, {
+      properties: { title: "Edited once" },
+      version: 1,
+    });
+    expect(moved.data.item.version).toBe(2);
+
+    const read = async (state: string) => {
+      const listed = await client.listItems({ tags: [tag], state, limit: 100 });
+      expect(listed.status).toBe(200);
+      return listed.data.data.find((item) => item.id === child);
+    };
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    // The witness that the cascade took the child, so the version read here
+    // is of a row the trash reached.
+    const trashed = await read("trashed");
+    expect(trashed?.trashed_with).toBe(parent);
+    expect(trashed?.version).toBe(2);
+
+    expect((await client.restoreItem(parent)).ok).toBe(true);
+    const back = await read("active");
+    expect(back?.state).toBe("active");
+    expect(back?.version).toBe(2);
+    const history = await client.getVersions(child);
+    expect(history.data.data.map((v) => v.version)).toEqual([1]);
   });
 
   it("version history for item with no updates is empty", async () => {

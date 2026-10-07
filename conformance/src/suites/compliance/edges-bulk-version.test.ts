@@ -159,6 +159,33 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     }
   });
 
+  it("overwrites a held edge for an entry that names no version, whatever the edge has moved to", async () => {
+    const { source, target, edge, staleVersion } = await editedEdge();
+    expect(edge.version).toBeGreaterThan(staleVersion);
+
+    for (const atomic of [true, false]) {
+      const res = await client.bulkEdges({
+        atomic,
+        edges: [
+          {
+            source_id: source,
+            target_id: target,
+            edge_type: "about",
+            properties: { weight: atomic ? 7 : 8 },
+          },
+        ],
+      });
+      expect(res.status, `atomic ${String(atomic)}`).toBe(200);
+      expect(res.data.results[0]).toMatchObject({
+        outcome: "updated",
+        id: edge.id,
+      });
+    }
+    const read = (await client.getEdge(edge.id)).data.edge;
+    expect(read.properties).toEqual({ weight: 8 });
+    expect(read.version).toBe(edge.version + 2);
+  });
+
   it("answers updated for an entry whose triple an edge of a force-deleted type holds", async () => {
     const edgeType = `mock.bulk-version.${ctx.runId}`;
     const registered = await client.registerEdgeType({

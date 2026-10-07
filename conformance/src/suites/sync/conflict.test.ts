@@ -1479,4 +1479,163 @@ describe("a conflicted copy names its original", () => {
     expect(kept.data.item.state).toBe("active");
     expect(kept.data.item.properties.body).toBe("the text the person lost");
   });
+
+  it("links the conflicted copy to its original for a writer holding the edge grants, and gives it the edges those grants allow", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const keyResp = await client.createKey({
+      label: "conflict-copy-edge-grants",
+      source: `${ctx.source}-edge-grants`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "derived-from": "write", references: "write" },
+    });
+    expect(keyResp.ok, JSON.stringify(keyResp.error)).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const origin = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "granted origin", body: "origin body" },
+      }),
+    );
+    const topic = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "granted topic", body: "topic body" },
+      }),
+    );
+    expect(origin.ok && topic.ok).toBe(true);
+    trackItem(ctx, origin.data.item.id);
+    trackItem(ctx, topic.data.item.id);
+    const original = await collidingNote("granted original");
+    for (const [edgeType, target] of [
+      ["derived-from", origin.data.item.id],
+      ["references", topic.data.item.id],
+    ] as const) {
+      const drawn = await client.createEdge({
+        source_id: original.id,
+        target_id: target,
+        edge_type: edgeType,
+      });
+      expect(drawn.ok, edgeType).toBe(true);
+      trackEdge(ctx, drawn.data.edge.id);
+    }
+
+    const resolved = await writer.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "granted body from the loser" },
+        version: original.version,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy, "no conflicted copy was written").toBeTruthy();
+
+    const links = await derivedFrom(copy!);
+    expect(links.map((edge) => edge.target_id)).toEqual([original.id]);
+    expect(links[0]?.properties).toEqual({});
+    expect(links[0]?.version).toBe(1);
+    const references = await client.listItemEdges(copy!, {
+      edge_type: "references",
+    });
+    expect(references.data.data.map((edge) => edge.target_id)).toEqual([
+      topic.data.item.id,
+    ]);
+    expect(await copiesOf(original.id)).toEqual([copy]);
+  });
+
+  it("leaves the conflicted copy as it was when its original is purged, and when it is restored beside it", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const tag = `copy-kept-${ctx.runId}`;
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "kept original", body: "kept original body" },
+        tags: [tag],
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const original = { id: made.data.item.id, version: made.data.item.version };
+    trackItem(ctx, original.id);
+    const topic = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "kept topic", body: "topic body" },
+      }),
+    );
+    expect(topic.ok).toBe(true);
+    trackItem(ctx, topic.data.item.id);
+    const mention = await client.createEdge({
+      source_id: original.id,
+      target_id: topic.data.item.id,
+      edge_type: "references",
+    });
+    expect(mention.ok).toBe(true);
+    trackEdge(ctx, mention.data.edge.id);
+    const winner = await client.updateItem(original.id, {
+      properties: { body: "kept body from the winner" },
+      version: original.version,
+    });
+    expect(winner.ok).toBe(true);
+
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "kept body from the loser" },
+        version: original.version,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const stand = async () => {
+      const read = await client.getItem(copy!);
+      expect(read.status).toBe(200);
+      const edges = await client.listItemEdges(copy!);
+      // The edges the read hydrates are compared through the listing below.
+      return {
+        item: { ...read.data.item, edges: undefined },
+        tags: read.data.metadata.tags,
+        edges: edges.data.data.map((e) => `${e.edge_type}>${e.target_id}`),
+      };
+    };
+    const before = await stand();
+    // The witness: the copy holds each of the things compared below.
+    expect(before.tags).toContain(tag);
+    expect(before.edges).toEqual(
+      expect.arrayContaining([
+        `derived-from>${original.id}`,
+        `references>${topic.data.item.id}`,
+      ]),
+    );
+
+    expect((await client.deleteItem(original.id)).ok).toBe(true);
+    expect((await client.restoreItem(original.id)).ok).toBe(true);
+    expect(
+      await stand(),
+      "a trash and restore of the original changed its conflicted copy or its link",
+    ).toEqual(before);
+    expect(await copiesOf(original.id)).toEqual([copy]);
+
+    expect((await client.deleteItem(original.id)).ok).toBe(true);
+    expect((await client.purgeItem(original.id)).ok).toBe(true);
+    const after = await stand();
+    expect(after.item).toEqual(before.item);
+    expect(after.tags).toEqual(before.tags);
+    expect(after.edges).toEqual([`references>${topic.data.item.id}`]);
+  });
 });
