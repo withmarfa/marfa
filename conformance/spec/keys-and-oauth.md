@@ -291,6 +291,6 @@
 
 75. WHEN a signed-in person approves a device code, the server SHALL add to the client's registration the scopes the person approved that it does not hold, and no others, before the device's exchange.
 
-    Reason: the exchange tests the approved scopes against the registration, so an approval that left them out would mint a code the exchange then refuses. A scope the person unticks, or a code they deny, adds nothing.
+    Reason: the registration is what a request naming no scope asks for (24) and what a request nobody can send to sign in is judged against (43), so what a person approves on a device reaches the client's later requests as an approval in the browser does. A scope the person unticks, or a code they deny, adds nothing.
 
     Tests: `compliance/signed-in-apps.test.ts › is registered only for what the person approved, which a narrower approval leaves out`, `› is registered for the published scope once the person approves it, and the token carries it`.

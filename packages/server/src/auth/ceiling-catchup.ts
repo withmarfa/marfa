@@ -16,17 +16,18 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * hook rewrites a request and hands it back to the vendored provider, which
  * re-validates it against the very same row with exact membership
  * (`new Set(client.scopes ?? opts.scopes)`, `.has(scope)`, no pattern
- * matching anywhere in it), and device initiation and redemption compare the
+ * matching anywhere in it), and device initiation and every poll compare the
  * row exactly for the same reason one file over. So the repair cannot be a
- * wider comparison at either site. It has to be a write: put the requested
- * literal INTO the stored row, and the exact tests on both surfaces then
- * pass on their own terms.
+ * wider comparison at either site. On the authorize surface it is a write:
+ * put the requested literal INTO the stored row, and the exact test then
+ * passes on its own terms.
  *
  * **The write waits for a signed-in person on both surfaces.** The authorize
  * hook writes once a session exists. A device asks before anybody has signed
- * in, so initiation only offers the scopes to the plugin for that request
- * (`offerDeviceScopes`) and the approval writes the ones the person ticked,
- * ahead of the redemption that tests them.
+ * in, so initiation and each poll only offer the scopes to the plugin for
+ * that request (`offerDeviceScopes`, `guardDeviceCodeGrant`), and the
+ * approval writes the ones the person ticked, so the registration records
+ * what a person has approved the client to ask for.
  */
 import { isValidScope } from "@withmarfa/shared";
 import { publishableBundleScopes } from "./allowlist-withholding.js";

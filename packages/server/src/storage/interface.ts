@@ -1963,9 +1963,10 @@ export interface OauthProviderStore {
     hasConsent: boolean;
   } | null>;
   /**
-   * The client and scopes a device code asked for, in any state. Null for a
-   * code this store does not recognize, which the caller passes through to
-   * the plugin.
+   * The client and the scopes a device code's row carries, in any state:
+   * what the device asked for, narrowed to what the person ticked once
+   * approved. Null for a code this store does not recognize, which the
+   * caller passes through to the plugin.
    */
   findDeviceCodeRequest(
     deviceCode: string,

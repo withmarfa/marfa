@@ -1814,7 +1814,9 @@ async function offerScopesBeyondCeiling(
  * client's ceiling, as initiation did. The plugin tests a code's scopes
  * against the ceiling on every poll, ahead of whether the code is still
  * pending, so without it a poll between initiation and approval would be
- * answered `invalid_scope` instead of `authorization_pending`.
+ * answered `invalid_scope` instead of `authorization_pending`. The offer
+ * stands at the exchange too, so what bounds the token is the code's own
+ * scope: what initiation admitted, narrowed to what the person ticked.
  */
 async function guardDeviceCodeGrant(
   ctx: HookCtxLite,

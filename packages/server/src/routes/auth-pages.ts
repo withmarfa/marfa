@@ -910,10 +910,13 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           async () => {
             const provider = storage.oauthProvider;
             // The write the device's initiation could not make: nobody was
-            // signed in then. It precedes the approval because the redemption
-            // tests the ticked set against the stored ceiling, and it is
-            // strict because a code approved past a ceiling it was not written
-            // into could only be refused at that exchange.
+            // signed in then. Inside the approval's transaction, so an
+            // approval that does not take writes nothing, and strict because
+            // the widening is part of what the approval records: a failure
+            // here fails the approval rather than leaving the registration
+            // behind what the person approved. The exchange itself is not
+            // what needs it; the poll hook offers the code's scopes to the
+            // plugin as initiation did (`guardDeviceCodeGrant`).
             const stored = await provider?.getClient(clientId);
             if (stored) {
               await catchUpClientScopeCeiling({
