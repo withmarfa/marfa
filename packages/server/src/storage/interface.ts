@@ -1963,6 +1963,14 @@ export interface OauthProviderStore {
     hasConsent: boolean;
   } | null>;
   /**
+   * The client and scopes a device code asked for, in any state. Null for a
+   * code this store does not recognize, which the caller passes through to
+   * the plugin.
+   */
+  findDeviceCodeRequest(
+    deviceCode: string,
+  ): Promise<{ clientId: string; scopes: string[] } | null>;
+  /**
    * Rewrite a pending device code's `scope` to the set the person ticked.
    *
    * The plugin approves a code as it was requested and issues the token for

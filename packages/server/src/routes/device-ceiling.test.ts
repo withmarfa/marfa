@@ -3,11 +3,10 @@
  * person approves it.
  *
  * `POST /auth/device/code` is made before anybody can sign in, so it is open
- * to anyone who knows a client's public id. It used to add every published
- * scope the request named to the client's registration, which let a stranger
- * widen what the client's later consent screens offer. Now the code is issued
- * for what the client could ask, the registration stays as it was, and the
- * person's approval writes the scopes they ticked.
+ * to anyone who knows a client's public id, and a write there would let a
+ * stranger widen what the client's later consent screens offer. The code is
+ * issued for what the client could ask, the registration stays as it was, and
+ * the person's approval writes the scopes they ticked.
  *
  * **Every assertion reads the stored row**, through the same read the plugin
  * makes, because the initiation answers 200 whether or not the row moved.
@@ -206,6 +205,28 @@ describe("a device sign-in widens a client's ceiling only when a person approves
     const minted = await redeem(c, init.device_code, clientId);
     expect(minted.status).toBe(200);
     expect(minted.body.scope?.split(" ").sort()).toEqual([HELD, ticked].sort());
+  });
+
+  it("answers a poll of a code nobody has decided with authorization_pending, whatever scopes it names", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await seedStaleClient(c);
+    const [beyond] = publishedBeyondCeiling();
+    const within = (await (
+      await initiate(c, clientId, HELD)
+    ).json()) as DeviceInit;
+    const offered = (await (
+      await initiate(c, clientId, `${HELD} ${beyond}`)
+    ).json()) as DeviceInit;
+
+    // The witness: a pending code the ceiling covers is answered as pending.
+    const covered = await redeem(c, within.device_code, clientId);
+    expect(covered.body.error).toBe("authorization_pending");
+
+    const pending = await redeem(c, offered.device_code, clientId);
+    expect(pending.status).toBe(400);
+    expect(pending.body.error).toBe("authorization_pending");
+    expect(await storedCeiling(c, clientId)).toEqual([HELD]);
   });
 
   it("does not widen the ceiling when the person denies, or ticks nothing", async () => {

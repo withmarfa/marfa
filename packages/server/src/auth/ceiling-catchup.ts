@@ -69,11 +69,6 @@ export type CeilingCatchUpSurface = "authorize" | "device";
  * and both surfaces that answer withhold on their own: each renders the
  * scope unticked, so leaving it alone grants nothing. Do not delete either
  * on the grounds that the ceiling looks narrow, because it is not.
- *
- * Device initiation used to refuse such a scope outright instead, because
- * its approval screen had no tick to withhold with. That screen has toggles
- * now and the refusal is retired, which changes where the withholding
- * happens and not whether it does.
  */
 export function bundlePublishedScopes(
   bundles: readonly PermissionBundle[],

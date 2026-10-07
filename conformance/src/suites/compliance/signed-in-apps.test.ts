@@ -276,9 +276,24 @@ describe("a device signing in", () => {
     expect(await registeredScope()).toEqual([HELD]);
 
     // Nobody is signed in, and the client's public id is all this request has.
-    await startCode(`${HELD} ${PUBLISHED}`);
+    const code = await startCode(`${HELD} ${PUBLISHED}`);
 
     expect(await registeredScope()).toEqual([HELD]);
+
+    // And until a person decides, the code is pending, as for any client.
+    const pending = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin },
+      body: new URLSearchParams({
+        grant_type: DEVICE_GRANT,
+        device_code: code.device_code,
+        client_id: deviceClient,
+      }),
+    });
+    expect(pending.status).toBe(400);
+    expect(((await pending.json()) as { error: string }).error).toBe(
+      "authorization_pending",
+    );
   });
 
   it("is registered only for what the person approved, which a narrower approval leaves out", async () => {

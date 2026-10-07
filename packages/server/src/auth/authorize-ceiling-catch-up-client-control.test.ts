@@ -500,10 +500,11 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
  * The containment the authorize surface leans on in place of a live-allowlist
  * pass of its own.
  *
- * The device surface clears its whole request against the allowlist before
- * its catch-up runs, because it refuses rather than narrows. The authorize
- * surface cannot: dropping a dead literal and letting the rest through is the
- * reason its hook exists, so a request naming one still reaches the catch-up.
+ * The device surface clears its whole request against the allowlist at
+ * initiation, because it refuses rather than narrows, and its catch-up runs
+ * only at the approval, on the scopes a person ticked. The authorize surface
+ * cannot: dropping a dead literal and letting the rest through is the reason
+ * its hook exists, so a request naming one still reaches the catch-up.
  * What keeps a scope this server cannot grant out of the stored row is not a
  * pass there but the catch-up's own bound — it widens only by scopes the
  * bundles publish, and `buildAllowedScopes` folds every grammatically valid

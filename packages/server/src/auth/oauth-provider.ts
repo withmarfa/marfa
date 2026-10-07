@@ -689,7 +689,7 @@ export function buildOauthProjectionPlugin(opts: {
           // the user has revoked must not redeem. See `guardDeviceCodeGrant`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            guardDeviceCodeGrant(ctx, storage),
+            guardDeviceCodeGrant(ctx, storage, bundleScopes),
           ),
         },
         ...(acceptedResources
@@ -1758,8 +1758,6 @@ async function offerDeviceScopes(
   storage: Storage,
   bundleScopes: Set<string>,
 ): Promise<void> {
-  const request = credentialRequest.getStore();
-  if (!request) return;
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
   const clientId = body.client_id;
@@ -1769,7 +1767,22 @@ async function offerDeviceScopes(
     typeof rawScope === "string"
       ? rawScope.split(" ").filter((s) => s.length > 0)
       : [];
-  if (requested.length === 0) return;
+  await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
+}
+
+/**
+ * Put the published scopes `requested` names beyond the client's stored
+ * ceiling on the request, for the credential adapter to read as held. Writes
+ * nothing.
+ */
+async function offerScopesBeyondCeiling(
+  storage: Storage,
+  clientId: string,
+  requested: readonly string[],
+  bundleScopes: Set<string>,
+): Promise<void> {
+  const request = credentialRequest.getStore();
+  if (!request || requested.length === 0) return;
   const oauth = storage.oauthProvider;
   if (!oauth) return;
   try {
@@ -1796,16 +1809,37 @@ async function offerDeviceScopes(
  * approved in the window between the two writes. Fails open on a lookup
  * error and on a code this store does not recognize, or one nobody has
  * claimed, which the plugin refuses on its own terms.
+ *
+ * It also offers the plugin the published scopes the code names beyond the
+ * client's ceiling, as initiation did. The plugin tests a code's scopes
+ * against the ceiling on every poll, ahead of whether the code is still
+ * pending, so without it a poll between initiation and approval would be
+ * answered `invalid_scope` instead of `authorization_pending`.
  */
 async function guardDeviceCodeGrant(
   ctx: HookCtxLite,
   storage: Storage,
+  bundleScopes: Set<string>,
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
   if (requestedGrantType(ctx) !== DEVICE_CODE_GRANT_TYPE) return;
   const code = body.device_code;
   if (typeof code !== "string" || code.length === 0) return;
+  try {
+    const asked = await storage.oauthProvider?.findDeviceCodeRequest(code);
+    if (asked)
+      await offerScopesBeyondCeiling(
+        storage,
+        asked.clientId,
+        asked.scopes,
+        bundleScopes,
+      );
+  } catch (err) {
+    log("warn", "oauth device-code scope precheck failed", {
+      error: errorMessage(err),
+    });
+  }
   if (typeof storage.oauthProvider?.findDeviceCodeGrantKey !== "function")
     return;
 
