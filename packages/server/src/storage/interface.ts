@@ -1571,17 +1571,6 @@ export interface OauthClientRow {
   /** Exact post-logout redirect URIs accepted for this client. */
   postLogoutRedirectUris: string[];
   /**
-   * `true` when the client is a public client (PKCE, no secret) —
-   * `token_endpoint_auth_method: none` and/or `public: true`. Public
-   * clients are the shape every unauthenticated Dynamic Client
-   * Registration (DCR) client takes: they self-assert their `client_name`
-   * with no verified identity behind it. The consent screen reads this to
-   * flag the app as unverified so a user can tell a self-asserted name
-   * from one backed by a confidential, vetted client. `false` for a
-   * confidential client (one that authenticates with a secret).
-   */
-  isPublic: boolean;
-  /**
    * The client's registered scope ceiling, or `null` when it holds none.
    *
    * The distinction is load-bearing and NOT a tidiness question. The OAuth

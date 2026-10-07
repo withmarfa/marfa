@@ -34,7 +34,6 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { WriteTracker } from "../write-tracker.js";
-import { isPublicClient } from "../oauth-client-trust.js";
 import { sameScopeSet } from "../consent-scopes.js";
 
 export class SqliteOauthProviderStore implements OauthProviderStore {
@@ -324,7 +323,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       name: row.name,
       redirectUris,
       postLogoutRedirectUris,
-      isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
       grantTypes,
     };

@@ -143,17 +143,17 @@
 
 ## What the sign-in pages say
 
-52. WHEN the browser consent page or the device approval page names an app that registered itself, the server SHALL show a caution that Marfa has not verified the app.
+52. WHEN the browser consent page or the device approval page names an app, the server SHALL show a caution that Marfa has not verified the app.
 
     Reason: registration needs no credential, so any program can pick any name, and the device flow is where a code from a stranger is likeliest to be typed in. A caution on one page and not the other leaves the second as the way round the first.
 
-    Tests: `packages/server/src/routes/auth-consent.test.ts › flags a public/DCR client as unverified on the consent screen`; `packages/server/src/routes/device-grant.test.ts › warns on the approval screen that Marfa has not verified an app that registered itself`.
+    Tests: `compliance/unverified-apps.test.ts › is shown with the caution on the consent page, whether or not it authenticates with a secret`, `› is shown with the caution on the device approval page, whether or not it authenticates with a secret`; `packages/server/src/routes/auth-consent.test.ts › flags an app that sends no secret as unverified on the consent screen`; `packages/server/src/routes/device-grant.test.ts › warns on the approval screen that Marfa has not verified an app that registered itself`.
 
-53. WHEN the browser consent page or the device approval page names an app that authenticates with a secret, the server SHALL NOT show the caution of statement 52.
+53. The server SHALL show the caution of statement 52 for an app that authenticates with a secret as for one that does not.
 
-    Reason: a caution shown beside every app says nothing about any of them.
+    Reason: an app that authenticates with a secret registered itself as any other app did, under a name it chose, so the secret says nothing about who it is.
 
-    Tests: `packages/server/src/routes/auth-consent.test.ts › does NOT flag a confidential client as unverified`; `packages/server/src/routes/device-grant.test.ts › does not warn about an app that authenticates with a secret`.
+    Tests: `compliance/unverified-apps.test.ts › is shown with the caution on the consent page, whether or not it authenticates with a secret`, `› is shown with the caution on the device approval page, whether or not it authenticates with a secret`; `packages/server/src/routes/auth-consent.test.ts › flags an app that authenticates with a secret as unverified too`; `packages/server/src/routes/device-grant.test.ts › warns about an app that authenticates with a secret too`.
 
 54. WHEN a sign-in with the form fails, the server SHALL redirect the browser to the sign-in page carrying the typed email.
 
@@ -185,11 +185,11 @@
 
     Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`; `packages/server/src/routes/sign-in-page.test.ts › names nothing when the request was never signed`.
 
-59. WHEN the sign-in page names an app that registered itself, it SHALL show the caution of statement 52.
+59. WHEN the sign-in page names an app, it SHALL show the caution of statement 52.
 
     Reason: the name is as unvetted on the page before the sign-in as on the page after it.
 
-    Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`.
+    Tests: `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`; `compliance/unverified-apps.test.ts › is shown with the caution on the sign-in page, whether or not it authenticates with a secret`.
 
 60. WHEN a person who holds a session opens `GET /auth/sign-in` and no authorization sent them, the server SHALL answer a page that says they are signed in and holds no sign-in form.
 

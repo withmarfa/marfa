@@ -244,7 +244,6 @@ describe("the pages with scopes on them", () => {
     .filter((scope) => scope !== null);
   const consent = renderConsentScreen({
     clientName: "App",
-    unverified: true,
     scopes,
     clientId: "c",
     oauthQuery: "a=b",
@@ -263,7 +262,6 @@ describe("the pages with scopes on them", () => {
       clientName: "App",
       scopes,
       userCode: "ABCD1234",
-      unverified: true,
     }),
     "the device decision page": renderDeviceDecisionPage({ approved: true }),
   };
