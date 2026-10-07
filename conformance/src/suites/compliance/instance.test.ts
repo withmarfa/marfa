@@ -182,6 +182,126 @@ describe("the instance", () => {
     }
   });
 
+  it("answers a page when text/html comes before application/json, and the description when it comes after or when the request names neither", async () => {
+    const answer = (accept: string) =>
+      fetch(`${apiUrl}/`, { headers: { accept } });
+
+    // Both named, html first: a page. The witness for the order below, which
+    // asks for the same two types the other way round.
+    const page = await answer("text/html, application/json");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+
+    const description = (await client.root()).data;
+    for (const accept of [
+      "application/json, text/html",
+      "text/plain",
+      "application/xml",
+      "image/png, */*;q=0.1",
+    ]) {
+      const program = await answer(accept);
+      expect(program.status, accept).toBe(200);
+      expect(program.headers.get("content-type"), accept).toContain(
+        "application/json",
+      );
+      // The description of statements 1, 3 and 4, whole: the identity, the
+      // features and the contract version.
+      expect(await program.json(), accept).toEqual(description);
+    }
+  });
+
+  it("sends Vary: Accept on a refusal at the root as on the answers it varies", async () => {
+    // A query key the root does not take is refused before its handler runs,
+    // so a cache that was handed the refusal would be handed it for a
+    // browser and for a program alike.
+    for (const accept of [undefined, "application/json", "text/html"]) {
+      const refused = await fetch(`${apiUrl}/?not_a_key=1`, {
+        headers: accept === undefined ? {} : { accept },
+      });
+      expect(refused.status, String(accept)).toBe(400);
+      expect(refused.headers.get("vary"), String(accept)).toContain("Accept");
+    }
+
+    // The witness: the same address without the key is answered, and says it
+    // varies as well, so the refusals are the ones the header was added to.
+    const served = await fetch(`${apiUrl}/`);
+    expect(served.status).toBe(200);
+    expect(served.headers.get("vary")).toContain("Accept");
+
+    const head = await fetch(`${apiUrl}/`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("vary")).toContain("Accept");
+  });
+
+  it("sends the page policy on the page a refusal renders, and none on the refusal a program is sent", async () => {
+    // Refused by a middleware before any door ran, by the credential gate,
+    // and by the root's own query check.
+    const refusals: [string, string, Record<string, string>, number][] = [
+      ["a request with no credential", "/items", {}, 401],
+      [
+        "a read view the sign-in page refuses",
+        "/auth/sign-in",
+        { "X-Marfa-Read-View": "x" },
+        400,
+      ],
+      ["a query key the root does not take", "/?not_a_key=1", {}, 400],
+    ];
+    const nonces = new Set<string>();
+    for (const [label, path, extra, status] of refusals) {
+      const asPage = await fetch(`${apiUrl}${path}`, {
+        headers: { accept: "text/html", ...extra },
+      });
+      expect(asPage.status, label).toBe(status);
+      expect(asPage.headers.get("content-type"), label).toContain("text/html");
+      const policy = asPage.headers.get("content-security-policy") ?? "";
+      const nonce = /script-src 'nonce-([^']+)'/.exec(policy)?.[1];
+      expect(nonce, label).toBeTruthy();
+      expect(policy, label).toContain(`style-src 'nonce-${nonce ?? ""}'`);
+      nonces.add(nonce ?? "");
+
+      // The witness: the same refusal, asked as a program, is not a page and
+      // carries no page policy.
+      const asProgram = await fetch(`${apiUrl}${path}`, { headers: extra });
+      expect(asProgram.status, `${label}, as a program`).toBe(status);
+      expect(asProgram.headers.get("content-type"), label).toContain(
+        "application/json",
+      );
+      expect(
+        asProgram.headers.get("content-security-policy"),
+        label,
+      ).toBeNull();
+    }
+    expect(nonces.size).toBe(refusals.length);
+  });
+
+  it("names in its policy the one nonce its page carries, a new one on each answer at one address", async () => {
+    const asBrowser = { accept: "text/html" };
+    const nonces = new Set<string>();
+    const asked = 20;
+    for (let call = 0; call < asked; call++) {
+      const res = await fetch(`${apiUrl}/`, { headers: asBrowser });
+      const policy = res.headers.get("content-security-policy") ?? "";
+      // A script and a style are allowed by that nonce alone.
+      const scripts = /script-src ([^;]*)/.exec(policy)?.[1];
+      const styles = /style-src ([^;]*)/.exec(policy)?.[1];
+      const nonce = /^'nonce-([^']+)'$/.exec(scripts ?? "")?.[1];
+      expect(nonce, `call ${String(call)}`).toBeTruthy();
+      expect(styles).toBe(`'nonce-${nonce ?? ""}'`);
+      nonces.add(nonce ?? "");
+
+      // What the page carries is the nonce its own policy names, so it is the
+      // page that works under the policy and not a nonce nothing uses.
+      const carried = [...(await res.text()).matchAll(/nonce="([^"]+)"/g)].map(
+        (match) => match[1],
+      );
+      if (call === 0) expect(carried.length).toBeGreaterThan(0);
+      expect(new Set(carried), `call ${String(call)}`).toEqual(
+        new Set([nonce]),
+      );
+    }
+    expect(nonces.size).toBe(asked);
+  });
+
   it("sends a content security policy with every HTML page and a nonce of its own with each", async () => {
     const asBrowser = { accept: "text/html" };
     const nonces = new Set<string>();
