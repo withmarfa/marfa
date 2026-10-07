@@ -25,8 +25,9 @@ export const DEFAULT_KEYS_RATE_LIMIT = 200;
 export const MAX_RETENTION_DAYS = 36_500;
 export const MAX_RETENTION_HOURS = MAX_RETENTION_DAYS * 24;
 export const MAX_RETENTION_MS = MAX_RETENTION_HOURS * 3_600_000;
-// Native JavaScript timers support at most a signed 32-bit millisecond delay.
-export const MAX_INBOUND_CLEANUP_INTERVAL_MS = 2_147_483_647;
+// Native JavaScript timers support at most a signed 32-bit millisecond delay;
+// a longer one fires after 1 ms. `AbortSignal.timeout` refuses one past 2^32 - 1.
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** What bounds the inbound webhook doors. */
 export interface InboundLimits {
@@ -467,20 +468,84 @@ export function defaultTessdataDir(sqlitePath: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * One setting: what an unset or blank value resolves to, and how a stated
- * value is read. A parser throws to refuse; the message completes "NAME ...".
- * Blank counts as unset, so an orchestrator that writes `NAME=` for every
- * variable it knows about leaves the default standing.
+ * What a setting accepts, as data. The refusal text a parser throws and the
+ * settings table in `conformance/spec/instance.md` are both written from the
+ * same numbers, so neither can drift from the rule.
  */
-function setting<T>(parse: (value: string) => T, fallback: () => T) {
-  return z
+export type SettingRule =
+  | { kind: "count"; min: number; max?: number; unit?: SettingUnit }
+  | { kind: "decimal"; min: number; max: number }
+  | { kind: "flag" }
+  | { kind: "choice"; values: readonly string[] }
+  | { kind: "url" }
+  | { kind: "text" }
+  | { kind: "secret"; minLength?: number }
+  | { kind: "origins" }
+  | { kind: "cidrs" }
+  | { kind: "header-name" }
+  | { kind: "headers" }
+  | { kind: "permission-bundles" };
+
+/** What a number counts, when it counts something named. */
+export type SettingUnit = "ms" | "days" | "hours" | "bytes";
+
+/** How a stated value is read: it throws to refuse, and the message completes "NAME ...". */
+interface Parser<T> {
+  rule: SettingRule;
+  parse: (value: string) => T;
+}
+
+/** A setting as the settings table states it. */
+export interface SettingDescription {
+  name: string;
+  rule: SettingRule;
+  /** What an unset or blank value resolves to. Absent for a secret, and for a setting that resolves to nothing. */
+  default?: string | number | boolean;
+  /** Said in words where the default is not one value: derived from another setting or from the environment. */
+  defaultNote?: string;
+  /** Never echoed into a refusal, which lands in a log. */
+  secret: boolean;
+  /** One plain statement of what the setting controls. */
+  description: string;
+}
+
+type SettingMeta = Omit<SettingDescription, "name">;
+
+const SETTING_META = new WeakMap<object, SettingMeta>();
+
+interface SettingOptions {
+  /** Never echoed into a refusal, and no default is stated. */
+  secret?: boolean;
+  defaultNote?: string;
+}
+
+/** An empty default is no default: the setting then resolves to nothing. */
+function statedDefault(value: unknown): SettingMeta["default"] {
+  if (typeof value === "string") return value === "" ? undefined : value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  return undefined;
+}
+
+/**
+ * One setting: what an unset or blank value resolves to, how a stated value
+ * is read, and one line on what it controls. Blank counts as unset, so an
+ * orchestrator that writes `NAME=` for every variable it knows about leaves
+ * the default standing.
+ */
+function setting<T>(
+  parser: Parser<T>,
+  fallback: () => T,
+  description: string,
+  { secret = false, defaultNote }: SettingOptions = {},
+) {
+  const schema = z
     .string()
     .optional()
     .transform((raw, ctx): T => {
       const value = raw?.trim();
       if (value === undefined || value === "") return fallback();
       try {
-        return parse(value);
+        return parser.parse(value);
       } catch (err) {
         ctx.addIssue({
           code: "custom",
@@ -489,6 +554,15 @@ function setting<T>(parse: (value: string) => T, fallback: () => T) {
         return z.NEVER;
       }
     });
+  const stated = secret ? undefined : statedDefault(fallback());
+  SETTING_META.set(schema, {
+    rule: parser.rule,
+    ...(stated !== undefined && { default: stated }),
+    ...(defaultNote !== undefined && { defaultNote }),
+    secret,
+    description,
+  });
+  return schema;
 }
 
 /**
@@ -497,127 +571,198 @@ function setting<T>(parse: (value: string) => T, fallback: () => T) {
  * signature with something other than what was set. Surrounding whitespace
  * is refused instead, so neither reading happens silently.
  */
-const secretSetting = z
-  .string()
-  .optional()
-  .transform((raw, ctx): string | undefined => {
-    if (raw === undefined || raw.trim() === "") return undefined;
-    if (raw !== raw.trim()) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "has whitespace around it, which would be part of the secret; remove it",
-      });
-      return z.NEVER;
-    }
-    return raw;
+const DEFAULT_SALT = "dev-salt-change-in-production";
+/** Every process signs with `MARFA_AUTH_SECRET` (`crypto/derive-key.ts`
+ * and Better Auth), so a short one is refused outside production too. */
+const SECRET_MIN_LENGTH = 32;
+
+function secretSetting(
+  description: string,
+  defaultNote?: string,
+  minLength?: number,
+) {
+  const schema = z
+    .string()
+    .optional()
+    .transform((raw, ctx): string | undefined => {
+      if (raw === undefined || raw.trim() === "") return undefined;
+      if (raw !== raw.trim()) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "has whitespace around it, which would be part of the secret; remove it",
+        });
+        return z.NEVER;
+      }
+      if (minLength !== undefined && raw.length < minLength) {
+        ctx.addIssue({
+          code: "custom",
+          message: `must be at least ${String(minLength)} characters; generate one with \`openssl rand -hex 32\``,
+        });
+        return z.NEVER;
+      }
+      return raw;
+    });
+  SETTING_META.set(schema, {
+    rule: {
+      kind: "secret",
+      ...(minLength !== undefined && { minLength }),
+    },
+    ...(defaultNote !== undefined && { defaultNote }),
+    secret: true,
+    description,
   });
+  return schema;
+}
 
 /** Plain digits only, not `Number()`'s grammar: `1e2` is not a hundred and `0x10` is not sixteen. */
-function wholeNumber(min: number, max = Number.MAX_SAFE_INTEGER) {
-  return (value: string): number => {
-    const parsed = Number(value);
-    if (!/^\d+$/.test(value) || parsed < min || parsed > max) {
-      const range =
-        max === Number.MAX_SAFE_INTEGER
-          ? `${String(min)} or more`
-          : `from ${String(min)} to ${String(max)}`;
-      throw new Error(`must be a whole number, ${range}`);
-    }
-    return parsed;
+function wholeNumber(
+  min: number,
+  max?: number,
+  unit?: SettingUnit,
+): Parser<number> {
+  const ceiling = max ?? Number.MAX_SAFE_INTEGER;
+  return {
+    rule: {
+      kind: "count",
+      min,
+      ...(max !== undefined && { max }),
+      ...(unit !== undefined && { unit }),
+    },
+    parse: (value) => {
+      const parsed = Number(value);
+      if (!/^\d+$/.test(value) || parsed < min || parsed > ceiling) {
+        const range =
+          max === undefined
+            ? `${String(min)} or more`
+            : `from ${String(min)} to ${String(max)}`;
+        throw new Error(`must be a whole number, ${range}`);
+      }
+      return parsed;
+    },
   };
 }
 
-function decimal(min: number, max: number) {
-  return (value: string): number => {
-    const parsed = Number(value);
-    if (
-      !/^\d+(\.\d+)?$/.test(value) ||
-      !Number.isFinite(parsed) ||
-      parsed < min ||
-      parsed > max
-    ) {
-      throw new Error(`must be a number from ${String(min)} to ${String(max)}`);
-    }
-    return parsed;
+function decimal(min: number, max: number): Parser<number> {
+  return {
+    rule: { kind: "decimal", min, max },
+    parse: (value) => {
+      const parsed = Number(value);
+      if (
+        !/^\d+(\.\d+)?$/.test(value) ||
+        !Number.isFinite(parsed) ||
+        parsed < min ||
+        parsed > max
+      ) {
+        throw new Error(
+          `must be a number from ${String(min)} to ${String(max)}`,
+        );
+      }
+      return parsed;
+    },
+  };
+}
+
+function choice<const T extends string>(...values: readonly T[]): Parser<T> {
+  const last = values[values.length - 1];
+  const message = `must be ${values.slice(0, -1).join(", ")} or ${String(last)}`;
+  return {
+    rule: { kind: "choice", values },
+    parse: (value) => {
+      const match = values.find((candidate) => candidate === value);
+      if (match === undefined) throw new Error(message);
+      return match;
+    },
   };
 }
 
 const TRUE_WORDS = new Set(["true", "1", "yes", "on"]);
 const FALSE_WORDS = new Set(["false", "0", "no", "off"]);
 
-function flag(value: string): boolean {
-  const word = value.toLowerCase();
-  if (TRUE_WORDS.has(word)) return true;
-  if (FALSE_WORDS.has(word)) return false;
-  throw new Error("must be true or false (also 1/0, yes/no, on/off)");
-}
+const flag: Parser<boolean> = {
+  rule: { kind: "flag" },
+  parse: (value) => {
+    const word = value.toLowerCase();
+    if (TRUE_WORDS.has(word)) return true;
+    if (FALSE_WORDS.has(word)) return false;
+    throw new Error("must be true or false (also 1/0, yes/no, on/off)");
+  },
+};
 
-function httpUrl(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("must be an absolute http or https URL");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("must be an absolute http or https URL");
-  }
-  return value;
-}
+const httpUrl: Parser<string> = {
+  rule: { kind: "url" },
+  parse: (value) => {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("must be an absolute http or https URL");
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("must be an absolute http or https URL");
+    }
+    return value;
+  },
+};
 
-function text(value: string): string {
-  return value;
-}
+const text: Parser<string> = {
+  rule: { kind: "text" },
+  parse: (value) => value,
+};
 
 /** The comparison is exact, so `https://app.example/` would never match an `Origin` header. */
-function origins(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      let origin: string;
-      try {
-        origin = new URL(entry).origin;
-      } catch {
-        origin = "null";
-      }
-      if (origin !== entry) {
-        throw new Error(
-          `must list origins, scheme and host with no path or trailing slash; "${entry}" is not one`,
-        );
-      }
-      return entry;
-    });
-}
+const origins: Parser<string[]> = {
+  rule: { kind: "origins" },
+  parse: (value) =>
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        let origin: string;
+        try {
+          origin = new URL(entry).origin;
+        } catch {
+          origin = "null";
+        }
+        if (origin !== entry) {
+          throw new Error(
+            `must list origins, scheme and host with no path or trailing slash; "${entry}" is not one`,
+          );
+        }
+        return entry;
+      }),
+};
 
 /**
  * `key=value` pairs separated by commas, values percent-decoded, as the OTLP
  * exporters read the `OTEL_EXPORTER_OTLP_*_HEADERS` variables themselves.
  */
-function otlpHeaders(value: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of value.split(",")) {
-    if (pair.trim() === "") continue;
-    const eq = pair.indexOf("=");
-    const key = eq > 0 ? pair.slice(0, eq).trim() : "";
-    const raw = eq > 0 ? pair.slice(eq + 1).trim() : "";
-    let decoded: string | undefined;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch {
-      decoded = undefined;
+const otlpHeaders: Parser<Record<string, string>> = {
+  rule: { kind: "headers" },
+  parse: (value) => {
+    const out: Record<string, string> = {};
+    for (const pair of value.split(",")) {
+      if (pair.trim() === "") continue;
+      const eq = pair.indexOf("=");
+      const key = eq > 0 ? pair.slice(0, eq).trim() : "";
+      const raw = eq > 0 ? pair.slice(eq + 1).trim() : "";
+      let decoded: string | undefined;
+      try {
+        decoded = decodeURIComponent(raw);
+      } catch {
+        decoded = undefined;
+      }
+      if (!key || !raw || decoded === undefined) {
+        throw new Error(
+          "must be comma-separated key=value pairs with percent-encoded values",
+        );
+      }
+      out[key] = decoded;
     }
-    if (!key || !raw || decoded === undefined) {
-      throw new Error(
-        "must be comma-separated key=value pairs with percent-encoded values",
-      );
-    }
-    out[key] = decoded;
-  }
-  return out;
-}
+    return out;
+  },
+};
 
 /**
  * The override is JSON the type system never checks, so a missing
@@ -625,239 +770,580 @@ function otlpHeaders(value: string): Record<string, string> {
  * misspelled key into an on-by-default grant, and `false` would leave a
  * consent screen that grants nothing without saying why.
  */
-function permissionBundles(value: string): PermissionBundle[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("must be a JSON array of permission bundles");
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error("must be a JSON array of permission bundles");
-  }
-  const rejected: string[] = [];
-  parsed.forEach((entry: unknown, i: number) => {
-    const b = entry as Partial<PermissionBundle> | null;
-    const valid =
-      typeof b === "object" &&
-      b !== null &&
-      typeof b.id === "string" &&
-      b.id.length > 0 &&
-      Array.isArray(b.scopes) &&
-      b.scopes.every((s) => typeof s === "string") &&
-      typeof b.default_on === "boolean";
-    if (!valid) {
-      const id: unknown = b?.id;
-      rejected.push(
-        typeof id === "string" && id.length > 0 ? id : `index ${String(i)}`,
+const permissionBundles: Parser<PermissionBundle[]> = {
+  rule: { kind: "permission-bundles" },
+  parse: (value) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error("must be a JSON array of permission bundles");
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error("must be a JSON array of permission bundles");
+    }
+    const rejected: string[] = [];
+    parsed.forEach((entry: unknown, i: number) => {
+      const b = entry as Partial<PermissionBundle> | null;
+      const valid =
+        typeof b === "object" &&
+        b !== null &&
+        typeof b.id === "string" &&
+        b.id.length > 0 &&
+        Array.isArray(b.scopes) &&
+        b.scopes.every((s) => typeof s === "string") &&
+        typeof b.default_on === "boolean";
+      if (!valid) {
+        const id: unknown = b?.id;
+        rejected.push(
+          typeof id === "string" && id.length > 0 ? id : `index ${String(i)}`,
+        );
+      }
+    });
+    if (rejected.length > 0) {
+      throw new Error(
+        `needs a string id, an array of scopes and a boolean default_on on every entry; offending entries: ${rejected.join(", ")}`,
       );
     }
-  });
-  if (rejected.length > 0) {
-    throw new Error(
-      `needs a string id, an array of scopes and a boolean default_on on every entry; offending entries: ${rejected.join(", ")}`,
-    );
-  }
-  return parsed as PermissionBundle[];
-}
+    return parsed as PermissionBundle[];
+  },
+};
 
-function fromThrowingParser<T>(parse: (raw: string) => T) {
-  return (value: string): T => {
-    try {
-      return parse(value);
-    } catch (err) {
-      // The parsers name the setting themselves; the schema names it again.
-      const message = errorMessage(err);
-      throw new Error(message.replace(/^[A-Z_]+:\s*/, ""), { cause: err });
-    }
+function fromThrowingParser<T>(
+  rule: SettingRule,
+  parse: (raw: string) => T,
+): Parser<T> {
+  return {
+    rule,
+    parse: (value) => {
+      try {
+        return parse(value);
+      } catch (err) {
+        // The parsers name the setting themselves; the schema names it again.
+        const message = errorMessage(err);
+        throw new Error(message.replace(/^[A-Z_]+:\s*/, ""), { cause: err });
+      }
+    },
   };
 }
 
-const optionalText = setting<string | undefined>(text, () => undefined);
-const optionalUrl = setting<string | undefined>(httpUrl, () => undefined);
-const blankText = setting(text, () => "");
-const count = (fallback: number, min = 1, max?: number) =>
-  setting(wholeNumber(min, max), () => fallback);
-const on = (fallback: boolean) => setting(flag, () => fallback);
+const optionalText = (description: string, defaultNote?: string) =>
+  setting<string | undefined>(
+    text,
+    () => undefined,
+    description,
+    defaultNote === undefined ? {} : { defaultNote },
+  );
+const optionalUrl = (description: string, defaultNote?: string) =>
+  setting<string | undefined>(
+    httpUrl,
+    () => undefined,
+    description,
+    defaultNote === undefined ? {} : { defaultNote },
+  );
+const blankText = (description: string) => setting(text, () => "", description);
+const blankUrl = (description: string) =>
+  setting(httpUrl, () => "", description);
+const count = (
+  fallback: number,
+  description: string,
+  {
+    min = 1,
+    max,
+    unit,
+  }: { min?: number; max?: number; unit?: SettingUnit } = {},
+) => setting(wholeNumber(min, max, unit), () => fallback, description);
+const on = (fallback: boolean, description: string) =>
+  setting(flag, () => fallback, description);
 
 /**
  * Every setting the server reads, by the environment variable that carries
  * it. Read once, at boot, by {@link loadConfig}; nothing else in the server
  * reads the environment. A value outside its rule stops the server with a
- * message naming the setting. `.env.example` lists every name here.
+ * message naming the setting. `.env.example` lists every name here, and the
+ * settings table in `conformance/spec/instance.md` is written from it.
  */
 const settingsShape = {
   NODE_ENV: setting(
-    (value) => {
-      if (
-        value !== "production" &&
-        value !== "development" &&
-        value !== "test"
-      ) {
-        throw new Error("must be production, development or test");
-      }
-      return value;
-    },
+    choice("production", "development", "test"),
     () => "development" as const,
+    "The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.",
   ),
-  PORT: count(8600, 1, 65_535),
-  SQLITE_PATH: setting(text, () => "./data/marfa.db"),
-  SQLITE_BUSY_BUDGET_MS: count(5_000, 0),
-  BLOB_PATH: setting(text, () => "./data/blobs"),
-  MARFA_MAX_REQUEST_BYTES: count(1_048_576),
-  MARFA_MAX_BULK_REQUEST_BYTES: count(16 * 1024 * 1024),
+  PORT: count(8600, "The port the server listens on.", { max: 65_535 }),
+  SQLITE_PATH: setting(
+    text,
+    () => "./data/marfa.db",
+    "The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.",
+  ),
+  SQLITE_BUSY_BUDGET_MS: count(
+    5_000,
+    "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
+    { min: 0, max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  BLOB_PATH: setting(
+    text,
+    () => "./data/blobs",
+    "The folder of the disk store, where every upload lands.",
+  ),
+  MARFA_MAX_REQUEST_BYTES: count(
+    1_048_576,
+    "The largest body the JSON write surface accepts. A larger body is answered `413 request_too_large`. Blob uploads and inbound webhook deliveries have their own limits.",
+    { unit: "bytes" },
+  ),
+  MARFA_MAX_BULK_REQUEST_BYTES: count(
+    16 * 1024 * 1024,
+    "The largest body the bulk operations accept.",
+    { unit: "bytes" },
+  ),
 
-  S3_BUCKET: blankText,
-  S3_REGION: setting(text, () => "us-east-1"),
-  S3_ENDPOINT: setting(httpUrl, () => ""),
-  S3_ACCESS_KEY_ID: blankText,
-  S3_SECRET_ACCESS_KEY: secretSetting,
-  S3_FORCE_PATH_STYLE: on(true),
-  S3_PREFIX: setting(text, () => "blobs"),
-  MARFA_BLOB_MIN_COPIES: count(1),
-  MARFA_BLOB_REPLICATE_INTERVAL_MS: count(60_000),
-  MARFA_BLOB_REPLICATE_BATCH: count(100),
-  MARFA_BLOB_REPLICATE_BATCH_BYTES: count(1024 * 1024 * 1024),
-  MARFA_BLOB_INTEGRITY_INTERVAL_MS: count(3_600_000),
-  MARFA_BLOB_INTEGRITY_BATCH: count(500),
-  MARFA_BLOB_INTEGRITY_BATCH_BYTES: count(1024 * 1024 * 1024),
-  MARFA_BLOB_CLEANUP_INTERVAL_MS: count(86_400_000, 0),
-  MARFA_BLOB_CLEANUP_GRACE_MS: count(86_400_000, 0),
+  S3_BUCKET: blankText(
+    "The bucket of an S3-compatible object store. The store is attached when this is set.",
+  ),
+  S3_REGION: setting(
+    text,
+    () => "us-east-1",
+    "The region of the object store.",
+  ),
+  S3_ENDPOINT: blankUrl(
+    "The endpoint of the object store. When blank, the store's provider chooses it.",
+  ),
+  S3_ACCESS_KEY_ID: blankText("The access key ID for the object store."),
+  S3_SECRET_ACCESS_KEY: secretSetting(
+    "The secret access key for the object store.",
+  ),
+  S3_FORCE_PATH_STYLE: on(
+    true,
+    "Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.",
+  ),
+  S3_PREFIX: setting(
+    text,
+    () => "blobs",
+    "The key prefix under which the object store keeps its objects.",
+  ),
+  MARFA_BLOB_MIN_COPIES: count(
+    1,
+    "The fewest live copies a blob keeps. A drop that would leave fewer is refused.",
+  ),
+  MARFA_BLOB_REPLICATE_INTERVAL_MS: count(
+    60_000,
+    "How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_BLOB_REPLICATE_BATCH: count(
+    100,
+    "The most blobs one replication run copies.",
+  ),
+  MARFA_BLOB_REPLICATE_BATCH_BYTES: count(
+    1024 * 1024 * 1024,
+    "The most bytes one replication run copies.",
+    { unit: "bytes" },
+  ),
+  MARFA_BLOB_INTEGRITY_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `blob-integrity` job checks the copies it holds. The job has no off switch.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_BLOB_INTEGRITY_BATCH: count(
+    500,
+    "The most copies one integrity run checks.",
+  ),
+  MARFA_BLOB_INTEGRITY_BATCH_BYTES: count(
+    1024 * 1024 * 1024,
+    "The most bytes one integrity run checks.",
+    { unit: "bytes" },
+  ),
+  MARFA_BLOB_CLEANUP_INTERVAL_MS: count(
+    86_400_000,
+    "How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.",
+    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_BLOB_CLEANUP_GRACE_MS: count(
+    86_400_000,
+    "How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.",
+    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+  ),
 
-  MARFA_ENRICHMENT_ENABLED: on(true),
-  MARFA_ENRICHMENT_OCR_ENABLED: on(true),
-  MARFA_ENRICHMENT_TESSDATA_DIR: optionalText,
-  MARFA_ENRICHMENT_INTERVAL_MS: count(30_000),
-  MARFA_ENRICHMENT_BATCH_SIZE: count(8),
-  MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(60_000),
-  MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(20 * 1024 * 1024),
+  MARFA_ENRICHMENT_ENABLED: on(
+    true,
+    "Whether the server extracts text from uploaded files.",
+  ),
+  MARFA_ENRICHMENT_OCR_ENABLED: on(
+    true,
+    "Whether the server reads text from images with OCR. When off, images are recorded as unsupported.",
+  ),
+  MARFA_ENRICHMENT_TESSDATA_DIR: optionalText(
+    "The folder where the OCR language model is cached. When unset, it is a `tessdata` folder beside the database file.",
+  ),
+  MARFA_ENRICHMENT_INTERVAL_MS: count(
+    30_000,
+    "How often the enrichment sweep runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_ENRICHMENT_BATCH_SIZE: count(
+    8,
+    "The most items one enrichment sweep extracts.",
+  ),
+  MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(
+    60_000,
+    "How long the extraction of one item may take.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(
+    20 * 1024 * 1024,
+    "The largest blob the server extracts text from. A larger blob is skipped unread.",
+    { unit: "bytes" },
+  ),
   // The validator's cap, not restated: above it, the sweeper's validation
   // parks an over-long extraction rather than storing it.
-  MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(DEFAULT_MAX_STRING_LENGTH),
-  MARFA_ENRICHMENT_MAX_ATTEMPTS: count(3),
+  MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(
+    DEFAULT_MAX_STRING_LENGTH,
+    "The most characters of extracted text the server keeps. Longer text is truncated.",
+  ),
+  MARFA_ENRICHMENT_MAX_ATTEMPTS: count(
+    3,
+    "How many times the server tries to extract text from a failing item before it stops.",
+  ),
 
   TRUSTED_PROXY_CIDRS: setting<CidrRange[]>(
-    fromThrowingParser(parseTrustedProxyCidrs),
+    fromThrowingParser({ kind: "cidrs" }, parseTrustedProxyCidrs),
     () => [],
+    "The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.",
   ),
   TRUSTED_PROXY_HEADER: setting<string | null>(
-    fromThrowingParser(parseTrustedProxyHeader),
+    fromThrowingParser({ kind: "header-name" }, parseTrustedProxyHeader),
     () => null,
+    "The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.",
   ),
 
-  API_KEY_SALT: secretSetting,
-  MARFA_AUTH_SECRET: secretSetting,
-  MARFA_AUTH_BASE_URL: optionalUrl,
-  CORS_ORIGINS: setting(origins, () => []),
+  API_KEY_SALT: secretSetting(
+    "The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.",
+    "None. Required in production.",
+  ),
+  MARFA_AUTH_SECRET: secretSetting(
+    "The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
+    "None. Required in production.",
+    SECRET_MIN_LENGTH,
+  ),
+  MARFA_AUTH_BASE_URL: optionalUrl(
+    "The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL falls back to `http://localhost:<PORT>`.",
+    "None. Required in production.",
+  ),
+  CORS_ORIGINS: setting(
+    origins,
+    () => [],
+    "The browser origins allowed to call the API across origins. Each is an exact scheme and host with no trailing slash.",
+  ),
   MARFA_PERMISSION_BUNDLES: setting<PermissionBundle[] | undefined>(
     permissionBundles,
     () => undefined,
+    "The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.",
+    { secret: true },
   ),
-  ENABLE_HSTS: on(false),
+  ENABLE_HSTS: on(
+    false,
+    "Whether the server sends the `Strict-Transport-Security` header.",
+  ),
 
-  RATE_LIMIT_ENABLED: on(true),
-  RATE_LIMIT_REQUESTS: count(1000),
-  RATE_LIMIT_WINDOW_MS: count(60_000),
-  RATE_LIMIT_KEYS_REQUESTS: count(DEFAULT_KEYS_RATE_LIMIT),
-  RATE_LIMIT_AGGREGATE_MULTIPLIER: count(4, 0),
-  MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(3_600_000),
+  RATE_LIMIT_ENABLED: on(true, "Whether the rate limiter is on."),
+  RATE_LIMIT_REQUESTS: count(
+    1000,
+    "The requests one credential may make in each window.",
+  ),
+  RATE_LIMIT_WINDOW_MS: count(60_000, "The length of a rate-limit window.", {
+    max: MAX_RETENTION_MS,
+    unit: "ms",
+  }),
+  RATE_LIMIT_KEYS_REQUESTS: count(
+    DEFAULT_KEYS_RATE_LIMIT,
+    "The requests one credential may make in each window to the operations under `/keys`.",
+  ),
+  RATE_LIMIT_AGGREGATE_MULTIPLIER: count(
+    4,
+    "The multiplier of `RATE_LIMIT_REQUESTS` that caps a credential across every operation in a window. At 0 there is no such cap.",
+    { min: 0 },
+  ),
+  MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `rate-limit-cleanup` job drops expired rate-limit windows.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
 
-  MARFA_CONNECTOR_HOLD_MS: count(DEFAULT_CONNECTOR_HOLD_MS, 1_000, 3_600_000),
-  MARFA_INBOUND_MAX_BYTES: count(DEFAULT_INBOUND_LIMITS.maxBytes),
-  RATE_LIMIT_INBOUND_REQUESTS: count(DEFAULT_INBOUND_LIMITS.requestsPerWindow),
+  MARFA_CONNECTOR_HOLD_MS: count(
+    DEFAULT_CONNECTOR_HOLD_MS,
+    "How long a connector's hold on its registration lasts after its last take or renewal.",
+    { min: 1_000, max: 3_600_000, unit: "ms" },
+  ),
+  MARFA_INBOUND_MAX_BYTES: count(
+    DEFAULT_INBOUND_LIMITS.maxBytes,
+    "The largest inbound webhook delivery the server stores.",
+    { unit: "bytes" },
+  ),
+  RATE_LIMIT_INBOUND_REQUESTS: count(
+    DEFAULT_INBOUND_LIMITS.requestsPerWindow,
+    "The deliveries one inbound endpoint accepts in each rate-limit window.",
+  ),
   MARFA_INBOUND_BACKLOG_DELIVERIES: count(
     DEFAULT_INBOUND_LIMITS.backlogDeliveries,
+    "The unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
   ),
-  MARFA_INBOUND_BACKLOG_BYTES: count(DEFAULT_INBOUND_LIMITS.backlogBytes),
+  MARFA_INBOUND_BACKLOG_BYTES: count(
+    DEFAULT_INBOUND_LIMITS.backlogBytes,
+    "The bytes of unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
+    { unit: "bytes" },
+  ),
   MARFA_INBOUND_RETAINED_DELIVERIES: count(
     DEFAULT_INBOUND_LIMITS.retainedDeliveries,
+    "The most deliveries the server retains across live and retired endpoints.",
   ),
-  MARFA_INBOUND_RETAINED_BYTES: count(DEFAULT_INBOUND_LIMITS.retainedBytes),
+  MARFA_INBOUND_RETAINED_BYTES: count(
+    DEFAULT_INBOUND_LIMITS.retainedBytes,
+    "The most bytes of deliveries the server retains across live and retired endpoints.",
+    { unit: "bytes" },
+  ),
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
     DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
-    1,
-    MAX_INBOUND_CLEANUP_INTERVAL_MS,
+    "How often the `inbound-delivery-cleanup` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
   ),
-  MARFA_INBOUND_IN_FLIGHT_BYTES: count(DEFAULT_INBOUND_LIMITS.inFlightBytes),
-  MARFA_INBOUND_READ_TIMEOUT_MS: count(DEFAULT_INBOUND_LIMITS.readTimeoutMs),
+  MARFA_INBOUND_IN_FLIGHT_BYTES: count(
+    DEFAULT_INBOUND_LIMITS.inFlightBytes,
+    "The most bytes of inbound webhook deliveries the server holds in memory at once.",
+    { unit: "bytes" },
+  ),
+  MARFA_INBOUND_READ_TIMEOUT_MS: count(
+    DEFAULT_INBOUND_LIMITS.readTimeoutMs,
+    "How long a delivery's body has to arrive whole.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
   MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.handledRetentionDays,
-    0,
-    MAX_RETENTION_DAYS,
+    "How long the server keeps a handled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
   MARFA_INBOUND_PENDING_RETENTION_DAYS: count(
     DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
-    0,
-    MAX_RETENTION_DAYS,
+    "How long the server keeps an unhandled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
   ),
 
-  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(1_000),
-  AUDIT_RETENTION_DAYS: count(90, 0, MAX_RETENTION_DAYS),
-  AUDIT_CLEANUP_INTERVAL_MS: count(86_400_000),
-  MARFA_REVOKED_GRANT_RETENTION_DAYS: count(90, 0, MAX_RETENTION_DAYS),
-  MARFA_GRANT_INACTIVITY_DAYS: count(365, 0, MAX_RETENTION_DAYS),
-  MARFA_EVENT_LOG_RETENTION_HOURS: count(168, 0, MAX_RETENTION_HOURS),
-  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(3_600_000),
-  VERSION_THINNING_INTERVAL_MS: count(3_600_000),
-  VERSION_RECENT_DAYS: count(30, 0),
-  VERSION_DAILY_SNAPSHOT_DAYS: count(90, 0),
-  VERSION_WEEKLY_SNAPSHOT_DAYS: count(365, 0),
-  VERSION_MAX_VERSIONS: count(500),
-  TRASH_RETENTION_DAYS: count(60, 0, MAX_RETENTION_DAYS),
-  TRASH_PURGE_INTERVAL_MS: count(86_400_000),
-  AUTH_SESSION_CLEANUP_INTERVAL_MS: count(3_600_000),
-  MARFA_DCR_CLIENT_RETENTION_DAYS: count(30, 0, MAX_RETENTION_DAYS),
-  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(86_400_000),
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(
+    1_000,
+    "How often the housekeeping scheduler asks its table which jobs are due.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  AUDIT_RETENTION_DAYS: count(
+    90,
+    "How long the server keeps audit entries and webhook delivery history. `PUT /config` overrides it.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  AUDIT_CLEANUP_INTERVAL_MS: count(
+    86_400_000,
+    "How often the `audit-cleanup` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_REVOKED_GRANT_RETENTION_DAYS: count(
+    90,
+    "How long a revoked application grant is kept. At 0 the job that purges them is off. `PUT /config` does not override it.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  MARFA_GRANT_INACTIVITY_DAYS: count(
+    365,
+    "How long an application grant may go unused before the server retires it. At 0 grants are never retired. `PUT /config` does not override it.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  MARFA_EVENT_LOG_RETENTION_HOURS: count(
+    168,
+    "The least time an event stays in the event log, which bounds how far back a stream can replay. `PUT /config` overrides it.",
+    { min: 0, max: MAX_RETENTION_HOURS, unit: "hours" },
+  ),
+  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `event-log-cleanup` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  VERSION_THINNING_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `version-thinning` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  VERSION_RECENT_DAYS: count(
+    30,
+    "The window in which the version policy keeps every version of an item.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  VERSION_DAILY_SNAPSHOT_DAYS: count(
+    90,
+    "The window in which the version policy keeps one version a day. It must be at least `VERSION_RECENT_DAYS`.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  VERSION_WEEKLY_SNAPSHOT_DAYS: count(
+    365,
+    "The window in which the version policy keeps one version a week. It must be at least `VERSION_DAILY_SNAPSHOT_DAYS`.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  VERSION_MAX_VERSIONS: count(
+    500,
+    "The most versions the version policy keeps for one item.",
+  ),
+  TRASH_RETENTION_DAYS: count(
+    60,
+    "How long an item stays in the trash before the server deletes it. At 0 the job that purges the trash is off. `PUT /config` overrides it.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  TRASH_PURGE_INTERVAL_MS: count(
+    86_400_000,
+    "How often the `trash-purge` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  AUTH_SESSION_CLEANUP_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `auth-session-cleanup` job drops expired sign-in sessions.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_DCR_CLIENT_RETENTION_DAYS: count(
+    30,
+    "How long a dynamically registered client with no grants is kept. At 0 the job that removes them is off.",
+    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ),
+  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(
+    86_400_000,
+    "How often the job that removes dynamically registered clients with no grants runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
   MARFA_BULK_ACTION_JOB_RETENTION_MS: count(
     7 * 24 * 3_600_000,
-    0,
-    MAX_RETENTION_MS,
+    "How long a finished bulk-action job is kept. At 0 the sweep that removes them is off.",
+    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
   ),
-  MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: count(3_600_000),
-  MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(500),
-  MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: count(60_000),
-  MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: setting(decimal(1, 100), () => 2),
-  MARFA_SSE_MAX_VIEWERS: count(0, 0),
+  MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: count(
+    3_600_000,
+    "How often the sweep that removes finished bulk-action jobs runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(
+    500,
+    "The base interval at which the bulk-action worker looks for work.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: count(
+    60_000,
+    "The longest the bulk-action worker waits between looks for work when it is idle. It must be at least `MARFA_BULK_ACTION_POLL_INTERVAL_MS`.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: setting(
+    decimal(1, 100),
+    () => 2,
+    "The factor by which the bulk-action worker's wait grows after each look that finds no work.",
+  ),
+  MARFA_SSE_MAX_VIEWERS: count(
+    0,
+    "The most event-stream viewers one server instance serves at once. At 0 there is no limit.",
+    { min: 0 },
+  ),
 
-  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: on(false),
-  ERROR_WEBHOOK_URL: setting(httpUrl, () => ""),
-  MARFA_ERROR_WEBHOOK_TIMEOUT_MS: count(5_000),
-  MARFA_HEARTBEAT_URL: setting(httpUrl, () => ""),
-  MARFA_HEARTBEAT_INTERVAL_MS: count(60_000),
-  MARFA_PLACEMENT_REGION: optionalText,
-  MARFA_PLACEMENT_LOCATION: optionalText,
-  MARFA_PLACEMENT_COUNTRY: optionalText,
+  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: on(
+    false,
+    "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
+  ),
+  ERROR_WEBHOOK_URL: blankUrl(
+    "The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.",
+  ),
+  MARFA_ERROR_WEBHOOK_TIMEOUT_MS: count(
+    5_000,
+    "How long one post to `ERROR_WEBHOOK_URL` may take.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  ),
+  MARFA_HEARTBEAT_URL: blankUrl(
+    "The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.",
+  ),
+  MARFA_HEARTBEAT_INTERVAL_MS: count(
+    60_000,
+    "How often the server requests `MARFA_HEARTBEAT_URL`.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
+  MARFA_PLACEMENT_REGION: optionalText(
+    "Free text naming the region the server runs in, reported at `/health` as `placement.region`.",
+  ),
+  MARFA_PLACEMENT_LOCATION: optionalText(
+    "Free text naming the location the server runs in, reported at `/health` as `placement.location`.",
+  ),
+  MARFA_PLACEMENT_COUNTRY: optionalText(
+    "Free text naming the country the server runs in, reported at `/health` as `placement.country`.",
+  ),
 
-  MARFA_OTEL_ENABLED: on(false),
-  MARFA_OTEL_SAMPLE_RATIO: setting(decimal(0, 1), () => 0.05),
-  OTEL_SERVICE_NAME: setting(text, () => "marfa-server"),
-  OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
-  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl,
-  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalUrl,
-  OTEL_EXPORTER_OTLP_HEADERS: setting(otlpHeaders, () => ({})),
-  OTEL_EXPORTER_OTLP_TRACES_HEADERS: setting(otlpHeaders, () => ({})),
-  OTEL_EXPORTER_OTLP_LOGS_HEADERS: setting(otlpHeaders, () => ({})),
-  MARFA_POSTHOG_HOST: optionalUrl,
-  MARFA_POSTHOG_PROJECT_TOKEN: secretSetting,
+  MARFA_OTEL_ENABLED: on(
+    false,
+    "Whether the server exports telemetry. Nothing is exported, and the telemetry SDK is not loaded, unless this is on.",
+  ),
+  MARFA_OTEL_SAMPLE_RATIO: setting(
+    decimal(0, 1),
+    () => 0.05,
+    "The share of traces exported. Traces that contain an error are exported whatever this says.",
+  ),
+  OTEL_SERVICE_NAME: setting(
+    text,
+    () => "marfa-server",
+    "The service name on exported telemetry.",
+  ),
+  OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
+    "The base URL of the OTLP receiver. Traces post to `v1/traces` and logs to `v1/logs` under it.",
+  ),
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl(
+    "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`.",
+  ),
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalUrl(
+    "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`.",
+  ),
+  OTEL_EXPORTER_OTLP_HEADERS: setting(
+    otlpHeaders,
+    () => ({}),
+    "The headers sent with every OTLP export, as `key=value` pairs.",
+    { secret: true },
+  ),
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: setting(
+    otlpHeaders,
+    () => ({}),
+    "The headers sent with trace exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
+    { secret: true },
+  ),
+  OTEL_EXPORTER_OTLP_LOGS_HEADERS: setting(
+    otlpHeaders,
+    () => ({}),
+    "The headers sent with log exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
+    { secret: true },
+  ),
+  MARFA_POSTHOG_HOST: optionalUrl(
+    "The PostHog host that receives exception reports. When telemetry is on, it must be set together with `MARFA_POSTHOG_PROJECT_TOKEN`.",
+  ),
+  MARFA_POSTHOG_PROJECT_TOKEN: secretSetting(
+    "The PostHog project token for exception reports. When telemetry is on, it must be set together with `MARFA_POSTHOG_HOST`.",
+  ),
 };
 
 /** Every setting's name, in the order the schema states them. */
 export const SETTING_NAMES: readonly string[] = Object.keys(settingsShape);
 
-/** Never echoed into a refusal, which lands in a log. */
-const SECRET_SETTINGS = new Set([
-  "API_KEY_SALT",
-  "MARFA_AUTH_SECRET",
-  "S3_SECRET_ACCESS_KEY",
-  "MARFA_POSTHOG_PROJECT_TOKEN",
-  "OTEL_EXPORTER_OTLP_HEADERS",
-  "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-  "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-  "MARFA_PERMISSION_BUNDLES",
-]);
+/**
+ * Every setting as the settings table states it: its rule, its default and
+ * what it controls, in the order the schema states them.
+ */
+export function describeSettings(): SettingDescription[] {
+  return Object.entries(settingsShape).map(([name, schema]) => {
+    const meta = SETTING_META.get(schema);
+    if (meta === undefined) {
+      throw new Error(`${name} has no rule or description`);
+    }
+    return { name, ...meta };
+  });
+}
 
-const DEFAULT_SALT = "dev-salt-change-in-production";
-const SECRET_MIN_LENGTH = 32;
+/** Never echoed into a refusal, which lands in a log. */
+const SECRET_SETTINGS = new Set(
+  describeSettings()
+    .filter((described) => described.secret)
+    .map((described) => described.name),
+);
+
 const SECRET_MIN_BITS = 96;
 
 /**
@@ -903,17 +1389,6 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     ctx.addIssue({ code: "custom", path: [name], message });
   };
   const generate = "; generate one with `openssl rand -hex 32`";
-  // Outside production a short secret is still refused, because
-  // `crypto/derive-key.ts` and Better Auth both sign with it.
-  const shortSecret =
-    s.MARFA_AUTH_SECRET !== undefined &&
-    s.MARFA_AUTH_SECRET.length < SECRET_MIN_LENGTH;
-  if (shortSecret) {
-    refuse(
-      "MARFA_AUTH_SECRET",
-      `must be at least ${String(SECRET_MIN_LENGTH)} characters${generate}`,
-    );
-  }
   if (s.NODE_ENV === "production") {
     // MARFA_AUTH_SECRET signs Better Auth's cookies and authorize query and
     // keys the credential-free blob link, so a readable one lets anyone
@@ -921,7 +1396,7 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     const salt = weakSecret(s.API_KEY_SALT);
     if (salt) refuse("API_KEY_SALT", salt + generate);
     const secret = weakSecret(s.MARFA_AUTH_SECRET);
-    if (secret && !shortSecret) refuse("MARFA_AUTH_SECRET", secret + generate);
+    if (secret) refuse("MARFA_AUTH_SECRET", secret + generate);
     // Unset, the issuer, cookie domain and every minted link would name
     // localhost.
     if (s.MARFA_AUTH_BASE_URL === undefined) {

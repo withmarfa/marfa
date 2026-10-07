@@ -3,5 +3,7 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["**/*.ts"]
+  // The server's settings schema is imported by path, and its error handler reads a
+  // global that only instrumentation.ts declares.
+  "include": ["**/*.ts", "../packages/server/src/instrumentation.ts"]
 }

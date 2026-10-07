@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnvFile } from "./target.js";
+import { parseEnvFile, redactBootstrapSecret } from "./target.js";
 
 /**
  * A server of the fixture's own, booted from this checkout into a state
@@ -35,17 +36,89 @@ export interface FreshServer {
   /** The SQLite file this server writes to, so a fixture about the write
    *  lock can hold it from outside the process. */
   sqlitePath: string;
+  /** The directory holding the SQLite file, the blob folder, the log and the
+   *  env file. */
+  stateDir: string;
+  /**
+   * Sends `name` to the server's process group and returns without waiting.
+   * Which signal ended the server is for the fixture to say, so a stop
+   * that is the subject of the test is not the harness's `SIGTERM`.
+   */
+  signal(name: StopSignal): void;
+  /**
+   * Waits for the server to end, however it did, and says how. For a server
+   * that was signaled through `signal` or that stopped of its own accord;
+   * rejects when it is still running after the grace a stopped server gets.
+   */
+  exit(): Promise<ServerExit>;
   /**
    * Stops the server's process without removing its state, runs
    * `whileStopped` while nothing is writing to the database file, and boots
    * the server again on the same state. The keys and the data stay; the port
    * does not, so `apiUrl` is the new one when this resolves.
    *
-   * For a state the doors refuse to produce, which a fixture arranges in the
-   * stored file and the next boot reads.
+   * A boot that finds an emptied database mints its keys again, so
+   * `operatorKey` is read afresh and `workingKey` is minted again when the
+   * operator key changed.
+   *
+   * Takes the callback alone, or `{ signal, whileStopped, env }` to stop the
+   * server with a signal other than `SIGTERM` or to boot it again under
+   * another setting. Resolves with how the stopped
+   * server ended. For a state the doors refuse to produce, which a fixture
+   * arranges in the stored file and the next boot reads.
    */
-  restart(whileStopped?: () => void | Promise<void>): Promise<void>;
+  restart(
+    arg?: (() => void | Promise<void>) | RestartOptions,
+  ): Promise<ServerExit>;
   /** Stops the server and removes its state. Safe to call twice. */
+  stop(): Promise<void>;
+}
+
+/** The signals a fixture stops a server with: the two a stop answers to, and
+ *  the one a crash is. */
+export type StopSignal = "SIGTERM" | "SIGINT" | "SIGKILL";
+
+export interface RestartOptions {
+  signal?: StopSignal;
+  whileStopped?: () => void | Promise<void>;
+  /** Environment for this boot alone, over what the server was first booted
+   *  with: a data directory started again under another setting. The boot
+   *  after this one is back to the first. */
+  env?: Record<string, string>;
+}
+
+/**
+ * How a server ended. `code` is the exit status and `signal` the signal that
+ * ended it, one of them null. A server killed with `SIGKILL` takes its
+ * supervisor with it and leaves no status, so it reads `code` null and
+ * `signal` `SIGKILL`. `ms` is the time from the last signal this fixture sent
+ * to the end, `0` when none was sent.
+ */
+export interface ServerExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  ms: number;
+}
+
+/** A SHA-256 of each file SQLite keeps for one database, `absent` for a
+ *  file that does not exist, so a boot that creates one shows. */
+export interface DatabaseFiles {
+  db: string;
+  wal: string;
+  shm: string;
+}
+
+/** A boot that ended instead of serving. */
+export interface RefusedBoot extends ServerExit {
+  /** Everything the server wrote to its log. */
+  output: string;
+  stateDir: string;
+  sqlitePath: string;
+  /** The database's files as `prepare` left them. */
+  before: DatabaseFiles;
+  /** The database's files once the server had ended. */
+  after: DatabaseFiles;
+  /** Removes the state. Safe to call twice. */
   stop(): Promise<void>;
 }
 
@@ -97,37 +170,64 @@ function processAlive(pid: number): boolean {
 /** The grace a stopped server gets before it is killed outright. */
 const STOP_GRACE_MS = 20_000;
 
-/**
- * Stops the process a state directory's pid file names, leaving the state.
- * The server runs as its own process group, so the group is signaled.
- */
-async function stopProcess(state: string): Promise<void> {
+/** The process group a state directory's pid file names. The server runs as
+ *  its own group, so the group is what is signaled. */
+function groupOf(state: string): number {
   const pid = Number(readFileSync(join(state, "server.pid"), "utf8").trim());
   if (!Number.isInteger(pid) || pid <= 0) {
     throw new Error(`the pid file under ${state} names no process`);
   }
-  const signal = (name: NodeJS.Signals): void => {
-    try {
-      process.kill(-pid, name);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  return pid;
+}
+
+function signalGroup(group: number, name: NodeJS.Signals): void {
+  try {
+    process.kill(-group, name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+/** Waits for the group to end; false when it is still there at `deadline`. */
+async function waitUntilGone(
+  group: number,
+  deadline: number,
+): Promise<boolean> {
+  while (processAlive(group) && Date.now() < deadline) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  return !processAlive(group);
+}
+
+/** What the supervisor recorded of the server's end, once the group is gone. */
+function readExit(
+  state: string,
+  signaledAt: number | undefined,
+  killed: boolean,
+): ServerExit {
+  const file = join(state, "server.exit");
+  if (!existsSync(file)) {
+    if (!killed) {
+      throw new Error(
+        `the server under ${state} ended and left no exit record`,
+      );
     }
+    return {
+      code: null,
+      signal: "SIGKILL",
+      ms: Date.now() - (signaledAt ?? Date.now()),
+    };
+  }
+  const record = JSON.parse(readFileSync(file, "utf8")) as {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    at: number;
   };
-  signal("SIGTERM");
-  const deadline = Date.now() + STOP_GRACE_MS;
-  while (processAlive(pid) && Date.now() < deadline) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-  }
-  if (processAlive(pid)) {
-    signal("SIGKILL");
-    const killDeadline = Date.now() + STOP_GRACE_MS;
-    while (processAlive(pid) && Date.now() < killDeadline) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-    }
-    if (processAlive(pid)) {
-      throw new Error(`process ${String(pid)} survived SIGKILL`);
-    }
-  }
+  return {
+    code: record.code,
+    signal: record.signal,
+    ms: Math.max(0, record.at - (signaledAt ?? record.at)),
+  };
 }
 
 /** Not blocking: a worker held for a boot cannot retire its pooled
@@ -183,6 +283,48 @@ async function mintWorkingKey(
   return body.key;
 }
 
+/**
+ * The environment a fixture's server is booted with: the script's own, with
+ * the port left to the kernel and the limiter and enrichment pinned off.
+ */
+function serverEnv(extraEnv: Record<string, string>): NodeJS.ProcessEnv {
+  return {
+    // The script pins the port to `PORT` when one is set, and the run's
+    // own server may already hold it. The limiter is pinned off for the
+    // same kind of reason and in the same place: a fixture that does not
+    // ask for it should not inherit one from whoever started the run.
+    // `extraEnv` comes last, so a fixture that does ask still wins.
+    ...process.env,
+    PORT: "",
+    RATE_LIMIT_ENABLED: "false",
+    MARFA_ENRICHMENT_ENABLED: "false",
+    MARFA_ENRICHMENT_OCR_ENABLED: "false",
+    ...extraEnv,
+  };
+}
+
+function tsxBinary(): string {
+  const tsx = resolve(conformanceRoot, "node_modules/.bin/tsx");
+  if (!existsSync(tsx)) {
+    throw new Error("no tsx binary in this checkout; run pnpm install first");
+  }
+  return tsx;
+}
+
+const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
+
+/** Before `down`, which clears the log with the rest of the state. The run's
+ *  server boots from the same checkout, so what this one answered is held to
+ *  the same document. */
+function keepStatusLog(state: string): void {
+  const destination = process.env.MARFA_STATUS_LOGS;
+  const log = join(state, "server.log");
+  if (destination !== undefined && destination !== "" && existsSync(log)) {
+    mkdirSync(destination, { recursive: true });
+    copyFileSync(log, join(destination, `${basename(state)}.log`));
+  }
+}
+
 export async function bootFreshServer(
   label: string,
   /**
@@ -195,26 +337,14 @@ export async function bootFreshServer(
    */
   extraEnv: Record<string, string> = {},
 ): Promise<FreshServer> {
-  const tsx = resolve(conformanceRoot, "node_modules/.bin/tsx");
-  if (!existsSync(tsx)) {
-    throw new Error("no tsx binary in this checkout; run pnpm install first");
-  }
-  const script = resolve(conformanceRoot, "scripts/marfa-server.ts");
+  const tsx = tsxBinary();
   const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
-  const run = (command: "up" | "down") =>
-    runScript(tsx, [script, command, "--state", state], {
-      // The script pins the port to `PORT` when one is set, and the run's
-      // own server may already hold it. The limiter is pinned off for the
-      // same kind of reason and in the same place: a fixture that does not
-      // ask for it should not inherit one from whoever started the run.
-      // `extraEnv` comes last, so a fixture that does ask still wins.
-      ...process.env,
-      PORT: "",
-      RATE_LIMIT_ENABLED: "false",
-      MARFA_ENRICHMENT_ENABLED: "false",
-      MARFA_ENRICHMENT_OCR_ENABLED: "false",
-      ...extraEnv,
-    });
+  const run = (command: "up" | "down", more: Record<string, string> = {}) =>
+    runScript(
+      tsx,
+      [SERVER_SCRIPT, command, "--state", state],
+      serverEnv({ ...extraEnv, ...more }),
+    );
 
   const booting = run("up");
   let stopping: Promise<void> | undefined;
@@ -223,15 +353,7 @@ export async function bootFreshServer(
       // `down` finds the server through the pid file `up` writes, so one
       // still booting is waited for rather than left to come up after.
       await booting;
-      // Before `down`, which clears the log with the rest of the state. The
-      // run's server boots from the same checkout, so what this one answered
-      // is held to the same document.
-      const destination = process.env.MARFA_STATUS_LOGS;
-      const log = join(state, "server.log");
-      if (destination !== undefined && destination !== "" && existsSync(log)) {
-        mkdirSync(destination, { recursive: true });
-        copyFileSync(log, join(destination, `${basename(state)}.log`));
-      }
+      keepStatusLog(state);
       const down = await run("down");
       if (down.status !== 0) {
         throw new Error(
@@ -271,29 +393,174 @@ export async function bootFreshServer(
     await stop();
     throw err;
   }
+
+  // When the last signal went out, so that `ServerExit.ms` can say how long
+  // the stop took.
+  let signaledAt: number | undefined;
+  const signal = (name: StopSignal): void => {
+    signaledAt = Date.now();
+    signalGroup(groupOf(state), name);
+  };
+  const exit = async (): Promise<ServerExit> => {
+    if (!(await waitUntilGone(groupOf(state), Date.now() + STOP_GRACE_MS))) {
+      throw new Error(
+        `the server under ${state} was still running ${String(STOP_GRACE_MS)}ms after it was asked to end`,
+      );
+    }
+    return readExit(state, signaledAt, false);
+  };
   const server: FreshServer = {
     apiUrl,
     operatorKey,
     workingKey,
     sqlitePath: join(state, "marfa.db"),
-    async restart(whileStopped) {
-      await stopProcess(state);
-      await whileStopped?.();
-      const again = await run("up");
+    stateDir: state,
+    signal,
+    exit,
+    async restart(arg) {
+      const options: RestartOptions =
+        typeof arg === "function" ? { whileStopped: arg } : (arg ?? {});
+      const name = options.signal ?? "SIGTERM";
+      const group = groupOf(state);
+      signal(name);
+      let killed = name === "SIGKILL";
+      if (!(await waitUntilGone(group, Date.now() + STOP_GRACE_MS))) {
+        // Not ended by the signal asked for: killed, and said so, so a
+        // fixture about a clean stop sees a stop that was not one.
+        signalGroup(group, "SIGKILL");
+        killed = true;
+        if (!(await waitUntilGone(group, Date.now() + STOP_GRACE_MS))) {
+          throw new Error(`process ${String(group)} survived SIGKILL`);
+        }
+      }
+      const ended = readExit(state, signaledAt, killed);
+      await options.whileStopped?.();
+      const again = await run("up", options.env);
       if (again.status !== 0) {
         throw new Error(
           `could not boot the server again into ${state}:\n${again.output}`,
         );
       }
       const after = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
-      if (!after.MARFA_API_URL) {
-        throw new Error(`the second boot into ${state} wrote no address`);
+      if (!after.MARFA_API_URL || !after.MARFA_OPERATOR_KEY) {
+        throw new Error(
+          `the second boot into ${state} wrote an incomplete env`,
+        );
       }
       server.apiUrl = after.MARFA_API_URL;
+      if (after.MARFA_OPERATOR_KEY !== server.operatorKey) {
+        server.operatorKey = after.MARFA_OPERATOR_KEY;
+        server.workingKey = await mintWorkingKey(
+          server.apiUrl,
+          server.operatorKey,
+          label,
+        );
+      }
+      return ended;
     },
     stop,
   };
   return server;
+}
+
+const DATABASE_SUFFIXES = { db: "", wal: "-wal", shm: "-shm" } as const;
+
+/** What `bootRefused` takes. */
+export interface RefusedBootOptions {
+  /**
+   * Arranges the state before the server is started: `sqlitePath` is where
+   * it will look for its database, which a fixture fills, damages or leaves
+   * out. A fixture about a setting leaves it out and the server finds no
+   * database at all.
+   */
+  prepare?: (sqlitePath: string, stateDir: string) => void | Promise<void>;
+  extraEnv?: Record<string, string>;
+  /**
+   * The `NODE_ENV` the server is started under, which every other boot
+   * leaves unset. Naming one also leaves `MARFA_AUTH_SECRET` and
+   * `MARFA_AUTH_BASE_URL` to `extraEnv`, so a rule that holds only in
+   * production reads what the fixture gives it.
+   */
+  nodeEnv?: string;
+}
+
+function fingerprint(sqlitePath: string): DatabaseFiles {
+  const of = (suffix: string): string => {
+    const path = `${sqlitePath}${suffix}`;
+    return existsSync(path)
+      ? createHash("sha256").update(readFileSync(path)).digest("hex")
+      : "absent";
+  };
+  return {
+    db: of(DATABASE_SUFFIXES.db),
+    wal: of(DATABASE_SUFFIXES.wal),
+    shm: of(DATABASE_SUFFIXES.shm),
+  };
+}
+
+/**
+ * Starts a server of the fixture's own that is meant to refuse to start, and
+ * waits for it to end, which `bootFreshServer` cannot do: it waits for
+ * `/health` and a server that ended is an error there.
+ *
+ * Resolves with how it ended, what it logged, and the database's files from
+ * before and after, so a fixture can say both what the refusal was and that
+ * it changed nothing. No credential is minted. Rejects when the server is
+ * still up a minute in.
+ */
+export async function bootRefused(
+  label: string,
+  options: RefusedBootOptions = {},
+): Promise<RefusedBoot> {
+  const tsx = tsxBinary();
+  const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
+  const sqlitePath = join(state, "marfa.db");
+  let stopping: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    stopping ??= Promise.resolve(
+      rmSync(state, { recursive: true, force: true }),
+    ).finally(() => unstopped.delete(stop));
+    return stopping;
+  };
+  unstopped.add(stop);
+
+  try {
+    await options.prepare?.(sqlitePath, state);
+    const before = fingerprint(sqlitePath);
+    const refused = await runScript(
+      tsx,
+      [
+        SERVER_SCRIPT,
+        "refused",
+        "--state",
+        state,
+        ...(options.nodeEnv === undefined
+          ? []
+          : ["--node-env", options.nodeEnv]),
+      ],
+      serverEnv(options.extraEnv ?? {}),
+    );
+    if (refused.status !== 0) {
+      throw new Error(
+        `the server booted into ${state} was not refused:\n${refused.output}`,
+      );
+    }
+    const ended = readExit(state, undefined, false);
+    return {
+      ...ended,
+      output: redactBootstrapSecret(
+        readFileSync(join(state, "server.log"), "utf8"),
+      ),
+      stateDir: state,
+      sqlitePath,
+      before,
+      after: fingerprint(sqlitePath),
+      stop,
+    };
+  } catch (err) {
+    await stop();
+    throw err;
+  }
 }
 
 /** What the token door answers a device code's poll. */

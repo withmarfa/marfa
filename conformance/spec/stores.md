@@ -638,7 +638,7 @@ When an `update_properties` job ends `completed`, `canceled` or `failed`, the se
 
 ### `stores/job-patch-no-reach`
 
-While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a working key that never held the bytes.
+While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a working key or an app's access token that never held the bytes.
 
 **Reason:** retention grants no read.
 

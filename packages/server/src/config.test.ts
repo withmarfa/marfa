@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CONNECTOR_HOLD_MS,
+  MAX_RETENTION_MS,
   SETTING_NAMES,
   SettingsError,
   defaultTessdataDir,
+  describeSettings,
   loadConfig,
 } from "./config.js";
 
@@ -486,16 +488,16 @@ describe("inbound retained capacity settings", () => {
   });
 });
 
-it("bounds inbound date horizons and the native timer interval", () => {
+it("bounds inbound date horizons and the cleanup cadence", () => {
   const maximum = loadConfig({
     MARFA_INBOUND_HANDLED_RETENTION_DAYS: "36500",
     MARFA_INBOUND_PENDING_RETENTION_DAYS: "36500",
-    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483647",
+    MARFA_INBOUND_CLEANUP_INTERVAL_MS: String(MAX_RETENTION_MS),
   });
   expect(maximum.inbound).toMatchObject({
     handledRetentionDays: 36500,
     pendingRetentionDays: 36500,
-    cleanupIntervalMs: 2147483647,
+    cleanupIntervalMs: MAX_RETENTION_MS,
   });
   for (const name of [
     "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
@@ -503,7 +505,9 @@ it("bounds inbound date horizons and the native timer interval", () => {
   ])
     expect(refusal({ [name]: "36501" })).toContain(name);
   expect(
-    refusal({ MARFA_INBOUND_CLEANUP_INTERVAL_MS: "2147483648" }),
+    refusal({
+      MARFA_INBOUND_CLEANUP_INTERVAL_MS: String(MAX_RETENTION_MS + 1),
+    }),
   ).toContain("MARFA_INBOUND_CLEANUP_INTERVAL_MS");
 });
 
@@ -526,4 +530,111 @@ it.each([
   );
   expect(refusal({ [name]: String(maximum + 1) })).toContain(name);
   expect(loadConfig({ [name]: "0" })).toHaveProperty(field, 0);
+});
+
+describe("the settings as data", () => {
+  const described = describeSettings();
+
+  /** The lines of a refusal that name this setting and say its own rule is broken, not a rule it shares with another. */
+  function ruleRefusal(name: string, raw: string): string {
+    return refusal({ [name]: raw })
+      .split("\n")
+      .filter(
+        (line) =>
+          line.trim().startsWith(`${name} must be `) &&
+          !line.includes("must be at least"),
+      )
+      .join("\n");
+  }
+
+  it("describes every setting once, in the order the schema states them", () => {
+    expect(described.map((s) => s.name)).toEqual([...SETTING_NAMES]);
+  });
+
+  it("gives every setting one plain sentence about what it controls", () => {
+    for (const { name, description } of described) {
+      expect(description, name).toMatch(/^[A-Z].*\.$/);
+      expect(description, name).not.toContain("\u2014");
+    }
+  });
+
+  it("states no default for a secret", () => {
+    const secrets = described.filter((s) => s.secret);
+    expect(secrets.map((s) => s.name)).toContain("API_KEY_SALT");
+    for (const setting of secrets) {
+      expect(setting.default, setting.name).toBeUndefined();
+    }
+  });
+
+  it("explains in words a default that derives from something else", () => {
+    const note = (name: string) =>
+      described.find((s) => s.name === name)?.defaultNote;
+    expect(note("API_KEY_SALT")).toContain("Required in production");
+    expect(note("MARFA_AUTH_BASE_URL")).toContain("Required in production");
+    expect(note("MARFA_AUTH_SECRET")).toContain("Required in production");
+  });
+
+  it("states a default its own rule accepts, and that loads", () => {
+    for (const setting of described) {
+      if (setting.default === undefined) continue;
+      expect(
+        ruleRefusal(setting.name, String(setting.default)),
+        setting.name,
+      ).toBe("");
+    }
+  });
+
+  it("states bounds that are the ones the setting refuses at", () => {
+    for (const { name, rule } of described) {
+      if (rule.kind === "count") {
+        expect(ruleRefusal(name, String(rule.min)), `${name} at min`).toBe("");
+        if (rule.min > 0) {
+          expect(
+            ruleRefusal(name, String(rule.min - 1)),
+            `${name} below min`,
+          ).not.toBe("");
+        }
+        if (rule.max !== undefined) {
+          expect(ruleRefusal(name, String(rule.max)), `${name} at max`).toBe(
+            "",
+          );
+          expect(
+            ruleRefusal(name, String(rule.max + 1)),
+            `${name} above max`,
+          ).not.toBe("");
+        }
+      }
+      if (rule.kind === "decimal") {
+        expect(ruleRefusal(name, String(rule.min)), `${name} at min`).toBe("");
+        expect(ruleRefusal(name, String(rule.max)), `${name} at max`).toBe("");
+        expect(
+          ruleRefusal(name, String(rule.max + 1)),
+          `${name} above max`,
+        ).not.toBe("");
+      }
+      if (rule.kind === "choice") {
+        for (const value of rule.values) {
+          expect(ruleRefusal(name, value), `${name}=${value}`).toBe("");
+        }
+        expect(ruleRefusal(name, "not-a-choice"), name).not.toBe("");
+      }
+    }
+  });
+});
+
+// A delay past the 32-bit limit makes a timer fire after 1 ms, and an
+// AbortSignal.timeout past 2^32 - 1 throw, so the value is refused at boot.
+it.each([
+  "SQLITE_BUSY_BUDGET_MS",
+  "MARFA_INBOUND_READ_TIMEOUT_MS",
+  "MARFA_ENRICHMENT_ITEM_TIMEOUT_MS",
+  "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS",
+  "MARFA_BULK_ACTION_POLL_INTERVAL_MS",
+  "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
+  "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
+])("refuses a %s no timer can honor", (name) => {
+  // The worker's interval may not exceed its own ceiling.
+  const ceiling = { MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "2147483647" };
+  expect(refusal({ ...ceiling, [name]: "2147483647" })).toBe("");
+  expect(refusal({ ...ceiling, [name]: "2147483648" })).toContain(name);
 });

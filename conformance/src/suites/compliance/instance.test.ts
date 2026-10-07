@@ -12,6 +12,8 @@ import {
 } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
 import { readTarGzEntry } from "../../utils/archive.js";
+import { uploadReferenced } from "../../utils/blobs.js";
+import { declareOversizeBody } from "../../utils/oversize.js";
 
 /** The shape `generateId` mints, which is what the identity is. */
 const UUID_V7 =
@@ -20,9 +22,13 @@ const UUID_V7 =
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext("compliance", "instance"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "instance",
+  ));
 });
 
 afterAll(async () => {
@@ -132,10 +138,26 @@ describe("the instance", () => {
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
     await expectMatchesSchema("GET", "/", 200, r.data);
+    // The contract version is an integer, and the case that names it holds
+    // it to the document; here it is only that the root carries one.
+    expect(Number.isInteger(r.data.contract)).toBe(true);
     // Every entry held against a door, by the case below.
     expect([...(r.data.features as string[])].sort()).toEqual(
       FEATURE_DOORS.map((door) => door.feature).sort(),
     );
+  });
+
+  it("advertises its features as an array of strings, each named once", async () => {
+    const r = await client.root();
+    expect(r.ok).toBe(true);
+    const features: unknown = r.data.features;
+    expect(Array.isArray(features)).toBe(true);
+    const named = features as unknown[];
+    expect(named.length).toBeGreaterThan(0);
+    for (const feature of named) {
+      expect(typeof feature, String(feature)).toBe("string");
+    }
+    expect(new Set(named).size).toBe(named.length);
   });
 
   it("answers a browser at the root with a page and a program with the JSON", async () => {
@@ -159,6 +181,126 @@ describe("the instance", () => {
       expect(program.headers.get("vary")).toContain("Accept");
       expect(((await program.json()) as { name: string }).name).toBe("marfa");
     }
+  });
+
+  it("answers a page when text/html comes before application/json, and the description when it comes after or when the request names neither", async () => {
+    const answer = (accept: string) =>
+      fetch(`${apiUrl}/`, { headers: { accept } });
+
+    // Both named, html first: a page. The witness for the order below, which
+    // asks for the same two types the other way round.
+    const page = await answer("text/html, application/json");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+
+    const description = (await client.root()).data;
+    for (const accept of [
+      "application/json, text/html",
+      "text/plain",
+      "application/xml",
+      "image/png, */*;q=0.1",
+    ]) {
+      const program = await answer(accept);
+      expect(program.status, accept).toBe(200);
+      expect(program.headers.get("content-type"), accept).toContain(
+        "application/json",
+      );
+      // The description, whole: the identity, the features and the contract
+      // version.
+      expect(await program.json(), accept).toEqual(description);
+    }
+  });
+
+  it("sends Vary: Accept on a refusal at the root as on the answers it varies", async () => {
+    // A query key the root does not take is refused before its handler runs,
+    // so a cache that was handed the refusal would be handed it for a
+    // browser and for a program alike.
+    for (const accept of [undefined, "application/json", "text/html"]) {
+      const refused = await fetch(`${apiUrl}/?not_a_key=1`, {
+        headers: accept === undefined ? {} : { accept },
+      });
+      expect(refused.status, String(accept)).toBe(400);
+      expect(refused.headers.get("vary"), String(accept)).toContain("Accept");
+    }
+
+    // The witness: the same address without the key is answered, and says it
+    // varies as well, so the refusals are the ones the header was added to.
+    const served = await fetch(`${apiUrl}/`);
+    expect(served.status).toBe(200);
+    expect(served.headers.get("vary")).toContain("Accept");
+
+    const head = await fetch(`${apiUrl}/`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("vary")).toContain("Accept");
+  });
+
+  it("sends the page policy on the page a refusal renders, and none on the refusal a program is sent", async () => {
+    // Refused by a middleware before any door ran, by the credential gate,
+    // and by the root's own query check.
+    const refusals: [string, string, Record<string, string>, number][] = [
+      ["a request with no credential", "/items", {}, 401],
+      [
+        "a read view the sign-in page refuses",
+        "/auth/sign-in",
+        { "X-Marfa-Read-View": "x" },
+        400,
+      ],
+      ["a query key the root does not take", "/?not_a_key=1", {}, 400],
+    ];
+    const nonces = new Set<string>();
+    for (const [label, path, extra, status] of refusals) {
+      const asPage = await fetch(`${apiUrl}${path}`, {
+        headers: { accept: "text/html", ...extra },
+      });
+      expect(asPage.status, label).toBe(status);
+      expect(asPage.headers.get("content-type"), label).toContain("text/html");
+      const policy = asPage.headers.get("content-security-policy") ?? "";
+      const nonce = /script-src 'nonce-([^']+)'/.exec(policy)?.[1];
+      expect(nonce, label).toBeTruthy();
+      expect(policy, label).toContain(`style-src 'nonce-${nonce ?? ""}'`);
+      nonces.add(nonce ?? "");
+
+      // The witness: the same refusal, asked as a program, is not a page and
+      // carries no page policy.
+      const asProgram = await fetch(`${apiUrl}${path}`, { headers: extra });
+      expect(asProgram.status, `${label}, as a program`).toBe(status);
+      expect(asProgram.headers.get("content-type"), label).toContain(
+        "application/json",
+      );
+      expect(
+        asProgram.headers.get("content-security-policy"),
+        label,
+      ).toBeNull();
+    }
+    expect(nonces.size).toBe(refusals.length);
+  });
+
+  it("names in its policy the one nonce its page carries, a new one on each answer at one address", async () => {
+    const asBrowser = { accept: "text/html" };
+    const nonces = new Set<string>();
+    const asked = 20;
+    for (let call = 0; call < asked; call++) {
+      const res = await fetch(`${apiUrl}/`, { headers: asBrowser });
+      const policy = res.headers.get("content-security-policy") ?? "";
+      // A script and a style are allowed by that nonce alone.
+      const scripts = /script-src ([^;]*)/.exec(policy)?.[1];
+      const styles = /style-src ([^;]*)/.exec(policy)?.[1];
+      const nonce = /^'nonce-([^']+)'$/.exec(scripts ?? "")?.[1];
+      expect(nonce, `call ${String(call)}`).toBeTruthy();
+      expect(styles).toBe(`'nonce-${nonce ?? ""}'`);
+      nonces.add(nonce ?? "");
+
+      // What the page carries is the nonce its own policy names, so it is the
+      // page that works under the policy and not a nonce nothing uses.
+      const carried = [...(await res.text()).matchAll(/nonce="([^"]+)"/g)].map(
+        (match) => match[1],
+      );
+      if (call === 0) expect(carried.length).toBeGreaterThan(0);
+      expect(new Set(carried), `call ${String(call)}`).toEqual(
+        new Set([nonce]),
+      );
+    }
+    expect(nonces.size).toBe(asked);
   });
 
   it("sends a content security policy with every HTML page and a nonce of its own with each", async () => {
@@ -271,6 +413,72 @@ describe("the instance", () => {
     }
   });
 
+  it("sends its contract version on every kind of answer, not only a JSON body", async () => {
+    // The statement says every answer, and the header is set by the layer
+    // ahead of the credential, the body cap and the sign-in library, so the
+    // answers below come from places that layer does not own: a page, a
+    // stream, a file, a body-less answer, a refusal made before a handler
+    // runs, and the sign-in library's own.
+    const root = await client.root();
+    const contract = String(root.data.contract);
+    const bytes = new TextEncoder().encode(
+      `a blob for the header ${Date.now()}`,
+    );
+    const uploaded = await uploadReferenced(client, ctx, bytes, "text/plain");
+    expect(uploaded.ok, JSON.stringify(uploaded.error)).toBe(true);
+    const auth = { Authorization: `Bearer ${apiKey}` };
+    const asBrowser = { accept: "text/html" };
+
+    const stream = await fetch(`${apiUrl}/events`, { headers: auth });
+    await stream.body?.cancel();
+    const tooLarge = await declareOversizeBody(`${apiUrl}/items`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      bytes: 1_048_577,
+    });
+    const answers: [string, number, Response][] = [
+      ["a page", 200, await fetch(`${apiUrl}/`, { headers: asBrowser })],
+      [
+        "a sign-in page",
+        200,
+        await fetch(`${apiUrl}/auth/sign-in`, { headers: asBrowser }),
+      ],
+      [
+        "the sign-in library's own answer",
+        200,
+        await fetch(`${apiUrl}/auth/get-session`),
+      ],
+      ["an event stream", 200, stream],
+      [
+        "a HEAD at the root",
+        200,
+        await fetch(`${apiUrl}/`, { method: "HEAD" }),
+      ],
+      [
+        "a HEAD of a read",
+        200,
+        await fetch(`${apiUrl}/items?limit=1`, {
+          method: "HEAD",
+          headers: auth,
+        }),
+      ],
+      [
+        "a blob download",
+        200,
+        await fetch(`${apiUrl}/blobs/${uploaded.data.hash}`, { headers: auth }),
+      ],
+      ["a request to /health", 200, await fetch(`${apiUrl}/health`)],
+    ];
+    for (const [label, status, response] of answers) {
+      expect(response.status, label).toBe(status);
+      expect(response.headers.get("X-Marfa-Contract"), label).toBe(contract);
+    }
+    expect(tooLarge.status, "a body past the cap").toBe(413);
+    expect(tooLarge.headers["x-marfa-contract"], "a body past the cap").toBe(
+      contract,
+    );
+  });
+
   it("names itself the same way at the root, at /config and in an archive", async () => {
     // One identity, three doors, and the third is the one the first two
     // cannot stand in for: the manifest is written into a file nothing
@@ -291,6 +499,11 @@ describe("the instance", () => {
     expect((config.data as { instance_id: string }).instance_id).toBe(
       root.instance_id,
     );
+    // The same value is a UUIDv7 at the other two doors, whether or not the
+    // equality above holds the shape.
+    expect((config.data as { instance_id: string }).instance_id).toMatch(
+      UUID_V7,
+    );
 
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.ok).toBe(true);
@@ -305,6 +518,7 @@ describe("the instance", () => {
     // for the wrong reason.
     expect(manifest.version).toBe(0);
     expect(manifest.instance_id).toBe(root.instance_id);
+    expect(manifest.instance_id).toMatch(UUID_V7);
   });
 
   it("serves its OpenAPI document, with and without a credential", async () => {

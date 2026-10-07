@@ -472,11 +472,11 @@ While an item of a type a working key or an access token may read references a b
 
 ### `blobs/lend-earlier-version`
 
-While only an earlier version of an item references a blob, the server MUST answer a working key `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While only an earlier version of an item references a blob, the server MUST answer a working key or an app's access token `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
 
 **Reason:** the `blob-orphans` housekeeping job keeps such a blob (`stores/orphan-keeps-versions`), so only the read is withheld.
 
-**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`.
+**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `compliance/blob-reach-app.test.ts › is not served a blob only an earlier version of an item names`.
 
 ### `blobs/lend-withdrawn`
 

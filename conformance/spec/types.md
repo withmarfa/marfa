@@ -576,15 +576,21 @@ If a type's `version_policy` names a window that ends sooner than an earlier one
 
 ### `types/config`
 
-When a key holding `config.manage` sends `PUT /config`, the server MUST replace the configuration whole and answer it beside the instance's identity, as `GET /config` then reads it (`instance.md` 2).
+When a key holding `config.manage` sends `PUT /config`, the server MUST replace the configuration whole and answer it beside the instance's identity, as `GET /config` then reads it (`instance/config-takes-back-read`).
 
 **Tests:** `compliance/schema-enforcement.test.ts › PUT replaces the configuration wholesale and GET reads it back`.
 
 ### `types/config-refused`
 
-If `PUT /config` names a lever of the wrong shape or a key it does not know, then the server MUST answer `400 validation_error` and keep the configuration.
+If `PUT /config` names a lever of the wrong shape, other than one missing a member it requires, or a key it does not know, then the server MUST answer `400 validation_error` and keep the configuration.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses a lever of the wrong shape`, `› refuses a configuration key it does not know, and keeps the configuration`.
+
+### `types/config-lever-missing-field`
+
+If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcement.source_allowlist` or `enforcement.source_filter` without `types` or `sources`, then the server MUST answer `400 missing_required_field` naming the missing member's path in `details.field`.
+
+**Tests:** `compliance/instance-config.test.ts › names the field a lever lacks with missing_required_field, and keeps the configuration`.
 
 ### `types/config-permission`
 

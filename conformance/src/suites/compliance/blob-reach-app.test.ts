@@ -153,6 +153,31 @@ describe("a signed-in app and an extension namespace", () => {
     expect(await readingDoors(app, hash)).toEqual(UNKNOWN);
   });
 
+  it("is not served a blob only an earlier version of an item names", async () => {
+    const sent = await owner.uploadBlob(
+      new TextEncoder().encode("named only by an earlier version"),
+      "text/plain",
+    );
+    expect(sent.status).toBe(201);
+    const note = await owner.createItem({
+      type: "core.note",
+      properties: { body: `![it](${sent.data.hash})` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    // The witness: the app reads the blob while the item names it.
+    expect((await app.downloadBlob(sent.data.hash)).status).toBe(200);
+
+    const moved = await owner.updateItem(note.data.item.id, {
+      properties: { body: "no longer names it" },
+      version: note.data.item.version,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const refused = await app.downloadBlob(sent.data.hash);
+    expect(refused.status).toBe(404);
+    expect(refused.error?.error.code).toBe("blob_not_found");
+    expect((await app.headBlob(sent.data.hash)).status).toBe(404);
+  });
+
   it("is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing", async () => {
     const send = async (words: string) => {
       const res = await owner.uploadBlob(

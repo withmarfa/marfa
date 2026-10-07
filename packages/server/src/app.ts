@@ -183,6 +183,18 @@ export function createApp(
   // version, the ones no later layer shapes included.
   app.use("*", contractHeader());
 
+  // The root answers a page or the description by what the caller asks for,
+  // so a cache must not hand one the other's: a refusal included.
+  app.use("*", async (c, next) => {
+    await next();
+    if (
+      c.req.path === "/" &&
+      (c.req.method === "GET" || c.req.method === "HEAD")
+    ) {
+      c.res.headers.append("Vary", "Accept");
+    }
+  });
+
   // Expose the resolved AppConfig on the request context so handlers and
   // middleware read env-derived values from the single config source
   // rather than re-reading `process.env`.
@@ -344,9 +356,7 @@ export function createApp(
   // somebody pointing a client at an address is asking.
   app.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
     // One address, two readers: a program takes the description and a person
-    // opening it in a browser takes a page. A cache must not hand one the
-    // other's.
-    c.header("Vary", "Accept");
+    // opening it in a browser takes a page.
     if (prefersHtml(c.req.header("accept"))) {
       // The page says who is signed in, so it is the person's own and is not
       // kept. It is where a sign-in with no app waiting ends.

@@ -128,3 +128,35 @@ describe("GET /", () => {
     expect(config.instance_id).toBe(root.instance_id);
   });
 });
+
+describe("Vary: Accept", () => {
+  it("rides a refusal at the root, and no other path's answer", async () => {
+    const refused = await ctx.app.request("/?stray=1");
+    expect(refused.status).toBe(400);
+    expect(refused.headers.get("vary")).toContain("Accept");
+    const elsewhere = await ctx.app.request("/health");
+    expect(elsewhere.headers.get("vary") ?? "").not.toContain("Accept");
+  });
+});
+
+describe("Vary at the root with an origin allowed", () => {
+  it("names Origin beside Accept, so a cache keeps one origin's answer from another", async () => {
+    const withCors = await createTestContext({
+      corsOrigins: ["https://a.example"],
+    });
+    try {
+      const res = await withCors.app.request("/", {
+        headers: { Origin: "https://a.example" },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBe(
+        "https://a.example",
+      );
+      const vary = (res.headers.get("vary") ?? "")
+        .split(",")
+        .map((part) => part.trim());
+      expect(vary).toEqual(expect.arrayContaining(["Accept", "Origin"]));
+    } finally {
+      await withCors.cleanup();
+    }
+  });
+});
