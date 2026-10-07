@@ -71,6 +71,14 @@ pub enum CliError {
         /// it took effect.
         status: Option<u16>,
     },
+    /// Not `Refused`: the docs site is not a Marfa server, so the envelope
+    /// names no server status or code.
+    #[error(
+        "no docs page at {path}: `marfa docs search` finds pages and `marfa docs topics` lists them"
+    )]
+    DocsPageNotFound { path: String },
+    #[error("cannot read the docs site at {address}: {reason}")]
+    DocsUnreachable { address: String, reason: String },
     #[error(
         "{origin} answered {status}, a redirect to {}: name that address instead",
         location.as_deref().unwrap_or("nowhere it named")
@@ -194,6 +202,8 @@ own_codes! {
     CliError::Invalid(_) => "invalid",
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
+    CliError::DocsPageNotFound { .. } => "docs_page_not_found",
+    CliError::DocsUnreachable { .. } => "docs_unreachable",
 }
 
 /// What the server's own refusal is named by, from its status.
@@ -274,9 +284,12 @@ impl CliError {
                 | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
-            CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
+            CliError::Io(_) | CliError::Watch(_) | CliError::DocsUnreachable { .. } => {
+                Exit::Environment
+            }
             CliError::NotHeld(_)
             | CliError::Invalid(_)
+            | CliError::DocsPageNotFound { .. }
             | CliError::ContractMismatch { .. }
             | CliError::Redirected { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
@@ -396,12 +409,13 @@ impl From<serde_json::Error> for CliError {
 const EXIT_CODES_TEXT: &str = "\
 Exit codes:
   0  done
-  1  the request was refused, by the server, by the binary before
-     sending, or for an answer on another contract; a retry does not
-     change it
+  1  the request was refused, by the server, by the command before
+     sending, for an answer on another contract, or for a docs page
+     that does not exist; a retry does not change it
   2  the command line was wrong, or named no store or server
   3  the environment failed (unreachable, timed out, a 5xx, a 429, an
-     answer naming no contract, full local storage); try again
+     answer naming no contract, full local storage, a docs site that
+     cannot be read); try again
   4  the working copy or the queue refused under the device rules, or
      this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended;
@@ -522,6 +536,8 @@ mod tests {
             "watch",
             "no_store",
             "no_credential",
+            "docs_page_not_found",
+            "docs_unreachable",
         ] {
             expected.push(own);
         }
@@ -571,6 +587,13 @@ mod tests {
                 origin: String::new(),
                 status: 302,
                 location: None,
+            },
+            CliError::DocsPageNotFound {
+                path: String::new(),
+            },
+            CliError::DocsUnreachable {
+                address: String::new(),
+                reason: String::new(),
             },
             CliError::Core(CoreError::BytesAbsent {
                 hash: String::new(),
@@ -680,6 +703,18 @@ mod tests {
             Exit::Credential
         );
         assert_eq!(CliError::NotHeld("x".into()).exit(), Exit::Refused);
+        assert_eq!(
+            CliError::DocsPageNotFound { path: "x".into() }.exit(),
+            Exit::Refused
+        );
+        assert_eq!(
+            CliError::DocsUnreachable {
+                address: "x".into(),
+                reason: "x".into()
+            }
+            .exit(),
+            Exit::Environment
+        );
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {

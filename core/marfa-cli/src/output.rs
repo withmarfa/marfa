@@ -395,6 +395,14 @@ impl Printer {
         Ok(())
     }
 
+    /// Text exactly as given, with nothing added after it.
+    pub fn raw(&self, text: &str) -> Result<(), CliError> {
+        let mut out = io::stdout().lock();
+        out.write_all(text.as_bytes())?;
+        out.flush()?;
+        Ok(())
+    }
+
     pub fn report(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
         if self.json {
             self.value(value)

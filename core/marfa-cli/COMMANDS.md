@@ -32,12 +32,13 @@ Output:
 
 Exit codes:
   0  done
-  1  the request was refused, by the server, by the binary before
-     sending, or for an answer on another contract; a retry does not
-     change it
+  1  the request was refused, by the server, by the command before
+     sending, for an answer on another contract, or for a docs page
+     that does not exist; a retry does not change it
   2  the command line was wrong, or named no store or server
   3  the environment failed (unreachable, timed out, a 5xx, a 429, an
-     answer naming no contract, full local storage); try again
+     answer naming no contract, full local storage, a docs site that
+     cannot be read); try again
   4  the working copy or the queue refused under the device rules, or
      this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended;
@@ -54,8 +55,8 @@ where error.code is one of: not_found, unauthorized, forbidden, validation, unkn
 rate_limited, server, io, network, unnamed_answer, decoding, store, storage_full, signed_out,
 no_keychain, redirect, no_server, no_cursor, hydration_incomplete, no_catalog, reading_handle,
 wrong_schema, copy_expired, stream_incomplete, wrong_server, bytes_absent, contract_mismatch,
-canceled, first_sync_waiting, invalid, not_held, watch, usage, no_store, no_credential, conflict,
-too_large.
+canceled, first_sync_waiting, invalid, not_held, watch, usage, no_store, no_credential,
+docs_page_not_found, docs_unreachable, conflict, too_large.
 ```
 
 ## status
@@ -8194,6 +8195,114 @@ Options:
       --for <SECONDS>
           Stop after this long. Unset, it runs until interrupted
 
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr
+```
+
+## docs
+
+### marfa docs
+
+```text
+Read Marfa's public docs: search them, list their pages, or print one.
+
+Reads the docs site at https://docs.marfa.so, or at the address in MARFA_DOCS_URL. It needs no
+server, store or key, and sends no credential.
+
+A page is its path on the site. `get-started/files`, `/get-started/files`, `get-started/files.md`
+and `https://docs.marfa.so/get-started/files` name the same page. `search`, `topics` and `help` are
+commands, so a page with one of those names takes a leading slash, such as `/search`.
+
+`--url` and `--key` name a Marfa server, so this command refuses them.
+
+Usage: marfa docs [OPTIONS] [PAGE]
+       marfa docs <COMMAND>
+
+Commands:
+  search  Search the docs, best match first: each page's title, address and a snippet
+  topics  Every docs page: its title, address and description
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [PAGE]
+          The page to print, as Markdown: its path on the docs site, or its address
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr
+
+Examples:
+  marfa docs search "restore an archive" --limit 5
+  marfa docs topics
+  marfa docs get-started/files
+```
+
+### marfa docs search
+
+```text
+Search the docs, best match first: each page's title, address and a snippet
+
+Usage: marfa docs search [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>
+          What to look for
+
+Options:
+      --limit <N>
+          How many pages at most, 1 to 50. Unset takes the site's own default
+
+  -h, --help
+          Print help
+
+Server:
+      --url <URL>
+          The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential
+          made current
+
+      --key <KEY>
+          A key or a token for that server. Falls back to MARFA_API_KEY, then to the keychain: the
+          file MARFA_KEYCHAIN names, where it names one
+
+Output:
+      --json
+          Print the answer as JSON, and a refusal as one JSON object on stderr
+```
+
+### marfa docs topics
+
+```text
+Every docs page: its title, address and description
+
+Usage: marfa docs topics [OPTIONS]
+
+Options:
   -h, --help
           Print help
 

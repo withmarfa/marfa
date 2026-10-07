@@ -168,6 +168,8 @@ fn skipped(words: &[String]) -> bool {
     // by the fixtures in `device/`.
     first == Some("device")
         || first == Some("operations")
+        // Reads the docs site, never a server.
+        || first == Some("docs")
         // A folder on this machine is listed in a registry of the person's own;
         // only the three that write a folder's settings to the server are
         // requests.

@@ -18,9 +18,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    audit, blobs, config, connectors, edge_types, edges, events, export, extensions, housekeeping,
-    items, keys, login, logout, metadata, operations, owner, restore, search, status, types,
-    webhooks, whoami,
+    audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
+    housekeeping, items, keys, login, logout, metadata, operations, owner, restore, search, status,
+    types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, Exit, exit_codes_help};
@@ -169,6 +169,7 @@ enum Command {
         #[command(subcommand)]
         command: FoldersCommand,
     },
+    Docs(docs::DocsArgs),
 }
 
 fn main() -> ExitCode {
@@ -241,11 +242,12 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         url: cli.url,
         key: cli.key,
     };
-    // Lazy: login, logout, device, folders and operations must run without
-    // a resolved credential.
+    // Lazy: login, logout, device, folders, operations and docs must run
+    // without a resolved credential.
     let remote = || Remote::resolve(&named);
     match cli.command {
         Command::Operations => operations::run(&out),
+        Command::Docs(args) => docs::run(args, &named, &out),
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
