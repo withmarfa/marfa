@@ -106,10 +106,10 @@ export enum ErrorCode {
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
   /**
-   * A child type registration redeclares a field that is already defined
-   * by an ancestor in its parent chain. Inherited fields keep their
-   * parent-type meaning in every descendant; redefining breaks the
-   * generic-reader contract. See `validateTypeSchema`.
+   * A child type redeclares a field an ancestor defines, with another
+   * shape. Inherited fields keep their parent-type meaning in every
+   * descendant; reshaping one breaks the generic-reader contract. See
+   * `validateTypeSchema`.
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
   /**
@@ -309,7 +309,7 @@ export interface ErrorCodeInfo {
    */
   statusLabel?: string;
   /**
-   * The condition, in one sentence, as a client meets it: what is the case
+   * The condition, as a client meets it: what is the case
    * when this code comes back, not which line of the server throws it.
    */
   summary: string;
@@ -405,7 +405,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   },
   [ErrorCode.INVALID_CLIENT]: {
     status: 400,
-    summary: "The device sign-in page names a client that no longer exists.",
+    summary: "The device sign-in page names a client that is not registered.",
   },
   [ErrorCode.RATE_LIMITED]: {
     status: 429,
@@ -474,7 +474,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   },
   [ErrorCode.REQUEST_TOO_LARGE]: {
     status: 413,
-    summary: "The request body is over the cap for its door.",
+    summary: "The request body is over the cap for its operation.",
   },
   [ErrorCode.RANGE_NOT_SATISFIABLE]: {
     status: 416,
@@ -552,8 +552,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   },
   [ErrorCode.ID_REUSED]: {
     status: 409,
-    summary:
-      "A caller-minted id already names a different item or edge. `details.differs` says what differs.",
+    summary: "A caller-minted id already names a different item or edge.",
   },
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: {
     status: 404,
@@ -589,7 +588,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.REQUEST_TIMEOUT]: {
     status: 408,
     summary:
-      "A request body did not finish arriving before the door's deadline.",
+      "An inbound webhook delivery did not finish arriving before its deadline.",
   },
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: {
     status: 503,
@@ -621,7 +620,8 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   // exactly what a client branching on 409 expects to mean.
   [ErrorCode.IDEMPOTENCY_KEY_IN_FLIGHT]: {
     status: 409,
-    summary: "An `Idempotency-Key` names a request that is still being served.",
+    summary:
+      "An `Idempotency-Key` is held by another request, or kept changing hands. Retry.",
   },
   // 422 rather than 409: the request is refused because of what the caller
   // sent, not because of what the server holds, and a client branching on

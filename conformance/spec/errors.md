@@ -6,7 +6,7 @@ What every refusal looks like, and the refusals no other chapter owns. A refusal
 
 ### `errors/envelope`
 
-When a request is refused, other than with an answer under `/auth/*` that is in the sign-in library's own shape or is plain text, or one that prefers HTML (`errors/html-page`), the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings.
+When the server refuses a request other than `HEAD`, the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings, unless the answer is the page of `errors/html-page` or is under `/auth/*` in the sign-in library's own shape, in plain text or as an HTML page.
 
 **Reason:** a client reads every refusal of the server's own from one shape, whichever operation answered it.
 
@@ -42,7 +42,7 @@ The server MUST give the `code` of every refusal it answers in the envelope as o
 
 ### `errors/html-page`
 
-If a request's `Accept` header names `text/html` and does not name `application/json` before it, then the server MUST answer its refusal with an HTML page of the refusal's status in place of the JSON body.
+If a request's `Accept` header names `text/html` and does not name `application/json` before it, then the server MUST answer a refusal it would give in the envelope with an HTML page of the refusal's status in place of the JSON body, other than a `409 version_conflict`, a `409 ancestor_unavailable` or an answer replayed for an `Idempotency-Key`.
 
 **Reason:** a person who follows a stale link is not handed a JSON body shown as raw text. A program that sends no such header is answered in the envelope.
 
@@ -60,13 +60,13 @@ When the server answers a refusal in the envelope, the server MUST carry the bod
 
 ### `errors/html-page-code-header`
 
-When the server answers a refusal with an HTML page, the server MUST carry the refusal's code in the `X-Error-Code` header.
+When the server answers a refusal with the page of `errors/html-page`, the server MUST carry the refusal's code in the `X-Error-Code` header.
 
 **Tests:** `compliance/refusal-headers.test.ts › rides a page a browser is sent in place of the body, for a request that prefers HTML`.
 
 ### `errors/request-id`
 
-The server MUST carry an `X-Request-ID` header on every answer, a refusal included, other than the `415` of `errors/register-415`.
+The server MUST carry an `X-Request-ID` header on every answer to a path outside `/auth/` and `/.well-known/`, a refusal included.
 
 **Reason:** it is the value a caller quotes to find its request in the server's log.
 
@@ -74,19 +74,19 @@ The server MUST carry an `X-Request-ID` header on every answer, a refusal includ
 
 ### `errors/request-id-echo`
 
-When a request carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+When a request to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
 
 **Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`.
 
 ### `errors/request-id-replaced`
 
-If a request carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
+If a request to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
 
 **Tests:** `compliance/refusal-headers.test.ts › is one of the server's own, not the caller's, when the caller sent more than 128 characters or one outside letters, digits, underscore and hyphen`.
 
 ### `errors/request-id-fresh`
 
-When a request carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
+When a request to a path outside `/auth/` and `/.well-known/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
 
 **Tests:** `compliance/refusal-headers.test.ts › is a different one of the server's own for each request that sent none`.
 
@@ -100,25 +100,25 @@ When the server replays an answer for an `Idempotency-Key`, the server MUST carr
 
 ### `errors/body-invalid-json`
 
-If a request to an operation that takes a JSON body sends a body that is not valid JSON under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body sends a body that is not valid JSON under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › malformed JSON body returns 400 validation_error`.
 
 ### `errors/body-empty`
 
-If a request to an operation that takes a JSON body sends an empty body under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body sends an empty body under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › empty body POST returns 400 validation_error`.
 
 ### `errors/body-not-object`
 
-If a request to an operation that takes a JSON object sends a JSON array in its place, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON object sends a JSON array in its place, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › array instead of object returns 400 validation_error`.
 
 ### `errors/json-content-type`
 
-When a request to an operation that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server MUST answer `400 validation_error`.
+When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server MUST answer `400 validation_error`.
 
 **Reason:** a body that is not read as JSON would reach the operation as an empty object, and an operation whose schema accepts `{}` would run a write the caller never sent, such as replacing an extension namespace's data with `{}`. A client that forgets the header is told, instead of losing data or learning nothing.
 
@@ -126,19 +126,19 @@ When a request to an operation that takes a JSON body is not sent with a JSON `C
 
 ### `errors/json-content-type-nothing`
 
-If a request to an operation that takes a JSON body is not sent with a JSON `Content-Type`, then the server MUST NOT change anything it stores.
+If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is not sent with a JSON `Content-Type`, then the server MUST NOT perform the operation's write.
 
 **Tests:** `compliance/json-body-doors.test.ts › changes nothing on these doors when the body is not sent as JSON`.
 
 ### `errors/json-content-type-spelling`
 
-When a request to an operation that takes a JSON body is sent with a `Content-Type` that names JSON in any case or with parameters, the server MUST read the body as JSON.
+When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is sent with a `Content-Type` of `application/json` or `application/<name>+json`, in any case and with or without parameters, the server MUST read the body as JSON.
 
 **Tests:** `compliance/json-body-doors.test.ts › still reads a body sent as JSON, whatever the case or parameters of its type`, `› writes each of these doors when the body is sent as JSON`.
 
 ### `errors/json-order`
 
-When a request to an operation that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
+When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
 
 **Reason:** a caller that may not use the operation learns that first, whatever it sent. The grant on an item's type is checked against the stored item after the body is read, so a key without it is answered `400` for a body that is not JSON, which tells it nothing about the item.
 
@@ -148,7 +148,7 @@ When a request to an operation that takes a JSON body meets more than one of the
 
 ### `errors/register-415`
 
-When `POST /auth/oauth2/register` is not sent with a JSON `Content-Type`, the server MUST answer `415` with a body of `message` and a `code` of `UNSUPPORTED_MEDIA_TYPE`, and no `error` member.
+When `POST /auth/oauth2/register` carries a body under a `Content-Type` other than `application/json`, in any case and with or without parameters, the server MUST answer `415` with a body of `message` and a `code` of `UNSUPPORTED_MEDIA_TYPE`, and no `error` member.
 
 **Reason:** registration takes JSON but belongs to the sign-in library, which refuses a body that is not JSON in its own shape and not with `errors/json-content-type`.
 
@@ -156,7 +156,7 @@ When `POST /auth/oauth2/register` is not sent with a JSON `Content-Type`, the se
 
 ### `errors/register-bearer-401`
 
-When `POST /auth/oauth2/register` carries an `Authorization` bearer the sign-in library does not accept, an API key included, the server MUST answer `401` with the body `{ "error": "invalid_token" }`.
+When `POST /auth/oauth2/register` sends, as JSON, a registration the server accepts from a caller with no credential, and carries an `Authorization` bearer the sign-in library does not accept, an API key included, the server MUST answer `401` with a body whose `error` is `invalid_token`.
 
 **Reason:** registration takes no credential, so a bearer it is sent is read as an initial access token.
 
@@ -164,9 +164,9 @@ When `POST /auth/oauth2/register` carries an `Authorization` bearer the sign-in 
 
 ### `errors/register-415-headers`
 
-When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` or `X-Request-ID` on the answer.
+When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer, although the OpenAPI document declares it there.
 
-**Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries both.
+**Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries the header.
 
 **Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries neither X-Error-Code nor X-Request-ID, where Marfa's own doors carry both`.
 
@@ -174,7 +174,7 @@ When the sign-in library answers `POST /auth/oauth2/register` with `415`, the se
 
 ### `errors/idem-reused-json`
 
-If a request repeats an `Idempotency-Key` whose first request differed only in whether its body was sent with a JSON `Content-Type`, then the server MUST answer `422 idempotency_key_reused`.
+If a credential repeats an `Idempotency-Key` whose first answer the server kept, with a request that differs from the first only in whether its body is sent with a JSON `Content-Type`, then the server MUST answer `422 idempotency_key_reused`.
 
 **Reason:** the first request was refused by `errors/json-content-type` or read as JSON, so the two are different requests, and replaying a refusal would tell the caller to do what it just did.
 
@@ -182,7 +182,7 @@ If a request repeats an `Idempotency-Key` whose first request differed only in w
 
 ### `errors/idem-json-spelling`
 
-When a request repeats an `Idempotency-Key` whose first request differed only in how it spelled the JSON `Content-Type`, the server MUST replay the first answer.
+When a credential repeats an `Idempotency-Key` whose first answer the server kept, with a request that differs from the first only in how it spells the JSON `Content-Type`, the server MUST replay the first answer.
 
 **Reason:** two spellings of one type, such as with and without `charset=utf-8`, are the same request.
 
@@ -190,7 +190,7 @@ When a request repeats an `Idempotency-Key` whose first request differed only in
 
 ### `errors/idem-in-flight`
 
-When a request repeats an `Idempotency-Key` whose first request has been claimed and not yet answered, the server MUST answer `409 idempotency_key_in_flight`.
+When a credential repeats, under one `Idempotency-Key`, a request whose first sending claimed the key less than 60 seconds earlier and has not been answered, the server MUST answer `409 idempotency_key_in_flight`.
 
 **Reason:** the claim is what stops two arrivals of one key both writing, so the one that did not take it is told to ask again. The status is `409` because something else did get there first.
 
@@ -204,7 +204,7 @@ When the server answers `409 idempotency_key_in_flight`, the server MUST NOT run
 
 ### `errors/idem-lease`
 
-If the first request under an `Idempotency-Key` ended without recording an answer, then the server MUST run the write for a retry once the claim is older than 60 seconds.
+If the first request under an `Idempotency-Key` ended without recording an answer, then the server MUST run the write for a retry of the same request once the claim is older than 60 seconds.
 
 **Reason:** a writer that dies between claiming and answering leaves a claim nothing completes, and without a lease the one failure the key exists for would refuse its retry for good.
 
@@ -212,7 +212,7 @@ If the first request under an `Idempotency-Key` ended without recording an answe
 
 ### `errors/idem-not-retained`
 
-When a request repeats an `Idempotency-Key` whose first answer was larger than 1,048,576 bytes, the server MUST answer `422 idempotency_result_not_retained`.
+When a credential repeats, under one `Idempotency-Key`, a request whose first answer was larger than 1,048,576 bytes, and `items/replay-reauthorized` would let it replay that answer, the server MUST answer `422 idempotency_result_not_retained`.
 
 **Reason:** a record keeps the first answer's status and drops its body above that size, because the alternative is a record of unbounded size per key or a second write. The status is `422` and not `409` because nothing got there first.
 
@@ -236,13 +236,13 @@ When the server answers `422 idempotency_result_not_retained`, the server MUST N
 
 ### `errors/unmatched-path`
 
-When a request names a path no operation serves, and is not a `GET` that carries `X-Marfa-Read-View`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
+When a request other than `OPTIONS` names a path no operation serves, and is neither a `GET` or `POST` under `/auth/`, which the sign-in library answers, nor a `GET` that carries `X-Marfa-Read-View`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
 
 **Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Read-View`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
 
 ### `errors/unmatched-method`
 
-When a request names a method no operation serves on a path that another method serves, the server MUST answer `404 not_found` and not `405`.
+When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
 
 **Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`.
 
@@ -280,7 +280,7 @@ When a write meets a write lock that is released inside the instance's busy budg
 
 If a credentialed read is the first request a key makes in an hour and the write that records the key's use cannot get the write lock within the busy budget, then the server MUST answer the read `503 write_contention`.
 
-**Reason:** the server records a key's first use in each hour before the operation runs, so every credentialed operation can meet the lock.
+**Reason:** the server records a key's first use in each hour before the operation runs, so every operation a key sends can meet the lock.
 
 **Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
 
@@ -292,7 +292,7 @@ If the server refuses a request `503 write_contention` at the write that records
 
 ### `errors/contention-stamp-once`
 
-When the server has set a key's `last_used_at` in an hour, the server MUST serve the key's later requests in that hour while another writer holds the write lock.
+When the server has set a key's `last_used_at` in an hour and has not restarted since, the server MUST serve the key's later reads in that hour while another writer holds the write lock.
 
 **Reason:** only a completed record of a key's use spares the next request that write.
 
@@ -314,7 +314,7 @@ If `POST /auth/oauth2/register` cannot get the write lock within the busy budget
 
 ### `errors/contention-bulk-page`
 
-If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before any of its entries has committed, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
+If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before any of its entries has committed or may have committed, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
 
 **Reason:** nothing was written and the next attempt would land, and a `200` that carried the refusal would tell a device there is nothing to retry.
 
@@ -322,7 +322,7 @@ If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before a
 
 ### `errors/contention-bulk-entry`
 
-If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets the write lock at an entry after an earlier entry has committed, then the server MUST report that entry `errored` with the code `write_contention`, in a `200` answer.
+If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets the write lock at an entry after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with the code `write_contention`, in a `200` answer.
 
 **Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
 
@@ -346,7 +346,7 @@ When the server answers `403 edge_permission_denied`, the server MUST carry `det
 
 ### `errors/grant-extension`
 
-When the server answers `403 forbidden` to an extension operation from a key that has no reach on the namespace, the server MUST carry `details.grant` with a `kind` of `extension` and a `name` that is the namespace.
+When the server answers `403 forbidden` to an extension operation because a key holds no grant, or too low a grant, on the namespace at the level the operation asks, the server MUST carry `details.grant` with a `kind` of `extension` and a `name` that is the namespace.
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`.
 
@@ -376,11 +376,11 @@ When a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` is rol
 
 ### `errors/grant-absent`
 
-If a `403` is not caused by a grant that the key could be given, such as the reserved `system.*` fence, a key whose type map reaches no type, a reserved extension namespace or a blob upload by a key whose map grants write on no type, then the server MUST NOT carry `details.grant`.
+If a `403` is not caused by a grant that the key could be given, such as the reserved `system.*` fence, a key whose type map reaches no type, a reserved extension namespace or a blob upload by a key whose map grants write on no type, or is the refusal of a natural key that resolves an item of a type the key may not read (`items/natural-key-unreadable`), then the server MUST NOT carry `details.grant`.
 
-**Reason:** no grant could let the request through, so a grant named would send the client to ask for one that cannot be had.
+**Reason:** where no grant could let the request through, a grant named would send the client to ask for one that cannot be had. Where the natural key resolves an item the key may not read, a grant named would disclose the item's type.
 
-**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`.
+**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`, `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`.
 
 ## An item in the bin, or no item at all
 
@@ -394,7 +394,7 @@ When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/meta
 
 ### `errors/bin-unreadable`
 
-If a key may not read the type of an item in the bin, then the server MUST answer a write that names the item `404 item_not_found` with no `details`.
+If a key may not read the type of an item in the bin, then the server MUST answer a write that names the item by its id `404 item_not_found` with no `details`.
 
 **Reason:** the answer says nothing of whether the item exists or what type it is.
 
@@ -402,15 +402,15 @@ If a key may not read the type of an item in the bin, then the server MUST answe
 
 ### `errors/bin-read`
 
-When a read names an item in the bin, the server MUST answer `404 item_not_found` with no `details`.
+When `GET /items/{id}`, `GET /items/{id}/metadata`, `GET /items/{id}/versions`, `GET /items/{id}/extensions` or `GET /items/{id}/extensions/{namespace}` names an item in the bin, the server MUST answer `404 item_not_found` with no `details`.
 
-**Reason:** a read answers an item in the bin as it answers one that does not exist.
+**Reason:** these reads answer an item in the bin as they answer one that does not exist.
 
 **Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
 ### `errors/item-missing-bare`
 
-When a request names an item that no item holds, the server MUST answer `404 item_not_found` with no `details`.
+When the server answers `404 item_not_found` for an id that no item holds, the server MUST carry no `details`.
 
 **Tests:** `compliance/metadata-routes.test.ts › answers 404 for an unknown item on every metadata door`.
 
@@ -434,7 +434,7 @@ When the server answers `500 internal_error`, the server MUST send exactly the b
 
 ### `errors/internal-error-entry`
 
-If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false`, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
+If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
 
 **Reason:** the page answers `200` for the entries that landed, and the entry's `error` names nothing of what failed, as `errors/internal-error-body` names nothing.
 
@@ -602,7 +602,7 @@ Every code the server can answer is a row of the table below, which is written f
 | `edge_constraint_violation`       | 400                 | An edge write breaks a constraint of its edge type or of the link graph, such as cardinality, endpoint types or a duplicate.                                      |
 | `edge_cycle`                      | 400                 | An edge would close a cycle: a self-loop on any edge type, or a loop on an edge type that must stay acyclic.                                                      |
 | `inheritance_violation`           | 400                 | A type changes the shape of a field it inherits, or a parent gains a field that a child declares with another shape.                                              |
-| `invalid_client`                  | 400                 | The device sign-in page names a client that no longer exists.                                                                                                     |
+| `invalid_client`                  | 400                 | The device sign-in page names a client that is not registered.                                                                                                    |
 | `invalid_id`                      | 400                 | An item, edge or folder id is not a well-formed identifier.                                                                                                       |
 | `invalid_properties`              | 400                 | An item's properties break the schema of its type.                                                                                                                |
 | `invalid_schema`                  | 400                 | A type or edge type carries a schema the server cannot accept.                                                                                                    |
@@ -632,15 +632,15 @@ Every code the server can answer is a row of the table below, which is written f
 | `owner_not_found`                 | 404                 | The instance has no owner yet.                                                                                                                                    |
 | `type_not_found`                  | 404                 | No registered type has this identifier.                                                                                                                           |
 | `webhook_not_found`               | 404                 | No webhook subscription this credential registered has this id.                                                                                                   |
-| `request_timeout`                 | 408                 | A request body did not finish arriving before the door's deadline.                                                                                                |
+| `request_timeout`                 | 408                 | An inbound webhook delivery did not finish arriving before its deadline.                                                                                          |
 | `ancestor_unavailable`            | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                      |
 | `conflict`                        | 409                 | The request collides with the current state in a way that no other code names.                                                                                    |
 | `connector_held`                  | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                    |
 | `copies_below_minimum`            | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                      |
 | `edge_type_in_use`                | 409                 | Edges of the edge type still exist, and the delete did not ask to force.                                                                                          |
 | `housekeeping_job_running`        | 409                 | The housekeeping job is in the middle of a run.                                                                                                                   |
-| `id_reused`                       | 409                 | A caller-minted id already names a different item or edge. `details.differs` says what differs.                                                                   |
-| `idempotency_key_in_flight`       | 409                 | An `Idempotency-Key` names a request that is still being served.                                                                                                  |
+| `id_reused`                       | 409                 | A caller-minted id already names a different item or edge.                                                                                                        |
+| `idempotency_key_in_flight`       | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                   |
 | `link_taken`                      | 409                 | A write would give an item a link that another item of its type holds.                                                                                            |
 | `owner_exists`                    | 409                 | The instance already has an owner.                                                                                                                                |
 | `read_view_changed`               | 409                 | A conditional copy read or copy stream carries a proof for a read view that has since changed. Rebuild the working copy.                                          |
@@ -651,7 +651,7 @@ Every code the server can answer is a row of the table below, which is written f
 | `type_in_use`                     | 409                 | Items of the type still exist, the bin included, and the delete did not ask to force.                                                                             |
 | `type_mismatch`                   | 409                 | The request declares a type other than the type of the item it resolved.                                                                                          |
 | `version_conflict`                | 409                 | The write names a version that is no longer the current one. The answer carries the current state.                                                                |
-| `request_too_large`               | 413                 | The request body is over the cap for its door.                                                                                                                    |
+| `request_too_large`               | 413                 | The request body is over the cap for its operation.                                                                                                               |
 | `range_not_satisfiable`           | 416                 | A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.                                                                          |
 | `compatible_with_violation`       | 422                 | A `compatible_with` declaration names a target that does not exist, or leaves out a field the target requires.                                                    |
 | `idempotency_key_reused`          | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                |

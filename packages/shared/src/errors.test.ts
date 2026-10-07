@@ -116,7 +116,7 @@ describe("ERROR_CODES", () => {
     expect(Object.values(ErrorCode)).not.toContain(INTERNAL_ERROR);
   });
 
-  it("gives each code an error status and a one-sentence summary", () => {
+  it("gives each code an error status and a summary", () => {
     for (const [code, info] of Object.entries(ERROR_CODES)) {
       expect(info.status, code).toBeGreaterThanOrEqual(400);
       expect(info.status, code).toBeLessThan(600);

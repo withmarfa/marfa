@@ -27,6 +27,7 @@ import { itemRoutes } from "./routes/items.js";
 import { renderRootPage } from "./routes/root-page.js";
 import { renderSignedInPage } from "./routes/signed-in-page.js";
 import { setNoStore } from "./routes/no-store.js";
+import { withPreparedHeaders } from "./prepared-headers.js";
 import { pageSecurityPolicy } from "./routes/content-security-policy.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
@@ -204,6 +205,10 @@ export function createApp(
     await next();
   });
 
+  // Structured logging (wraps entire request lifecycle)
+  app.use("*", loggerMiddleware());
+
+  // After the logger, so its refusal carries `X-Request-ID` like any other.
   app.use("*", async (c, next) => {
     if (
       c.req.method === "GET" &&
@@ -217,9 +222,6 @@ export function createApp(
       );
     await next();
   });
-
-  // Structured logging (wraps entire request lifecycle)
-  app.use("*", loggerMiddleware());
 
   // Stamp request_id / key_id onto the active OTel span and
   // mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
@@ -703,12 +705,16 @@ export function createApp(
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
-    app.on(["POST", "GET"], "/auth/*", (c) => {
+    app.on(["POST", "GET"], "/auth/*", async (c) => {
       // The one door of the library's that the document publishes. It takes
       // its request in the body, so a query key on it is a mistake like on
       // any other door.
       if (c.req.method === "POST" && c.req.path === "/auth/oauth2/register") {
         refuseUndeclaredKeysOf(c.req.url, []);
+        return withPreparedHeaders(
+          c,
+          await authInstance.handler(c.req.raw, c.var.clientIp ?? null),
+        );
       }
       return authInstance.handler(c.req.raw, c.var.clientIp ?? null);
     });
