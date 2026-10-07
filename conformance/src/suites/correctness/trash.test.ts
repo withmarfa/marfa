@@ -98,8 +98,12 @@ describe("trash — soft delete and restore", () => {
     const purged = await client.purgeItem(r.data.item.id);
     expect(purged.ok).toBe(true);
     await expectMatchesSchema("POST", "/items/{id}/purge", 200, purged.data);
-    expect((await client.getItem(r.data.item.id)).status).toBe(404);
-    expect((await client.restoreItem(r.data.item.id)).status).toBe(404);
+    const read = await client.getItem(r.data.item.id);
+    expect(read.status).toBe(404);
+    expect(read.error?.error.code).toBe("item_not_found");
+    const restored = await client.restoreItem(r.data.item.id);
+    expect(restored.status).toBe(404);
+    expect(restored.error?.error.code).toBe("item_not_found");
     const again = await client.purgeItem(r.data.item.id);
     expect(again.status).toBe(404);
     expect(again.error?.error.code).toBe("item_not_found");

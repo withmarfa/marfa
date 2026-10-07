@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, generateId } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -51,6 +51,39 @@ describe("validation edge cases", () => {
     trackItem(ctx, r.data.item.id);
   });
 
+  it("refuses a client-minted id that is not a lowercase UUIDv7", async () => {
+    const lowercase = generateId();
+    const refusals = [
+      ["a UUIDv4", "9b2e4f64-5c1d-4e8a-9f3b-2d7c6a1e0b55"],
+      ["an uppercase UUIDv7", lowercase.toUpperCase()],
+    ] as const;
+    for (const [label, id] of refusals) {
+      const sourceId = `bad-id-${generateId()}`;
+      const refused = await client.createItem(
+        createNote({ id, source: ctx.source, source_id: sourceId }),
+      );
+      expect(
+        [refused.status, refused.error?.error.code],
+        `${label} was not refused`,
+      ).toEqual([400, "invalid_id"]);
+      // Nothing was written: the natural key it named is still free, so a
+      // create naming it lands as a new row rather than an upsert.
+      const free = await client.createItem(
+        createNote({ source: ctx.source, source_id: sourceId }),
+      );
+      expect(free.status, `${label} left a row behind`).toBe(201);
+      trackItem(ctx, free.data.item.id);
+    }
+
+    // The witness: the lowercase UUIDv7 is taken as the row's id.
+    const accepted = await client.createItem(
+      createNote({ id: lowercase, source: ctx.source }),
+    );
+    expect(accepted.status, JSON.stringify(accepted.error)).toBe(201);
+    trackItem(ctx, accepted.data.item.id);
+    expect(accepted.data.item.id).toBe(lowercase);
+  });
+
   it("rejects deep multi-segment type identifiers as unknown", async () => {
     // Well-formed at any depth under a non-reserved root, so the refusal is
     // the registration gate rather than the grammar.
@@ -78,6 +111,54 @@ describe("validation edge cases", () => {
     const fetched = await client.getItem(r.data.item.id);
     expect(fetched.ok).toBe(true);
     expect((fetched.data.item.properties.body as string).length).toBe(100_000);
+  });
+
+  it("refuses a string one unit over the default length cap, naming the field", async () => {
+    const over = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "x".repeat(100_001) },
+      }),
+    );
+    expect(over.status).toBe(400);
+    expect(over.error?.error.code).toBe("invalid_properties");
+    const errors = over.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("body");
+
+    // The witness: one unit fewer is accepted.
+    const edge = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "x".repeat(100_000) },
+      }),
+    );
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    trackItem(ctx, edge.data.item.id);
+  });
+
+  it("refuses a NUL in a string property, naming the field", async () => {
+    const refused = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "before\u0000after" },
+      }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const errors = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("body");
+
+    // The witness: the same text without the NUL is accepted.
+    const accepted = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "beforeafter" },
+      }),
+    );
+    expect(accepted.status, JSON.stringify(accepted.error)).toBe(201);
+    trackItem(ctx, accepted.data.item.id);
   });
 
   it("refuses a filter number no double holds, on the listing and the search", async () => {
@@ -355,6 +436,43 @@ describe("type identifier validation", () => {
       body: "b",
       title: "changed",
     });
+  });
+
+  it("refuses a null on a field the type requires under a merge", async () => {
+    const created = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "required", title: "kept" },
+      }),
+    );
+    expect(created.ok).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    const id = created.data.item.id;
+
+    const refused = await client.updateItem(id, {
+      properties: { body: null },
+      version: created.data.item.version,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const errors = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("body");
+
+    const read = await client.getItem(id);
+    expect(read.data.item.version).toBe(created.data.item.version);
+    expect(read.data.item.properties).toEqual({
+      body: "required",
+      title: "kept",
+    });
+
+    // The witness: the same merge naming a value for the field lands.
+    const merged = await client.updateItem(id, {
+      properties: { body: "changed" },
+      version: created.data.item.version,
+    });
+    expect(merged.ok, JSON.stringify(merged.error)).toBe(true);
+    expect(merged.data.item.properties.body).toBe("changed");
   });
 
   it("leaves out a create's null on a declared optional field, and keeps one on an undeclared property", async () => {

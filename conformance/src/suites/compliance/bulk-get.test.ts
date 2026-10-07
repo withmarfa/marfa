@@ -9,15 +9,25 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import {
+  createTestContext,
+  trackItem,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
+import {
+  createBookmark,
+  createNote,
+  generateId,
+} from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "bulk-get"));
+  ({ ctx, client, apiUrl } = await createTestContext("compliance", "bulk-get"));
 });
 
 afterAll(async () => {
@@ -56,6 +66,42 @@ describe("POST /items/bulk-get", () => {
     const ids = res.data.items.map((i) => i.id);
     expect(ids).toContain(present);
     expect(ids).not.toContain(gone);
+  });
+
+  it("omits an id whose type the key cannot read, and an id naming nothing", async () => {
+    const note = await createTrackedNote();
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.status).toBe(201);
+    trackItem(ctx, bookmark.data.item.id);
+    const unused = generateId();
+
+    const minted = await client.createKey({
+      label: "note-reader",
+      source: `${ctx.source}-note-reader`,
+      type_permissions: { "core.note": "read" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const noteReader = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    const ids = [note, bookmark.data.item.id, unused];
+    const narrow = await noteReader.bulkGet(ids);
+    expect(narrow.status).toBe(200);
+    expect(narrow.data.items.map((i) => i.id)).toEqual([note]);
+
+    // The witness: a key that reads all three types is handed the bookmark,
+    // so its absence above is the key's reach and not the row.
+    const full = await client.bulkGet(ids);
+    expect(full.status).toBe(200);
+    expect(full.data.items.map((i) => i.id)).toEqual([
+      note,
+      bookmark.data.item.id,
+    ]);
   });
 
   it("rejects a request with more than 100 ids", async () => {

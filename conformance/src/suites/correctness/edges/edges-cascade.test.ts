@@ -468,4 +468,116 @@ describe("edge cascade semantics", () => {
     ]);
     expect((await client.getItem(source)).data.item.state).toBe("active");
   });
+
+  it("takes what a cascade reaches on a bulk transition into the bin, and brings it back on a restore", async () => {
+    const tag = `bulk-trash-${ctx.runId}`;
+    const parent = await makeItem("bt-parent");
+    const child = await makeItem("bt-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+    // Only the parent matches the filter, so the child is taken by the edge.
+    expect((await client.updateMetadata(parent, { tags: [tag] })).ok).toBe(
+      true,
+    );
+
+    const queued = await client.bulkAction({
+      action: "transition",
+      state: "trashed",
+      filter: { tags: [tag] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (queued.data as { id: string }).id,
+    );
+    expect(job.result?.succeeded).toBe(1);
+    expect(job.result?.errors ?? []).toEqual([]);
+    expect((await client.getItem(parent)).status).toBe(404);
+    expect((await client.getItem(child)).status).toBe(404);
+    const trashed = await client.listItems({
+      source: ctx.source,
+      state: "trashed",
+      limit: 100,
+    });
+    expect(trashed.data.data.map((i) => i.id)).toEqual(
+      expect.arrayContaining([parent, child]),
+    );
+
+    const restored = await client.restoreItem(parent);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const back = await client.getItem(child);
+    expect(back.status).toBe(200);
+    expect(back.data.item.state).toBe("active");
+  });
+
+  it("refuses a transition into the bin held by a block edge into the row, or on a row the cascade reaches", async () => {
+    const etId = `mock.block-reach.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const edgeBetween = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ): Promise<string> => {
+      const made = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type,
+      });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      trackEdge(ctx, made.data.edge.id);
+      return made.data.edge.id;
+    };
+    const blockedBy = (
+      moved: Awaited<ReturnType<typeof client.transitionItem>>,
+    ): string[] =>
+      (
+        moved.error?.error.details?.blocking_edges as
+          Array<{ id: string }> | undefined
+      )?.map((e) => e.id) ?? [];
+
+    // A block edge pointing into the row named.
+    const named = await makeItem("br-named");
+    const pointing = await makeItem("br-pointing");
+    const into = await edgeBetween(pointing, named, etId);
+    const refusedInto = await client.transitionItem(named, "trashed");
+    expect(refusedInto.status).toBe(400);
+    expect(refusedInto.error?.error.code).toBe("edge_constraint_violation");
+    expect(blockedBy(refusedInto)).toEqual([into]);
+    expect((await client.getItem(named)).data.item.state).toBe("active");
+
+    // A block edge on a child the cascade would take.
+    const parent = await makeItem("br-parent");
+    const child = await makeItem("br-child");
+    const held = await makeItem("br-held");
+    await edgeBetween(parent, child, "parent-of");
+    const onChild = await edgeBetween(child, held, etId);
+    const refusedChild = await client.transitionItem(parent, "trashed");
+    expect(refusedChild.status).toBe(400);
+    expect(refusedChild.error?.error.code).toBe("edge_constraint_violation");
+    expect(blockedBy(refusedChild)).toEqual([onChild]);
+    for (const id of [parent, child]) {
+      expect(
+        (await client.getItem(id)).data.item.state,
+        "a refused transition moved a row",
+      ).toBe("active");
+    }
+
+    // The witness: with each blocking edge gone the same moves are taken.
+    expect((await client.deleteEdge(into)).ok).toBe(true);
+    expect((await client.deleteEdge(onChild)).ok).toBe(true);
+    expect((await client.transitionItem(named, "trashed")).status).toBe(200);
+    expect((await client.transitionItem(parent, "trashed")).status).toBe(200);
+    expect((await client.getItem(child)).status).toBe(404);
+  });
 });

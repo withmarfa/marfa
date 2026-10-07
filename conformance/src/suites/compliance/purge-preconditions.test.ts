@@ -103,6 +103,64 @@ describe("POST /items/{id}/purge with version", () => {
   });
 });
 
+describe("a version that is not a positive whole number", () => {
+  it("refuses a delete or purge version that is not a positive whole number", async () => {
+    const live = await client.createItem(createNote({ source: ctx.source }));
+    expect(live.ok).toBe(true);
+    trackItem(ctx, live.data.item.id);
+    const tag = `purge-bad-version-${ctx.runId}`;
+    const binned = await trashedNote(tag);
+
+    for (const version of ["0", "1.5"]) {
+      for (const [label, method, path] of [
+        ["DELETE", "DELETE", `/items/${live.data.item.id}`],
+        ["purge", "POST", `/items/${binned}/purge`],
+      ] as const) {
+        const refused = await client.rawRequest(`${path}?version=${version}`, {
+          method,
+        });
+        expect(
+          [refused.status, refused.error?.error.code],
+          `${label} with version=${version}`,
+        ).toEqual([400, "validation_error"]);
+      }
+    }
+    const kept = await client.getItem(live.data.item.id);
+    expect(kept.data.item.state, "a refused delete trashed the row").toBe(
+      "active",
+    );
+    expect(await trashedIds(tag), "a refused purge took the row").toEqual([
+      binned,
+    ]);
+
+    // The witness: the same operations naming the row's version succeed, so
+    // the refusals above are about the number.
+    const purged = await client.purgeItem(binned, { version: 1 });
+    expect(purged.status).toBe(200);
+    const deleted = await client.deleteItem(live.data.item.id, { version: 1 });
+    expect(deleted.status).toBe(200);
+  });
+
+  it("refuses a query parameter the purge operation does not declare, and purges nothing", async () => {
+    const tag = `purge-undeclared-${ctx.runId}`;
+    const id = await trashedNote(tag);
+
+    const refused = await client.rawRequest(`/items/${id}/purge?force=true`, {
+      method: "POST",
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(await trashedIds(tag), "the refused purge took the row").toEqual([
+      id,
+    ]);
+
+    // The witness: the same request without the parameter purges the row.
+    const purged = await client.purgeItem(id);
+    expect(purged.status).toBe(200);
+    expect(await trashedIds(tag)).toEqual([]);
+  });
+});
+
 describe("POST /items/bulk-actions purge with expected_ids", () => {
   it("does not purge a row trashed after the dry run", async () => {
     const tag = `purge-expected-${ctx.runId}`;

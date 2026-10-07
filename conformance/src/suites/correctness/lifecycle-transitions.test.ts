@@ -56,6 +56,9 @@ describe("lifecycle transitions", () => {
     const invalid = await client.transitionItem(r.data.item.id, "nonexistent");
     expect(invalid.status).toBe(400);
     expect(invalid.error?.error.code).toBe("validation_error");
+    const errors = invalid.error?.error.details?.errors as
+      Array<{ path: string }> | undefined;
+    expect(errors?.[0]?.path).toBe("state");
   });
 
   it("offers a canonical type three states, and not the fourth", async () => {
@@ -92,6 +95,49 @@ describe("lifecycle transitions", () => {
     expect(r.ok).toBe(true);
     expect(r.data.item.state).toBe("active");
     trackItem(ctx, r.data.item.id);
+  });
+
+  it("refuses an initial state the type's lifecycle cannot reach, and stores one it can", async () => {
+    const sourceId = `initial-state-${ctx.runId}`;
+    const refused = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        state: "revoked",
+      }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // Nothing was written: the same natural key lands as a new row.
+    const archived = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        state: "archived",
+      }),
+    );
+    expect(archived.status, JSON.stringify(archived.error)).toBe(201);
+    trackItem(ctx, archived.data.item.id);
+    expect(archived.data.item.state).toBe("archived");
+    const read = await client.getItem(archived.data.item.id);
+    expect(read.data.item.state).toBe("archived");
+  });
+
+  it("refuses a move to the state the row is in", async () => {
+    const r = await client.createItem(createNote({ source: ctx.source }));
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const same = await client.transitionItem(r.data.item.id, "active");
+    expect(same.status).toBe(400);
+    expect(same.error?.error.code).toBe("invalid_transition");
+
+    // The witness: a move to a different state the graph allows is taken, so
+    // the refusal above is about the state the row is in.
+    const moved = await client.transitionItem(r.data.item.id, "archived");
+    expect(moved.ok).toBe(true);
+    expect(moved.data.item.state).toBe("archived");
   });
 
   it("state filter works on listItems", async () => {

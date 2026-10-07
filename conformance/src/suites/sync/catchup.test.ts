@@ -111,6 +111,74 @@ describe("the modification time a catch-up reads", () => {
   });
 });
 
+describe("every tag operation moves the modification time", () => {
+  it("moves updated_at on every tag operation", async () => {
+    const tagged = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "updated-at-each-operation" },
+    });
+    const untouched = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "updated-at-each-control" },
+    });
+    expect(tagged.ok && untouched.ok).toBe(true);
+    trackItem(ctx, tagged.data.item.id);
+    trackItem(ctx, untouched.data.item.id);
+    const id = tagged.data.item.id;
+
+    const operations = [
+      {
+        name: "POST /items/{id}/tags",
+        send: () =>
+          client.rawRequest(`/items/${id}/tags`, {
+            method: "POST",
+            body: { tags: ["first"] },
+          }),
+      },
+      {
+        name: "DELETE /items/{id}/tags/{tag}",
+        send: () => client.removeTag(id, "first"),
+      },
+      {
+        name: "PUT /items/{id}/metadata",
+        send: () =>
+          client.rawRequest(`/items/${id}/metadata`, {
+            method: "PUT",
+            body: { tags: ["replaced"] },
+          }),
+      },
+    ];
+
+    const controlBefore = untouched.data.item.updated_at;
+    let last = tagged.data.item.updated_at;
+    for (const { name, send } of operations) {
+      // The column can be stored at a coarser resolution than the writes are
+      // made at, so a bump and no bump are the same value without this.
+      await new Promise((r) => setTimeout(r, 1100));
+      const written = await send();
+      expect(
+        written.ok,
+        `${name} was refused: ${JSON.stringify(written.error)}`,
+      ).toBe(true);
+      const read = await client.getItem(id);
+      expect(read.ok).toBe(true);
+      expect(
+        Date.parse(read.data.item.updated_at ?? ""),
+        `${name} left the item's modification time where it was`,
+      ).toBeGreaterThan(Date.parse(last ?? ""));
+      last = read.data.item.updated_at;
+    }
+
+    const control = await client.getItem(untouched.data.item.id);
+    expect(
+      control.data.item.updated_at,
+      "an item nobody touched changed its modification time, so a change to the tagged item proves nothing",
+    ).toBe(controlBefore);
+  });
+});
+
 describe("incremental catch-up", () => {
   it("sees a tag written after the boundary, not just a property change", async () => {
     requireRule(caps, "updatedAfter");

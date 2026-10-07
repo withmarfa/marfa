@@ -8,7 +8,7 @@ import {
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, generateId } from "../../generators/items.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -601,6 +601,76 @@ describe("a write naming a source", () => {
       reason: "duplicate_source",
       id: liveId,
     });
+  });
+
+  it("refuses a create naming another id than the row its natural key resolves, to a key that may not read the row, without naming it", async () => {
+    const mint = async (
+      label: string,
+      type_permissions: Record<string, string>,
+    ): Promise<MarfaClient> => {
+      const minted = await operator.createKey({
+        label,
+        source: `${ctx.source}-${label}`,
+        sources: [folder],
+        type_permissions,
+      });
+      expect(minted.status, `the operator could not mint ${label}`).toBe(201);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const writer = await mint("other-id-writer", {
+      "core.note": "write",
+      "core.bookmark": "write",
+    });
+    const notesOnly = await mint("other-id-notes", { "core.note": "write" });
+
+    const sourceId = `other-id-${ctx.runId}`;
+    const secret = { url: "https://example.com/other-id", title: "Hidden" };
+    const row = await writer.createItem({
+      type: "core.bookmark",
+      source: folder,
+      source_id: sourceId,
+      properties: secret,
+    });
+    expect(row.status, JSON.stringify(row.error)).toBe(201);
+    trackItem(ctx, row.data.item.id);
+
+    const fresh = generateId();
+    const body = {
+      type: "core.note",
+      id: fresh,
+      source: folder,
+      source_id: sourceId,
+      properties: { title: "a note", body: "over a bookmark" },
+    };
+    const refused = await notesOnly.rawRequest("/items", {
+      method: "POST",
+      body,
+    });
+    expect([refused.status, refused.error?.error.code]).toEqual([
+      403,
+      "type_not_permitted",
+    ]);
+    const text = JSON.stringify(refused.error);
+    for (const named of [
+      row.data.item.id,
+      "core.bookmark",
+      secret.url,
+      secret.title,
+    ]) {
+      expect(text, `the refusal named ${named}`).not.toContain(named);
+    }
+    expect((await client.getItem(fresh)).status).toBe(404);
+
+    // The witness: a key that may write the row's type is told which row the
+    // key names, so the silence above is the gate and not a door that names
+    // no row to anyone.
+    const named = await writer.rawRequest("/items", {
+      method: "POST",
+      body: { ...body, type: "core.bookmark", properties: secret },
+    });
+    expect(named.status).toBe(400);
+    expect(JSON.stringify(named.error)).toContain(row.data.item.id);
   });
 
   it("refuses a bulk entry naming a source its key does not claim, and rolls an atomic page back", async () => {

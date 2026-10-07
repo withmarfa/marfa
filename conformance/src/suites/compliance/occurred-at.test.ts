@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, generateId } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -32,6 +32,44 @@ describe("occurred_at compliance", () => {
     const createdMs = new Date(r.data.item.created_at).getTime();
     const tsMs = new Date(ts).getTime();
     expect(createdMs).toBeGreaterThan(tsMs);
+  });
+
+  it("refuses an occurred_at that is not a timestamp, naming the field", async () => {
+    const sourceId = `occurred-bad-${generateId()}`;
+    const refused = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        occurred_at: "last tuesday",
+      }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain("occurred_at");
+
+    // The witness, and the proof nothing was written: the same natural key
+    // with a timestamp lands as a new row.
+    const accepted = await client.createItem(
+      createNote({
+        source: ctx.source,
+        source_id: sourceId,
+        occurred_at: daysAgo(1),
+      }),
+    );
+    expect(accepted.status, JSON.stringify(accepted.error)).toBe(201);
+    trackItem(ctx, accepted.data.item.id);
+  });
+
+  it("reads a zone-less occurred_at as UTC", async () => {
+    const created = await client.createItem(
+      createNote({ source: ctx.source, occurred_at: "2026-04-01T07:00:00" }),
+    );
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    expect(created.data.item.occurred_at).toBe("2026-04-01T07:00:00.000Z");
+
+    const read = await client.getItem(created.data.item.id);
+    expect(read.data.item.occurred_at).toBe("2026-04-01T07:00:00.000Z");
   });
 
   it("create without occurred_at defaults to created_at", async () => {
