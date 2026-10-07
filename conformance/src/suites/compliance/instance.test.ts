@@ -432,7 +432,14 @@ describe("the instance", () => {
     await stream.body?.cancel();
     const tooLarge = await fetch(`${apiUrl}/items`, {
       method: "POST",
-      headers: { ...auth, "content-type": "application/json" },
+      // Its own connection: the server answers before it has read the body
+      // and drops the connection, which a pooled one would carry into the
+      // next request as a stale socket.
+      headers: {
+        ...auth,
+        "content-type": "application/json",
+        connection: "close",
+      },
       body: JSON.stringify({ padding: "x".repeat(1_048_576) }),
     });
     const answers: [string, number, Response][] = [

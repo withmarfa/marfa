@@ -241,3 +241,290 @@ describe("the order PUT /config refuses in", () => {
     expect(told.status).toBe(400);
   }, 120_000);
 });
+
+/**
+ * The two doors as a whole: who may use them, what they read back and what
+ * each accepted write leaves behind. The levers' meaning and the retention
+ * bounds are asserted where those chapters own them.
+ */
+describe("GET /config and PUT /config", () => {
+  /** Every setting the door takes, each set. */
+  const EVERYTHING = {
+    enforcement: {
+      strict_mode: { types: ["core.note"] },
+      source_allowlist: { types: ["core.note"], sources: ["listed"] },
+      source_filter: { types: ["core.note"], sources: ["listed"] },
+    },
+    audit_retention_days: 31,
+    trash_retention_days: 30,
+    inbound_handled_retention_days: 5,
+    inbound_pending_retention_days: 6,
+    event_log_retention_hours: 100,
+  };
+
+  function operatorClient(): MarfaClient {
+    return new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: server!.operatorKey,
+    });
+  }
+
+  async function put(
+    client: MarfaClient,
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const written = await client.updateConfig(body);
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    return written.data as Record<string, unknown>;
+  }
+
+  async function read(client: MarfaClient): Promise<Record<string, unknown>> {
+    const answer = await client.getConfig();
+    expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+    return answer.data as Record<string, unknown>;
+  }
+
+  it("refuses both operations to the operator key, which holds no config.manage, and serves them to a key that does", async () => {
+    const operator = operatorClient();
+    for (const [label, answer] of [
+      ["GET", await operator.getConfig()],
+      ["PUT", await operator.updateConfig({})],
+    ] as const) {
+      expect(answer.status, label).toBe(403);
+      expect(answer.error?.error.code, label).toBe("forbidden");
+      expect(answer.error?.error.details?.required_scope, label).toBe(
+        "config.manage",
+      );
+    }
+
+    // The witness: the same two requests, from a key that holds the
+    // permission, are served.
+    const holder = configKey();
+    await put(holder, {});
+    expect(await read(holder)).toHaveProperty("instance_id");
+  }, 120_000);
+
+  it("answers 401 unauthorized to both operations for no credential and for a key the instance does not hold", async () => {
+    for (const authorization of [
+      undefined,
+      "Bearer marfa_a-key-no-instance-holds",
+    ]) {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        ...(authorization === undefined
+          ? {}
+          : { Authorization: authorization }),
+      };
+      for (const method of ["GET", "PUT"]) {
+        const answer = await fetch(`${server!.apiUrl}/config`, {
+          method,
+          headers,
+          ...(method === "PUT" && { body: "{}" }),
+        });
+        const label = `${method} with ${authorization ?? "no credential"}`;
+        expect(answer.status, label).toBe(401);
+        expect(
+          ((await answer.json()) as { error: { code: string } }).error.code,
+          label,
+        ).toBe("unauthorized");
+      }
+    }
+  }, 120_000);
+
+  it("reads back each setting that has been set, and no field for one that has not", async () => {
+    const client = configKey();
+    const minted = await rootIdentity(server!);
+
+    // Nothing set: the identity alone.
+    await put(client, {});
+    expect(await read(client)).toEqual({ instance_id: minted });
+
+    try {
+      const written = await put(client, EVERYTHING);
+      expect(written).toEqual({ instance_id: minted, ...EVERYTHING });
+      expect(await read(client)).toEqual({
+        instance_id: minted,
+        ...EVERYTHING,
+      });
+
+      // One setting set: that one and the identity, and none of the other
+      // seven.
+      await put(client, { trash_retention_days: 30 });
+      expect(await read(client)).toEqual({
+        instance_id: minted,
+        trash_retention_days: 30,
+      });
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+
+  it("takes away each setting a later PUT leaves out", async () => {
+    const client = configKey();
+    try {
+      await put(client, EVERYTHING);
+      for (const field of Object.keys(EVERYTHING)) {
+        const without = Object.fromEntries(
+          Object.entries(EVERYTHING).filter(([name]) => name !== field),
+        );
+        await put(client, EVERYTHING);
+        const written = await put(client, without);
+        expect(written, field).not.toHaveProperty(field);
+        const after = await read(client);
+        expect(after, field).not.toHaveProperty(field);
+        expect(Object.keys(after).sort(), field).toEqual(
+          ["instance_id", ...Object.keys(without)].sort(),
+        );
+      }
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+
+  it("names the field a lever lacks with missing_required_field, and keeps the configuration", async () => {
+    const client = configKey();
+    const held = await put(client, { audit_retention_days: 31 });
+
+    const lacking: [string, Record<string, unknown>][] = [
+      ["enforcement.strict_mode.types", { enforcement: { strict_mode: {} } }],
+      [
+        "enforcement.source_allowlist.types",
+        { enforcement: { source_allowlist: { sources: ["listed"] } } },
+      ],
+      [
+        "enforcement.source_allowlist.sources",
+        { enforcement: { source_allowlist: { types: ["core.note"] } } },
+      ],
+      [
+        "enforcement.source_filter.types",
+        { enforcement: { source_filter: { sources: ["listed"] } } },
+      ],
+      [
+        "enforcement.source_filter.sources",
+        { enforcement: { source_filter: { types: ["core.note"] } } },
+      ],
+    ];
+    for (const [field, body] of lacking) {
+      const refused = await client.updateConfig(body);
+      expect(refused.status, field).toBe(400);
+      expect(refused.error?.error.code, field).toBe("missing_required_field");
+      expect(refused.error?.error.details?.field, field).toBe(field);
+      expect(refused.error?.error.message, field).toBe(`${field} is required`);
+      expect(await read(client), field).toEqual(held);
+    }
+
+    // The witness: each lever with both of its members is taken.
+    try {
+      await put(client, {
+        enforcement: {
+          strict_mode: { types: ["core.note"] },
+          source_allowlist: { types: ["core.note"], sources: ["listed"] },
+          source_filter: { types: ["core.note"], sources: ["listed"] },
+        },
+      });
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+
+  it("records a config.update audit entry for the key that wrote, and none for a refused write", async () => {
+    const client = configKey();
+    const second = await operatorClient().createKey({
+      label: "instance-config-second",
+      source: "instance-config-second",
+      permissions: ["config.manage"],
+    });
+    expect(second.ok, JSON.stringify(second.error)).toBe(true);
+    const secondClient = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: second.data.key,
+    });
+    const current = await client.getCurrentKey();
+    expect(current.ok, JSON.stringify(current.error)).toBe(true);
+
+    const entries = async () => {
+      const listed = await client.listAudit({
+        action: "config.update",
+        limit: 100,
+      });
+      expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+      return listed.data.data;
+    };
+    const before = await entries();
+
+    await put(client, { audit_retention_days: 31 });
+    await put(secondClient, { audit_retention_days: 32 });
+    // Refused for its shape and for its identity: nothing was written, so
+    // nothing is recorded.
+    expect((await client.updateConfig({ not_a_setting: 1 })).status).toBe(400);
+    expect((await client.updateConfig({ instance_id: ELSEWHERE })).status).toBe(
+      400,
+    );
+
+    const after = await entries();
+    const known = new Set(before.map((entry) => entry.id));
+    const added = after.filter((entry) => !known.has(entry.id));
+    expect(added.map((entry) => entry.key_id).sort()).toEqual(
+      [current.data.id, second.data.id].sort(),
+    );
+    for (const entry of added) {
+      expect(entry.action).toBe("config.update");
+      expect(entry.resource_type).toBe("config");
+    }
+
+    await put(client, {});
+  }, 120_000);
+
+  it("refuses a query key on both operations", async () => {
+    for (const method of ["GET", "PUT"]) {
+      const answer = await fetch(`${server!.apiUrl}/config?not_a_key=1`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${server!.workingKey}`,
+          "content-type": "application/json",
+        },
+        ...(method === "PUT" && { body: "{}" }),
+      });
+      expect(answer.status, method).toBe(400);
+      expect(
+        ((await answer.json()) as { error: { code: string } }).error.code,
+        method,
+      ).toBe("validation_error");
+    }
+  }, 120_000);
+  it("refuses a body past the request cap with 413 request_too_large, and keeps the configuration", async () => {
+    const client = configKey();
+    const held = await put(client, { audit_retention_days: 31 });
+    // No setting bounds its own size, so a lever's list is held only by the
+    // cap on the body.
+    const lever = (bytes: number) => ({
+      enforcement: { strict_mode: { types: ["t".repeat(bytes)] } },
+    });
+
+    try {
+      // The witness: half the default cap is taken.
+      await put(client, lever(512 * 1024));
+      await put(client, { audit_retention_days: 31 });
+
+      // Over its own connection: the server answers before it has read the
+      // body and drops the connection, which a pooled one would carry into
+      // the next request as a stale socket.
+      const refused = await fetch(`${server!.apiUrl}/config`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${server!.workingKey}`,
+          "content-type": "application/json",
+          connection: "close",
+        },
+        body: JSON.stringify(lever(1_048_576)),
+      });
+      expect(refused.status).toBe(413);
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code,
+      ).toBe("request_too_large");
+      expect(await read(client)).toEqual(held);
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+});
