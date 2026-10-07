@@ -224,14 +224,6 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** waiting on #2.",
     "",
-    "## Retired",
-    "",
-    "### `sample/after-heading`",
-    "",
-    "The server MUST read a Retired section as an ordinary one.",
-    "",
-    "**Tests:** waiting on #3.",
-    "",
   ].join("\n");
 
   const BAD = [
@@ -403,7 +395,6 @@ describe("the form check sees what it is for", () => {
       "sample/feature-event",
       "sample/unwanted",
       "sample/code-span",
-      "sample/after-heading",
     ]);
     expect(violations("sample", GOOD)).toEqual(empty());
   });

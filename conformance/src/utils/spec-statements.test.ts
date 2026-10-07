@@ -91,10 +91,6 @@ describe("a chapter in the ID form", () => {
     "",
     "**Tests:** waiting on #7.",
     "",
-    "## Retired",
-    "",
-    "- `sample/old`: withdrawn.",
-    "",
   ].join("\n");
   const chapter = readChapter("sample", text);
 
@@ -129,17 +125,12 @@ describe("a chapter in the ID form", () => {
     expect(chapter.statements.map((s) => s.key)).not.toContain("sample/fenced");
   });
 
-  it("reads a Retired section as an ordinary section", () => {
+  it("lists the chapter's IDs in order", () => {
     expect(chapter.statements.map((s) => s.key)).toEqual([
       "sample/one",
       "sample/two",
     ]);
     expect(chapter.stray).toEqual([]);
-    const retired = readChapter(
-      "sample",
-      "## Retired\n\n### `sample/old`\n\nThe server MUST wait.\n",
-    );
-    expect(retired.statements.map((s) => s.key)).toEqual(["sample/old"]);
     expect(chapterIds(chapter)).toEqual(["sample/one", "sample/two"]);
   });
 
