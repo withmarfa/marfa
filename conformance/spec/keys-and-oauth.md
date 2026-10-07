@@ -53,7 +53,7 @@
 
     Reason: a device holds no credential until the exchange, so the answer to its poll is all it has to act on, and a device told nothing of the person's choice cannot tell waiting from failure. A poll sooner than the interval, an expired code and a denied code have their own answers, `slow_down`, `expired_token` and `access_denied`, which no statement here holds. The approval is a signed-in owner's, which the run's shared server does not have, so the fixture boots a server of its own and creates the owner there (31).
 
-    Tests: `compliance/device-grant.test.ts › answers authorization_pending to a poll of a code nobody has decided`.
+    Tests: `compliance/device-grant.test.ts › answers authorization_pending to a poll of a code nobody has decided`; `compliance/signed-in-apps.test.ts › is issued a code for a published scope it is not registered for, and its registration is as it was`.
 
 ## The owner
 
@@ -97,7 +97,7 @@
 
 ## Signed-in apps
 
-43. **A client's registration widens only for a signed-in person.** An authorization request naming a scope the instance publishes to every client and the client is not registered for adds that scope to the registration, so the client is not refused a scope it was never told it lacked, but only when a person is signed in. A request from nobody signed in is sent to `/auth/sign-in` with the request, every scope it named included, as `return_to`, and the registration is unchanged: a request naming no scope is still the registration's own (24). Under `prompt=none` nobody can be sent anywhere, so such a request is judged against the registration as it stands. **The exception is device initiation**: `POST /auth/device/code` is made before anybody can sign in, by design, and still adds a published scope the device asks for to the client's registration with no session; the person then approves each scope on the device approval screen. `compliance/signed-in-apps.test.ts › is registered at the scope it asked for, which an authorize from nobody signed in leaves as it was`, `› is caught up to a published scope once a person is signed in, and the grant carries it`.
+43. **A client's registration widens only for a signed-in person.** An authorization request naming a scope the instance publishes to every client and the client is not registered for adds that scope to the registration, so the client is not refused a scope it was never told it lacked, but only when a person is signed in. A request from nobody signed in is sent to `/auth/sign-in` with the request, every scope it named included, as `return_to`, and the registration is unchanged: a request naming no scope is still the registration's own (24). Under `prompt=none` nobody can be sent anywhere, so such a request is judged against the registration as it stands. Device initiation, which is made before anybody can sign in, is held to the same rule by 73 to 75. `compliance/signed-in-apps.test.ts › is registered at the scope it asked for, which an authorize from nobody signed in leaves as it was`, `› is caught up to a published scope once a person is signed in, and the grant carries it`.
 44. **A signed-in app is limited by its grant, not by its token.** Every request an app makes for one person counts against one window, whichever access token it carries, so refreshing a token does not start a fresh window: the request after a refresh is answered with one fewer remaining (`X-RateLimit-Remaining`) than the one before it. `compliance/signed-in-apps.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
 45. **Revoking a token this server does not hold answers `200`**, as RFC 7009 has it: a token never issued, already revoked or already gone is answered as one just revoked, whatever `token_type_hint` says. A revocation naming no token is refused `400 invalid_request`, and a client that fails to authenticate is refused as the plugin refuses it. `compliance/oauth.test.ts › answers 200 to revoking a token it does not hold, and 400 to a revocation naming no token`.
 
@@ -274,3 +274,23 @@
     Reason: a code that minted a second token would let anyone who has seen the code mint again. The refusal comes whatever the time since the previous poll.
 
     Tests: `compliance/device-grant.test.ts › answers invalid_grant to a poll of a code a token was already issued for`.
+
+## Asking for a device code
+
+73. WHEN a device asks `POST /auth/device/code` for a scope the instance publishes to every client and the client is not registered for, the server SHALL issue the code.
+
+    Reason: a client registered before the instance published a scope can still be approved for it. A scope the instance does not publish to every client is refused `400 invalid_scope`.
+
+    Tests: `compliance/signed-in-apps.test.ts › is issued a code for a published scope it is not registered for, and its registration is as it was`.
+
+74. WHEN a device asks `POST /auth/device/code` for a scope the instance publishes to every client and the client is not registered for, the server SHALL NOT change the client's registration.
+
+    Reason: nobody is signed in when a device asks, and a client's public id is all the request needs, so a change here would let a stranger widen what the client's later approval screens offer.
+
+    Tests: `compliance/signed-in-apps.test.ts › is issued a code for a published scope it is not registered for, and its registration is as it was`.
+
+75. WHEN a signed-in person approves a device code, the server SHALL add to the client's registration the scopes the person approved that it does not hold, and no others, before the device's exchange.
+
+    Reason: the registration is what a request naming no scope asks for (24) and what a request nobody can send to sign in is judged against (43), so what a person approves on a device reaches the client's later requests as an approval in the browser does. A scope the person unticks, or a code they deny, adds nothing.
+
+    Tests: `compliance/signed-in-apps.test.ts › is registered only for what the person approved, which a narrower approval leaves out`, `› is registered for the published scope once the person approves it, and the token carries it`.

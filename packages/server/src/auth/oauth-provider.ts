@@ -676,12 +676,12 @@ export function buildOauthProjectionPlugin(opts: {
           ),
         },
         {
-          // The device twin of the narrowing above: catches a stale client
-          // ceiling up to what the device asks for, before the plugin compares
-          // the request against the stored row with exact membership.
+          // The device twin of the narrowing above: lets the plugin compare
+          // the request against a stale client ceiling widened for this
+          // request only. See `offerDeviceScopes`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/device/code",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            catchUpDeviceCeiling(ctx, storage, bundleScopes),
+            offerDeviceScopes(ctx, storage, bundleScopes),
           ),
         },
         {
@@ -689,7 +689,7 @@ export function buildOauthProjectionPlugin(opts: {
           // the user has revoked must not redeem. See `guardDeviceCodeGrant`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            guardDeviceCodeGrant(ctx, storage),
+            guardDeviceCodeGrant(ctx, storage, bundleScopes),
           ),
         },
         ...(acceptedResources
@@ -1229,8 +1229,9 @@ async function narrowAuthorizeScopes(
   //
   // A ceiling is permission to ask, and the person still approves the
   // screen, so a signed-in person widening a ceiling widens nothing anybody
-  // holds. `catchUpDeviceCeiling` is the device twin and has no session to
-  // ask for: a device asks before anybody has signed in, by design.
+  // holds. `offerDeviceScopes` is the device twin and has no session to ask
+  // for, because a device asks before anybody has signed in, by design. So it
+  // writes nothing: the device approval writes what the person ticked.
 
   // The plugin refuses a JAR request object outright, and refuses a
   // `request_uri` because `requestUriResolver` is unconfigured. Matched on
@@ -1735,19 +1736,24 @@ async function guardRefreshTokenGrant(
 // ---------------------------------------------------------------------------
 
 /**
- * Before-hook for `/device/code`: catch the client's stored scope ceiling up
- * to what this device asks for, before the plugin compares the request
- * against the row with exact membership.
+ * Before-hook for `/device/code`: let the plugin compare the request against
+ * the client's stored ceiling as though it already held the published scopes
+ * this device asks for, without writing the row.
  *
  * The device twin of `narrowAuthorizeScopes`, and narrower on purpose: the
  * authorize surface narrows a request so a stale scope costs the requester
  * that scope rather than the authorization, because its error rides a
  * redirect nobody may render. Here the answer goes straight back to the
  * machine that asked, which can read it, so the plugin's own refusal of an
- * uncovered scope stands and only the ceiling moves. `ceiling-catchup.ts`
- * carries the three bounds on what moves.
+ * uncovered scope stands for anything the bundles do not publish.
+ *
+ * Nobody is signed in when a device asks, and a client's public id is all the
+ * request needs, so a write here would let a stranger widen what the client's
+ * later screens offer. The widened view lives on the request, in the
+ * credential adapter, and dies with it; the approval screen writes the scopes
+ * the person ticked (`catchUpClientScopeCeiling`, `routes/auth-pages.ts`).
  */
-async function catchUpDeviceCeiling(
+async function offerDeviceScopes(
   ctx: HookCtxLite,
   storage: Storage,
   bundleScopes: Set<string>,
@@ -1761,29 +1767,39 @@ async function catchUpDeviceCeiling(
     typeof rawScope === "string"
       ? rawScope.split(" ").filter((s) => s.length > 0)
       : [];
-  if (requested.length === 0) return;
+  await offerScopesBeyondCeiling(storage, clientId, requested, bundleScopes);
+}
+
+/**
+ * Put the published scopes `requested` names beyond the client's stored
+ * ceiling on the request, for the credential adapter to read as held. Writes
+ * nothing.
+ */
+async function offerScopesBeyondCeiling(
+  storage: Storage,
+  clientId: string,
+  requested: readonly string[],
+  bundleScopes: Set<string>,
+): Promise<void> {
+  const request = credentialRequest.getStore();
+  if (!request || requested.length === 0) return;
   const oauth = storage.oauthProvider;
   if (!oauth) return;
-  let ceiling: readonly string[] | null;
   try {
     const client = await oauth.getClient(clientId);
     if (!client) return;
-    ceiling = client.scopes;
+    const offered = scopesAwaitingCatchUp(
+      client.scopes,
+      requested,
+      bundleScopes,
+    );
+    if (offered.length > 0) request.deviceOffer = { clientId, scopes: offered };
   } catch (err) {
     log("warn", "oauth device ceiling precheck failed", {
       client_id: clientId,
       error: errorMessage(err),
     });
-    return;
   }
-  await catchUpClientScopeCeiling({
-    storage,
-    clientId,
-    requested,
-    ceiling,
-    bundleScopes,
-    surface: "device",
-  });
 }
 
 /**
@@ -1793,16 +1809,39 @@ async function catchUpDeviceCeiling(
  * approved in the window between the two writes. Fails open on a lookup
  * error and on a code this store does not recognize, or one nobody has
  * claimed, which the plugin refuses on its own terms.
+ *
+ * It also offers the plugin the published scopes the code names beyond the
+ * client's ceiling, as initiation did. The plugin tests a code's scopes
+ * against the ceiling on every poll, ahead of whether the code is still
+ * pending, so without it a poll between initiation and approval would be
+ * answered `invalid_scope` instead of `authorization_pending`. The offer
+ * stands at the exchange too, so what bounds the token is the code's own
+ * scope: what initiation admitted, narrowed to what the person ticked.
  */
 async function guardDeviceCodeGrant(
   ctx: HookCtxLite,
   storage: Storage,
+  bundleScopes: Set<string>,
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
   if (requestedGrantType(ctx) !== DEVICE_CODE_GRANT_TYPE) return;
   const code = body.device_code;
   if (typeof code !== "string" || code.length === 0) return;
+  try {
+    const asked = await storage.oauthProvider?.findDeviceCodeRequest(code);
+    if (asked)
+      await offerScopesBeyondCeiling(
+        storage,
+        asked.clientId,
+        asked.scopes,
+        bundleScopes,
+      );
+  } catch (err) {
+    log("warn", "oauth device-code scope precheck failed", {
+      error: errorMessage(err),
+    });
+  }
   if (typeof storage.oauthProvider?.findDeviceCodeGrantKey !== "function")
     return;
 

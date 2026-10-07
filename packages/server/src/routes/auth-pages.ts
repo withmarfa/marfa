@@ -32,6 +32,10 @@ import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 import {
+  bundlePublishedScopes,
+  catchUpClientScopeCeiling,
+} from "../auth/ceiling-catchup.js";
+import {
   renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
@@ -905,6 +909,26 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           async () => {
             const provider = storage.oauthProvider;
+            // The write the device's initiation could not make: nobody was
+            // signed in then. Inside the approval's transaction, so an
+            // approval that does not take writes nothing, and strict because
+            // the widening is part of what the approval records: a failure
+            // here fails the approval rather than leaving the registration
+            // behind what the person approved. The exchange itself is not
+            // what needs it; the poll hook offers the code's scopes to the
+            // plugin as initiation did (`guardDeviceCodeGrant`).
+            const stored = await provider?.getClient(clientId);
+            if (stored) {
+              await catchUpClientScopeCeiling({
+                storage,
+                clientId,
+                requested: approvedScopes,
+                ceiling: stored.scopes,
+                bundleScopes: bundlePublishedScopes(getPermissionBundles()),
+                surface: "device",
+                strict: true,
+              });
+            }
             const created = await createUserAppGrant(
               storage,
               sessionResult.session.user,

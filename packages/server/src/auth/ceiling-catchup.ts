@@ -16,11 +16,18 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * hook rewrites a request and hands it back to the vendored provider, which
  * re-validates it against the very same row with exact membership
  * (`new Set(client.scopes ?? opts.scopes)`, `.has(scope)`, no pattern
- * matching anywhere in it), and device initiation compares the row exactly
- * for the same reason one file over. So the repair cannot be a wider
- * comparison at either site. It has to be a write: put the requested
- * literal INTO the stored row, and the exact tests on both surfaces then
- * pass on their own terms.
+ * matching anywhere in it), and device initiation and every poll compare the
+ * row exactly for the same reason one file over. So the repair cannot be a
+ * wider comparison at either site. On the authorize surface it is a write:
+ * put the requested literal INTO the stored row, and the exact test then
+ * passes on its own terms.
+ *
+ * **The write waits for a signed-in person on both surfaces.** The authorize
+ * hook writes once a session exists. A device asks before anybody has signed
+ * in, so initiation and each poll only offer the scopes to the plugin for
+ * that request (`offerDeviceScopes`, `guardDeviceCodeGrant`), and the
+ * approval writes the ones the person ticked, so the registration records
+ * what a person has approved the client to ask for.
  */
 import { isValidScope } from "@withmarfa/shared";
 import { publishableBundleScopes } from "./allowlist-withholding.js";
@@ -32,8 +39,8 @@ import { log } from "../middleware/logger.js";
  * Which surface performed a catch-up. It reaches the log line and the audit
  * row because the two surfaces fail differently and an operator reading the
  * trail afterwards has to be able to tell which one moved the row: an
- * authorize catch-up rides a browser redirect with a person in front of it,
- * a device catch-up answers a machine that polled for it.
+ * authorize catch-up rides a browser redirect, a device catch-up is the
+ * approval of a code a machine is polling for.
  */
 export type CeilingCatchUpSurface = "authorize" | "device";
 
@@ -63,11 +70,6 @@ export type CeilingCatchUpSurface = "authorize" | "device";
  * and both surfaces that answer withhold on their own: each renders the
  * scope unticked, so leaving it alone grants nothing. Do not delete either
  * on the grounds that the ceiling looks narrow, because it is not.
- *
- * Device initiation used to refuse such a scope outright instead, because
- * its approval screen had no tick to withhold with. That screen has toggles
- * now and the refusal is retired, which changes where the withholding
- * happens and not whether it does.
  */
 export function bundlePublishedScopes(
   bundles: readonly PermissionBundle[],
@@ -130,7 +132,9 @@ export function scopesAwaitingCatchUp(
  * A failed catch-up is not a failed request. It logs and answers with the
  * ceiling as it was, which is the ordinary path when there is nothing to
  * catch up: the caller's own comparison still runs against the row as it
- * stands.
+ * stands. **A caller that must not go on without the widening says so with
+ * `strict`**, and the failure propagates: a device approval that could not
+ * write what the person ticked would mint a code the redemption then refuses.
  */
 export async function catchUpClientScopeCeiling(opts: {
   storage: Storage;
@@ -139,6 +143,7 @@ export async function catchUpClientScopeCeiling(opts: {
   ceiling: readonly string[] | null;
   bundleScopes: ReadonlySet<string>;
   surface: CeilingCatchUpSurface;
+  strict?: boolean;
 }): Promise<readonly string[] | null> {
   const { storage, clientId, requested, ceiling, bundleScopes, surface } = opts;
   const oauth = storage.oauthProvider;
@@ -172,6 +177,7 @@ export async function catchUpClientScopeCeiling(opts: {
     );
     if (!changed) return ceiling;
   } catch (err) {
+    if (opts.strict) throw err;
     // A failed catch-up is not a failed request. The comparison the caller
     // makes next still runs against the ceiling as it stands, which is the
     // ordinary path when there is nothing to catch up.

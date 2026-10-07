@@ -26,7 +26,7 @@ const READS: Record<string, string> = {
   WebhookStore: "checkpoint listAfter list get count",
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
-    "getClientName getClient getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey",
+    "getClientName getClient getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey findDeviceCodeRequest",
   AuditStore: "has list",
   EventLogStore: "getAfter getMinRetainedId getMaxId",
   SettingsStore: "get",

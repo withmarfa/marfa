@@ -140,6 +140,28 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     };
   }
 
+  async findDeviceCodeRequest(
+    deviceCode: string,
+  ): Promise<{ clientId: string; scopes: string[] } | null> {
+    const rows = await this.db
+      .select({
+        oauthClientId: auth_oauth_device_code.oauthClientId,
+        clientId: auth_oauth_device_code.clientId,
+        scope: auth_oauth_device_code.scope,
+      })
+      .from(auth_oauth_device_code)
+      .where(eq(auth_oauth_device_code.deviceCode, deviceCode))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    const clientId = row.oauthClientId ?? row.clientId;
+    if (!clientId) return null;
+    return {
+      clientId,
+      scopes: (row.scope ?? "").split(" ").filter((scope) => scope !== ""),
+    };
+  }
+
   async narrowDeviceCodeScope(
     userCode: string,
     scopes: readonly string[],

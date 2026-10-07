@@ -16,6 +16,10 @@ interface CredentialRequest {
   phase?: CredentialPersistencePhase;
   registrationScopes?: string[];
   email?: string;
+  /** Scopes a device initiation names beyond the client's stored ceiling. The
+   *  plugin's exact-membership check reads them as held for this request only;
+   *  nothing is written until a signed-in person approves. */
+  deviceOffer?: { clientId: string; scopes: readonly string[] };
 }
 export const credentialRequest = new AsyncLocalStorage<CredentialRequest>();
 
@@ -164,6 +168,25 @@ export class CredentialPersistencePhase {
     if (!response) throw new Error("Credential operation produced no response");
     return response;
   }
+}
+
+/** The client row as the plugin reads it during a device initiation: the
+ *  stored ceiling plus the scopes that request offers the person to approve. */
+function withDeviceOffer(
+  request: CredentialRequest | undefined,
+  args: AdapterArgs,
+  row: unknown,
+): unknown {
+  const offer = request?.deviceOffer;
+  if (!offer || args.model !== "oauthClient" || !row) return row;
+  const client = row as { clientId?: unknown; scopes?: unknown };
+  if (client.clientId !== offer.clientId || !Array.isArray(client.scopes))
+    return row;
+  const held = client.scopes as string[];
+  return {
+    ...client,
+    scopes: [...held, ...offer.scopes.filter((scope) => !held.includes(scope))],
+  };
 }
 
 interface AdapterArgs {
@@ -363,7 +386,8 @@ export function withCredentialAudit<
         const request = credentialRequest.getStore();
         if (request && !request.active)
           return Promise.reject(new Error("Credential request is closed"));
-        const work = () => (original as Operation)(args);
+        const work = async () =>
+          withDeviceOffer(request, args, await (original as Operation)(args));
         return request?.phase?.run(false, work) ?? work();
       };
     }
