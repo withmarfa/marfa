@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { readdir, statfs } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { setAvailableBytesProbe } from "../storage/disk-space.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -14,6 +14,7 @@ const MIB = 1024 * 1024;
 
 let ctx: TestContext | undefined;
 afterEach(async () => {
+  setAvailableBytesProbe(undefined);
   await ctx?.cleanup();
   ctx = undefined;
 });
@@ -23,16 +24,18 @@ async function boot(diskReserveBytes: number): Promise<TestContext> {
   return ctx;
 }
 
-/** The room the volume has now that a test context's folders are made on. */
-async function freeBytes(): Promise<number> {
-  const stats = await statfs(tmpdir());
-  return stats.bavail * stats.bsize;
-}
-
-/** A reserve a few mebibytes short of all the room there is: crossed by a
- *  body that is written, and not by anything small. */
-async function nearlyAllOfIt(): Promise<number> {
-  return (await freeBytes()) - 6 * MIB;
+/**
+ * A volume that loses `lostPerLook` bytes at each look at it, from `start`:
+ * the room a body leaves behind it as it is written, said by a test and not
+ * left to whatever else is using the machine's disk.
+ */
+function shrinking(start: number, lostPerLook: number) {
+  const state = { looks: 0 };
+  setAvailableBytesProbe(() => {
+    state.looks++;
+    return Promise.resolve(start - (state.looks - 1) * lostPerLook);
+  });
+  return state;
 }
 
 async function spoolEntries(c: TestContext): Promise<string[]> {
@@ -139,7 +142,7 @@ describe("POST /blobs keeps the disk reserve", () => {
     const error = await errorOf(res);
     expect(error.code).toBe("insufficient_storage");
     expect(error.details?.reserve_bytes).toBe(Number.MAX_SAFE_INTEGER);
-    expect(error.details?.incoming_bytes).toBe(bytes.length);
+    expect(typeof error.details?.available_bytes).toBe("number");
     expect(await c.storage.blobs.get(hashOf(bytes))).toBeNull();
     expect(await spoolEntries(c)).toEqual([]);
   });
@@ -153,11 +156,32 @@ describe("POST /blobs keeps the disk reserve", () => {
   });
 
   it("stops a body that declares no length as the volume falls inside the reserve, and removes its spool", async () => {
-    const c = await boot(await nearlyAllOfIt());
+    const c = await boot(100 * MIB);
+    const volume = shrinking(1000 * MIB, 40 * MIB);
     const res = await upload(c, streamed(128));
     expect(res.status).toBe(507);
     expect((await errorOf(res)).code).toBe("insufficient_storage");
     expect(await spoolEntries(c)).toEqual([]);
+    // Refused part of the way through, not at the door and not at the end.
+    expect(volume.looks).toBeGreaterThan(2);
+    expect(volume.looks).toBeLessThan(128 / 4);
+  });
+
+  it("takes bodies that arrive together one at a time against the room", async () => {
+    const c = await boot(100 * MIB);
+    setAvailableBytesProbe(() => Promise.resolve(100 * MIB + 10 * MIB));
+    const bodies = Array.from({ length: 4 }, () => Buffer.alloc(3 * MIB, 1));
+    const answers = await Promise.all(
+      bodies.map(async (body, i) => {
+        // Different bytes, so the four are four blobs.
+        body[0] = i;
+        return (
+          await upload(c, body, { "Content-Length": String(body.length) })
+        ).status;
+      }),
+    );
+    expect(answers.filter((status) => status === 201)).toHaveLength(1);
+    expect(answers.filter((status) => status === 507)).toHaveLength(3);
   });
 
   it("takes the same streamed body when nothing is held back", async () => {
@@ -178,7 +202,8 @@ describe("POST /blobs keeps the disk reserve", () => {
 
 describe("POST /restore keeps the disk reserve", () => {
   it("refuses an archive whose entry inflates past the reserve, and writes nothing", async () => {
-    const c = await boot(await nearlyAllOfIt());
+    const c = await boot(100 * MIB);
+    const volume = shrinking(1000 * MIB, 40 * MIB);
     const archive = await inflatingArchive(96);
     // The archive is small on the wire and large once inflated, which is
     // what the length it declares cannot show.
@@ -186,6 +211,20 @@ describe("POST /restore keeps the disk reserve", () => {
     const res = await restore(c, archive);
     expect(res.status).toBe(507);
     expect((await errorOf(res)).code).toBe("insufficient_storage");
+    expect(await spoolEntries(c)).toEqual([]);
+    // Stopped while the entry was being written.
+    expect(volume.looks).toBeGreaterThan(2);
+  });
+
+  it("refuses an entry by the size its header gives, before any of it is written", async () => {
+    const c = await boot(100 * MIB);
+    // Room for the reserve and a little over, not for a 96 MiB entry.
+    const volume = shrinking(150 * MIB, 0);
+    const res = await restore(c, await inflatingArchive(96));
+    expect(res.status).toBe(507);
+    expect((await errorOf(res)).code).toBe("insufficient_storage");
+    // The archive's own admission and the entry's, and no look at a stream.
+    expect(volume.looks).toBe(2);
     expect(await spoolEntries(c)).toEqual([]);
   });
 

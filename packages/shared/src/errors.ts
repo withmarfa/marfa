@@ -206,7 +206,8 @@ export enum ErrorCode {
   /**
    * The volume the instance writes to has no room for this write: the disk
    * is full, or the write would leave less free than the instance's
-   * reserve. Nothing of the request was kept.
+   * reserve. Nothing of the request was kept, unless the volume turned away
+   * the commit itself, which `details.write_outcome` of `unknown` says.
    *
    * `507` and not `503`. A `503` here would read as the instance busy, and
    * a retry a moment later cannot help; only someone freeing space can.
@@ -615,7 +616,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.INSUFFICIENT_STORAGE]: {
     status: 507,
     summary:
-      "The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept.",
+      "The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`.",
   },
   [ErrorCode.SOURCE_ID_CONFLICT]: {
     status: 409,

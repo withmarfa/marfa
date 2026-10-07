@@ -56,6 +56,8 @@ describe("a reserve the volume cannot keep", () => {
   const restored = new TextEncoder().encode("a blob an archive carries");
   const restoredHash = blobHash(restored);
 
+  const typeId = "user.disk_reserve_note";
+
   const archive = () =>
     itemsArchive(
       [
@@ -70,6 +72,15 @@ describe("a reserve the volume cannot keep", () => {
         },
       ],
       [{ data: restored, mime_type: "application/octet-stream" }],
+      [
+        {
+          id: typeId,
+          name: "Disk reserve note",
+          description: "A type the archive registers",
+          version: 1,
+          fields: { body: { type: "string", description: "Body" } },
+        },
+      ],
     );
 
   it("refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing", async () => {
@@ -86,12 +97,13 @@ describe("a reserve the volume cannot keep", () => {
     expect((await operator.downloadBlob(hash)).status).toBe(404);
   });
 
-  it("refuses a restore 507 insufficient_storage, and writes no row and no blob", async () => {
+  it("refuses a restore 507 insufficient_storage, and writes no row, no type and no blob", async () => {
     const refused = await operator.restoreArchive(archive());
     expect(refused.status).toBe(507);
     expect(refused.error?.error.code).toBe("insufficient_storage");
     expect((await working.getItem(id)).status).toBe(404);
     expect((await operator.downloadBlob(restoredHash)).status).toBe(404);
+    expect((await working.getType(typeId)).status).toBe(404);
   });
 
   it("takes a write that carries a JSON body, which the reserve is not asked of", async () => {
@@ -118,5 +130,6 @@ describe("a reserve the volume cannot keep", () => {
     expect(done.data.imported).toBe(1);
     expect((await working.getItem(id)).status).toBe(200);
     expect((await operator.downloadBlob(restoredHash)).status).toBe(200);
+    expect((await working.getType(typeId)).status).toBe(200);
   });
 });

@@ -963,7 +963,9 @@ export function restoreArchiveRoutes(
     // blob spool the store moved into place is simply no longer there.
     const spools: string[] = [];
     const declared = Number(c.req.header("Content-Length"));
-    await reserve.admit(Number.isSafeInteger(declared) ? declared : 0);
+    const place = await reserve.admit(
+      Number.isSafeInteger(declared) ? declared : 0,
+    );
     const mintSpool = (): string => {
       const spool = blobs.disk.spoolPath();
       spools.push(spool);
@@ -973,11 +975,15 @@ export function restoreArchiveRoutes(
       const bodySpool = mintSpool();
       const body = c.req.raw.body;
       if (body) {
-        await pipeline(
-          Readable.fromWeb(body),
-          reserve.guard(),
-          createWriteStream(bodySpool),
-        );
+        try {
+          await pipeline(
+            Readable.fromWeb(body),
+            place.guard(),
+            createWriteStream(bodySpool),
+          );
+        } finally {
+          place.close();
+        }
       }
       if (
         (await stat(bodySpool).then(
@@ -1074,6 +1080,7 @@ export function restoreArchiveRoutes(
         releaseBlobs();
       }
     } finally {
+      place.close();
       for (const spool of spools) await rm(spool, { force: true });
     }
   });

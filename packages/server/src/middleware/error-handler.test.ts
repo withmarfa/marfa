@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { createTestContext, type TestContext } from "../test-utils.js";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { createErrorHandler } from "./error-handler.js";
+import { TransactionFailure } from "../storage/sqlite/transaction-control.js";
 import * as logger from "./logger.js";
 import type { AppEnv } from "./auth.js";
 
@@ -223,6 +224,40 @@ describe("error handler — a volume with no room left", () => {
       }
     },
   );
+
+  it("still logs the fault it typed, which needs a person, and does not for a refusal a route chose", async () => {
+    const logSpy = vi.spyOn(logger, "log").mockImplementation(() => undefined);
+    try {
+      const unhandled = () =>
+        logSpy.mock.calls.filter(
+          ([level, message]) =>
+            level === "error" && message === "Unhandled error",
+        );
+      await appThrowing(wrapped("SQLITE_FULL")).request("/boom");
+      expect(unhandled()).toHaveLength(1);
+      await appThrowing(
+        new MarfaError(ErrorCode.INSUFFICIENT_STORAGE, "over the reserve"),
+      ).request("/boom");
+      expect(unhandled()).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("says the write may have landed when the commit was the thing turned away", async () => {
+    const commit = Object.assign(new Error("commit failed"), {
+      control: { outcome: "unknown" },
+      cause: wrapped("SQLITE_FULL"),
+    });
+    Object.setPrototypeOf(commit, TransactionFailure.prototype);
+    const res = await appThrowing(commit).request("/boom");
+    expect(res.status).toBe(507);
+    const body = (await res.json()) as {
+      error: { details?: Record<string, unknown>; message: string };
+    };
+    expect(body.error.details).toEqual({ write_outcome: "unknown" });
+    expect(body.error.message).toMatch(/may have landed/);
+  });
 
   it("still answers a fault with another code 500 internal_error", async () => {
     const res = await appThrowing(wrapped("SQLITE_CORRUPT")).request("/boom");

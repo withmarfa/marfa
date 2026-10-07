@@ -226,40 +226,49 @@ export async function readArchive(
         return;
       }
 
-      const spool = mintSpool();
-      if (blobHash === undefined) {
-        pipeline(
-          stream,
-          new LineLengthGuard(name),
-          reserve.guard(),
-          createWriteStream(spool),
-        ).then(() => {
-          lineFiles[name as LineFile] = spool;
-          next();
-        }, fail);
-        return;
-      }
-
-      // A blob entry is hashed on the way to its spool; one that does not
-      // hash to its name is left out, as an entry under a name that is no
-      // hash is.
-      const hashing = new HashingTransform();
-      pipeline(stream, hashing, reserve.guard(), createWriteStream(spool)).then(
-        async () => {
-          if (constantTimeEqual(hashing.digest(), blobHash)) {
-            blobs.push({
-              hash: blobHash,
-              mimeType: "",
-              path: spool,
-              sizeBytes: hashing.bytes,
+      // The entry's size is in its header, so the room it needs is known
+      // before a byte of it is written.
+      reserve.admit(header.size).then((place) => {
+        const spool = mintSpool();
+        if (blobHash === undefined) {
+          pipeline(
+            stream,
+            new LineLengthGuard(name),
+            place.guard(),
+            createWriteStream(spool),
+          )
+            .then(() => {
+              lineFiles[name as LineFile] = spool;
+              next();
+            }, fail)
+            .finally(() => {
+              place.close();
             });
-          } else {
-            await rm(spool, { force: true });
-          }
-          next();
-        },
-        fail,
-      );
+          return;
+        }
+
+        // A blob entry is hashed on the way to its spool; one that does not
+        // hash to its name is left out, as an entry under a name that is no
+        // hash is.
+        const hashing = new HashingTransform();
+        pipeline(stream, hashing, place.guard(), createWriteStream(spool))
+          .then(async () => {
+            if (constantTimeEqual(hashing.digest(), blobHash)) {
+              blobs.push({
+                hash: blobHash,
+                mimeType: "",
+                path: spool,
+                sizeBytes: hashing.bytes,
+              });
+            } else {
+              await rm(spool, { force: true });
+            }
+            next();
+          }, fail)
+          .finally(() => {
+            place.close();
+          });
+      }, fail);
     });
     extract.on("finish", resolve);
   });

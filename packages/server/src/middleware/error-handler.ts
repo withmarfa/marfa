@@ -108,9 +108,68 @@ export function createErrorHandler(config: {
   const instance = config.authBaseUrl
     ? new URL(config.authBaseUrl).host
     : undefined;
+  /**
+   * What is done about a fault the server did not choose a refusal for: the
+   * log line, the exception on the trace and the alert. Also done for a full
+   * disk, which is answered with a typed refusal but is the one fault that
+   * needs a person, and which the refusal's own text says nothing of.
+   */
+  const report = (err: unknown, c: Context<AppEnv>): void => {
+    // The summary walks the cause chain, so a failed query reads as its
+    // statement and the driver's reason, with the values it was bound to out.
+    const summary = formatErrorSummary(err);
+
+    // `request_id` is the join key to the access-log line for the same
+    // request, and the path and method say where it was.
+    log("error", "Unhandled error", {
+      request_id: c.get("requestId"),
+      method: c.req.method,
+      path: loggablePath(c.req.path),
+      error: summary,
+      error_detail: serializeError(err),
+      stack: errorStack(err),
+    });
+
+    globalThis.__marfaReportException?.(err, {
+      request_id: c.get("requestId"),
+      method: c.req.method,
+      path: loggablePath(c.req.path),
+    });
+
+    // Mark span as errored so the error-aware sampler forces 100% export on this trace.
+    // API-only + null-guarded — no-op when OTel is off.
+    const span = trace.getActiveSpan();
+    if (span) {
+      if (err instanceof Error) {
+        span.recordException({
+          name: err.name,
+          message: summary,
+          stack: errorStack(err),
+        });
+      }
+      span.setStatus({ code: SpanStatusCode.ERROR });
+    }
+
+    if (config.errorWebhookUrl) {
+      notifyError(
+        config.errorWebhookUrl,
+        {
+          timestamp: new Date().toISOString(),
+          request_id: c.get("requestId"),
+          error: summary,
+          path: loggablePath(c.req.path),
+          method: c.req.method,
+          ...(instance && { instance }),
+        },
+        config.errorWebhookTimeoutMs,
+      );
+    }
+  };
+
   return (err, c) => {
     const shaped = shapedError(err);
     if (shaped) {
+      if (diskFull(err)) report(err, c);
       const error: Record<string, unknown> = {
         code: shaped.code,
         message: shaped.message,
@@ -181,55 +240,7 @@ export function createErrorHandler(config: {
       );
     }
 
-    // The summary walks the cause chain, so a failed query reads as its
-    // statement and the driver's reason, with the values it was bound to out.
-    const summary = formatErrorSummary(err);
-
-    // `request_id` is the join key to the access-log line for the same
-    // request, and the path and method say where it was.
-    log("error", "Unhandled error", {
-      request_id: c.get("requestId"),
-      method: c.req.method,
-      path: loggablePath(c.req.path),
-      error: summary,
-      error_detail: serializeError(err),
-      stack: errorStack(err),
-    });
-
-    globalThis.__marfaReportException?.(err, {
-      request_id: c.get("requestId"),
-      method: c.req.method,
-      path: loggablePath(c.req.path),
-    });
-
-    // Mark span as errored so the error-aware sampler forces 100% export on this trace.
-    // API-only + null-guarded — no-op when OTel is off.
-    const span = trace.getActiveSpan();
-    if (span) {
-      if (err instanceof Error) {
-        span.recordException({
-          name: err.name,
-          message: summary,
-          stack: errorStack(err),
-        });
-      }
-      span.setStatus({ code: SpanStatusCode.ERROR });
-    }
-
-    if (config.errorWebhookUrl) {
-      notifyError(
-        config.errorWebhookUrl,
-        {
-          timestamp: new Date().toISOString(),
-          request_id: c.get("requestId"),
-          error: summary,
-          path: loggablePath(c.req.path),
-          method: c.req.method,
-          ...(instance && { instance }),
-        },
-        config.errorWebhookTimeoutMs,
-      );
-    }
+    report(err, c);
 
     return jsonResponse(
       c,

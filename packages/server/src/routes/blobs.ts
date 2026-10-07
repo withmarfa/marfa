@@ -741,11 +741,10 @@ export function blobRoutes(
       );
     }
 
-    // A body that declares its length is refused before its first byte is
-    // written; one that does not, or that runs past what it declared, is
-    // stopped by the guard as it arrives.
     const declared = Number(c.req.header("Content-Length"));
-    await reserve.admit(Number.isSafeInteger(declared) ? declared : 0);
+    const place = await reserve.admit(
+      Number.isSafeInteger(declared) ? declared : 0,
+    );
 
     // Spooled onto the disk store's own filesystem while the hash is
     // computed, because the name is not known until the last byte has
@@ -759,13 +758,15 @@ export function blobRoutes(
         await pipeline(
           Readable.fromWeb(body),
           hashing,
-          reserve.guard(),
+          place.guard(),
           createWriteStream(spool),
         );
       }
     } catch (err) {
       await rm(spool, { force: true });
       throw err;
+    } finally {
+      place.close();
     }
     if (hashing.bytes === 0) {
       await rm(spool, { force: true });

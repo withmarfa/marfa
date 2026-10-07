@@ -391,7 +391,7 @@ const WRITE_CONTENTION_TEXT =
   "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.";
 
 const INSUFFICIENT_STORAGE_TEXT =
-  "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed. Free space on the disk, then try the request again.";
+  "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.";
 
 /**
  * Applied as floors: a route that declares the status itself keeps its own.
