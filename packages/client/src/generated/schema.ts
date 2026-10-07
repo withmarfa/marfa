@@ -3667,7 +3667,7 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
@@ -3732,7 +3732,7 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
+            /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
             extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
@@ -18243,7 +18243,7 @@ export interface operations {
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
-                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };
@@ -18750,7 +18750,7 @@ export interface operations {
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
-                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`. */
+                    /** @description Extension namespaces the key may `read` or `write`, by namespace or `*`. */
                     extension_permissions?: {
                         [key: string]: components["schemas"]["PermissionLevel"];
                     };

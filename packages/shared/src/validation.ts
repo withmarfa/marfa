@@ -291,31 +291,26 @@ export function resolveTypePermission(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the effective permission for an extension namespace.
- * Checks: exact match → wildcard "*" → implicit own-namespace write → "none".
+ * The level an extension map grants on a namespace: its exact entry, else its
+ * `*` entry, else `"none"`.
  */
 export function resolveExtensionPermission(
   namespace: string,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
-  keyLabel: string,
 ): import("./types.js").ExtensionPermission | "none" {
   if (permissions) {
-    // Exact namespace match
     const exact = permissions[namespace];
     if (exact) return exact;
-    // Wildcard
     const wildcard = permissions["*"];
     if (wildcard) return wildcard;
   }
-  // Implicit: keys can always write their own namespace (matching key label)
-  if (namespace === keyLabel) return "write";
   return "none";
 }
 
 /**
  * Filters extension namespaces to the ones the requesting credential's
- * extension permissions reach, plus its own label's namespace.
+ * extension permissions reach.
  *
  * There is no privileged reader: one permission model has no rank that sees
  * everything.
@@ -324,11 +319,10 @@ export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
-  keyLabel: string,
 ): Record<string, Record<string, unknown>> {
   const filtered: Record<string, Record<string, unknown>> = {};
   for (const [ns, data] of Object.entries(extensions)) {
-    const perm = resolveExtensionPermission(ns, permissions, keyLabel);
+    const perm = resolveExtensionPermission(ns, permissions);
     if (perm !== "none") {
       filtered[ns] = data;
     }

@@ -2558,20 +2558,16 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     ]);
   });
 
-  it("implicit own-namespace rule still exposes a member's own namespace", async () => {
+  it("exposes no namespace to a key by its label alone", async () => {
     const id = await seedItemWithExtensions();
-    // Key with no explicit grants — the own-namespace rule should let it
-    // see an extension namespace that matches its label.
-    const ownerKey = await createScopedKey({}, "visible-app.prefs");
+    const labeled = await createScopedKey({}, "visible-app.prefs");
     const res = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ownerKey,
+      key: labeled,
     });
     const body = (await res.json()) as {
       metadata: { extensions: Record<string, unknown> };
     };
-    expect(Object.keys(body.metadata.extensions).sort()).toEqual([
-      "visible-app.prefs",
-    ]);
+    expect(body.metadata.extensions).toEqual({});
   });
 });
 

@@ -227,6 +227,86 @@ describe("metadata extensions", () => {
     expect(remove.error?.error.code).toBe("forbidden");
   });
 
+  describe("a key's label", () => {
+    let namespace: string;
+    let minter: { id: string; client: MarfaClient };
+
+    /** Every namespace door, and the readings that carry extensions, as
+     *  `holder` is answered them for `namespace`. */
+    async function expectRefused(holder: MarfaClient): Promise<void> {
+      for (const r of [
+        await holder.getItemExtension(itemId, namespace),
+        await holder.setItemExtension(itemId, namespace, { taken: true }),
+        await holder.deleteItemExtension(itemId, namespace),
+      ]) {
+        expect(r.status).toBe(403);
+        expect(r.error?.error.code).toBe("forbidden");
+        expect(r.error?.error.details?.grant).toMatchObject({
+          kind: "extension",
+          name: namespace,
+        });
+      }
+      const listed = await holder.listItemExtensions(itemId);
+      expect(listed.status).toBe(200);
+      expect(listed.data.extensions).not.toHaveProperty(namespace);
+      const item = await holder.getItem(itemId);
+      expect(item.data.metadata.extensions).not.toHaveProperty(namespace);
+      const kept = await client.getItemExtension(itemId, namespace);
+      expect(kept.data.data).toEqual({ held: "by the map" });
+    }
+
+    beforeAll(async () => {
+      namespace = `label-${ctx.runId}`;
+      // The witness: the namespace is on the item, and a key whose
+      // extension map reaches it reads it.
+      const written = await client.setItemExtension(itemId, namespace, {
+        held: "by the map",
+      });
+      expect(written.ok, JSON.stringify(written.error)).toBe(true);
+      expect(written.data.extensions[namespace]).toEqual({
+        held: "by the map",
+      });
+
+      const minted = await client.createKey({
+        label: "extensions-label-minter",
+        source: `${ctx.source}-extensions-label-minter`,
+        permissions: ["keys.mint"],
+        type_permissions: { "core.note": "write" },
+        extension_permissions: {},
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      trackKey(ctx, minted.data.id);
+      minter = {
+        id: minted.data.id,
+        client: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+      };
+    });
+
+    it("grants no namespace to a key relabelled with its name", async () => {
+      const relabelled = await minter.client.updateKey(minter.id, {
+        label: namespace,
+      });
+      expect(relabelled.status).toBe(200);
+      expect(relabelled.data.label).toBe(namespace);
+      await expectRefused(minter.client);
+    });
+
+    it("grants no namespace to a key minted with its name for a label", async () => {
+      const child = await minter.client.createKey({
+        label: namespace,
+        source: `${ctx.source}-extensions-label-child`,
+        type_permissions: { "core.note": "write" },
+      });
+      expect(child.status).toBe(201);
+      trackKey(ctx, child.data.id);
+      expect(child.data.label).toBe(namespace);
+      expect(child.data.extension_permissions).toEqual({});
+      await expectRefused(
+        new MarfaClient({ baseUrl: apiUrl, apiKey: child.data.key }),
+      );
+    });
+  });
+
   it("answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it", async () => {
     const ns = "type-gated";
     const note = await client.createItem(createNote({ source: ctx.source }));

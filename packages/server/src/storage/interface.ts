@@ -1194,8 +1194,7 @@ export interface KeyStore {
    * and `CreateKeyInput` is the shape a route builds from a body, where a
    * settable field would read as something a caller may ask for. It
    * records that an app minted this key rather than a person, which is what
-   * ties the key to that app and what `extensionLabelOf` reads to refuse a
-   * label claim.
+   * ties the key to that app.
    */
   create(
     input: CreateKeyInput & { oauth_client_id?: string },

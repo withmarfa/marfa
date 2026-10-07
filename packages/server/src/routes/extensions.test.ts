@@ -6,8 +6,6 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-// The credential's label doubles as the namespace owner: a key with label
-// "noter" can implicitly write to the "noter" namespace.
 const SCOPED_LABEL = "noter";
 let scopedKey: string;
 
@@ -30,9 +28,8 @@ async function createItem(): Promise<string> {
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // Seed the scoped credential. `extension_permissions` grants read on the
-  // "friends" namespace; the implicit own-namespace write keeps the "noter"
-  // namespace writable.
+  // Seed the scoped credential: read on the "friends" namespace and write on
+  // the "noter" one.
   const suffix = Math.random().toString(36).slice(2, 10);
   scopedKey = `marfa_k1_ext_scoped_${suffix}`;
   await ctx.storage.keys.create(
@@ -40,7 +37,7 @@ beforeAll(async () => {
       label: SCOPED_LABEL,
       source: `ext-scoped-${suffix}`,
       type_permissions: { "*": "write" },
-      extension_permissions: { friends: "read" },
+      extension_permissions: { friends: "read", [SCOPED_LABEL]: "write" },
       default_tier: "feed",
       is_operator: false,
     },

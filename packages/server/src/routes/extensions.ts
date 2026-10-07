@@ -6,9 +6,8 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * `write` as the item doors do, answering an item it may not read as a
  * missing one, and nothing about the namespace skips it.
  *
- * The namespace is the second gate. A key's label names a namespace it holds
- * write on (a key labeled "noter" writes "noter"), because the label is the
- * namespace's identity; `extension_permissions` grants any other.
+ * The namespace is the second gate: `extension_permissions` grants it, by
+ * its name or `*`, and nothing else does.
  *
  * **Reserved namespaces (core, marfa, system) are closed to every
  * credential.** What writes them is the platform's own machinery, through
@@ -16,7 +15,6 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
-import { extensionLabelOf } from "../auth/extension-label.js";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import { readableExtensions } from "./_extension-reach.js";
 import { READABLE_EXTENSIONS_TEXT } from "./_schemas.js";
@@ -471,12 +469,8 @@ export function extensionRoutes(storage: Storage) {
             ErrorCode.FORBIDDEN,
             `Namespace "${namespace}" is reserved`,
           );
-        } else {
-          const isOwner = extensionLabelOf(apiKey) === namespace;
-          if (!isOwner) {
-            checkExtensionPermission(apiKey, namespace, "write");
-          }
         }
+        checkExtensionPermission(apiKey, namespace, "write");
 
         const written = await storage.metadata.deleteExtension(id, namespace);
 

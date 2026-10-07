@@ -5328,7 +5328,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
             },
-            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`."
+            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
           },
           "edge_permissions": {
             "type": "object",
@@ -5505,7 +5505,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/PermissionLevel"
             },
-            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`."
+            "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
           },
           "edge_permissions": {
             "type": "object",
@@ -34960,7 +34960,7 @@
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
                     },
-                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`."
+                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
                   },
                   "edge_permissions": {
                     "type": "object",
@@ -36247,7 +36247,7 @@
                     "additionalProperties": {
                       "$ref": "#/components/schemas/PermissionLevel"
                     },
-                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`. A key can always read and write the namespace named by its own `label`."
+                    "description": "Extension namespaces the key may `read` or `write`, by namespace or `*`."
                   },
                   "edge_permissions": {
                     "type": "object",
