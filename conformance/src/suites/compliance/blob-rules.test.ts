@@ -632,6 +632,66 @@ describe("the rules that keep a blob's bytes", () => {
     }
   });
 
+  it("keeps the bytes a restore stores while a purge of them races it", async () => {
+    // An archive that carries one file item and its bytes, taken before the
+    // item is purged: nothing names the bytes afterwards, and a restore
+    // brings both back.
+    async function archiveThenPurge(words: string) {
+      const since = new Date(Date.now() - 1).toISOString();
+      const hash = await uploadText(words);
+      const file = await client.createItem({
+        type: "core.file",
+        source: ctx.source,
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      });
+      expect(file.ok, JSON.stringify(file.error)).toBe(true);
+      const id = file.data.item.id;
+      trackItem(ctx, id);
+      const archive = await client.exportArchive({
+        source: ctx.source,
+        occurred_after: since,
+      });
+      expect(archive.status).toBe(200);
+      expect((await client.deleteItem(id)).status).toBe(200);
+      expect((await client.purgeItem(id)).status).toBe(200);
+      return { hash, archive: archive.data };
+    }
+
+    // The witness: with no restore in the way, the report and the next run
+    // purge the bytes, so the races below have something to lose.
+    const idle = await archiveThenPurge("restorable and left alone");
+    await run("blob-orphans");
+    expect(
+      (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+    ).toContain(idle.hash);
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(idle.hash)).status).toBe(404);
+
+    for (let round = 0; round < 8; round++) {
+      const words = `reported, then restored while the run purges, round ${String(round)}`;
+      const { hash, archive } = await archiveThenPurge(words);
+      await run("blob-orphans");
+      expect(
+        (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+      ).toContain(hash);
+
+      // Either order is allowed: the restore lands first and the run keeps
+      // the bytes, or the run purges them and the restore stores them again.
+      // A run the scheduler holds answers 409 and purges nothing.
+      const [restored, swept] = await Promise.all([
+        operator.restoreArchive(archive),
+        operator.runHousekeeping("blob-orphans"),
+      ]);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_imported).toBe(1);
+      expect([200, 409]).toContain(swept.status);
+
+      const read = await operator.downloadBlob(hash);
+      expect(read.status, `round ${String(round)}`).toBe(200);
+      expect(new TextDecoder().decode(read.data)).toBe(text(words));
+    }
+  });
+
   it("answers a link to a blob the sweep has purged as an unknown blob", async () => {
     const hash = await uploadText("linked, then purged");
     const file = await client.createItem({
