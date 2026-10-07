@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { idOf, send } from "../../utils/inbound-sender.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import {
   cleanup,
@@ -279,7 +280,14 @@ describe("a registration that is not there, against the key", () => {
 });
 
 describe("a field the door does not declare, against the key and the fence", () => {
-  const strays: { label: string; call: Call; fence: Call }[] = [
+  const strays: {
+    label: string;
+    call: Call;
+    fence: Call;
+    /** What the operator key is told: it reaches the operations that admit
+     *  it, and is refused the rest. */
+    operator?: number;
+  }[] = [
     {
       label: "POST hold",
       call: {
@@ -328,10 +336,55 @@ describe("a field the door does not declare, against the key and the fence", () 
         body: { item_ids: [UNKNOWN] },
       },
     },
+    {
+      label: "POST runs",
+      call: {
+        method: "POST",
+        path: "/runs",
+        body: {
+          outcome: "succeeded",
+          started_at: "2026-10-05T18:00:00Z",
+          finished_at: "2026-10-05T18:00:01Z",
+          retries: 2,
+        },
+      },
+      fence: {
+        method: "POST",
+        path: "/runs",
+        body: {
+          outcome: "succeeded",
+          started_at: "2026-10-05T18:00:00Z",
+          finished_at: "2026-10-05T18:00:01Z",
+        },
+      },
+    },
+    {
+      label: "POST endpoints",
+      call: {
+        method: "POST",
+        path: "/endpoints",
+        body: { label: "stray", secret: "s" },
+      },
+      fence: { method: "POST", path: "/endpoints", body: { label: "stray" } },
+      operator: 400,
+    },
+    {
+      label: "POST deliveries/handled",
+      call: {
+        method: "POST",
+        path: "/deliveries/handled",
+        body: { ids: [UNKNOWN], outcome: "processed", note: "n" },
+      },
+      fence: {
+        method: "POST",
+        path: "/deliveries/handled",
+        body: { ids: [UNKNOWN], outcome: "processed" },
+      },
+    },
   ];
 
   it("answers the key's 403 and the registration's 404 before a field the door does not declare", async () => {
-    for (const { label, call, fence } of strays) {
+    for (const { label, call, fence, operator: reached } of strays) {
       // The witness: the connector's own key is told of the field.
       const own = await answer(owner, connectorId, call);
       expect(own.status, `${label}: own key`).toBe(400);
@@ -342,7 +395,10 @@ describe("a field the door does not declare, against the key and the fence", () 
       expect(refused.status, `${label}: another key`).toBe(403);
       expect(refused.code, label).toBe("forbidden");
       const operator = await answer(getOperatorClient(), connectorId, call);
-      expect(operator.status, `${label}: operator`).toBe(403);
+      expect(operator.status, `${label}: operator`).toBe(reached ?? 403);
+      expect(operator.code, `${label}: operator`).toBe(
+        reached === undefined ? "forbidden" : "validation_error",
+      );
       const missing = await answer(stranger, UNKNOWN, call);
       expect(missing.status, `${label}: unknown id`).toBe(404);
       expect(missing.code, label).toBe("connector_not_found");
@@ -358,7 +414,7 @@ describe("a field the door does not declare, against the key and the fence", () 
     const holder = randomUUID();
     expect((await own.holdConnector(id, holder)).status).toBe(200);
     for (const { label, call, fence } of strays) {
-      if (label === "POST hold" || label === "POST agreements/lookup") continue;
+      if (label !== "PUT state" && label !== "POST agreements") continue;
       const other = {
         ...call,
         body: { ...call.body, process: "another-process" },
@@ -457,6 +513,176 @@ describe("a field the door does not declare, against the key and the fence", () 
       expect(clean.code, label).toBe("connector_held");
     }
     expect((await own.getConnectorState(id)).data.updated_at).toBeNull();
+  });
+});
+
+describe("a body the door refuses once the key is the connector's own, against another key", () => {
+  it("answers another key's 403 before the checks its body meets once the key is the connector's own", async () => {
+    const row = uuidv7();
+    const times = {
+      outcome: "succeeded",
+      started_at: "2026-10-05T18:00:00Z",
+      finished_at: "2026-10-05T18:00:01Z",
+    };
+    const refused: { label: string; call: Call }[] = [
+      {
+        label: "a run that finishes before it starts",
+        call: {
+          method: "POST",
+          path: "/runs",
+          body: { ...times, finished_at: "2026-10-05T17:59:59Z" },
+        },
+      },
+      {
+        label: "a run time outside years 0000 to 9999",
+        call: {
+          method: "POST",
+          path: "/runs",
+          body: {
+            ...times,
+            started_at: "0000-01-01T00:00:00+00:01",
+            finished_at: "0000-01-01T00:00:00Z",
+          },
+        },
+      },
+      {
+        label: "a state over its cap",
+        call: {
+          method: "PUT",
+          path: "/state",
+          body: { process: "p", state: { s: "x".repeat(STATE_CAP) } },
+        },
+      },
+      {
+        label: "a record over its cap",
+        call: {
+          method: "POST",
+          path: "/agreements",
+          body: {
+            process: "p",
+            set: [
+              {
+                item_id: row,
+                waiting: true,
+                record: { r: "x".repeat(RECORD_CAP) },
+              },
+            ],
+          },
+        },
+      },
+      {
+        label: "a batch naming a row twice",
+        call: {
+          method: "POST",
+          path: "/agreements",
+          body: {
+            process: "p",
+            set: [
+              { item_id: row, waiting: true, record: {} },
+              { item_id: row, waiting: false, record: {} },
+            ],
+          },
+        },
+      },
+      {
+        label: "a body with an undeclared field",
+        call: {
+          method: "POST",
+          path: "/runs",
+          body: { ...times, retries: 2 },
+        },
+      },
+    ];
+    for (const { label, call } of refused) {
+      // The witness: the connector's own key is told what is wrong.
+      const own = await answer(owner, connectorId, call);
+      expect(own.status, `${label}: own key`).toBe(400);
+      expect(own.code, label).toBe("validation_error");
+
+      for (const [who, name] of [
+        [stranger, "another key"],
+        [getOperatorClient(), "operator"],
+      ] as const) {
+        const told = await answer(who, connectorId, call);
+        expect(told.status, `${label}: ${name}`).toBe(403);
+        expect(told.code, `${label}: ${name}`).toBe("forbidden");
+      }
+    }
+    expect((await owner.listConnectorRuns(connectorId)).data.data).toEqual([]);
+    expect(
+      (await owner.getConnectorState(connectorId)).data.updated_at,
+    ).toBeNull();
+  });
+});
+
+describe("a body the door refuses, against a limit and a delivery that is not there", () => {
+  it("answers a body the door refuses 400 before the limit of ten live endpoints' 409", async () => {
+    const { client: own, id } = await freshConnector("endpoint-limit-body");
+    for (let i = 0; i < 10; i++) {
+      expect((await own.createInboundEndpoint(id)).status).toBe(201);
+    }
+    // The witness that the limit is reached: a good body is refused for it.
+    const eleventh = await own.createInboundEndpoint(id);
+    expect(eleventh.status).toBe(409);
+    expect(eleventh.error?.error.code).toBe("conflict");
+
+    const refused: [string, Record<string, unknown>][] = [
+      ["an empty label", { label: "" }],
+      ["a label over 200 characters", { label: "l".repeat(201) }],
+      ["a header that is no header name", { duplicate_header: "not a header" }],
+      ["a field the door does not declare", { secret: "s" }],
+    ];
+    for (const [what, body] of refused) {
+      const told = await answer(own, id, {
+        method: "POST",
+        path: "/endpoints",
+        body,
+      });
+      expect(told.status, what).toBe(400);
+      expect(told.code, what).toBe("validation_error");
+    }
+    expect((await own.listInboundEndpoints(id)).data.data).toHaveLength(10);
+  });
+
+  it("answers a handled mark the door refuses 400 before a delivery the registration does not hold's 404", async () => {
+    const { client: own, id } = await freshConnector("handled-body");
+    const { client: another, id: anotherId } =
+      await freshConnector("handled-other");
+    const made = await another.createInboundEndpoint(anotherId);
+    expect(made.status).toBe(201);
+    const theirs = idOf(await send(apiUrl, made.data.path, "theirs"));
+    const mark = (body: Record<string, unknown>) =>
+      answer(own, id, {
+        method: "POST",
+        path: "/deliveries/handled",
+        body,
+      });
+
+    // The witnesses: a good mark naming an id nothing holds, and one naming
+    // another registration's delivery, are told there is no such delivery.
+    for (const named of [UNKNOWN, theirs]) {
+      const absent = await mark({ ids: [named], outcome: "processed" });
+      expect(absent.status, named).toBe(404);
+      expect(absent.code, named).toBe("delivery_not_found");
+    }
+
+    for (const named of [UNKNOWN, theirs]) {
+      const badOutcome = await mark({ ids: [named], outcome: "done" });
+      expect(badOutcome.status, `a bad outcome, ${named}`).toBe(400);
+      expect(badOutcome.code, `a bad outcome, ${named}`).toBe(
+        "validation_error",
+      );
+      const stray = await mark({
+        ids: [named],
+        outcome: "processed",
+        note: "n",
+      });
+      expect(stray.status, `a stray field, ${named}`).toBe(400);
+      expect(stray.code, `a stray field, ${named}`).toBe("validation_error");
+      expect(stray.details?.["unknown_body_fields"]).toBeDefined();
+    }
+    const unmarked = await another.listInboundDeliveries(anotherId);
+    expect(unmarked.data.data.map((row) => row.handled_at)).toEqual([null]);
   });
 });
 

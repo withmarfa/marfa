@@ -26,8 +26,9 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  // Revoking the keys leaves their registrations standing (statement 5);
-  // `cleanup` removes them through the operator first.
+  // Revoking the keys leaves their registrations standing, as
+  // `connectors/revoked-registration-stays` says; `cleanup` removes them
+  // through the operator first.
   await cleanup(ctx);
 });
 
@@ -194,6 +195,34 @@ describe("registration", () => {
       (row) => row.key_id === ctx.trackedKeys[0],
     );
     expect(mine).toHaveLength(1);
+    expect((await client.deleteConnector(first.data.id)).status).toBe(200);
+  });
+
+  it("stamps a repeat registration's updated_at with the server's clock at the write", async () => {
+    const first = await client.registerConnector({
+      name: `${ctx.runId} stamp`,
+    });
+    expect(first.status).toBe(201);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const before = Date.now();
+    const again = await client.registerConnector({
+      name: `${ctx.runId} stamp again`,
+    });
+    const after = Date.now();
+    expect(again.status).toBe(200);
+    // The fixture's clock and the server's are one machine's in a run, and a
+    // second either way allows for the stamp's rounding.
+    expect(again.data.updated_at).toMatch(ISO);
+    expect(Date.parse(again.data.updated_at)).toBeGreaterThanOrEqual(
+      before - 1000,
+    );
+    expect(Date.parse(again.data.updated_at)).toBeLessThanOrEqual(after + 1000);
+    expect(Date.parse(again.data.updated_at)).toBeGreaterThan(
+      Date.parse(first.data.updated_at),
+    );
+    expect((await client.getConnector(first.data.id)).data.updated_at).toBe(
+      again.data.updated_at,
+    );
     expect((await client.deleteConnector(first.data.id)).status).toBe(200);
   });
 
@@ -387,6 +416,9 @@ describe("registration", () => {
     expect((await shortLived.heartbeatConnector(mine.data.id)).status).toBe(
       200,
     );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const lastBeat = await shortLived.heartbeatConnector(mine.data.id);
+    expect(lastBeat.status).toBe(200);
 
     const operator = getOperatorClient();
     expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
@@ -396,7 +428,10 @@ describe("registration", () => {
     expect(standing.status).toBe(200);
     expect(standing.data.key_id).toBe(mine.data.key_id);
     expect(standing.data.source).toBe(mine.data.source);
-    expect(standing.data.last_heartbeat_at).toMatch(ISO);
+    // The last the key stamped, not the first and not none.
+    expect(standing.data.last_heartbeat_at).toBe(
+      lastBeat.data.last_heartbeat_at,
+    );
     expect(
       (await operator.listConnectors()).data.data.map((row) => row.id),
     ).toContain(mine.data.id);
@@ -602,6 +637,36 @@ describe("heartbeats and runs", () => {
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
     ).toHaveLength(1);
+    expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
+  });
+
+  it("names a missing started_at or finished_at as missing_required_field", async () => {
+    const mine = await register(client, `${ctx.runId} run times missing`);
+    const at = new Date().toISOString();
+    const runs = `/connectors/${mine.data.id}/runs`;
+    const times = { started_at: at, finished_at: at };
+    for (const missing of ["started_at", "finished_at"] as const) {
+      const { [missing]: _left, ...rest } = times;
+      const refused = await client.rawRequest<unknown>(runs, {
+        method: "POST",
+        body: { outcome: "succeeded", ...rest },
+      });
+      expect(refused.status, missing).toBe(400);
+      expect(refused.error?.error.code, missing).toBe("missing_required_field");
+      expect(refused.error?.error.details?.["field"], missing).toBe(missing);
+    }
+    expect((await client.listConnectorRuns(mine.data.id)).data.data).toEqual(
+      [],
+    );
+    // The witness: with both named, the run is taken.
+    expect(
+      (
+        await client.reportConnectorRun(mine.data.id, {
+          outcome: "succeeded",
+          ...times,
+        })
+      ).status,
+    ).toBe(201);
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 

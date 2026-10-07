@@ -5,12 +5,14 @@ import { MarfaClient } from "../../client/api.js";
 import type { AuditEntry, TestContext } from "../../client/types.js";
 import { createNote } from "../../generators/items.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
+import { publishedOperations } from "../../utils/openapi.js";
 import {
   cleanup,
   createSecondClient,
   createTestContext,
   getOperatorClient,
   trackItem,
+  trackKey,
 } from "../../utils/setup.js";
 
 /**
@@ -46,6 +48,7 @@ interface Owner {
   client: MarfaClient;
   id: string;
   keyId: string;
+  source: string;
 }
 
 async function owner(label: string): Promise<Owner> {
@@ -54,7 +57,12 @@ async function owner(label: string): Promise<Owner> {
     name: `${ctx.runId} ${label}`,
   });
   expect(registered.status).toBe(201);
-  return { client: own, id: registered.data.id, keyId: registered.data.key_id };
+  return {
+    client: own,
+    id: registered.data.id,
+    keyId: registered.data.key_id,
+    source: registered.data.source,
+  };
 }
 
 const at = () => new Date().toISOString();
@@ -89,27 +97,103 @@ describe("a revoked key", () => {
       failed.data.id,
     ]);
 
+    // What the key holds, so that a refusal leaves something to compare.
+    const process = randomUUID();
+    const row = await client.createItem(createNote());
+    expect(row.ok).toBe(true);
+    trackItem(ctx, row.data.item.id);
+    expect((await own.client.holdConnector(own.id, process)).status).toBe(200);
+    expect(
+      (
+        await own.client.replaceConnectorState(own.id, {
+          process,
+          state: { cursor: "kept" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await own.client.writeConnectorAgreements(own.id, {
+          process,
+          set: [{ item_id: row.data.item.id, waiting: true, record: { e: 1 } }],
+        })
+      ).status,
+    ).toBe(200);
+    const made = await address(own);
+    const delivery = idOf(await send(apiUrl, made.path, "kept"));
+    const beat = await own.client.heartbeatConnector(own.id);
+    expect(beat.status).toBe(200);
+
     expect((await client.revokeKey(own.keyId)).status).toBe(200);
 
-    const doors: [string, string, Record<string, unknown> | undefined][] = [
-      ["GET", "/connectors", undefined],
-      ["GET", `/connectors/${own.id}`, undefined],
-      ["GET", `/connectors/${own.id}/runs`, undefined],
-      ["DELETE", `/connectors/${own.id}`, undefined],
-      ["POST", `/connectors/${own.id}/heartbeat`, undefined],
+    const base = `/connectors/${own.id}`;
+    const doors: [string, string, string, Record<string, unknown>?][] = [
+      ["POST", "/connectors", "/connectors", { name: "again" }],
+      ["GET", "/connectors", "/connectors"],
+      ["GET", "/connectors/{id}", base],
+      ["DELETE", "/connectors/{id}", base],
+      ["POST", "/connectors/{id}/heartbeat", `${base}/heartbeat`],
       [
         "POST",
-        `/connectors/${own.id}/runs`,
+        "/connectors/{id}/runs",
+        `${base}/runs`,
         { outcome: "succeeded", started_at: when, finished_at: when },
       ],
-      ["POST", `/connectors/${own.id}/hold`, { process: "p" }],
-      ["GET", `/connectors/${own.id}/state`, undefined],
-      ["GET", `/connectors/${own.id}/agreements`, undefined],
-      ["POST", `/connectors/${own.id}/endpoints`, {}],
-      ["GET", `/connectors/${own.id}/deliveries`, undefined],
-      ["POST", "/connectors", { name: "again" }],
+      ["GET", "/connectors/{id}/runs", `${base}/runs`],
+      ["POST", "/connectors/{id}/hold", `${base}/hold`, { process }],
+      ["DELETE", "/connectors/{id}/hold", `${base}/hold?process=${process}`],
+      ["GET", "/connectors/{id}/state", `${base}/state`],
+      [
+        "PUT",
+        "/connectors/{id}/state",
+        `${base}/state`,
+        { process, state: { cursor: "revoked" } },
+      ],
+      ["DELETE", "/connectors/{id}/state", `${base}/state`],
+      [
+        "POST",
+        "/connectors/{id}/agreements",
+        `${base}/agreements`,
+        { process, clear: [row.data.item.id] },
+      ],
+      [
+        "POST",
+        "/connectors/{id}/agreements/lookup",
+        `${base}/agreements/lookup`,
+        { item_ids: [row.data.item.id] },
+      ],
+      ["GET", "/connectors/{id}/agreements", `${base}/agreements`],
+      ["POST", "/connectors/{id}/endpoints", `${base}/endpoints`, {}],
+      ["GET", "/connectors/{id}/endpoints", `${base}/endpoints`],
+      [
+        "DELETE",
+        "/connectors/{id}/endpoints/{endpoint_id}",
+        `${base}/endpoints/${made.id}`,
+      ],
+      ["GET", "/connectors/{id}/deliveries", `${base}/deliveries`],
+      [
+        "GET",
+        "/connectors/{id}/deliveries/{delivery_id}/body",
+        `${base}/deliveries/${delivery}/body`,
+      ],
+      [
+        "POST",
+        "/connectors/{id}/deliveries/handled",
+        `${base}/deliveries/handled`,
+        { ids: [delivery], outcome: "processed" },
+      ],
     ];
-    for (const [method, path, body] of doors) {
+    // The doors above are every operation the document publishes under
+    // `/connectors`, so a door added later is a door this test fails to drive.
+    const published = (await publishedOperations())
+      .filter((op) => op.path.startsWith("/connectors"))
+      .map((op) => `${op.method} ${op.path}`)
+      .sort();
+    expect(
+      doors.map(([method, template]) => `${method} ${template}`).sort(),
+    ).toEqual(published);
+
+    for (const [method, , path, body] of doors) {
       const refused = await own.client.rawRequest<unknown>(path, {
         method,
         body,
@@ -126,10 +210,43 @@ describe("a revoked key", () => {
     expect(read.status).toBe(200);
     expect(read.data.key_id).toBe(own.keyId);
     expect(read.data.last_run?.id).toBe(succeeded.data.id);
+    expect(read.data.last_heartbeat_at).toBe(beat.data.last_heartbeat_at);
+    expect(read.data.hold_expires_at).not.toBeNull();
     const kept = await operator().listConnectorRuns(own.id);
     expect(kept.status).toBe(200);
     expect(kept.data.data).toEqual(runs);
     expect(kept.data.next_cursor).toBeNull();
+    // None of the refused writes and removals happened: the endpoint is
+    // live, and the next key under the source reads the state and the
+    // agreement as they were left.
+    const endpoints = await operator().listInboundEndpoints(own.id);
+    expect(endpoints.data.data.map((row) => row.retired_at)).toEqual([null]);
+    const successor = await client.createKey({
+      label: `${own.source}-successor`,
+      source: own.source,
+      default_tier: "library",
+    });
+    expect(successor.status).toBe(201);
+    trackKey(ctx, successor.data.id);
+    const next = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: successor.data.key,
+    });
+    const successorRegistration = await next.registerConnector({
+      name: `${ctx.runId} successor`,
+    });
+    expect(successorRegistration.status).toBe(201);
+    stateful.push(successorRegistration.data.id);
+    expect(
+      (await next.getConnectorState(successorRegistration.data.id)).data.state,
+    ).toEqual({ cursor: "kept" });
+    expect(
+      (
+        await next.lookupConnectorAgreements(successorRegistration.data.id, [
+          row.data.item.id,
+        ])
+      ).data.data.map((agreement) => agreement.record),
+    ).toEqual([{ e: 1 }]);
   });
 });
 

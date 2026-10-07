@@ -305,6 +305,35 @@ describe("an app's session token on the connector doors", () => {
     }
   });
 
+  it("refuses an app's access token 403 before it reads the registration body", async () => {
+    const bodies: [string, Record<string, unknown>][] = [
+      ["no name", {}],
+      ["an empty name", { name: "" }],
+      ["a name of 201 characters", { name: "n".repeat(201) }],
+      [
+        "a description over its bound",
+        { name: "n", description: "d".repeat(2001) },
+      ],
+      ["a field no one declares", { name: "n", merge: true }],
+    ];
+    for (const [what, body] of bodies) {
+      // The witness: the connector's own key, a working key, is told what is
+      // wrong with the same body.
+      const told = await own.rawRequest<unknown>("/connectors", {
+        method: "POST",
+        body,
+      });
+      expect(told.status, `${what}: a key`).toBe(400);
+
+      const refused = await asApp("POST", "/connectors", body);
+      expect(refused.status, `${what}: an access token`).toBe(403);
+      expect(
+        (refused.body as { error?: { code?: string } }).error?.code,
+        what,
+      ).toBe("forbidden");
+    }
+  });
+
   it("refuses an app's session token 403 on registration, leaving nothing registered", async () => {
     const refused = await asApp("POST", "/connectors", { name: "session" });
     expect(refused.status).toBe(403);

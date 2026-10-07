@@ -62,6 +62,22 @@ const STATE_CAP = 512 * 1024;
 const RECORD_CAP = 16 * 1024;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * That a stamp is the server's clock at a write: the fixture's clock and the
+ * server's are one machine's in a run, and a second either way allows for
+ * the stamp's rounding.
+ */
+function expectStampedBetween(
+  stamp: string,
+  before: number,
+  after: number,
+  what: string,
+): void {
+  expect(stamp, what).toMatch(ISO);
+  expect(Date.parse(stamp), what).toBeGreaterThanOrEqual(before - 1000);
+  expect(Date.parse(stamp), what).toBeLessThanOrEqual(after + 1000);
+}
+
 async function register(own: MarfaClient, label: string): Promise<Connector> {
   const registered = await own.registerConnector({
     name: `${ctx.runId} ${label}`,
@@ -168,6 +184,34 @@ describe("the hold", () => {
     expect(
       (await getOperatorClient().getConnector(mine.id)).data.hold_expires_at,
     ).toBe(renewed.data.expires_at);
+  });
+
+  it("stamps a renewed hold's expires_at as the server's clock at the renewal plus the window", async () => {
+    const mine = await connector("hold-renew-clock");
+    const process = randomUUID();
+    const taken = await mine.client.holdConnector(mine.id, process);
+    expect(taken.status).toBe(200);
+    expect(taken.data.renewed).toBe(false);
+
+    await sleep(20);
+    const before = Date.now();
+    const renewed = await mine.client.holdConnector(mine.id, process);
+    const after = Date.now();
+    expect(renewed.status).toBe(200);
+    expect(renewed.data.renewed).toBe(true);
+    const window = renewed.data.ttl_ms;
+    expect(window).toBe(180_000);
+    expectStampedBetween(
+      new Date(Date.parse(renewed.data.expires_at) - window).toISOString(),
+      before,
+      after,
+      "the renewal's clock",
+    );
+    // The witness that the renewal restamped it rather than keeping the
+    // take's.
+    expect(Date.parse(renewed.data.expires_at)).toBeGreaterThan(
+      Date.parse(taken.data.expires_at),
+    );
   });
 
   it("refuses a process outside its bounds", async () => {
@@ -536,6 +580,7 @@ describe("what a connector keeps on the instance", () => {
       [{ process, state: ["not", "an", "object"] }, "validation_error"],
       [{ process, state: "text" }, "validation_error"],
       [{ process: "", state: {} }, "validation_error"],
+      [{ process: "p".repeat(101), state: {} }, "validation_error"],
       [{ state: {} }, "missing_required_field"],
       [{ process }, "missing_required_field"],
     ] as const) {
@@ -549,6 +594,39 @@ describe("what a connector keeps on the instance", () => {
     expect((await mine.client.getConnectorState(mine.id)).data.state).toEqual({
       page: 2,
     });
+
+    // The witness for the longest process: a hundred characters pass the
+    // bounds, and a process that is not the holder is then fenced.
+    const longest = await mine.client.rawRequest<unknown>(
+      `/connectors/${mine.id}/state`,
+      { method: "PUT", body: { process: "p".repeat(100), state: {} } },
+    );
+    expect(longest.status).toBe(409);
+    expect(longest.error?.error.code).toBe("connector_held");
+  });
+
+  it("stamps a replaced state's updated_at with the server's clock at the write", async () => {
+    const mine = await connector("state-clock");
+    const process = await holding(mine);
+    for (const state of [{ n: 1 }, { n: 2 }]) {
+      await sleep(20);
+      const before = Date.now();
+      const written = await mine.client.replaceConnectorState(mine.id, {
+        process,
+        state,
+      });
+      const after = Date.now();
+      expect(written.status).toBe(200);
+      expectStampedBetween(
+        written.data.updated_at,
+        before,
+        after,
+        `state ${JSON.stringify(state)}`,
+      );
+      expect(
+        (await mine.client.getConnectorState(mine.id)).data.updated_at,
+      ).toBe(written.data.updated_at);
+    }
   });
 
   it("keeps a top-level __proto__ key in the state and in a record as sent", async () => {
@@ -713,17 +791,19 @@ describe("what a connector keeps on the instance", () => {
     const changed = await mine.client.writeConnectorAgreements(mine.id, {
       process,
       set: [{ item_id: kept.id, waiting: true, record: { etag: "k2" } }],
-      clear: [waiting.id, bystander.id, task.data.item.id, missing],
+      clear: [waiting.id, bystander.id, task.data.item.id, missing, trashed.id],
     });
     expect(changed.status).toBe(200);
+    // The trashed row's agreement is cleared as a live row's is.
     expect(changed.data).toEqual({
       written: 1,
-      cleared: 1,
+      cleared: 2,
       skipped: [task.data.item.id, missing],
     });
     const after = await mine.client.lookupConnectorAgreements(mine.id, [
       kept.id,
       waiting.id,
+      trashed.id,
     ]);
     expect(after.data.data).toHaveLength(1);
     expect(after.data.data[0]).toMatchObject({
@@ -731,6 +811,37 @@ describe("what a connector keeps on the instance", () => {
       waiting: true,
       record: { etag: "k2" },
     });
+  });
+
+  it("lists skipped set ids before skipped clear ids, whatever order the body names them", async () => {
+    const mine = await connector("agreement-skipped-order");
+    const process = await holding(mine);
+    // Four rows nothing stores. Named out of their own sort order, so that
+    // neither a sort nor the order of the ids can stand in for the rule.
+    const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7()].sort();
+    const [a, b, c, d] = ids as [string, string, string, string];
+    const set = [d, b].map((item_id) => ({
+      item_id,
+      waiting: true,
+      record: {},
+    }));
+    const clear = [c, a];
+
+    for (const body of [
+      { process, set, clear },
+      { process, clear, set },
+    ]) {
+      const written = await mine.client.rawRequest<unknown>(
+        `/connectors/${mine.id}/agreements`,
+        { method: "POST", body },
+      );
+      expect(written.status, Object.keys(body).join(",")).toBe(200);
+      expect(written.data, Object.keys(body).join(",")).toEqual({
+        written: 0,
+        cleared: 0,
+        skipped: [d, b, c, a],
+      });
+    }
   });
 
   it("refuses a batch over its caps and writes nothing", async () => {
