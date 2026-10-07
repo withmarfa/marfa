@@ -118,14 +118,22 @@ describe("a restore that commits", () => {
       );
 
       const restoring = operatorOf(ordered).restoreArchive(restore.bytes);
-      const written = await writesWhile(restoring, async () => {
+      // A write the restore holds past the busy budget is refused
+      // `write_contention` and writes nothing (`search-and-filters/restore-writers-wait`);
+      // only the writes that committed have events to order.
+      const answers = await writesWhile(restoring, async () => {
         const r = await worker.createItem({
           type: "core.note",
           properties: { body: "written during the restore" },
         });
+        if (r.status === 503) {
+          expect(r.error?.error.code).toBe("write_contention");
+          return null;
+        }
         expect(r.status, JSON.stringify(r.error)).toBe(201);
         return r.data.item.id;
       });
+      const written = answers.filter((id): id is string => id !== null);
       const answer = await restoring;
       expect(answer.status, JSON.stringify(answer.error)).toBe(200);
 
