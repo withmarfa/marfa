@@ -308,6 +308,44 @@ When an edge type holds more inbound edges than the 50 a block of `backrefs` car
 
 **Tests:** `correctness/edges/edges-response.test.ts › continues a hydrated inbound block at the backrefs listing`.
 
+### `edges/neighbors`
+
+When `GET /items/{id}` names `include=neighbors`, the server MUST carry in `neighbors`, as a list and not a page, each item at the far end of the edge blocks of the answer that the credential may read, with its metadata.
+
+**Tests:** `compliance/envelope.test.ts › hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`.
+
+### `edges/neighbors-cap`
+
+When the far ends of the edge blocks of `GET /items/{id}` pass 100 together across every edge type, the server MUST hydrate exactly 100 of them in `neighbors`.
+
+**Reason:** no block's `next_cursor` can say that the combined count passed the cap, since each block can be whole.
+
+**Tests:** `compliance/envelope.test.ts › flags neighbors_truncated one past the cap, hydrating exactly the cap`.
+
+### `edges/neighbors-truncated`
+
+When the far ends of the edge blocks of `GET /items/{id}` pass 100, the server MUST answer `neighbors_truncated` as `true`.
+
+**Tests:** `compliance/envelope.test.ts › flags neighbors_truncated one past the cap, hydrating exactly the cap`.
+
+### `edges/neighbors-not-truncated`
+
+When the far ends of the edge blocks of `GET /items/{id}` number 100 or fewer, the server MUST answer `neighbors_truncated` as `false`.
+
+**Tests:** `compliance/envelope.test.ts › hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`.
+
+### `edges/neighbors-whole`
+
+When the far ends of the edge blocks of `GET /items/{id}` number 100 or fewer, the server MUST hydrate every far end that the credential may read in `neighbors`.
+
+**Tests:** `compliance/envelope.test.ts › hydrates the far ends as a list, flagging no truncation below the cap`, `› hydrates every far end at the cap, flagging no truncation`.
+
+### `edges/neighbors-blocks`
+
+When `GET /items/{id}` leaves a far end out of `neighbors` for the cap, the server MUST still carry the edge to it in its edge block, as `edges/hydrate` pages the block.
+
+**Tests:** `compliance/envelope.test.ts › flags neighbors_truncated one past the cap, hydrating exactly the cap`.
+
 ## Edge terms in a listing filter
 
 ### `edges/filter-edge`
@@ -322,7 +360,7 @@ When `GET /items` names `edge[<edge type>]=<id>`, the server MUST list only item
 
 When `GET /items` names `filter=edge[<edge type>] eq "<id>"`, the server MUST list exactly the items `edge[<edge type>]=<id>` lists.
 
-**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`.
+**Tests:** `correctness/edges/edges-query.test.ts › answers the full edge filter with exactly the items the edges listing names, and not an item holding another edge type`, `› filter=edge[X] eq "Y" full form returns the same set`.
 
 ### `edges/filter-edge-type`
 

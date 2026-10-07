@@ -602,7 +602,35 @@ If a key without `config.manage` sends `GET /config` or `PUT /config`, then the 
 
 Where the `enforcement.strict_mode` that holds for the writing key, its own override's if the override names one and else the instance's, names a type in `types`, the server MUST refuse a write of an item of exactly that type that names a property neither the type nor an ancestor declares, with `400 invalid_properties`.
 
-**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects unknown property with invalid_properties`, `› default-off accepts unknown property on core.note write`, `› holds strict mode and the source allow-list to the type named, not its subtypes`.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects unknown property with invalid_properties`, `› default-off accepts unknown property on core.note write`, `› holds strict mode and the source allow-list to the type named, not its subtypes`, `› strict-on rejects the same unknown property through the bulk door, on both halves of an upsert`, `› strict-on rejects the same unknown property through the update door`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
+
+### `types/strict-mode-code`
+
+When `enforcement.strict_mode` refuses a property that no type declares, the server MUST carry `details.code` of `unknown_property` beside the code `invalid_properties`.
+
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property through the update door`, `› strict-on rejects the same unknown property arriving through the restore door`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
+
+### `types/strict-mode-declared`
+
+Where `enforcement.strict_mode` names the type of a row, the server MUST take a patch that names only declared properties, whatever else the type requires.
+
+**Reason:** the lever refuses an undeclared property and nothing else. A missing required property is the store's refusal and carries the store's reason, so a lever that read a patch as a complete set would refuse an ordinary update under a message naming the wrong cause. The lever judges the properties the caller sent and not the merge they land in, because a merge would freeze every row that already carries an undeclared property from before the lever was set.
+
+**Tests:** `compliance/schema-enforcement.test.ts › takes a patch naming only declared properties, whatever else the type requires`.
+
+### `types/strict-mode-off`
+
+Where `enforcement.strict_mode` does not name the type of a row, the server MUST take a property that no type declares on `POST /items`, `POST /items/bulk` and `PATCH /items/{id}`, and serve it back.
+
+**Tests:** `compliance/schema-enforcement.test.ts › default-off accepts unknown property on core.note write`, `› default-off accepts through the bulk and update doors as it does through the create door`.
+
+### `types/strict-mode-job`
+
+When a `POST /items/bulk-actions` job with `update_properties` writes a row, the server MUST ask `enforcement.strict_mode` as it stands then, for the credential that queued the job as that credential stands then.
+
+**Reason:** every other operation asks when it writes, so a lever set while a job waits holds for it. A job whose queuing credential is gone writes nothing more (`items/job-credential-lost`).
+
+**Tests:** waiting on #1444.
 
 ### `types/source-allowlist`
 

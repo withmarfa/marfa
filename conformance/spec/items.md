@@ -1332,7 +1332,9 @@ If a bulk action's filter matches more items than its `max_items`, which is 10,0
 
 ### `items/bulk-action-undeclared`
 
-If a `POST /items/bulk-actions` body, or its filter, carries a key the operation does not declare, then the server MUST answer `400 validation_error` naming the key.
+If a `POST /items/bulk-actions` body, or its filter, carries a key the operation does not declare, then the server MUST answer `400 validation_error` naming the key in `details.unknown_body_fields` or `details.unknown_filter_fields`.
+
+**Reason:** a dropped filter field is not a narrower match set but every item the credential may write, so the operation refuses the field rather than strips it.
 
 **Tests:** `compliance/bulk-limits.test.ts › refuses a body key the bulk-action operation does not declare, naming it`, `compliance/bulk.test.ts › refuses a filter field it does not declare, naming it`, `sync/time-filters.test.ts › refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row`.
 
