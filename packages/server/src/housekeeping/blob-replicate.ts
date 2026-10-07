@@ -71,9 +71,21 @@ export class BlobReplicator {
         // Under the per-hash lock a purge takes, and only while the row
         // stands: a copy put after a purge removed the row and the bytes
         // would be bytes in a store that nothing names and nothing sweeps.
-        const placed = await withBlobUploadLock(blob.hash, () =>
-          this.copy(blob.hash, target),
-        );
+        let placed: boolean;
+        try {
+          placed = await withBlobUploadLock(blob.hash, () =>
+            this.copy(blob.hash, target),
+          );
+        } catch (err) {
+          // A store that cannot be reached fails every copy into it, so the
+          // run moves on to the next store rather than ending.
+          log("error", "blob.replicate_failed", {
+            hash: blob.hash,
+            to: target.id,
+            error: errorMessage(err),
+          });
+          break;
+        }
         if (!placed) continue;
         copied += 1;
         bytes += blob.size_bytes;

@@ -51,7 +51,8 @@ export class LocationNotFound extends Error {
 /**
  * Drop one store's copy of a blob, when the log says enough live copies
  * would remain. Location removal, audit and cleanup intent commit together
- * before bytes are deleted, so a store failure leaves a retryable intent.
+ * before bytes are deleted, so a store failure leaves a retryable intent
+ * and the drop still succeeds.
  */
 export async function dropBlobCopy(
   storage: Storage,
@@ -89,7 +90,17 @@ export async function dropBlobCopy(
         details: { store_id: storeId },
       },
     );
-    await finishCopyDeletion(storage, store, hash);
+    try {
+      await finishCopyDeletion(storage, store, hash);
+    } catch (err) {
+      // The drop has committed, so it stands; the durable cleanup intent
+      // survives for the next run.
+      log("error", "blob.dropped_copy_kept", {
+        hash,
+        store_id: storeId,
+        error: errorMessage(err),
+      });
+    }
   });
 }
 
