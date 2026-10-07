@@ -293,6 +293,127 @@ describe("occurred_at compliance", () => {
     expect(beforeBound).not.toContain(later);
   });
 
+  /**
+   * The same three rows as the listing's case, read through a door that takes
+   * no `source` of its own: the search finds them by a word of their own and
+   * the export by the source. A distinct base instant per run keeps a bound
+   * set to it from being answered by a sibling run's rows.
+   */
+  async function seedAroundABound(word: string): Promise<{
+    at: (offsetMs: number) => string;
+    earlier: string;
+    onBound: string;
+    later: string;
+  }> {
+    const base =
+      Date.UTC(2002, 0, 1) + Number.parseInt(ctx.runId.slice(1, 7), 16);
+    const at = (offsetMs: number) => new Date(base + offsetMs).toISOString();
+    const seed = async (offsetMs: number): Promise<string> => {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          occurred_at: at(offsetMs),
+          properties: { title: word, body: `${word} ${String(offsetMs)}` },
+        }),
+      );
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    return {
+      at,
+      earlier: await seed(-1000),
+      onBound: await seed(0),
+      later: await seed(1000),
+    };
+  }
+
+  it("GET /search bounds a search by the item's own time and excludes an item sitting exactly on either bound", async () => {
+    const word = `searchbounds${ctx.runId}`;
+    const { at, earlier, onBound, later } = await seedAroundABound(word);
+
+    const ids = async (bound: Record<string, string>): Promise<string[]> => {
+      const page = await client.search(word, { limit: 100, ...bound });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      expect(
+        page.data.next_cursor,
+        "the page was truncated, so a row missing from it proves nothing about the bound",
+      ).toBeNull();
+      return page.data.data.map((hit) => hit.item.id);
+    };
+    // The control: without a bound every row is found, so each absence below
+    // is the bound's.
+    expect(await ids({})).toEqual(
+      expect.arrayContaining([earlier, onBound, later]),
+    );
+
+    const afterBound = await ids({ occurred_after: at(0) });
+    expect(
+      afterBound,
+      "a row whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound);
+    expect(afterBound).toContain(later);
+    expect(afterBound).not.toContain(earlier);
+
+    const beforeBound = await ids({ occurred_before: at(0) });
+    expect(
+      beforeBound,
+      "a row whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound);
+    expect(beforeBound).toContain(earlier);
+    expect(beforeBound).not.toContain(later);
+
+    const window = await ids({
+      occurred_after: at(-1000),
+      occurred_before: at(1000),
+    });
+    expect(window).toContain(onBound);
+    expect(window).not.toContain(earlier);
+    expect(window).not.toContain(later);
+  });
+
+  it("GET /export bounds an export by the item's own time and excludes an item sitting exactly on either bound", async () => {
+    const word = `exportbounds${ctx.runId}`;
+    const { at, earlier, onBound, later } = await seedAroundABound(word);
+
+    const ids = async (bound: Record<string, string>): Promise<string[]> => {
+      const exported = await client.exportItems({
+        source: ctx.source,
+        type: "core.note",
+        ...bound,
+      });
+      expect(exported.status, JSON.stringify(exported.error)).toBe(200);
+      return exported.data
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .flatMap((line) => {
+          const parsed = JSON.parse(line) as {
+            item?: { id: string; properties: { title?: string } };
+          };
+          return parsed.item?.properties.title === word ? [parsed.item.id] : [];
+        });
+    };
+    expect(await ids({})).toEqual(
+      expect.arrayContaining([earlier, onBound, later]),
+    );
+
+    const afterBound = await ids({ occurred_after: at(0) });
+    expect(
+      afterBound,
+      "a row whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound);
+    expect(afterBound).toContain(later);
+    expect(afterBound).not.toContain(earlier);
+
+    const beforeBound = await ids({ occurred_before: at(0) });
+    expect(
+      beforeBound,
+      "a row whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+    ).not.toContain(onBound);
+    expect(beforeBound).toContain(earlier);
+    expect(beforeBound).not.toContain(later);
+  });
+
   it("occurred_at does not affect created_at ordering", async () => {
     const noteOld = createNote({
       source: ctx.source,

@@ -135,6 +135,103 @@ describe("canonical instants on item writes and filters", () => {
     }
   });
 
+  it("compares filter timestamps with neq, gt, lt and lte as instants, on listing and search", async () => {
+    // `+02:00` spellings of instants that sit on and between the two rows'
+    // own times, 07:00:00Z and 08:00:00Z, so the comparison is of instants
+    // and not of text.
+    const [first, second] = rows as [Row, Row];
+    const onFirst = "2026-04-01T09:00:00+02:00";
+    const between = "2026-04-01T09:30:00+02:00";
+    const cases: [string, string, string[]][] = [
+      ["neq", onFirst, [second.id]],
+      ["gt", onFirst, [second.id]],
+      ["lt", onFirst, []],
+      ["lte", onFirst, [first.id]],
+      ["neq", between, [first.id, second.id]],
+      ["gt", between, [second.id]],
+      ["lt", between, [first.id]],
+      ["lte", between, [first.id]],
+    ];
+    for (const path of ["/items", "/search"]) {
+      const params: Record<string, string> =
+        path === "/search" ? { q: "chronocanonical" } : { type: "core.note" };
+      // The witness: both rows answer a comparison that excludes neither, so each
+      // answer below leaves out a row that was there to be found.
+      expect(
+        await ids(path, {
+          ...params,
+          filter: 'occurred_at neq "1999-01-01T00:00:00Z"',
+        }),
+      ).toEqual([first.id, second.id].sort());
+      for (const [operator, literal, expected] of cases) {
+        expect(
+          await ids(path, {
+            ...params,
+            filter: `occurred_at ${operator} "${literal}"`,
+          }),
+          `${path} occurred_at ${operator} ${literal}`,
+        ).toEqual([...expected].sort());
+      }
+    }
+    for (const field of ["created_at", "updated_at"] as const) {
+      const pivot = Date.parse(first[field]);
+      const spelled = first[field].replace("Z", "+00:00");
+      for (const operator of ["neq", "gt", "lt", "lte"] as const) {
+        const holds = (value: number): boolean =>
+          operator === "neq"
+            ? value !== pivot
+            : operator === "gt"
+              ? value > pivot
+              : operator === "lt"
+                ? value < pivot
+                : value <= pivot;
+        const expected = rows
+          .filter((r) => holds(Date.parse(r[field])))
+          .map((r) => r.id)
+          .sort();
+        for (const path of ["/items", "/search"]) {
+          const params: Record<string, string> =
+            path === "/search"
+              ? { q: "chronocanonical" }
+              : { type: "core.note" };
+          expect(
+            await ids(path, {
+              ...params,
+              filter: `${field} ${operator} "${spelled}"`,
+            }),
+            `${path} ${field} ${operator} ${spelled}`,
+          ).toEqual(expected);
+        }
+      }
+    }
+  });
+
+  it("refuses a time comparison with a literal that is not a timestamp, on every operator, naming validation_error", async () => {
+    for (const path of ["/items", "/search"]) {
+      const base: Record<string, string> =
+        path === "/search" ? { q: "chronocanonical" } : { type: "core.note" };
+      // The witness: the same comparison with a timestamp is taken.
+      expect(
+        await ids(path, {
+          ...base,
+          filter: 'occurred_at gte "2026-04-01T00:00:00Z"',
+        }),
+      ).toHaveLength(2);
+      for (const operator of ["eq", "neq", "gt", "gte", "lt", "lte"]) {
+        for (const literal of ['"not-a-date"', "42"]) {
+          const refused = await client.rawRequest<unknown>(
+            `${path}?${scoped({ ...base, filter: `occurred_at ${operator} ${literal}` })}`,
+          );
+          expect(refused.status, `${path} ${operator} ${literal}`).toBe(400);
+          expect(
+            refused.error?.error.code,
+            `${path} ${operator} ${literal}`,
+          ).toBe("validation_error");
+        }
+      }
+    }
+  });
+
   it("normalizes a patch before comparing stale changes", async () => {
     const row = rows[0]!;
     const first = await client.rawRequest<{ item: Row }>(`/items/${row.id}`, {
