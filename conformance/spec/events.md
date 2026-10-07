@@ -598,6 +598,14 @@ When the grant of an app whose access token holds a stream open is revoked, the 
 
 **Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended when its app's grant is revoked`.
 
+### `events/credential-heartbeat`
+
+If a stream's credential no longer stands, then the server MUST end the stream with `credential_ended` within 30 seconds, whether or not any frame is published.
+
+**Reason:** the credential is read again at each heartbeat as well as before each batch, so a quiet stream does not outlive its credential.
+
+**Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`.
+
 ### `events/credential-nothing-after`
 
 When a key that holds a stream open is revoked, the server MUST NOT send the stream an event written after the revocation.
@@ -664,19 +672,19 @@ When the server has sent `stream_incomplete`, the server MUST close the stream.
 
 ### `events/replay-failed`
 
-If the server cannot read the log while it replays, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
+If the server cannot read the log's head when a stream opens, or cannot read the log while it replays, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
 
 **Tests:** waiting on #1444.
 
 ### `events/live-delivery-failed`
 
-If the server cannot read a stream's credential while it delivers a live frame, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
+If the server cannot read a stream's credential again, at a heartbeat or before it delivers a batch of live or replayed frames, or cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
 
 **Tests:** waiting on #1444.
 
 ### `events/backlog-overflow`
 
-If the live frames published during a replay outrun what the server holds for it and one of them is a row the server cannot read, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
+If 500 live frames are published while a stream is still replaying and one of them is a row the server cannot read, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `backlog_overflow`.
 
 **Reason:** the unreadable row's live copy was the one carrier the event had.
 
