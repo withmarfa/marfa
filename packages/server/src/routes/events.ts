@@ -525,6 +525,7 @@ export function eventRoutes(
   // first, as the copy stream tells it.
   const refuseReadViewHeader: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (c.req.header("X-Marfa-Read-View") !== undefined) {
+      requireAuth(c);
       throw invalidReadViewRequest("X-Marfa-Read-View requires copy=1");
     }
     await next();

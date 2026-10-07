@@ -610,7 +610,7 @@ If a stream's credential no longer stands, then the server MUST end the stream w
 
 **Reason:** the credential is read again at each heartbeat as well as before each batch, so a quiet stream does not outlive its credential.
 
-**Tests:** `compliance/stream-credential.test.ts › names the last event it sent in the cursor of credential_ended, and refuses a reconnect with the revoked key 401`.
+**Tests:** `compliance/stream-credential.test.ts › ends a quiet stream with credential_ended within 30 seconds of its key's revocation`.
 
 ### `events/heartbeat`
 
