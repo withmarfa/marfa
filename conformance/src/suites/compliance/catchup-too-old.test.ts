@@ -1,25 +1,37 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 import { openEventStream, parseSse, type SseEvent } from "../../utils/sse.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
+let server: FreshServer | undefined;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "catchup-too-old",
   ));
-});
+  server = await bootFreshServer("catchup-too-old");
+}, FRESH_SERVER_TIMEOUT_MS + 60_000);
 
 afterAll(async () => {
   await cleanup(ctx);
-});
+  await stopFreshServers();
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /**
  * Read an SSE response until `done` holds of what has arrived, or the
@@ -78,10 +90,7 @@ describe("the cursor a catch-up resumes from", () => {
     //
     // The premise is that this run's server still holds event `1`. It does:
     // the server is booted for the run and retains events for hours, and a
-    // run lasts minutes. The stale case itself cannot be arranged over the
-    // wire: a request can run the retention sweep but cannot make an event
-    // older than the shortest retention, an hour; `events.md` 3 says where
-    // it is asserted.
+    // run lasts minutes.
     const seed = await client.createItem(
       createNote({ source: ctx.source, properties: { body: "catchup-seed" } }),
     );
@@ -141,4 +150,141 @@ describe("the cursor a catch-up resumes from", () => {
     );
     expect(replayed).toBeDefined();
   });
+});
+
+const runSqlite = promisify(execFile);
+
+describe("a cursor behind the oldest event the log keeps", () => {
+  it(
+    "answers 200 and a terminal catchup_too_old frame naming the oldest retained id and the cursor, and delivers a cursor still in the log",
+    async ({ signal }) => {
+      // A request cannot age an event, and retention keeps at least an hour, so
+      // the log is cut in the stored file while the server is stopped: the
+      // state a retention sweep leaves and nothing else a client can do does.
+      const fresh = server!;
+      const writer = new MarfaClient({
+        baseUrl: fresh.apiUrl,
+        apiKey: fresh.workingKey,
+      });
+      const written: string[] = [];
+      for (let n = 1; n <= 6; n += 1) {
+        const created = await writer.createItem({
+          type: "core.note",
+          properties: { body: `retired-${String(n)}` },
+        });
+        expect(created.ok, JSON.stringify(created.error)).toBe(true);
+        written.push(created.data.item.id);
+      }
+
+      const idOf = (e: SseEvent) =>
+        (e.data as { item?: { id?: string } })?.item?.id;
+      const ids = await withStream(
+        fresh.apiUrl,
+        fresh.workingKey,
+        { lastEventId: "0" },
+        async (stream) => {
+          const { events } = await collectUntil(
+            stream,
+            (seen) => seen.some((e) => idOf(e) === written[5]),
+            "the sixth note in a replay from cursor 0",
+            signal,
+          );
+          return written.map((note) => {
+            const frame = events.find((e) => idOf(e) === note);
+            expect(frame?.id, `no event for ${note}`).toBeDefined();
+            return BigInt(frame!.id!);
+          });
+        },
+      );
+      // The log keeps the fourth note's event and everything after it.
+      const oldest = ids[3]!;
+      await fresh.restart({
+        whileStopped: async () => {
+          await runSqlite("sqlite3", [
+            fresh.sqlitePath,
+            `DELETE FROM event_log WHERE id < ${String(oldest)};`,
+          ]);
+        },
+      });
+
+      interface Answer {
+        events: SseEvent[];
+        closed: boolean;
+      }
+      const open = async (cursor: string, until: (e: SseEvent[]) => boolean) =>
+        withStream(
+          fresh.apiUrl,
+          fresh.workingKey,
+          { lastEventId: cursor },
+          async (stream): Promise<Answer> => {
+            expect(stream.response.status).toBe(200);
+            const { events } = await collectUntil(
+              stream,
+              until,
+              `a frame ending the read from cursor ${cursor}`,
+              signal,
+            );
+            const reader = stream.response.body!.getReader();
+            const next = await Promise.race([
+              reader.read(),
+              new Promise<"open">((resolve) =>
+                setTimeout(() => resolve("open"), 2_000),
+              ),
+            ]);
+            return { events, closed: next !== "open" && next.done };
+          },
+        );
+      const tooOld = (e: SseEvent[]) =>
+        e.some((frame) => frame.event === "catchup_too_old");
+      const hasNote = (e: SseEvent[], note: string) =>
+        e.some((frame) => idOf(frame) === note);
+
+      // The smallest cursor refused: the event after it is gone.
+      const refusedCursor = String(oldest - 2n);
+      const refused = await open(refusedCursor, tooOld);
+      const frame = refused.events.find((e) => e.event === "catchup_too_old");
+      expect(frame?.data).toEqual({
+        event_type: "catchup_too_old",
+        min_retained_id: String(oldest),
+        requested: refusedCursor,
+      });
+      expect(frame?.id).toBeUndefined();
+      expect(
+        refused.closed,
+        "the stream stayed open after catchup_too_old",
+      ).toBe(true);
+      expect(refused.events.some((e) => e.event === "stream_live")).toBe(false);
+      expect(refused.events.some((e) => e.id !== undefined)).toBe(false);
+
+      // A cursor of zero is the same refusal now that the log no longer begins
+      // at one.
+      const zero = await open("0", tooOld);
+      expect(
+        zero.events.find((e) => e.event === "catchup_too_old")?.data,
+      ).toMatchObject({
+        min_retained_id: String(oldest),
+        requested: "0",
+      });
+
+      // The witnesses. The largest cursor accepted is the one just before the
+      // oldest retained event, which has missed nothing: the replay starts at
+      // that event.
+      const edge = await open(String(oldest - 1n), (e) =>
+        hasNote(e, written[5]!),
+      );
+      expect(tooOld(edge.events)).toBe(false);
+      expect(edge.events.find((e) => idOf(e) === written[3])?.id).toBe(
+        String(oldest),
+      );
+      expect(hasNote(edge.events, written[2]!)).toBe(false);
+
+      // A cursor at an event the log still holds replays what follows it and
+      // not the event itself.
+      const inLog = await open(String(ids[4]!), (e) => hasNote(e, written[5]!));
+      expect(tooOld(inLog.events)).toBe(false);
+      expect(hasNote(inLog.events, written[4]!)).toBe(false);
+      expect(hasNote(inLog.events, written[3]!)).toBe(false);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });
