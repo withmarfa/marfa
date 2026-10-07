@@ -23,7 +23,7 @@ import {
 
 /**
  * The hold, the state document and the agreements a connector keeps on the
- * instance rather than beside itself: `connectors.md` 12 to 22.
+ * instance rather than beside itself: `connectors.md`.
  */
 
 let ctx: TestContext;
@@ -1120,6 +1120,28 @@ describe("what a connector keeps on the instance", () => {
       ).status,
     ).toBe(200);
     expect(await found(mine, [taskId])).toEqual([taskId]);
+  });
+
+  it("answers each row a lookup names once, in the order it was first named", async () => {
+    const mine = await connector("agreement-lookup-order");
+    const process = await holding(mine);
+    const [a, b, c] = [await note("a"), await note("b"), await note("c")];
+    const written = await mine.client.writeConnectorAgreements(mine.id, {
+      process,
+      set: [a, b, c].map((row) => ({
+        item_id: row.id,
+        waiting: true,
+        record: { title: row.id },
+      })),
+    });
+    expect(written.status).toBe(200);
+    // The witness: named once each, the rows come back in the order named.
+    expect(await found(mine, [c.id, a.id, b.id])).toEqual([c.id, a.id, b.id]);
+    expect(await found(mine, [b.id, c.id, b.id, a.id, c.id])).toEqual([
+      b.id,
+      c.id,
+      a.id,
+    ]);
   });
 
   it("finds agreements by row and lists the waiting ones a page at a time", async () => {
