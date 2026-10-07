@@ -209,6 +209,35 @@ describe("POST /connectors", () => {
   });
 });
 
+describe("POST /connectors/{id}/runs", () => {
+  it("names a missing outcome as missing_required_field, and a wrong one as validation_error", async () => {
+    const mine = await register(ctx.workingKey, "reports runs");
+    const report = async (body: Record<string, unknown>) => {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${mine.connector.id}/runs`,
+        { key: ctx.workingKey, body },
+      );
+      const parsed = await json<{
+        error: { code: string; details?: { field?: string } };
+      }>(res);
+      return { status: res.status, ...parsed.error };
+    };
+    const times = { started_at: at(1000), finished_at: at(0) };
+    expect(await report(times)).toMatchObject({
+      status: 400,
+      code: "missing_required_field",
+      details: { field: "outcome" },
+    });
+    expect(await report({ ...times, outcome: "skipped" })).toMatchObject({
+      status: 400,
+      code: "validation_error",
+    });
+    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  });
+});
+
 describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
   it("answers one to the operator, 404 for an unknown id, and removes for the own key or the operator", async () => {
     const mine = await register(ctx.workingKey, "mine");
