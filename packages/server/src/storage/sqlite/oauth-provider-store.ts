@@ -265,8 +265,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
         postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
-        public: auth_oauth_client.public,
-        tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
         grantTypes: auth_oauth_client.grantTypes,
       })

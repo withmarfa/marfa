@@ -222,9 +222,7 @@ describe("an OAuth-derived subscriber", () => {
         source: `oauthwriter-${suffix}`,
         permissions: [...PERMISSIONS],
         type_permissions: { "*": "write" },
-        // Named, because the extension door reads this map and nothing else:
-        // the implicit own-namespace write follows the key's label, which is
-        // not `mine`.
+        // Named, because the extension door reads this map and nothing else.
         extension_permissions: { mine: "write" },
         default_tier: "library",
         is_operator: false,

@@ -1283,11 +1283,7 @@ describe("POST /restore — the items it writes", () => {
    */
   it("drops an empty extension namespace rather than restoring it", async () => {
     // A namespace is a path segment everywhere else, so no ordinary write can
-    // create an empty one — but a restore copies the keys it is handed. That
-    // matters because the empty string is how a credential holding no implicit
-    // namespace is represented (`auth/extension-label.ts`), so an item
-    // carrying one would be readable by exactly the credentials that hold
-    // nothing.
+    // create an empty one, and no operation could address or delete it.
     const source = `archive-empty-ns-${Math.random().toString(36).slice(2, 8)}`;
     const itemId = "019537a0-7b80-7000-8000-0000000001f0";
 
