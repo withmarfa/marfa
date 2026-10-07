@@ -475,6 +475,13 @@ export interface RefusedBootOptions {
    */
   prepare?: (sqlitePath: string, stateDir: string) => void | Promise<void>;
   extraEnv?: Record<string, string>;
+  /**
+   * The `NODE_ENV` the server is started under, which every other boot
+   * leaves unset. Naming one also leaves `MARFA_AUTH_SECRET` and
+   * `MARFA_AUTH_BASE_URL` to `extraEnv`, so a rule that holds only in
+   * production reads what the fixture gives it.
+   */
+  nodeEnv?: string;
 }
 
 function fingerprint(sqlitePath: string): DatabaseFiles {
@@ -522,7 +529,15 @@ export async function bootRefused(
     const before = fingerprint(sqlitePath);
     const refused = await runScript(
       tsx,
-      [SERVER_SCRIPT, "refused", "--state", state],
+      [
+        SERVER_SCRIPT,
+        "refused",
+        "--state",
+        state,
+        ...(options.nodeEnv === undefined
+          ? []
+          : ["--node-env", options.nodeEnv]),
+      ],
       serverEnv(options.extraEnv ?? {}),
     );
     if (refused.status !== 0) {

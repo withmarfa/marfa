@@ -1230,8 +1230,12 @@ function settingLines(refused: RefusedBoot): string[] {
  *  settings' lines after removing the state. */
 async function refusedOverSettings(
   env: Record<string, string>,
+  nodeEnv?: string,
 ): Promise<string[]> {
-  const refused = await bootRefused("lifecycle-settings", { extraEnv: env });
+  const refused = await bootRefused("lifecycle-settings", {
+    extraEnv: env,
+    nodeEnv,
+  });
   try {
     // Exit status 1, as for any failure to start that is not a refused database
     // (`instance/upgrade-exit-1`), before anything was opened or listened on.
@@ -1426,7 +1430,29 @@ describe("starting with a setting outside its rule", () => {
       ).toEqual([
         'VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
       ]);
+
+      // The rules that hold only in production wait too. The three settings
+      // production requires are given as empty, which is unset, so what the
+      // environment of whoever runs the suite holds does not answer them.
+      const unset = {
+        API_KEY_SALT: "",
+        MARFA_AUTH_SECRET: "",
+        MARFA_AUTH_BASE_URL: "",
+      };
+      // The witness: in production alone, the three are named.
+      expect(
+        [...(await refusedOverSettings(unset, "production"))].sort(),
+      ).toEqual(
+        [
+          "API_KEY_SALT must be set in production; generate one with `openssl rand -hex 32`",
+          "MARFA_AUTH_BASE_URL must be set in production to the public URL clients reach this server at",
+          "MARFA_AUTH_SECRET must be set in production; generate one with `openssl rand -hex 32`",
+        ].sort(),
+      );
+      expect(
+        await refusedOverSettings({ ...unset, [name]: value }, "production"),
+      ).toEqual([line]);
     },
-    FRESH_SERVER_TIMEOUT_MS,
+    2 * FRESH_SERVER_TIMEOUT_MS,
   );
 });

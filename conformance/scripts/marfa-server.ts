@@ -75,12 +75,22 @@ interface Args {
   command: "up" | "down" | "status" | "refused";
   state: string;
   port?: number;
+  nodeEnv?: string;
 }
 
 /** What a boot needs: the state directory, and a port when one is wanted. */
 export interface BootOptions {
   state: string;
   port?: number;
+  /**
+   * The `NODE_ENV` the server starts under, for a boot meant to be refused
+   * over a rule that holds only in one. Left out, the server starts as it
+   * does on the run's own, with none set. Named, the script also leaves the
+   * two settings production requires, the auth secret and the public URL,
+   * to the environment, so the boot reads what the fixture says and not a
+   * stand-in.
+   */
+  nodeEnv?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -105,6 +115,8 @@ function parseArgs(argv: string[]): Args {
       if (!Number.isInteger(args.port) || args.port <= 0) {
         throw new Error("--port needs a positive integer");
       }
+    } else if (arg === "--node-env") {
+      args.nodeEnv = rest[++i] ?? "";
     } else {
       throw new Error(`unexpected argument: ${arg ?? ""}`);
     }
@@ -333,7 +345,15 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
       process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
-  delete env.NODE_ENV;
+  if (args.nodeEnv === undefined) {
+    delete env.NODE_ENV;
+  } else {
+    env.NODE_ENV = args.nodeEnv;
+    for (const name of ["MARFA_AUTH_SECRET", "MARFA_AUTH_BASE_URL"] as const) {
+      if (process.env[name] === undefined) delete env[name];
+      else env[name] = process.env[name];
+    }
+  }
 
   // The log is appended to, so a boot against a state directory that was
   // already bootstrapped would otherwise re-read the first boot's secret and
