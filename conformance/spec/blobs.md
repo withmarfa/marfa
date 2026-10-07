@@ -566,11 +566,11 @@ When a working key or an app's access token writes an edge's properties through 
 
 **Reason:** a credential that may write an edge could otherwise read any blob whose hash it knows by naming it there.
 
-**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`, `compliance/blob-reach-app.test.ts › lends through an edge only a digest the app proved`, `compliance/blob-reach.test.ts › lends a digest named by a bulk edge create only when its writer sent the bytes`, `› lends a digest named by a bulk edge update only when its writer sent the bytes`.
+**Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`, `› lends a digest named by a bulk edge create only when its writer sent the bytes`, `› lends a digest named by a bulk edge update only when its writer sent the bytes`, `compliance/blob-reach-app.test.ts › lends through an edge only a digest the app proved`.
 
 ### `blobs/proof-extension`
 
-When a working key or an app's access token writes an extension namespace through `PUT /items/{id}/extensions/{namespace}` and names a digest the namespace did not name before, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
+When a working key writes an extension namespace through `PUT /items/{id}/extensions/{namespace}` and names a digest the namespace did not name before, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.
 
 **Tests:** `compliance/blob-reach.test.ts › lends through an edge or an extension only a digest its writer proved`.
 
@@ -586,9 +586,9 @@ While an item, an edge or an extension namespace keeps naming a digest that does
 
 While an item, an edge or an extension namespace keeps naming a digest through a reference that lends, the server MUST keep that reference lending through every later write, whoever makes it.
 
-**Reason:** a write that keeps a digest decides nothing about it, so a writer that never sent the bytes cannot withdraw what another proved.
+**Reason:** a write that keeps a digest decides nothing about it, so no later write, one made for no credential included, withdraws what another proved.
 
-**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`, `compliance/blob-reach.test.ts › keeps a lending digest on an edge lending through later writes by a key that never sent the bytes`, `› keeps a lending digest in an extension lending through later writes by a key that never sent the bytes`.
+**Tests:** `compliance/blob-reach.test.ts › keeps a lending digest lending through later writes by a key that never sent the bytes`, `› keeps a lending digest on an edge lending through later writes by a key that never sent the bytes`, `› keeps a lending digest in an extension lending through later writes by a key that never sent the bytes`.
 
 ### `blobs/proof-repair`
 
@@ -632,7 +632,7 @@ When the enrichment sweep writes onto a file item, the server MUST NOT make a di
 
 ### `blobs/read-order`
 
-If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a malformed `ttl`, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
+If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
 
 **Reason:** a blob the credential may not read and an unknown one answer alike, so their order cannot be told.
 

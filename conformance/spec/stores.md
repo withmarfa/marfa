@@ -160,11 +160,11 @@ While the log holds no copy of a blob, the server MUST answer `GET /blobs/{hash}
 
 ### `stores/no-bytes-not-found`
 
-While no attached store holds a recorded copy of a blob the instance has registered, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` with `404 blob_not_found`.
+While the location log records no copy of a registered blob in an attached store, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `404 blob_not_found`.
 
 **Reason:** the bytes of a copy struck or dropped can stay in their store until a later run deletes them, and they are not the blob's.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-store-folders.test.ts › answers HEAD as GET does for a blob that lost its last copy`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `› answers HEAD as GET does for a blob that lost its last copy`.
 
 ## Links
 
@@ -365,12 +365,6 @@ When a run of `blob-integrity` checks an object-store copy whose object is missi
 When a run of `blob-integrity` finds a copy missing or altered, the server MUST remove the copy from the location log.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
-
-### `stores/integrity-strike-audited`
-
-When a run of `blob-integrity` strikes a copy, the server MUST record an audit row with the action `blob.copy_struck`, the blob's hash as its resource and the store's `kind` in its `details`.
-
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`.
 
 ### `stores/integrity-strike-restored`
 
@@ -638,7 +632,7 @@ While a queued or in-progress `update_properties` job's patch holds a blob's dig
 
 ### `stores/orphan-job-ended`
 
-When a canceled, failed or completed `update_properties` job ends, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
+When an `update_properties` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
 
 **Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a job canceled as it was enqueued has ended`.
 
