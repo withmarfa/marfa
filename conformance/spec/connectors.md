@@ -22,9 +22,9 @@ When the server answers a registration, the server MUST give `key_id` as the id 
 
 ### `connectors/register-fresh-nulls`
 
-While a registration has had no heartbeat, no run and no hold, the server MUST answer its `last_heartbeat_at`, `last_run` and `hold_expires_at` as `null`.
+While a registration has had no heartbeat or no run, the server MUST answer the field of what it has not had, `last_heartbeat_at` or `last_run`, as `null`.
 
-**Tests:** `compliance/connectors.test.ts › registers the key as a connector and lists it`, `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`.
+**Tests:** `compliance/connectors.test.ts › registers the key as a connector and lists it`, `› lists none of a removed registration's runs under the next one its key makes`, `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`.
 
 ### `connectors/register-name-bounds`
 
@@ -182,15 +182,15 @@ If a working key that is not the connector's own sends `GET /connectors/{id}` or
 
 ### `connectors/unknown-id`
 
-If a request that the operation accepts on its own terms names an id no registration carries, then the server MUST answer `404 connector_not_found`.
+If a request to an operation under `/connectors/{id}` whose body and query fit the operation's declaration names an id no registration carries, then the server MUST answer `404 connector_not_found`.
 
-**Reason:** a request the operation refuses on its own terms is told so first, as `connectors/order-body-before-registration` says.
+**Reason:** a body or query that does not fit the declaration is refused first, as `connectors/order-body-before-registration` says.
 
 **Tests:** `compliance/connectors.test.ts › answers 404 for an unknown connector, where a registered one answers`, `compliance/connector-check-order.test.ts › answers a registration that is not there 404 before the key's 403, on every door the key reaches`.
 
 ### `connectors/no-credential`
 
-If a request to an operation under `/connectors` carries no credential, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and no body over the operation's cap or nested more than 64 levels, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -284,7 +284,7 @@ When a key is revoked, the server MUST keep the runs its connector reported, and
 
 ### `connectors/revoked-unauthorized`
 
-If a revoked key sends a request to any operation under `/connectors`, then the server MUST answer `401 unauthorized`.
+If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap or nested more than 64 levels, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the operator`, `compliance/connectors.test.ts › keeps a registration whose key was revoked, until the operator removes it`.
 
@@ -1208,7 +1208,7 @@ If a request to an operation under `/connectors` carries a JSON body nested more
 
 ### `connectors/order-credential-before-body`
 
-If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse for anything but the body's size or nesting, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a missing credential 401 before a body the door would refuse`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -1220,27 +1220,27 @@ If the operator key sends `POST /connectors` with a body the operation would ref
 
 ### `connectors/order-body-before-registration`
 
-If a request to an operation under `/connectors/{id}` fails the operation's own validation of its body or query, then the server MUST answer `400`, whether the id names no registration or the registration of another key.
+If a request to an operation under `/connectors/{id}` has a body field or a query parameter that is missing or does not fit the type, format, length, count or values the operation declares for it, then the server MUST answer `400`, whether the id names no registration or the registration of another key.
 
-**Reason:** a request the operation would refuse on its own terms is refused for that before the server looks for the registration, so the validation codes `validation_error` and `missing_required_field` come before `connector_not_found` and `forbidden`.
+**Reason:** the declared fields are checked before the server looks for the registration, so `validation_error` and `missing_required_field` come before `connector_not_found` and `forbidden` for them.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a request the door refuses 400 before the registration's 404 and the key's 403`.
 
 ### `connectors/order-registration-before-key`
 
-If a key that is not the connector's own sends a request the operation accepts on its own terms and names an id no registration carries, then the server MUST answer `404 connector_not_found` and not `403 forbidden`.
+If a key that an operation under `/connectors/{id}` refuses `403 forbidden` on an existing registration sends it a request whose body and query fit the operation's declaration and that names an id no registration carries, then the server MUST answer `404 connector_not_found`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a registration that is not there 404 before the key's 403, on every door the key reaches`.
 
 ### `connectors/order-key-before-stray-field`
 
-If a key that is not the connector's own, the operator key included, sends a request to an operation under `/connectors/{id}` that takes a body, with a top-level body field the operation does not declare, then the server MUST answer `403 forbidden`.
+If a key that an operation under `/connectors/{id}` refuses `403 forbidden` sends it a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers the key's 403 and the registration's 404 before a field the door does not declare`.
 
 ### `connectors/order-registration-before-stray-field`
 
-If a working key sends a request to an operation under `/connectors/{id}` that takes a body, with a top-level body field the operation does not declare, and names an id no registration carries, then the server MUST answer `404 connector_not_found`.
+If a key sends a request to an operation under `/connectors/{id}` that names an id no registration carries, with a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare, then the server MUST answer `404 connector_not_found`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers the key's 403 and the registration's 404 before a field the door does not declare`.
 

@@ -60,9 +60,9 @@ If a key that is neither the connector's own nor the operator key sends `POST /c
 
 ### `inbound-webhooks/endpoint-unknown-registration`
 
-If `POST /connectors/{id}/endpoints` or `GET /connectors/{id}/endpoints` names an id no registration carries, then the server MUST answer `404 connector_not_found`.
+If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an id no registration carries, then the server MUST answer `404 connector_not_found`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › refuses another key, an unknown registration and a header that is no header name`.
+**Tests:** `compliance/inbound-webhooks.test.ts › refuses another key, an unknown registration and a header that is no header name`, `compliance/connector-check-order.test.ts › answers a registration that is not there 404 before the key's 403, on every door the key reaches`.
 
 ### `inbound-webhooks/endpoint-list`
 
@@ -78,7 +78,7 @@ When the server lists endpoints, the server MUST list the newest endpoint first.
 
 ### `inbound-webhooks/endpoint-list-whole`
 
-When a credential sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
+When the connector's own key or the operator key sends `GET /connectors/{id}/endpoints`, the server MUST answer the whole list with `next_cursor` `null`.
 
 **Reason:** the operation takes no `limit` and no `cursor`.
 
@@ -86,7 +86,7 @@ When a credential sends `GET /connectors/{id}/endpoints`, the server MUST answer
 
 ### `inbound-webhooks/endpoint-limit`
 
-If a registration holds ten live endpoints and `POST /connectors/{id}/endpoints` asks for another, then the server MUST answer `409 conflict`.
+If a registration holds ten live endpoints and the server would otherwise take a `POST /connectors/{id}/endpoints` for another, then the server MUST answer `409 conflict`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › holds a registration to ten live endpoints, and a retired one frees a place`.
 
@@ -170,7 +170,7 @@ When a registration is removed, the server MUST answer a request to the address 
 
 ### `inbound-webhooks/receipt-accepted`
 
-When a request posts to the address of a live endpoint with no credential, the server MUST answer `202` with `id`, the id of the delivery it stored.
+When a request posts to the address of a live endpoint, whether or not it carries a credential, the server MUST answer `202` with `id`, the id of the delivery it stored.
 
 **Reason:** the connector that owns the endpoint verifies each delivery, and the server holds no sender's secret, so it stores what came and answers at once.
 
@@ -366,7 +366,7 @@ Three things bound what a registration holds: what it has not handled, what it r
 
 ### `inbound-webhooks/backlog-count`
 
-If a receipt would take the unhandled deliveries of a registration, across all its live endpoints, past `MARFA_INBOUND_BACKLOG_DELIVERIES`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a receipt would take the unhandled deliveries of a registration, across all its endpoints, live and retired, past `MARFA_INBOUND_BACKLOG_DELIVERIES`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses while the backlog is full, and takes again once it drains`.
 
@@ -450,7 +450,13 @@ When a body ends, whether it arrived whole, was refused or broke off, the server
 
 ### `inbound-webhooks/arriving-retired`
 
-If an endpoint is retired while a body is arriving at its address, then the server MUST answer `404 not_found` and store no delivery.
+If an endpoint is retired while a body is arriving at its address, then the server MUST answer `404 not_found`.
+
+**Tests:** `compliance/inbound-bounds.test.ts › refuses a body whose endpoint was retired while it arrived, and stores nothing`.
+
+### `inbound-webhooks/arriving-retired-stores-nothing`
+
+If an endpoint is retired while a body is arriving at its address, then the server MUST NOT store a delivery for the body.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body whose endpoint was retired while it arrived, and stores nothing`.
 
@@ -474,7 +480,7 @@ If a receipt's charge would take the bytes a registration retains past `MARFA_IN
 
 ### `inbound-webhooks/retained-charge`
 
-When the server charges a receipt against the bytes a registration retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `connector_id`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, the value of the endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
+When the server charges a receipt against the bytes a registration retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `connector_id`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, `dedupe_key` as the value the delivery carries in its endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
 
 **Reason:** the 32 bytes are kept for the marks a handled delivery gains, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
 
@@ -612,7 +618,13 @@ A mark says how the connector handled a delivery. The server records it and acts
 
 ### `inbound-webhooks/handled-mark`
 
-When the connector's own key sends `POST /connectors/{id}/deliveries/handled` with `ids` and an `outcome` of `processed`, `duplicate` or `rejected`, the server MUST mark each named delivery with `handled_at` and the outcome and answer `200` with `data` holding them.
+When the connector's own key sends `POST /connectors/{id}/deliveries/handled` with `ids` and an `outcome` of `processed`, `duplicate` or `rejected`, the server MUST mark each named delivery with `handled_at` and the outcome.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › keeps the first mark, and marks nothing when an id is not the connector's`, `› answers each id of a handled mark once, in the order first named`.
+
+### `inbound-webhooks/handled-answer`
+
+When the server marks deliveries handled, the server MUST answer `200` with `data` holding the named deliveries.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › keeps the first mark, and marks nothing when an id is not the connector's`, `› answers each id of a handled mark once, in the order first named`.
 
@@ -630,7 +642,7 @@ When `POST /connectors/{id}/deliveries/handled` names a delivery that is marked 
 
 ### `inbound-webhooks/handled-unheld`
 
-If `POST /connectors/{id}/deliveries/handled` names a delivery the registration does not hold, another registration's delivery included, then the server MUST answer `404 delivery_not_found`.
+If a `POST /connectors/{id}/deliveries/handled` the server would otherwise take names a delivery the registration does not hold, another registration's delivery included, then the server MUST answer `404 delivery_not_found`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › keeps the first mark, and marks nothing when an id is not the connector's`, `compliance/connector-codes.test.ts › answers another connector's delivery, endpoint and registration with the code of each, and marks and retires nothing`.
 
@@ -682,7 +694,7 @@ A sender may send one delivery more than once. An endpoint made with a `duplicat
 
 ### `inbound-webhooks/duplicate-of`
 
-When a delivery repeats the value of its endpoint's duplicate header, the server MUST give its `duplicate_of` as the `id` and `outcome` of the earliest retained delivery on the same endpoint that carried the value.
+When a delivery carries a value in its endpoint's duplicate header that an earlier delivery the endpoint still retains carried, the server MUST give its `duplicate_of` as the `id` and `outcome` of the earliest retained delivery on the same endpoint that carried the value.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › marks a repeat of the duplicate header with the first delivery and how it was handled`.
 
@@ -702,7 +714,7 @@ When a delivery repeats a value, the server MUST store both deliveries.
 
 ### `inbound-webhooks/duplicate-new-value`
 
-When a delivery carries a value its endpoint's duplicate header has not carried before, the server MUST give its `duplicate_of` as `null`.
+When a delivery carries a value in its endpoint's duplicate header that no earlier delivery the endpoint still retains carried, the server MUST give its `duplicate_of` as `null`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › marks a repeat of the duplicate header with the first delivery and how it was handled`.
 
@@ -770,9 +782,9 @@ Where `PUT /config` names `inbound_pending_retention_days`, when the `inbound-de
 
 ### `inbound-webhooks/retention-config`
 
-When `PUT /config` names `inbound_handled_retention_days` or `inbound_pending_retention_days` as a whole number of days, 0 or more, the server MUST answer it at `GET /config` until a later `PUT /config` leaves it out.
+When `PUT /config` names `inbound_handled_retention_days` or `inbound_pending_retention_days` as an integer from 0 through 36500, the server MUST answer it at `GET /config` until a later `PUT /config` leaves it out.
 
-**Reason:** a negative or fractional value is refused as every retention in `PUT /config` is, `housekeeping/retention-days-range`.
+**Reason:** any other value is refused as `housekeeping/retention-days-range` says.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › round trips retention overrides and refuses invalid values`.
 
@@ -834,7 +846,7 @@ When the server removes a delivery by age, the server MUST remove its body, so t
 
 ### `inbound-webhooks/cleanup-byte-target`
 
-When the deliveries past their retention charge more than 33554432 bytes together, the server MUST remove in one run no more than the oldest of them whose charges together are at most 33554432 bytes.
+When the deliveries past their retention charge more than 33554432 bytes together, the server MUST remove in one run the oldest of them, in order, up to the last whose charge keeps the run's total at most 33554432 bytes.
 
 **Tests:** `compliance/inbound-retention.test.ts › removes in one pass no more of the oldest than 32 MiB of their charges, taking a set of exactly 32 MiB`.
 
@@ -916,7 +928,7 @@ While the limiter is on, if a request is past an endpoint's window and its regis
 
 ### `inbound-webhooks/order-backlog-before-length`
 
-If a request declares a `Content-Length` over the limit and its registration's backlog of deliveries is full, then the server MUST answer `503 inbound_unavailable`.
+If a request declares a `Content-Length` over the limit and its registration already holds `MARFA_INBOUND_BACKLOG_DELIVERIES` unhandled deliveries, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a full backlog 503 before a declared length over the limit`.
 
@@ -928,6 +940,6 @@ If a request declares a `Content-Length` over the limit and sends none of the bo
 
 ### `inbound-webhooks/order-limit-before-in-flight`
 
-If a body passes the limit as it is read and would also take the bytes in flight past their limit, then the server MUST answer `413 request_too_large`.
+If the same part of a body takes it past the limit as it is read and would also take the bytes in flight past their limit, then the server MUST answer `413 request_too_large`.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a body read past the limit 413 before the bytes in flight's 503`.
