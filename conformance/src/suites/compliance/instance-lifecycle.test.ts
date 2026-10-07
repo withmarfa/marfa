@@ -959,3 +959,185 @@ describe("starting on a database that holds some of the server's tables and no r
     FRESH_SERVER_TIMEOUT_MS,
   );
 });
+
+/** The lines of a refusal over settings, one per setting, as the log has
+ *  them: what follows the heading. */
+function settingLines(refused: RefusedBoot): string[] {
+  const [heading, ...lines] = refusalText(refused).split("\n");
+  expect(heading).toBe("The server cannot start; fix these settings:");
+  return lines.map((line) => line.trim());
+}
+
+/** Boots with `env`, expects it refused over settings, and answers the
+ *  settings' lines after removing the state. */
+async function refusedOverSettings(
+  env: Record<string, string>,
+): Promise<string[]> {
+  const refused = await bootRefused("lifecycle-settings", { extraEnv: env });
+  try {
+    // Exit status 1, as for any failure to start that is not a refused
+    // database (`instance.md` 16), before anything was opened or listened on.
+    expect(refused).toMatchObject({ code: 1, signal: null });
+    expect(refused.after).toEqual({
+      db: "absent",
+      wal: "absent",
+      shm: "absent",
+    });
+    expect(listened(refused)).toBe(false);
+    return settingLines(refused);
+  } finally {
+    await refused.stop();
+  }
+}
+
+describe("starting with a setting outside its rule", () => {
+  // One step outside each rule, for a kind of rule apiece.
+  const OUTSIDE: [string, string, string, string][] = [
+    [
+      "MARFA_CONNECTOR_HOLD_MS",
+      "a count below its minimum",
+      "999",
+      'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
+    ],
+    [
+      "AUDIT_RETENTION_DAYS",
+      "a count above its maximum",
+      "36501",
+      'AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
+    ],
+    [
+      "SQLITE_BUSY_BUDGET_MS",
+      "not a number",
+      "soon",
+      'SQLITE_BUSY_BUDGET_MS must be a whole number, 0 or more (got "soon")',
+    ],
+    [
+      "MARFA_ENRICHMENT_ENABLED",
+      "not a boolean",
+      "maybe",
+      'MARFA_ENRICHMENT_ENABLED must be true or false (also 1/0, yes/no, on/off) (got "maybe")',
+    ],
+    [
+      "S3_ENDPOINT",
+      "not a URL",
+      "nope",
+      'S3_ENDPOINT must be an absolute http or https URL (got "nope")',
+    ],
+  ];
+
+  // The witness for every refusal below: the largest or smallest value each
+  // rule takes, and the cross-field rules at their equal edge, start.
+  it(
+    "starts with each of those settings one step inside its rule and each cross-field rule at its edge",
+    async () => {
+      const server = await bootFreshServer("lifecycle-settings-edge", {
+        MARFA_CONNECTOR_HOLD_MS: "1000",
+        AUDIT_RETENTION_DAYS: "36500",
+        SQLITE_BUSY_BUDGET_MS: "0",
+        MARFA_ENRICHMENT_ENABLED: "OFF",
+        S3_ENDPOINT: "https://objects.example.test",
+        VERSION_RECENT_DAYS: "40",
+        VERSION_DAILY_SNAPSHOT_DAYS: "40",
+        VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
+        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
+        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "500",
+        MARFA_AUTH_SECRET: "x".repeat(32),
+      });
+
+      try {
+        expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it.each(OUTSIDE)(
+    "refuses to start with status 1, naming %s and no other setting, when it is %s",
+    async (name, _kind, value, line) => {
+      expect(await refusedOverSettings({ [name]: value })).toEqual([line]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "names every setting that is outside its rule in one refusal",
+    async () => {
+      const lines = await refusedOverSettings(
+        Object.fromEntries(OUTSIDE.map(([name, , value]) => [name, value])),
+      );
+
+      expect([...lines].sort()).toEqual(
+        OUTSIDE.map(([, , , line]) => line).sort(),
+      );
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one",
+    async () => {
+      const secret = "padded-secret-value";
+
+      const lines = await refusedOverSettings({
+        S3_SECRET_ACCESS_KEY: ` ${secret} `,
+        MARFA_CONNECTOR_HOLD_MS: "999",
+      });
+
+      expect([...lines].sort()).toEqual(
+        [
+          'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
+          "S3_SECRET_ACCESS_KEY has whitespace around it, which would be part of the secret; remove it",
+        ].sort(),
+      );
+      expect(lines.join("\n")).not.toContain(secret);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a MARFA_AUTH_SECRET of 31 characters, without printing it",
+    async () => {
+      const secret = "y".repeat(31);
+
+      const lines = await refusedOverSettings({ MARFA_AUTH_SECRET: secret });
+
+      expect(lines).toEqual([
+        "MARFA_AUTH_SECRET must be at least 32 characters; generate one with `openssl rand -hex 32`",
+      ]);
+      expect(lines.join("\n")).not.toContain(secret);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it.each([
+    [
+      "VERSION_DAILY_SNAPSHOT_DAYS",
+      { VERSION_RECENT_DAYS: "40", VERSION_DAILY_SNAPSHOT_DAYS: "39" },
+      'VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS (got "39")',
+    ],
+    [
+      "VERSION_WEEKLY_SNAPSHOT_DAYS",
+      {
+        VERSION_DAILY_SNAPSHOT_DAYS: "100",
+        VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
+      },
+      'VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
+    ],
+    [
+      "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
+      {
+        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
+        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "499",
+      },
+      'MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS (got "499")',
+    ],
+  ])(
+    "refuses to start with status 1, naming %s, when each setting is inside its own rule and the two disagree",
+    async (_name, env, line) => {
+      expect(await refusedOverSettings(env)).toEqual([line]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
