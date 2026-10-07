@@ -204,6 +204,111 @@ describe("type registration and listing", () => {
     expect(errors?.some((e) => e.field === "fields.count.format")).toBe(true);
   });
 
+  it("stores email, datetime and date formats on a string as their own types", async () => {
+    const id = `user.format-types-${ctx.runId}`;
+    const formats = ["email", "datetime", "date"] as const;
+    const registered = await client.registerType({
+      id,
+      fields: Object.fromEntries(
+        formats.map((format) => [`as_${format}`, { type: "string", format }]),
+      ),
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    const read = await client.getType(id);
+    expect(read.ok).toBe(true);
+    for (const format of formats) {
+      expect(read.data.fields[`as_${format}`], format).toEqual({
+        type: format,
+      });
+    }
+  });
+
+  it("leaves a format that names the field's own type unchanged, and refuses thumbnail on a list", async () => {
+    const id = `user.format-same-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { home: { type: "url", format: "url" } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    expect((await client.getType(id)).data.fields.home).toEqual({
+      type: "url",
+    });
+
+    const refusedId = `user.format-list-thumbnail-${ctx.runId}`;
+    const refused = await client.registerType({
+      id: refusedId,
+      fields: {
+        covers: { type: "array", items_type: "string", format: "thumbnail" },
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const errors = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.map((e) => e.field)).toContain("fields.covers.format");
+    expect((await client.getType(refusedId)).status).toBe(404);
+
+    // The witness: the same list takes a format that names a type a list may
+    // hold.
+    const urls = await client.registerType({
+      id: refusedId,
+      fields: {
+        covers: { type: "array", items_type: "string", format: "url" },
+      },
+    });
+    expect(urls.status, JSON.stringify(urls.error)).toBe(201);
+  });
+
+  it("keeps bcp47 and iso3166 as formats of a string, and refuses them on any other type", async () => {
+    const id = `user.format-kept-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: {
+        locale: { type: "string", format: "bcp47" },
+        country: { type: "string", format: "iso3166" },
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const read = await client.getType(id);
+    expect(read.ok).toBe(true);
+    expect(read.data.fields.locale).toEqual({
+      type: "string",
+      format: "bcp47",
+    });
+    expect(read.data.fields.country).toEqual({
+      type: "string",
+      format: "iso3166",
+    });
+
+    const refusedId = `user.format-kept-refused-${ctx.runId}`;
+    const others: Record<string, unknown>[] = [
+      { type: "number" },
+      { type: "integer" },
+      { type: "boolean" },
+      { type: "url" },
+      { type: "array", items_type: "string" },
+    ];
+    for (const format of ["bcp47", "iso3166"]) {
+      for (const other of others) {
+        const refused = await client.registerType({
+          id: refusedId,
+          fields: { code: { ...other, format } },
+        } as never);
+        const label = `${format} on ${JSON.stringify(other)}`;
+        expect(refused.status, label).toBe(400);
+        expect(refused.error?.error.code, label).toBe("invalid_schema");
+        const errors = refused.error?.error.details?.errors as
+          { field: string }[] | undefined;
+        expect(
+          errors?.map((e) => e.field),
+          label,
+        ).toContain("fields.code.format");
+      }
+    }
+    expect((await client.getType(refusedId)).status).toBe(404);
+  });
+
   it("refuses a replacement whose property name shadows a first-class Item field, as registration does", async () => {
     const id = `user.shadow-replace-${ctx.runId}`;
     const registered = await client.registerType({

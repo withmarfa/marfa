@@ -301,6 +301,151 @@ describe("a type's link", () => {
     );
   });
 
+  it("refuses a link that is not a string field on a replacement too", async () => {
+    const id = `user.linked-replaced-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string" },
+      count: { type: "integer" },
+      home: { type: "url" },
+    };
+    expect(
+      (
+        await client.registerType({
+          id,
+          fields,
+          link_field: "vendor_id",
+        } as never)
+      ).ok,
+    ).toBe(true);
+    for (const link_field of [42, "missing", "count", "home"]) {
+      const refused = await client.replaceType(id, {
+        fields,
+        link_field,
+        version: 2,
+      });
+      expect(refused.status, `link_field ${String(link_field)}`).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(errors?.map((e) => e.field)).toContain("link_field");
+      expect((await client.getType(id)).data.link_field).toBe("vendor_id");
+    }
+    // The witness: the same replacement naming a string field lands.
+    const landed = await client.replaceType(id, {
+      fields: { ...fields, remote_id: { type: "string" } },
+      link_field: "remote_id",
+      version: 2,
+    });
+    expect(landed.ok, JSON.stringify(landed.error)).toBe(true);
+    expect((await client.getType(id)).data.link_field).toBe("remote_id");
+  });
+
+  it("holds the rows to a changed link at once", async () => {
+    const id = `user.linked-changes-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string" },
+      remote_id: { type: "string" },
+    };
+    expect(
+      (
+        await client.registerType({
+          id,
+          fields,
+          link_field: "vendor_id",
+        } as never)
+      ).ok,
+    ).toBe(true);
+    const shared = v("changes-shared");
+    const first = await row(
+      { vendor_id: v("changes-a"), remote_id: shared },
+      { type: id },
+    );
+    await row({ vendor_id: v("changes-b"), remote_id: shared }, { type: id });
+
+    const refused = await client.replaceType(id, {
+      fields,
+      version: 2,
+      link_field: "remote_id",
+    });
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("link_taken");
+    expect(refused.error?.error.details).toEqual({
+      type: id,
+      field: "remote_id",
+    });
+    expect((await client.getType(id)).data.link_field).toBe("vendor_id");
+    // The type still holds its rows to the link it kept.
+    expectTaken(
+      await create({ vendor_id: v("changes-a") }, { type: id }),
+      first.id,
+      v("changes-a"),
+    );
+
+    // The witness: once no two rows share a value, the same replacement lands.
+    const moved = await client.updateItem(first.id, {
+      properties: { remote_id: v("changes-moved") },
+      version: first.version,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const landed = await client.replaceType(id, {
+      fields,
+      version: 2,
+      link_field: "remote_id",
+    });
+    expect(landed.ok, JSON.stringify(landed.error)).toBe(true);
+    expect((await client.getType(id)).data.link_field).toBe("remote_id");
+  });
+
+  it("frees the rows and forgets the tombstones when a type withdraws its link", async () => {
+    const id = `user.linked-withdrawn-${ctx.runId}`;
+    const fields = { vendor_id: { type: "string" } };
+    expect(
+      (
+        await client.registerType({
+          id,
+          fields,
+          link_field: "vendor_id",
+        } as never)
+      ).ok,
+    ).toBe(true);
+    const purgedValue = v("withdrawn-purged");
+    await purge((await row({ vendor_id: purgedValue }, { type: id })).id);
+    // The witness: the purge left the value's tombstone under the link.
+    expect(await tombstonesByLink([purgedValue], id)).toHaveLength(1);
+    const shared = v("withdrawn-shared");
+    const holder = await row({ vendor_id: shared }, { type: id });
+    expectTaken(
+      await create({ vendor_id: shared }, { type: id }),
+      holder.id,
+      shared,
+    );
+
+    const withdrawn = await client.replaceType(id, { fields, version: 2 });
+    expect(withdrawn.ok, JSON.stringify(withdrawn.error)).toBe(true);
+    expect((await client.getType(id)).data.link_field).toBeUndefined();
+
+    const twin = await create({ vendor_id: shared }, { type: id });
+    expect(twin.ok, JSON.stringify(twin.error)).toBe(true);
+    const refused = await client.lookupItems({ type: id, links: [shared] });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+
+    // Naming the link again shows what was left of it: the rows held apart
+    // are accepted, and the old tombstone is gone.
+    const moved = await client.updateItem(twin.data.item.id, {
+      properties: { vendor_id: v("withdrawn-moved") },
+      version: twin.data.item.version,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const regained = await client.replaceType(id, {
+      fields,
+      version: 3,
+      link_field: "vendor_id",
+    });
+    expect(regained.ok, JSON.stringify(regained.error)).toBe(true);
+    expect(await tombstonesByLink([purgedValue], id)).toEqual([]);
+  });
+
   /** A type naming no link, two of whose rows share a `vendor_id`, deleted
    *  by force so the rows stay under its identifier. */
   async function leftBehind(name: string): Promise<{
@@ -968,9 +1113,15 @@ describe("a purge's tombstones", () => {
       ).ok,
     ).toBe(true);
     const value = v("kept");
-    await purge((await row({ vendor_id: value }, { type: id })).id);
+    const key = v("kept-key");
+    const byKey = { type: id, source: ctx.source, source_ids: [key] };
+    await purge(
+      (await row({ vendor_id: value }, { type: id, source_id: key })).id,
+    );
     const [tombstone] = await tombstonesByLink([value], id);
     expect(tombstone?.key).toBe(value);
+    const keyTombstones = (await client.lookupItems(byKey)).data.tombstones;
+    expect(keyTombstones.map((t) => t.key)).toEqual([key]);
 
     const changed = await client.replaceType(id, {
       fields: { ...fields, note: { type: "string" } },
@@ -981,6 +1132,9 @@ describe("a purge's tombstones", () => {
     // The witness: the change landed.
     expect((await client.getType(id)).data.fields.note).toBeDefined();
     expect(await tombstonesByLink([value], id)).toEqual([tombstone]);
+    expect((await client.lookupItems(byKey)).data.tombstones).toEqual(
+      keyTombstones,
+    );
   });
 
   it("starts a type deleted and registered again with none of its tombstones", async () => {

@@ -233,6 +233,184 @@ describe("a key whose type map reaches a type evolves it", () => {
     },
   );
 
+  /** A type whose kept fields each carry something a replacement can
+   *  change: a requirement, a bound, a set of values, an element type. */
+  function shaped(id: string): Definition {
+    return {
+      id,
+      version: 1,
+      fields: {
+        body: { type: "string", required: true },
+        flag: { type: "string", required: true },
+        title: { type: "string" },
+        notes: { type: "string", maxLength: 100 },
+        status: { type: "enum", enum_values: ["open", "closed"] },
+        tags: { type: "array", items_type: "string", maxItems: 5 },
+        locale: { type: "string" },
+        hidden: { type: "string", searchable: false },
+        visible: { type: "string" },
+      },
+    };
+  }
+
+  /** The replacement of `shaped` with one kept field's definition swapped,
+   *  or a member of the type changed. */
+  function reshaped(
+    id: string,
+    change: { field?: [string, Definition]; member?: Definition },
+  ): Definition {
+    const { id: _id, ...rest } = shaped(id);
+    const fields = { ...(rest.fields as Definition) };
+    if (change.field) fields[change.field[0]] = change.field[1];
+    return { ...rest, fields, ...change.member };
+  }
+
+  const KEPT_SHAPE_CHANGES: {
+    what: string;
+    change: Parameters<typeof reshaped>[1];
+    named: string;
+  }[] = [
+    {
+      what: "compatible_with",
+      change: { member: { compatible_with: "core.note" } },
+      named: "compatible_with",
+    },
+    {
+      what: "a maxLength",
+      change: { field: ["notes", { type: "string", maxLength: 50 }] },
+      named: "fields.notes",
+    },
+    {
+      what: "the enum_values",
+      change: {
+        field: ["status", { type: "enum", enum_values: ["open", "done"] }],
+      },
+      named: "fields.status",
+    },
+    {
+      what: "a maxItems",
+      change: {
+        field: ["tags", { type: "array", items_type: "string", maxItems: 6 }],
+      },
+      named: "fields.tags",
+    },
+    {
+      what: "the items_type",
+      change: {
+        field: ["tags", { type: "array", items_type: "number", maxItems: 5 }],
+      },
+      named: "fields.tags",
+    },
+    {
+      what: "a format",
+      change: { field: ["locale", { type: "string", format: "bcp47" }] },
+      named: "fields.locale",
+    },
+    {
+      what: "a field no longer required",
+      change: { field: ["flag", { type: "string" }] },
+      named: "fields.flag",
+    },
+    {
+      what: "a field made required",
+      change: { field: ["title", { type: "string", required: true }] },
+      named: "fields.title",
+    },
+    {
+      what: "a field made searchable",
+      change: { field: ["hidden", { type: "string", searchable: true }] },
+      named: "fields.hidden",
+    },
+    {
+      what: "a field made unsearchable",
+      change: { field: ["visible", { type: "string", searchable: false }] },
+      named: "fields.visible",
+    },
+  ];
+
+  it.each(KEPT_SHAPE_CHANGES)(
+    "refuses a change to compatible_with, a kept field's constraint, required or searchable to a key without schema.write, and lands it with it",
+    async ({ what, change, named }) => {
+      const ns = namespace("shape");
+      const id = `${ns}.shaped`;
+      const own = await connector(ns);
+      await register(own, shaped(id));
+      const before = (await client.getType(id)).data;
+
+      const refused = await own.replaceType(id, reshaped(id, change));
+      expect(refused.status, what).toBe(403);
+      expect(refusal(refused)?.code, what).toBe("forbidden");
+      expect(refusal(refused)?.details?.required_scope, what).toBe(
+        "schema.write",
+      );
+      expect(refusal(refused)?.details?.changes, what).toEqual([named]);
+      expect((await client.getType(id)).data, what).toEqual(before);
+
+      // The witness: the replacement is one the door takes.
+      const landed = await (
+        await curator(ns)
+      ).replaceType(id, reshaped(id, change));
+      expect(landed.status, `${what}: ${JSON.stringify(landed.error)}`).toBe(
+        200,
+      );
+      expect((await client.getType(id)).data, what).not.toEqual(before);
+    },
+  );
+
+  it("admits a change to the version and to a kept field's description on metadata.types:write alone", async () => {
+    const ns = namespace("free");
+    const id = `${ns}.issue`;
+    const own = await connector(ns);
+    await register(own, issue(id));
+
+    const versioned = await own.replaceType(id, replaced(id, { version: 2 }));
+    expect(versioned.status, JSON.stringify(versioned.error)).toBe(200);
+    expect((await client.getType(id)).data.version).toBe(2);
+
+    const fields = issue(id).fields as Definition;
+    const described = await own.replaceType(
+      id,
+      replaced(id, {
+        version: 2,
+        fields: {
+          ...fields,
+          rank: { type: "integer", description: "Where it sits in the queue." },
+        },
+      }),
+    );
+    expect(described.status, JSON.stringify(described.error)).toBe(200);
+    expect((await client.getType(id)).data.fields.rank).toEqual({
+      type: "integer",
+      description: "Where it sits in the queue.",
+    });
+  });
+
+  it("lists every change that needs schema.write, sorted", async () => {
+    const ns = namespace("sorted");
+    const id = `${ns}.issue`;
+    const own = await connector(ns);
+    await register(own, issue(id));
+    const { legacy: _legacy, ...kept } = issue(id).fields as Definition;
+
+    const refused = await own.replaceType(
+      id,
+      replaced(id, {
+        fields: kept,
+        merge_policy: { fields: { vendor_state: "keep_both_copies" } },
+      }),
+    );
+    expect(refused.status).toBe(403);
+    expect(refusal(refused)?.code).toBe("forbidden");
+    expect(refusal(refused)?.details?.changes).toEqual(
+      ["merge_policy", "fields.legacy"].sort(),
+    );
+    expect(await fieldsOf(id)).toContain("legacy");
+
+    // The witness: each change on its own is named alone.
+    const removal = await own.replaceType(id, replaced(id, { fields: kept }));
+    expect(refusal(removal)?.details?.changes).toEqual(["fields.legacy"]);
+  });
+
   it("refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write", async () => {
     const ns = namespace("held");
     const id = `${ns}.entry`;
@@ -542,6 +720,67 @@ describe("a parent is named only within the key's reach", () => {
     }
   });
 
+  it("asks write on a parent nothing registered, before saying it is unknown", async () => {
+    const ns = namespace("ghost");
+    const elsewhere = namespace("nowhere");
+    const parent = `${elsewhere}.missing`;
+    const body = {
+      id: `${ns}.child`,
+      parent,
+      fields: { size: { type: "integer" } },
+    };
+    expect((await client.getType(parent)).status).toBe(404);
+
+    const refused = await (await connector(ns)).registerType(body as never);
+    expect(refused.status).toBe(403);
+    expect(refusal(refused)?.code).toBe("type_not_permitted");
+    expect(refusal(refused)?.message).toContain(parent);
+    expect(refusal(refused)?.details?.grant).toEqual({
+      kind: "type",
+      name: parent,
+      level: "write",
+    });
+    expect((await client.getType(body.id)).status).toBe(404);
+
+    // The witness: a key whose map reaches the parent is told it is unknown.
+    const reaching = await keyFor(`ghost-reach-${ns}`, {
+      types: { [`${ns}.*`]: "write", [parent]: "write" },
+    });
+    const unknown = await reaching.registerType(body as never);
+    expect(unknown.status).toBe(400);
+    expect(refusal(unknown)?.code).toBe("validation_error");
+  });
+
+  it("asks write on a core parent the server does not ship", async () => {
+    const ns = namespace("core");
+    const parent = `core.nothing-${unique()}`;
+    const body = {
+      id: `${ns}.child`,
+      parent,
+      fields: { size: { type: "integer" } },
+    };
+
+    const refused = await (await connector(ns)).registerType(body as never);
+    expect(refused.status).toBe(403);
+    expect(refusal(refused)?.code).toBe("type_not_permitted");
+    expect(refusal(refused)?.message).toContain(parent);
+    expect((await client.getType(body.id)).status).toBe(404);
+
+    // The witness: a parent the server ships is not asked for, and a key
+    // whose map reaches this one is told it is unknown.
+    await register(await connector(ns), {
+      id: `${ns}.shipped`,
+      parent: "core.task",
+      fields: { size: { type: "integer" } },
+    });
+    const reaching = await keyFor(`core-reach-${ns}`, {
+      types: { [`${ns}.*`]: "write", [parent]: "write" },
+    });
+    const unknown = await reaching.registerType(body as never);
+    expect(unknown.status).toBe(400);
+    expect(refusal(unknown)?.code).toBe("validation_error");
+  });
+
   it("holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
@@ -604,5 +843,51 @@ describe("a parent is named only within the key's reach", () => {
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
     expect((await client.getType(id)).data.parent).toBe(target);
+  });
+
+  it("refuses a key on metadata.types:write alone a change of parent as a schema change", async () => {
+    const owner = namespace("owner");
+    const mine = namespace("mine");
+    const foreign = `${owner}.base`;
+    await register(await curator(owner), {
+      id: foreign,
+      fields: { name: { type: "string" } },
+    });
+    const id = `${mine}.child`;
+    await register(await curator(mine), {
+      id,
+      parent: "core.task",
+      fields: { size: { type: "integer" } },
+    });
+    const change = { parent: foreign, fields: { size: { type: "integer" } } };
+
+    const own = await connector(mine);
+    const refused = await own.replaceType(id, change);
+    expect(refused.status).toBe(403);
+    expect(refusal(refused)?.code).toBe("forbidden");
+    expect(refusal(refused)?.details?.required_scope).toBe("schema.write");
+    expect(refusal(refused)?.details?.changes).toEqual(["parent"]);
+    expect((await client.getType(id)).data.parent).toBe("core.task");
+
+    // The witness: a key holding schema.write whose map stops short of the
+    // parent is asked for write on it, and a key whose map reaches it lands
+    // the change.
+    const short = await curator(mine);
+    const unreached = await short.replaceType(id, change);
+    expect(refusal(unreached)?.code).toBe("type_not_permitted");
+    const reaching = await keyFor(`reaching-${mine}`, {
+      permissions: ["schema.write"],
+      types: { [`${mine}.*`]: "write", [foreign]: "write" },
+    });
+    const landed = await reaching.replaceType(id, change);
+    expect(landed.status, JSON.stringify(landed.error)).toBe(200);
+    expect((await client.getType(id)).data.parent).toBe(foreign);
+
+    // Back under a shipped parent, so teardown can delete the owner's type.
+    const restored = await reaching.replaceType(id, {
+      parent: "core.task",
+      fields: { size: { type: "integer" } },
+    });
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 });

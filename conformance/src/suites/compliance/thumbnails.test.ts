@@ -101,6 +101,7 @@ describe("a thumbnail field", () => {
         refused.status,
         `a type declaring ${JSON.stringify(fields)} was registered`,
       ).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
     }
     // Counting the one a subtype inherits.
     const inheriting = await client.registerType({
@@ -112,6 +113,7 @@ describe("a thumbnail field", () => {
       inheriting.status,
       "a subtype added a thumbnail beside the one it inherits",
     ).toBe(400);
+    expect(inheriting.error?.error.code).toBe("invalid_schema");
     // The witnesses: the type registered before all this declares one
     // thumbnail under a name search does not index, and a subtype that adds
     // none registers.
@@ -149,6 +151,7 @@ describe("a thumbnail field", () => {
       widened.status,
       "a parent gained a thumbnail beside its child's, so the child's items carry two and a device reads one of them",
     ).toBe(400);
+    expect(widened.error?.error.code).toBe("invalid_schema");
     // The witness: the same update without the thumbnail is taken.
     const plain = await client.replaceType(parent, {
       id: parent,
@@ -210,12 +213,14 @@ describe("a thumbnail field", () => {
       titled.status,
       "a type named its thumbnail as its title, so the image's base64 is read and searched as text",
     ).toBe(400);
+    expect(titled.error?.error.code).toBe("invalid_schema");
     const bodied = await client.registerType({
       id: `user.snapshot-bodied-${ctx.runId}`,
       fields: { cover: { type: "thumbnail" }, caption: { type: "string" } },
       display_hints: { body_field: "cover" },
     });
     expect(bodied.status).toBe(400);
+    expect(bodied.error?.error.code).toBe("invalid_schema");
     // The witness: the same type titled by its caption registers.
     const captioned = await client.registerType({
       id: `user.snapshot-captioned-${ctx.runId}`,
@@ -233,6 +238,7 @@ describe("a thumbnail field", () => {
       edge.status,
       "an edge type declared a thumbnail property, which nothing checks and nothing reads",
     ).toBe(400);
+    expect(edge.error?.error.code).toBe("validation_error");
     // The format that stands for a thumbnail on a type's field is refused
     // on an edge's property too, rather than dropped and the edge type
     // registered as though it had carried none.
@@ -245,6 +251,7 @@ describe("a thumbnail field", () => {
       formatEdge.status,
       "an edge type declared a thumbnail by its format, and the format was dropped rather than refused",
     ).toBe(400);
+    expect(formatEdge.error?.error.code).toBe("validation_error");
     const arrayEdge = await client.registerEdgeType({
       id: `mock.depicts-array.${ctx.runId}`,
       cardinality: "many-to-many",
@@ -254,6 +261,7 @@ describe("a thumbnail field", () => {
       arrayEdge.status,
       "an edge type declared an array of thumbnails, whose elements nothing checks",
     ).toBe(400);
+    expect(arrayEdge.error?.error.code).toBe("validation_error");
     const plainEdge = await client.registerEdgeType({
       id: `mock.depicts-plain.${ctx.runId}`,
       cardinality: "many-to-many",

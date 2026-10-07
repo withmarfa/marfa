@@ -103,6 +103,44 @@ describe("a type's version policy", () => {
       max_versions: 5,
     });
   });
+
+  it("names the field on a replacement that breaks the version policy, and registers nothing on a create", async () => {
+    const id = `user.policy-named-${ctx.runId}`;
+    expect(
+      (await client.registerType(declared({ max_versions: 5 }, id))).status,
+    ).toBe(201);
+
+    const refused = await client.replaceType(
+      id,
+      declared({ recent_days: 30, daily_snapshot_days: 7 }, id),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const errors = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.map((e) => e.field)).toContain(
+      "version_policy.daily_snapshot_days",
+    );
+    // The witness: the windows in order are taken on the same door.
+    const mended = await client.replaceType(
+      id,
+      declared({ recent_days: 7, daily_snapshot_days: 30 }, id),
+    );
+    expect(mended.status, JSON.stringify(mended.error)).toBe(200);
+
+    const created = `user.policy-none-${ctx.runId}`;
+    const none = await client.registerType(
+      declared({ max_versions: 0 }, created),
+    );
+    expect(none.status).toBe(400);
+    expect(none.error?.error.code).toBe("invalid_schema");
+    expect(
+      (none.error?.error.details?.errors as { field: string }[]).map(
+        (e) => e.field,
+      ),
+    ).toContain("version_policy.max_versions");
+    expect((await client.getType(created)).status).toBe(404);
+  });
 });
 
 describe("the version policy a type inherits", () => {
@@ -185,5 +223,70 @@ describe("the version policy a type inherits", () => {
     expect(await kept(items.unconstrained)).toBe(3);
     expect(await kept(items.inheriting)).toBe(1);
     expect(await kept(items.overriding)).toBe(2);
+  });
+
+  /** An item of `type` holding `snapshots` snapshots, none of them its
+   *  current version. */
+  async function itemWithHistory(
+    type: string,
+    snapshots: number,
+  ): Promise<string> {
+    const created = await client.createItem({
+      type,
+      properties: { title: "v1" },
+    });
+    expect(created.status).toBe(201);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    for (let n = 1; n <= snapshots; n++) {
+      const updated = await client.updateItem(id, {
+        properties: { title: `v${String(n + 1)}` },
+        version: n,
+      });
+      expect(updated.status).toBe(200);
+    }
+    expect((await client.getVersions(id)).data.data).toHaveLength(snapshots);
+    return id;
+  }
+
+  async function runThinning(): Promise<void> {
+    const run = await getOperatorClient().runHousekeeping("version-thinning");
+    expect(run.status, JSON.stringify(run.error)).toBe(200);
+    expect(run.data.outcome).toBe("ok");
+  }
+
+  const history = async (id: string) =>
+    (await client.getVersions(id)).data.data.length;
+
+  it("never thins an item holding two versions or fewer", async () => {
+    const type = await register(undefined, { max_versions: 1 });
+    const one = await itemWithHistory(type, 1);
+    const two = await itemWithHistory(type, 2);
+    // The witness: an item holding three is thinned to the policy's one by
+    // the same run.
+    const three = await itemWithHistory(type, 3);
+
+    await runThinning();
+
+    expect(await history(three)).toBe(1);
+    expect(await history(two)).toBe(2);
+    expect(await history(one)).toBe(1);
+  });
+
+  it("thins an item in the bin as it thins a live one", async () => {
+    const type = await register(undefined, { max_versions: 1 });
+    // Each holds three snapshots before the run.
+    const live = await itemWithHistory(type, 3);
+    const binned = await itemWithHistory(type, 3);
+    expect((await client.deleteItem(binned)).ok).toBe(true);
+
+    await runThinning();
+
+    expect(await history(live)).toBe(1);
+    // A binned item's history is not readable, so it is read once restored,
+    // which thins nothing.
+    const restored = await client.restoreItem(binned);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(await history(binned)).toBe(1);
   });
 });
