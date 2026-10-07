@@ -27,11 +27,11 @@ export const NAMESPACE_TIER_ROOTS = [
  * One root per verb-less permission, because a permission is named for
  * what it permits and there is no noun for the whole to name them after.
  *
- * **Seven ordinary publisher handles leave the claimable namespace by being
- * here**, since reserving a root is what refuses a handle claim. That cost is
- * the reservation working rather than a side effect of it: a publisher called
- * `items` could otherwise register `items.purge` as a type and put an
- * identifier and a permission literal on one string.
+ * **Seven words leave the publisher namespace by being here**, since
+ * reserving a root refuses every registration under it. That cost is
+ * the reservation working rather than a side effect of it: `items.purge`
+ * could otherwise be registered as a type, putting an identifier and a
+ * permission literal on one string.
  */
 export const PERMISSION_FAMILY_ROOTS = [
   "schema",

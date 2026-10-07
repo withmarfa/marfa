@@ -198,9 +198,9 @@ If a type would give a field another `type`, `format`, `items_type`, `searchable
 
 ### `types/listing-subtree`
 
-When a listing names a type, the server MUST answer the items of that type and of every type under it.
+When a listing names a type, the server MUST answer the items of that type, of every type whose identifier begins with it and a dot, and of every type whose chain of `parent` reaches it.
 
-**Tests:** `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `› querying core.entity.person returns only persons`.
+**Tests:** `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `› querying core.entity.person returns only persons`, `compliance/types.test.ts › selects a type filter's items by identifier and by declared parent alike`.
 
 ### `types/compatible-with`
 
@@ -612,9 +612,9 @@ The server MUST NOT apply `enforcement.source_filter` to a read by id.
 
 ### `types/shipped`
 
-The server MUST ship `core.bookmark`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file.image`, `core.highlight`, `core.media.article`, `core.media.book`, `core.message`, `core.note` and `core.task`, each with fields and a label.
+The server MUST ship `core.bookmark`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
 
-**Tests:** `compliance/types.test.ts › lists every shipped type the suite writes against`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
+**Tests:** `compliance/types.test.ts › ships exactly the core types, each with fields and a label`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
 
 ### `types/shipped-system`
 

@@ -31,11 +31,8 @@ describe("type label compliance", () => {
   });
 
   it("register custom type with label", async () => {
-    // **`user.*`, not a publisher root.** The publisher tier's first segment
-    // is a claimable handle, and registering there requires the caller to hold
-    // it; the suite's credentials hold none, so every publisher registration
-    // is refused. Labels are a property of any custom type, so the tier is
-    // incidental to what this file is about.
+    // Labels are a property of any custom type, so the tier is incidental
+    // to what this file is about.
     const typeId = `user.label-test-${ctx.runId}`;
     const r = await client.registerType({
       id: typeId,
