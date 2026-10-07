@@ -17,6 +17,11 @@
  *
  * An edge shorthand such as `edge[<type>]=` is refused where it is read,
  * because its key carries the edge type and no schema lists it.
+ *
+ * `POST /items/bulk-actions` takes the same four as fields of its `filter`
+ * and is refused the same way (`refuseEmptyNarrowingFilter`), with each
+ * field named by its path. Its `tags` is an array, so an empty array and an
+ * array of blank entries narrow nothing too.
  */
 import type { MiddlewareHandler } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
@@ -33,8 +38,12 @@ export const NARROWING_KEYS: readonly string[] = [
 const LIST_KEYS: readonly string[] = ["type", "tags"];
 
 /** Whether a value, read as the door reads it, holds nothing to narrow by. */
-function narrowsNothing(key: string, value: string): boolean {
-  const entries = LIST_KEYS.includes(key) ? value.split(",") : [value];
+function narrowsNothing(
+  key: string,
+  value: string,
+  listed = LIST_KEYS.includes(key),
+): boolean {
+  const entries = listed ? value.split(",") : [value];
   return entries.every((entry) => entry.trim() === "");
 }
 
@@ -59,6 +68,34 @@ export function refuseEmptyNarrowingValuesOf(
   throw new MarfaError(
     ErrorCode.VALIDATION_ERROR,
     `The ${names} ${noun} sent with nothing to narrow by. A filter with no value narrows nothing and would return everything the endpoint can read. Send a value, or leave the parameter out.`,
+    { empty_parameters: empty },
+  );
+}
+
+/**
+ * Refuse a bulk action's `filter` that holds a narrowing field narrowing
+ * nothing, in one `400 validation_error` naming each as `filter.<field>` in
+ * `details.empty_parameters`. A field left out is no filter on that axis and
+ * is not refused: only one sent with nothing in it is.
+ */
+export function refuseEmptyNarrowingFilter(
+  filter: Partial<Record<string, unknown>>,
+): void {
+  const empty: string[] = [];
+  for (const key of NARROWING_KEYS) {
+    const value = filter[key];
+    if (value === undefined) continue;
+    const narrows = Array.isArray(value)
+      ? value.some((entry) => String(entry).trim() !== "")
+      : typeof value === "string" && !narrowsNothing(key, value, false);
+    if (!narrows) empty.push(`filter.${key}`);
+  }
+  if (empty.length === 0) return;
+  const names = empty.map((key) => `"${key}"`).join(", ");
+  const noun = empty.length === 1 ? "filter was" : "filters were";
+  throw new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `The ${names} ${noun} sent with nothing to narrow by. A filter with no value narrows nothing and would match everything the action may write. Send a value, or leave the field out.`,
     { empty_parameters: empty },
   );
 }

@@ -7590,7 +7590,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
+             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key not starting with `_`, a `filter` field is empty or blank, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
              *     - `missing_required_field`: a field the action needs is missing.
              *     - `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.
              *     - `bulk_cap_exceeded`: more items match than `max_items` allows.

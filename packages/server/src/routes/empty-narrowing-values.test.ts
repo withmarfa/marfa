@@ -193,3 +193,79 @@ describe("an empty type, source, tags or filter", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("an empty type, source, tags or filter in a bulk action's filter", () => {
+  const act = (filter: Record<string, unknown>, key = ctx.workingKey) =>
+    request(ctx.app, "POST", "/items/bulk-actions", {
+      key,
+      body: { action: "update_tier", tier: "library", dry_run: true, filter },
+    });
+
+  it("is refused 400 validation_error naming the field, for each way of sending nothing", async () => {
+    const shapes: Record<string, unknown[]> = {
+      type: ["", " ", "  "],
+      source: ["", " ", "  "],
+      tags: [[], [""], [" "], ["", " "]],
+      filter: ["", " ", "  "],
+    };
+    for (const [field, values] of Object.entries(shapes)) {
+      for (const value of values) {
+        const res = await act({ [field]: value });
+        const body = (await res.json()) as {
+          error: { code: string; details?: { empty_parameters?: string[] } };
+        };
+        const where = `${field}=${JSON.stringify(value)}`;
+        expect(res.status, where).toBe(400);
+        expect(body.error.code, where).toBe("validation_error");
+        expect(body.error.details?.empty_parameters, where).toEqual([
+          `filter.${field}`,
+        ]);
+      }
+    }
+  });
+
+  it("is answered 200 with a value, so the refusal is the empty value", async () => {
+    for (const filter of [
+      {},
+      { type: "core.note" },
+      { source: "empty-narrowing-test" },
+      { tags: ["kept"] },
+      { tags: ["kept", ""] },
+      { filter: 'properties.body eq "one"' },
+    ]) {
+      const res = await act(filter);
+      expect(res.status, JSON.stringify(filter)).toBe(200);
+    }
+    const everything = (await (await act({})).json()) as { matched: number };
+    expect(everything.matched).toBeGreaterThan(0);
+  });
+
+  it("is refused once for every empty field, and a filled one beside it is not named", async () => {
+    const res = await act({ type: "", source: "", tags: ["kept"] });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details: { empty_parameters: string[] } };
+    };
+    expect(body.error.details.empty_parameters).toEqual([
+      "filter.type",
+      "filter.source",
+    ]);
+  });
+
+  it("is refused for a purge too, before anything is matched", async () => {
+    const res = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key: ctx.workingKey,
+      body: {
+        action: "purge",
+        confirm: "PURGE",
+        dry_run: true,
+        filter: { source: "" },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details: { empty_parameters: string[] } };
+    };
+    expect(body.error.details.empty_parameters).toEqual(["filter.source"]);
+  });
+});
