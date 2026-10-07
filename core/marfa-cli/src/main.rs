@@ -72,7 +72,7 @@ enum Command {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// Items: create, read, change, tag, link, attach, and the bulk doors.
+    /// Items: create, read, change, tag, link, attach, and the bulk operations.
     Items {
         #[command(subcommand)]
         command: items::ItemsCommand,

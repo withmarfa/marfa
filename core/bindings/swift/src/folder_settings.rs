@@ -1,5 +1,5 @@
 //! A folder's settings as a working copy reads them, its search answered
-//! from the copy, and its settings written through the folder door. Unlike
+//! from the copy, and its settings written through the folder operations. Unlike
 //! `folders`, nothing here touches a directory, so it serves every platform.
 
 use std::collections::HashMap;

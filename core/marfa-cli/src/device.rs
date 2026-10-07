@@ -84,7 +84,7 @@ pub enum DeviceCommand {
         command: ItemsCommand,
     },
     /// Folders' settings: read from the copy, written through the folder
-    /// door.
+    /// operations.
     Folders {
         #[command(subcommand)]
         command: DeviceFoldersCommand,
@@ -651,13 +651,13 @@ const FOLDER_SCOPED: [&str; 9] = [
 
 #[derive(Debug, Subcommand)]
 pub enum DeviceFoldersCommand {
-    /// Create a folder's settings through the folder door, at once and never
+    /// Create a folder's settings through the folder operations, at once and never
     /// queued; settings no folder follows are refused before they are sent.
     Create(crate::commands::folders::CreateArgs),
-    /// Change a folder's settings through the folder door, at once, each
+    /// Change a folder's settings through the folder operations, at once, each
     /// named one replaced whole.
     Change(crate::commands::folders::ChangeArgs),
-    /// Retire a folder's settings through the folder door, at once. A
+    /// Retire a folder's settings through the folder operations, at once. A
     /// revoked folder does not change.
     Revoke {
         /// The folder's `system.folder` id.
