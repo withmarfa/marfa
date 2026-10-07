@@ -13,6 +13,7 @@ import { createNote, createTask } from "../../generators/items.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
+  approvedApp,
   approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -35,13 +36,19 @@ let apiUrl: string;
 /** For the credentials the shared server cannot make: an app's grant, which
  *  needs the instance's owner, and a key with a lifetime. */
 let own: FreshServer | undefined;
+/** A second server, because an instance has one owner and so approves an app
+ *  through the sign-in flow once: `own` spends that on the grant. */
+let tokenServer: FreshServer | undefined;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
     "stream-credential",
   ));
-  own = await bootFreshServer("stream-credential");
+  [own, tokenServer] = await Promise.all([
+    bootFreshServer("stream-credential"),
+    bootFreshServer("stream-credential-token"),
+  ]);
 }, FRESH_SERVER_TIMEOUT_MS + 60_000);
 
 afterAll(async () => {
@@ -206,6 +213,51 @@ describe("a stream answers to its credential as it stands", () => {
   });
 });
 
+/** The interval the server pings a quiet stream at, and the slack the
+ *  contract's "about" allows on each side. */
+const PING_INTERVAL_MS = 30_000;
+const PING_EARLY_MS = 500;
+const PING_LATE_MS = 5_000;
+
+describe("a quiet stream", () => {
+  it(
+    "sends a :ping comment on a quiet stream every 30 seconds",
+    async ({ signal }) => {
+      const { key } = await viewer("stream-ping");
+      const opened = Date.now();
+      await withStream(apiUrl, key, {}, async (stream) => {
+        const reader = stream.response.body!.getReader();
+        const onAbort = () => void reader.cancel().catch(() => undefined);
+        signal.addEventListener("abort", onAbort, { once: true });
+        const decoder = new TextDecoder();
+        let seen = "";
+        let pingAt: number | undefined;
+        try {
+          while (pingAt === undefined) {
+            const { done, value } = await reader.read();
+            if (done) {
+              throw new Error(
+                `the stream closed before a ping; read ${JSON.stringify(seen)}`,
+              );
+            }
+            seen += decoder.decode(value, { stream: true });
+            if (seen.includes("\n:ping\n\n")) pingAt = Date.now() - opened;
+          }
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+          reader.releaseLock();
+        }
+
+        // The stream is live: it announced itself before it went quiet.
+        expect(seen).toContain("event: stream_cursor");
+        expect(pingAt).toBeGreaterThanOrEqual(PING_INTERVAL_MS - PING_EARLY_MS);
+        expect(pingAt).toBeLessThanOrEqual(PING_INTERVAL_MS + PING_LATE_MS);
+      });
+    },
+    PING_INTERVAL_MS + PING_LATE_MS + 15_000,
+  );
+});
+
 const runSqlite = promisify(execFile);
 
 /** Past the restart that sets a key's lifetime, so the key stands when the
@@ -344,6 +396,58 @@ describe("a stream answers to a credential only a server of its own can make", (
         );
         expect(revoked.status).toBe(204);
         const after = await noteOn(server, "grant-after");
+
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_incomplete"),
+          "the stream to say it ended",
+          signal,
+        );
+        const ended = events.find((e) => e.event === "stream_incomplete");
+        expect((ended?.data as { reason?: string }).reason).toBe(
+          "credential_ended",
+        );
+        expect(ended?.id).toBeUndefined();
+        expect(arrived(events, after)).toBe(false);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a stream with credential_ended when its access token is revoked",
+    async ({ signal }) => {
+      const server = tokenServer!;
+      const app = await approvedApp(server);
+
+      await withStream(server.apiUrl, app.token, {}, async (stream) => {
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_cursor"),
+          "the frame announcing the stream's position",
+          signal,
+        );
+        // The witness: the app reads the stream while its token stands.
+        const before = await noteOn(server, "token-before");
+        await collectUntil(
+          stream,
+          (events) => arrived(events, before),
+          `the note ${before} before the token is revoked`,
+          signal,
+        );
+
+        const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            token: app.token,
+            token_type_hint: "access_token",
+            client_id: app.clientId,
+          }),
+        });
+        await revoked.body?.cancel();
+        expect(revoked.status).toBe(200);
+        const after = await noteOn(server, "token-after");
 
         const { events } = await collectUntil(
           stream,
