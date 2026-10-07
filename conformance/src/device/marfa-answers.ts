@@ -802,8 +802,8 @@ export function heldLog(
  * A snapshot inside a 409 envelope, as the real server writes one.
  *
  * The three item fields are here because the version check covers them
- * (`versions.md` 8) and a collision can name one, so the envelope carries
- * both sides' values. `fidelity.test.ts` is what makes that a requirement
+ * (`versions/collision-item-field`) and a collision can name one, so the
+ * envelope carries both sides' values. `fidelity.test.ts` is what makes that a requirement
  * rather than a nicety: a field the real server sends and the scripted one
  * does not is a device read that goes green here and meets nothing there.
  */
@@ -1013,7 +1013,7 @@ export const answers = {
   }),
   /** A stale edge update: the edge as it now stands under `current`, and no
    *  ancestor, fields or policy, because an edge has no history to merge
-   *  against (`versions.md` 16, 17). */
+   *  against (`versions/edge-stale-bare`). */
   edgeVersionConflict: (current: Record<string, unknown>): Answer => ({
     kind: "json",
     status: 409,

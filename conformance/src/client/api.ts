@@ -92,7 +92,7 @@ export interface CreateItemInput {
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   /** Whether `properties` lays over the row's or is the whole of them, so a
-   *  field left out is cleared (`versions.md` 11 for a stale write). */
+   *  field left out is cleared (`versions/merge-replace-clear` for a stale write). */
   properties_mode?: "merge" | "replace";
   /** Move the item to this type, with `retype`. */
   type?: string;
@@ -100,7 +100,7 @@ export interface UpdateItemInput {
   source_id?: string; // Mutable — updated value round-trips on subsequent GET
   tier?: "library" | "feed";
   /** The item's own time. One of the three fields of the row that are not
-   *  properties and that the version check covers (`versions.md` 8). */
+   *  properties and that the version check covers (`versions/collision-item-field`). */
   occurred_at?: string;
   /**
    * The version the caller read. Required on this door: an update names the

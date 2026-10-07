@@ -40,7 +40,7 @@ If `POST /items` names an `id` that is not a lowercase UUIDv7, then the server M
 
 ### `items/create-repeat`
 
-When `POST /items` names an `id` that an item of the same type holds and names no natural key that resolves an item, the server MUST answer `200` with the stored item as it stands and `acknowledged: true`.
+When `POST /items` names an `id` that an item of the same type, which the key may read, holds and names no natural key that resolves an item, the server MUST answer `200` with the stored item as it stands and `acknowledged: true`.
 
 **Reason:** a client that lost the answer to its create sends it again, and must get the row it made without overwriting an edit made since.
 
@@ -1040,7 +1040,7 @@ When the server purges an item, the server MUST announce `item.purged` with the 
 
 When a purge deletes an item, the server MUST delete its edges and announce each `edge.deleted` with `purged_with` naming the item.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`, `sync/deletions.test.ts › announces an edge removed by cascade, not only one removed by its own route`.
+**Tests:** `compliance/cascade-marks.test.ts › names the purged item on each edge its purge took, and on no edge deleted by its own door`, `sync/deletions.test.ts › announces an edge removed by cascade, not only one removed by its own route`, `compliance/cascade-marks.test.ts › names the purged original on the edge.deleted of the link to its conflicted copy`.
 
 ### `items/purge-gone`
 
@@ -1182,9 +1182,9 @@ If a `POST /items/bulk` entry under `mode: upsert` and without `retype: true` na
 
 ### `items/bulk-version`
 
-If a `POST /items/bulk` entry names a `version` that the item it resolves no longer holds, then the server MUST refuse the entry `version_conflict`.
+If a `POST /items/bulk` entry under `mode: upsert` names a `version` that the item it resolves no longer holds, whose snapshot the key may read, and changes a field another writer changed since, then the server MUST refuse the entry `version_conflict`.
 
-**Tests:** `sync/idempotency.test.ts › a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says`, `compliance/bulk.test.ts › takes properties_mode on an entry as PATCH takes it, stale versions included`.
+**Tests:** `sync/idempotency.test.ts › a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says`, `compliance/bulk.test.ts › takes properties_mode on an entry as PATCH takes it, stale versions included`, `compliance/version-order.test.ts › merges an entry that collides on nothing, and refuses one that collides as errored with its code and message`, `› rolls the whole batch back under atomic true when one entry collides`.
 
 ### `items/bulk-source-id-move`
 
@@ -1194,7 +1194,7 @@ If a `POST /items/bulk` entry resolves an item by its `id` and names another `so
 
 ### `items/bulk-properties-mode`
 
-When a `POST /items/bulk` entry resolves an item, the server MUST apply its `properties_mode` as `PATCH /items/{id}` does, a stale `replace` merged as `versions.md` 11 states.
+When a `POST /items/bulk` entry resolves an item, the server MUST apply its `properties_mode` as `PATCH /items/{id}` does, a stale `replace` merged as `versions/merge-replace-clear` states.
 
 **Tests:** `compliance/bulk.test.ts › takes properties_mode on an entry as PATCH takes it, stale versions included`.
 
@@ -1760,7 +1760,7 @@ When an item's link is cleared or changed, or the item moves out of the type, th
 
 ### `items/link-keep-both`
 
-When the server writes a keep-both copy of an item (`versions.md` 13), the server MUST give the copy neither the item's natural key nor its link.
+When the server writes a keep-both copy of an item (`versions/copy-written`), the server MUST give the copy neither the item's natural key nor its link.
 
 **Tests:** `compliance/links.test.ts › leaves the link off a keep-both copy of a row`.
 

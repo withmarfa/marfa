@@ -131,11 +131,11 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// Well past any fetch or copy of a blob's bytes still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
-/// The tag the server gives a conflicted copy (`versions.md` 13).
+/// The tag the server gives a conflicted copy (`versions/copy-written`).
 pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 
 /// The edge type linking a conflicted copy, its source, to the original
-/// (`versions.md` 22).
+/// (`versions/copy-link`).
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 
 impl Core {

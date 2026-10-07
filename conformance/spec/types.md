@@ -136,6 +136,14 @@ When a credential sends `GET /types/{id}` for a registered type, the server MUST
 
 **Tests:** `compliance/type-inheritance.test.ts › a child reads back with the parent's fields merged beside its own`, `compliance/types.test.ts › a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`.
 
+### `types/list-declared-policy`
+
+When `GET /types` lists a type, the server MUST answer the `version_policy` and `merge_policy` the type itself declares, and none it only inherits.
+
+**Reason:** `GET /types/{id}` answers the policies a type is held to (`types/read`); the listing shows what each registration says.
+
+**Tests:** `compliance/version-order.test.ts › lists the version_policy and merge_policy a type declares, and answers the resolved ones for the type itself`.
+
 ### `types/read-display-hints`
 
 When a type declares no `display_hints`, the server MUST answer on `GET /types/{id}` those of its nearest ancestor that declares any, whole.
