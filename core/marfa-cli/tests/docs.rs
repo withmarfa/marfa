@@ -28,18 +28,22 @@ struct Ran {
     stderr: String,
 }
 
-fn marfa(site: &str, args: &[&str]) -> Ran {
+fn command(site: &str, args: &[&str]) -> Command {
     let nowhere =
         std::env::temp_dir().join(format!("marfa-docs-no-keychain-{}", std::process::id()));
-    let output = Command::new(env!("CARGO_BIN_EXE_marfa"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+    command
         .env_remove("MARFA_API_URL")
         .env_remove("MARFA_API_KEY")
         .env_remove("MARFA_DB")
         .env("MARFA_KEYCHAIN", nowhere)
         .env("MARFA_DOCS_URL", site)
-        .args(args)
-        .output()
-        .unwrap();
+        .args(args);
+    command
+}
+
+fn marfa(site: &str, args: &[&str]) -> Ran {
+    let output = command(site, args).output().unwrap();
     Ran {
         code: output.status.code().unwrap(),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -204,29 +208,108 @@ fn an_answer_that_is_not_the_json_expected_leaves_by_three() {
     door.received();
 }
 
+/// A site that records whether anything arrived.
+struct Silent {
+    url: String,
+    listener: std::net::TcpListener,
+}
+
+impl Silent {
+    fn open() -> Silent {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        Silent {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+            listener,
+        }
+    }
+
+    fn was_asked(&self) -> bool {
+        match self.listener.accept() {
+            Ok(_) => true,
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+                false
+            }
+        }
+    }
+}
+
+#[test]
+fn a_page_served_as_html_is_never_printed() {
+    let door = Door::open(vec![
+        answer(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<html>catch-all</html>",
+        ),
+        answer("200 OK", "application/json", "<html>catch-all</html>"),
+    ]);
+    for args in [&["docs", "files"][..], &["docs", "topics"][..]] {
+        let ran = marfa(&door.url, &[&["--json"], args].concat());
+        assert_eq!(ran.code, 3, "{args:?}: {}", ran.stderr);
+        assert_eq!(ran.stdout, "");
+        assert_eq!(envelope_code(&ran.stderr), "decoding");
+        assert!(!ran.stderr.contains("catch-all"), "{}", ran.stderr);
+    }
+    door.received();
+}
+
 #[test]
 fn the_command_line_is_checked_before_anything_is_sent() {
-    // No door is open: a request would be unreachable, exit three.
-    let site = closed_port();
-    for (args, code) in [
-        (&["docs"][..], 2),
-        (&["docs", "search"][..], 2),
-        (&["docs", "search", ""][..], 2),
-        (&["docs", "search", "x", "--limit", "0"][..], 2),
-        (&["docs", "search", "x", "--limit", "51"][..], 2),
-        (&["docs", "search", "x", "--limit", "many"][..], 2),
-        (&["--key", "marfa_k1_x", "docs", "topics"][..], 2),
-        (&["--url", "http://127.0.0.1:1", "docs", "topics"][..], 2),
-        (&["docs", "../outside"][..], 1),
-        (&["docs", "a b"][..], 1),
+    let site = Silent::open();
+    for (args, code, name) in [
+        (&["docs"][..], 2, None),
+        (&["docs", "search"][..], 2, None),
+        (&["docs", "search", ""][..], 2, None),
+        (&["docs", "search", "x", "--limit", "0"][..], 2, None),
+        (&["docs", "search", "x", "--limit", "51"][..], 2, None),
+        (&["docs", "search", "x", "--limit", "many"][..], 2, None),
+        (
+            &["--key", "marfa_k1_x", "docs", "topics"][..],
+            2,
+            Some("usage"),
+        ),
+        (&["--key", "marfa_k1_x", "docs", "x"][..], 2, Some("usage")),
+        (
+            &["--url", "http://127.0.0.1:1", "docs", "topics"][..],
+            2,
+            Some("usage"),
+        ),
+        (&["docs", "../outside"][..], 1, Some("invalid")),
+        (&["docs", "a b"][..], 1, Some("invalid")),
+        (&["docs", "a/%2e%2e/b"][..], 1, Some("invalid")),
+        (&["docs", "/"][..], 1, Some("invalid")),
     ] {
-        let ran = marfa(&site, args);
+        let mut with_json = vec!["--json"];
+        with_json.extend(args);
+        let ran = marfa(&site.url, &with_json);
         assert_eq!(ran.code, code, "{args:?}: {}", ran.stderr);
         assert_eq!(ran.stdout, "", "{args:?}");
+        if let Some(name) = name {
+            assert_eq!(envelope_code(&ran.stderr), name, "{args:?}");
+        }
     }
-    let ran = marfa("not a url", &["--json", "docs", "topics"]);
-    assert_eq!(ran.code, 1, "{}", ran.stderr);
-    assert_eq!(envelope_code(&ran.stderr), "invalid");
+    assert!(!site.was_asked(), "a request reached the site");
+    // The witness: the same site is reached when the command line is right.
+    // It never answers, so the command is stopped once it has asked.
+    let mut waiting = command(&site.url, &["docs", "topics"]).spawn().unwrap();
+    let started = std::time::Instant::now();
+    while !site.was_asked() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the site was never reached"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    waiting.kill().unwrap();
+    waiting.wait().unwrap();
+    for address in ["not a url", "ftp://127.0.0.1/docs", "127.0.0.1:8600"] {
+        let ran = marfa(address, &["--json", "docs", "topics"]);
+        assert_eq!(ran.code, 1, "{address}: {}", ran.stderr);
+        assert_eq!(ran.stdout, "");
+        assert_eq!(envelope_code(&ran.stderr), "invalid", "{address}");
+    }
     // The limit's bounds are held by the parser, so the edges are taken.
     let door = Door::open(vec![
         answer("200 OK", "application/json", HITS),

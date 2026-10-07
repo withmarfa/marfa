@@ -24,6 +24,9 @@ pub const SITE_VARIABLE: &str = "MARFA_DOCS_URL";
 const CONNECT_BUDGET: Duration = Duration::from_secs(10);
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
 const BODY_BUDGET: Duration = Duration::from_secs(30);
+/// The most of an answer the command reads: a page or a list of pages is far
+/// smaller.
+const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 
 /// Read Marfa's public docs: search them, list their pages, or print one.
 ///
@@ -110,6 +113,7 @@ struct Answer {
 pub struct Site {
     base: String,
     agent: ureq::Agent,
+    body_limit: u64,
 }
 
 impl Site {
@@ -156,7 +160,11 @@ impl Site {
             .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
-        Ok(Site { base, agent })
+        Ok(Site {
+            base,
+            agent,
+            body_limit: BODY_LIMIT,
+        })
     }
 
     fn unreachable(&self, reason: impl Into<String>) -> CliError {
@@ -188,10 +196,13 @@ impl Site {
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|error| self.unreachable(error.to_string()))?;
+        // Only a success is read: the status says what a refusal is, whatever
+        // its body holds.
+        let body = if (200..300).contains(&status) {
+            self.read(path, response.body_mut())?
+        } else {
+            String::new()
+        };
         Ok((
             url,
             Answer {
@@ -200,6 +211,31 @@ impl Site {
                 body,
             },
         ))
+    }
+
+    /// A body as text. A body the command will not read, because it is
+    /// larger than it reads or is not UTF-8, is an answer it cannot decode,
+    /// which a retry does not change; one that fails part way is the network.
+    fn read(&self, path: &str, body: &mut ureq::Body) -> Result<String, CliError> {
+        let cannot = |what: String| {
+            CliError::Core(CoreError::Decoding(format!(
+                "the docs site at {} answered {path} with a body the command cannot read: {what}",
+                self.base
+            )))
+        };
+        let bytes = body
+            .with_config()
+            // The reader refuses when the limit is spent before the end, so a
+            // body of exactly the limit needs one byte more than it.
+            .limit(self.body_limit + 1)
+            .read_to_vec()
+            .map_err(|error| match error {
+                ureq::Error::BodyExceedsLimit(_) => {
+                    cannot(format!("it is larger than {} bytes", self.body_limit))
+                }
+                other => self.unreachable(other.to_string()),
+            })?;
+        String::from_utf8(bytes).map_err(|_| cannot("it is not UTF-8".into()))
     }
 
     /// What a status other than the one a call expects says.
@@ -632,6 +668,108 @@ mod tests {
             assert!(error.to_string().contains(&door.url), "{error}");
         }
         door.received();
+    }
+
+    fn redirect(to: &str) -> Answer {
+        answer("302 Found", "text/plain", "").with_header("Location", to)
+    }
+
+    /// A site that answers each connection with these bytes, whole, and
+    /// closes it.
+    fn raw_site(reply: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut head = [0u8; 4096];
+                let _ = stream.read(&mut head);
+                let _ = stream.write_all(reply);
+            }
+        });
+        address
+    }
+
+    #[test]
+    fn up_to_five_redirects_in_a_row_are_followed_and_the_page_keeps_the_address_asked_for() {
+        let door = Door::open_at(|url| {
+            vec![
+                redirect("/a.md"),
+                redirect("/b.md"),
+                redirect(&format!("{url}/c.md")),
+                redirect("/d.md"),
+                redirect("/e.md"),
+                markdown("200 OK", "# Moved\n"),
+            ]
+        });
+        let page = Site::at(&door.url).unwrap().page("moved").unwrap();
+        assert_eq!(page.markdown, "# Moved\n");
+        assert_eq!(page.url, format!("{}/moved.md", door.url));
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
+        assert_eq!(
+            paths,
+            ["/moved.md", "/a.md", "/b.md", "/c.md", "/d.md", "/e.md"]
+        );
+        assert!(received.iter().all(|r| r.header("authorization").is_none()));
+    }
+
+    #[test]
+    fn a_sixth_redirect_in_a_row_is_the_site_failing() {
+        let door = Door::open((0..6).map(|n| redirect(&format!("/{n}.md"))).collect());
+        let error = Site::at(&door.url).unwrap().page("moved").unwrap_err();
+        assert_eq!(error.code(), "docs_unreachable", "{error}");
+        assert!(error.to_string().contains("too many redirects"), "{error}");
+        assert_eq!(error.exit(), crate::error::Exit::Environment);
+        assert_eq!(door.received().len(), 6);
+    }
+
+    #[test]
+    fn a_body_larger_than_the_command_reads_is_a_decoding_error_whatever_the_status_says_after() {
+        let door = Door::open(vec![
+            markdown("200 OK", &"a".repeat(16)),
+            markdown("200 OK", &"a".repeat(17)),
+            answer("404 Not Found", "text/plain", &"a".repeat(17)),
+        ]);
+        let mut site = Site::at(&door.url).unwrap();
+        site.body_limit = 16;
+        // The witness: a body at the limit is read.
+        assert_eq!(site.page("files").unwrap().markdown.len(), 16);
+        let error = site.page("files").unwrap_err();
+        assert_eq!(error.code(), "decoding", "{error}");
+        assert_eq!(error.exit(), crate::error::Exit::Environment);
+        assert!(
+            error.to_string().contains("larger than 16 bytes"),
+            "{error}"
+        );
+        // A refusal is read from its status, not its body.
+        assert_eq!(
+            site.page("files").unwrap_err().code(),
+            "docs_page_not_found"
+        );
+        door.received();
+    }
+
+    #[test]
+    fn a_body_that_is_not_utf8_is_a_decoding_error_but_a_refusal_is_still_a_refusal() {
+        let page = raw_site(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/markdown\r\nContent-Length: 3\r\nConnection: close\r\n\r\n\xff\xfe\xfd",
+        );
+        let error = Site::at(&page).unwrap().page("files").unwrap_err();
+        assert_eq!(error.code(), "decoding", "{error}");
+        assert!(error.to_string().contains("not UTF-8"), "{error}");
+        let missing = raw_site(
+            b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 3\r\nConnection: close\r\n\r\n\xff\xfe\xfd",
+        );
+        assert_eq!(
+            Site::at(&missing)
+                .unwrap()
+                .page("files")
+                .unwrap_err()
+                .code(),
+            "docs_page_not_found"
+        );
     }
 
     #[test]
