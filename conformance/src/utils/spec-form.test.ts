@@ -25,10 +25,11 @@ const RULES = {
     "a chapter is wholly numbered or wholly in the ID form, never both",
   idGrammar:
     "every ID is the chapter's name, a slash and a slug of lowercase words and digits joined by hyphens, at most 40 characters",
-  idUnique: "every ID is stated once, and retired once",
-  idRetired: "an ID that is active is not also on the Retired list",
+  idUnique: "every ID is stated once",
   blockShape:
-    "a statement is a heading holding one ID, then one rule paragraph, an optional Reason paragraph and one Tests paragraph, and the Retired list holds only its entries",
+    "a statement is a heading holding one ID, then one rule paragraph, an optional Reason paragraph and one Tests paragraph",
+  ruleOneSentence:
+    "the rule paragraph is one sentence, with no full stop followed by a capital letter outside a code span",
   oneRequirement:
     "a rule holds exactly one MUST or MUST NOT and no other key word of RFC 2119 in capitals",
   earsForm:
@@ -62,8 +63,6 @@ const CITATION =
 const CITATIONS = new RegExp(`^${CITATION}(?:, ${CITATION})*\\.$`);
 const WAITING = /^waiting on #\d+\.$/;
 
-const GENERIC_ID = /^[a-z][a-z-]*\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-
 function empty(): Record<Rule, string[]> {
   return Object.fromEntries(
     (Object.keys(RULES) as Rule[]).map((rule) => [rule, []]),
@@ -94,16 +93,6 @@ function violations(name: string, text: string): Record<Rule, string[]> {
     if (seen.has(key)) found.idUnique.push(where(key));
     seen.add(key);
   }
-  const retired = new Set<string>();
-  for (const entry of chapter.retired) {
-    if (!isId(name, entry.id)) found.idGrammar.push(where(entry.id));
-    for (const target of entry.replacedBy) {
-      if (!GENERIC_ID.test(target)) found.idGrammar.push(where(target));
-    }
-    if (retired.has(entry.id)) found.idUnique.push(where(entry.id));
-    retired.add(entry.id);
-    if (seen.has(entry.id)) found.idRetired.push(where(entry.id));
-  }
 
   const ruleLines = new Set<number>();
   for (const statement of chapter.statements) {
@@ -113,6 +102,9 @@ function violations(name: string, text: string): Record<Rule, string[]> {
     for (const paragraph of statement.paragraphs) {
       if (paragraph.kind !== "rule") continue;
       for (let n = paragraph.line; n <= paragraph.end; n++) ruleLines.add(n);
+      if (/\. [A-Z]/.test(paragraph.text.replace(/`[^`]*`/g, ""))) {
+        found.ruleOneSentence.push(where(id));
+      }
     }
 
     const rule = statement.rule.replace(/\s+/g, " ").trim();
@@ -226,11 +218,19 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** `correctness/d.test.ts › refuses`.",
     "",
+    "### `sample/code-span`",
+    "",
+    "The server MUST answer `a. B` and keep it.",
+    "",
+    "**Tests:** waiting on #2.",
+    "",
     "## Retired",
     "",
-    "- `sample/old-one`: replaced by `sample/always`.",
-    "- `sample/old-two`: replaced by `sample/always`, `sample/on-event` and `other/elsewhere`.",
-    "- `sample/old-three`: withdrawn.",
+    "### `sample/after-heading`",
+    "",
+    "The server MUST read a Retired section as an ordinary one.",
+    "",
+    "**Tests:** waiting on #3.",
     "",
   ].join("\n");
 
@@ -261,12 +261,6 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** waiting on #1.",
     "",
-    "### `sample/also-retired`",
-    "",
-    "The server MUST answer.",
-    "",
-    "**Tests:** waiting on #1.",
-    "",
     "### `sample/two-musts`",
     "",
     "The server MUST answer and MUST NOT wait.",
@@ -276,6 +270,12 @@ describe("the form check sees what it is for", () => {
     "### `sample/other-keyword`",
     "",
     "The server MUST answer and MAY wait.",
+    "",
+    "**Tests:** waiting on #1.",
+    "",
+    "### `sample/two-sentences`",
+    "",
+    "The server MUST answer. It then waits.",
     "",
     "**Tests:** waiting on #1.",
     "",
@@ -383,14 +383,6 @@ describe("the form check sees what it is for", () => {
     "",
     "**Tests:** waiting on #1.",
     "",
-    "## Retired",
-    "",
-    "- `sample/also-retired`: withdrawn.",
-    "- `sample/Gone_One`: replaced by `sample/twice` and `elsewhere`.",
-    "- `sample/gone-two`: withdrawn.",
-    "- `sample/gone-two`: withdrawn.",
-    "- A line that is no entry. NOENTRY",
-    "",
   ].join("\n");
 
   const line = (marker: string) =>
@@ -410,14 +402,8 @@ describe("the form check sees what it is for", () => {
       "sample/in-state",
       "sample/feature-event",
       "sample/unwanted",
-    ]);
-    expect(readable.retired).toEqual([
-      { id: "sample/old-one", replacedBy: ["sample/always"] },
-      {
-        id: "sample/old-two",
-        replacedBy: ["sample/always", "sample/on-event", "other/elsewhere"],
-      },
-      { id: "sample/old-three", replacedBy: [] },
+      "sample/code-span",
+      "sample/after-heading",
     ]);
     expect(violations("sample", GOOD)).toEqual(empty());
   });
@@ -428,16 +414,15 @@ describe("the form check sees what it is for", () => {
     // with the README about what a rule means.
     expect(violations("sample", BAD)).toEqual({
       mixedForm: ["sample"],
-      idGrammar: [s("Bad_Id"), s("Gone_One"), "sample elsewhere"],
-      idUnique: [s("twice"), s("gone-two")],
-      idRetired: [s("also-retired")],
+      idGrammar: [s("Bad_Id")],
+      idUnique: [s("twice")],
       blockShape: [
         s("no-tests"),
         s("two-rules"),
         s("reason-first"),
         at("STRAY"),
-        at("NOENTRY"),
       ],
+      ruleOneSentence: [s("two-sentences")],
       oneRequirement: [s("two-musts"), s("other-keyword"), s("no-keyword")],
       earsForm: [
         s("no-pattern"),

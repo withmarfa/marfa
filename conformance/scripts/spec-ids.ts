@@ -2,15 +2,19 @@
  * Move the references to a chapter's numbered statements to the IDs that
  * replaced them, when the chapter moves to the ID form:
  *
- *   tsx scripts/spec-ids.ts plan <chapter> <decisions.json>
- *   tsx scripts/spec-ids.ts apply <chapter> <decisions.json>
+ *   tsx scripts/spec-ids.ts plan <chapter> <map.json> <decisions.json>
+ *   tsx scripts/spec-ids.ts apply <chapter> <map.json> <decisions.json>
  *   tsx scripts/spec-ids.ts verify <chapter> <git-ref>
  *
- * `plan` reads `spec-migrations/<chapter>.json`, finds every reference to the
- * chapter's numbers in the tree and writes each with the text that would
- * replace it. A reference that needs a reading, not a lookup, is marked
+ * The map is a JSON object from each of the chapter's old numbers to the
+ * list of IDs that replaced it. It is a working file for the chapter's
+ * move: keep it, and the decisions file, outside the repository.
+ *
+ * `plan` reads the map, finds every reference to the chapter's numbers in
+ * the tree and writes each with the text that would replace it. A reference that needs a reading, not a lookup, is marked
  * `needs_choice`: give it a `choice` in the file, the replacement text or a
- * list of IDs. `apply` refuses until every one has a choice, then rewrites
+ * list of IDs. `apply` refuses a decisions file that names a number the map
+ * does not have, and until every reference has a choice, then rewrites
  * every reference. `verify` fails when the chapter, as it stands, no longer
  * cites a fixture it cited at the Git reference.
  */
@@ -21,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import {
   droppedCitations,
   findSites,
+  outOfMap,
   rewrite,
   unchosen,
   type Migration,
@@ -34,7 +39,7 @@ const REWRITTEN = /\.(?:ts|rs|swift|md|example)$/;
 /** Where one is only reported: text that nothing here rewrites. */
 const REPORTED = /\.(?:json|ya?ml|toml|sh|[cm]?js|txt|html|css|mdx)$/;
 const SKIPPED =
-  /(?:^|\/)(?:node_modules|target|dist)\/|^\.claude\/worktrees\/|^conformance\/spec-migrations\/|(?:^|\/)pnpm-lock\.yaml$/;
+  /(?:^|\/)(?:node_modules|target|dist)\/|^\.claude\/worktrees\/|(?:^|\/)pnpm-lock\.yaml$/;
 
 function git(...args: string[]): string {
   return execFileSync("git", args, {
@@ -63,24 +68,19 @@ function chapterName(value: string | undefined): string {
   return value;
 }
 
-function readMigration(chapter: string): Migration {
-  const path = resolve(
-    REPOSITORY,
-    "conformance",
-    "spec-migrations",
-    `${chapter}.json`,
-  );
-  if (!existsSync(path)) {
-    throw new Error(
-      `conformance/spec-migrations/${chapter}.json does not exist`,
-    );
-  }
-  return JSON.parse(readFileSync(path, "utf8")) as Migration;
+function readMigration(path: string | undefined): Migration {
+  if (path === undefined) throw new Error("name the map file to read");
+  if (!existsSync(resolve(path))) throw new Error(`${path} does not exist`);
+  return JSON.parse(readFileSync(resolve(path), "utf8")) as Migration;
 }
 
-function plan(chapter: string, output: string | undefined): void {
+function plan(
+  chapter: string,
+  mapPath: string | undefined,
+  output: string | undefined,
+): void {
+  const migration = readMigration(mapPath);
   if (output === undefined) throw new Error("name the decisions file to write");
-  const migration = readMigration(chapter);
   const own = `conformance/spec/${chapter}.md`;
   const sites: Site[] = [];
   const unrewritten: string[] = [];
@@ -118,7 +118,12 @@ function plan(chapter: string, output: string | undefined): void {
   }
 }
 
-function apply(chapter: string, input: string | undefined): void {
+function apply(
+  chapter: string,
+  mapPath: string | undefined,
+  input: string | undefined,
+): void {
+  const migration = readMigration(mapPath);
   if (input === undefined) throw new Error("name the decisions file to read");
   const decisions = JSON.parse(readFileSync(resolve(input), "utf8")) as {
     chapter: string;
@@ -127,6 +132,12 @@ function apply(chapter: string, input: string | undefined): void {
   if (decisions.chapter !== chapter) {
     throw new Error(
       `the decisions are for ${decisions.chapter}, not ${chapter}`,
+    );
+  }
+  const stale = outOfMap(decisions.sites, migration);
+  if (stale.length > 0) {
+    throw new Error(
+      `${String(stale.length)} references name numbers the map does not have: ${stale.join(", ")}`,
     );
   }
   const waiting = unchosen(decisions.sites);
@@ -173,11 +184,11 @@ function verify(chapter: string, ref: string | undefined): void {
   console.log(`${path} cites every fixture it cited at ${ref}.`);
 }
 
-const [command, chapter, argument] = process.argv.slice(2);
+const [command, chapter, first, second] = process.argv.slice(2);
 try {
-  if (command === "plan") plan(chapterName(chapter), argument);
-  else if (command === "apply") apply(chapterName(chapter), argument);
-  else if (command === "verify") verify(chapterName(chapter), argument);
+  if (command === "plan") plan(chapterName(chapter), first, second);
+  else if (command === "apply") apply(chapterName(chapter), first, second);
+  else if (command === "verify") verify(chapterName(chapter), first);
   else throw new Error("use plan, apply or verify; see the top of this file");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

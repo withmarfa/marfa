@@ -93,11 +93,7 @@ describe("a chapter in the ID form", () => {
     "",
     "## Retired",
     "",
-    "- `sample/old`: replaced by `sample/one`.",
-    "- `sample/older`: replaced by `sample/one`, `sample/two` and `x/y`.",
-    "- `sample/oldest`: withdrawn.",
-    "- not an entry",
-    "- `sample/odd`: replaced by nothing.",
+    "- `sample/old`: withdrawn.",
     "",
   ].join("\n");
   const chapter = readChapter("sample", text);
@@ -133,17 +129,18 @@ describe("a chapter in the ID form", () => {
     expect(chapter.statements.map((s) => s.key)).not.toContain("sample/fenced");
   });
 
-  it("reads the Retired list and sets aside what is no entry", () => {
-    expect(chapter.retired).toEqual([
-      { id: "sample/old", replacedBy: ["sample/one"] },
-      { id: "sample/older", replacedBy: ["sample/one", "sample/two", "x/y"] },
-      { id: "sample/oldest", replacedBy: [] },
+  it("reads a Retired section as an ordinary section", () => {
+    expect(chapter.statements.map((s) => s.key)).toEqual([
+      "sample/one",
+      "sample/two",
     ]);
-    expect(chapter.stray).toEqual([31, 32]);
-    expect(chapterIds(chapter)).toEqual({
-      active: ["sample/one", "sample/two"],
-      retired: ["sample/old", "sample/older", "sample/oldest"],
-    });
+    expect(chapter.stray).toEqual([]);
+    const retired = readChapter(
+      "sample",
+      "## Retired\n\n### `sample/old`\n\nThe server MUST wait.\n",
+    );
+    expect(retired.statements.map((s) => s.key)).toEqual(["sample/old"]);
+    expect(chapterIds(chapter)).toEqual(["sample/one", "sample/two"]);
   });
 
   it("sets aside a heading that is not one ID, at any level but 1 and 2", () => {
@@ -167,15 +164,13 @@ describe("the form of a chapter", () => {
 });
 
 describe("what the references checks leave out", () => {
-  it("blanks headings, the Retired list and fenced blocks, line for line", () => {
+  it("blanks ID headings and fenced blocks, line for line", () => {
     const text = [
       "### `sample/a`",
       "Keep `sample/b`.",
       "```",
       "`sample/c`",
       "```",
-      "## Retired",
-      "- `sample/d`: withdrawn.",
       "## Next",
       "Keep `sample/e`.",
     ].join("\n");
@@ -184,8 +179,6 @@ describe("what the references checks leave out", () => {
       "Keep `sample/b`.",
       "",
       "",
-      "",
-      "## Retired",
       "",
       "## Next",
       "Keep `sample/e`.",

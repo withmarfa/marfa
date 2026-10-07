@@ -1,6 +1,6 @@
 # Housekeeping
 
-The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. `GET /housekeeping` lists the jobs an instance runs. One scheduler runs every job from one table, so the operator can see what runs, when each job is next due and what its last run did, and can run any job now.
+The periodic jobs the server runs on itself, such as the trash purge, version thinning and the log cleanups. One scheduler runs them all. The operator can list the jobs, see when each is next due and what its last run did, and run any job now.
 
 ## The housekeeping jobs
 
@@ -106,7 +106,7 @@ While a run of one housekeeping job is in progress, the server MUST run another 
 
 ## The enrichment sweep
 
-The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`. Enrichment is on unless a setting switches it off, and OCR, which reads text from images, can be switched off on its own.
+The `enrichment-sweep` job reads a file item's bytes and writes what it finds onto the item: an image's `width` and `height`, and a file's `extracted_text`. Enrichment is on unless a setting switches it off. OCR, which reads text from images, has a switch of its own.
 
 ### `housekeeping/enrichment-failure-counted`
 
@@ -168,7 +168,7 @@ Where enrichment is on, the server MUST write `width` and `height` for a well-fo
 
 ## Retention
 
-`PUT /config` sets how long some records are kept: `audit_retention_days`, `trash_retention_days`, `inbound_handled_retention_days`, `inbound_pending_retention_days` and `event_log_retention_hours`. Settings give the defaults, and set the retention of other records, such as revoked grants and finished bulk-action jobs.
+`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants and finished bulk-action jobs.
 
 ### `housekeeping/retention-days-range`
 
@@ -234,7 +234,7 @@ If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor 
 
 ## Restarts and deadlines
 
-No fixture can yet restart the server, or hold a run past its deadline: the heartbeat and the webhook poll, which wait on receivers a fixture can run, stop waiting after 10 seconds, before their deadlines.
+No fixture can restart the server yet. Nor can one hold a run past its deadline: the heartbeat and the webhook poll stop waiting for their receivers after 10 seconds, before their deadlines.
 
 ### `housekeeping/schedule-survives-restart`
 

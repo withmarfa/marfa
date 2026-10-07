@@ -5,6 +5,7 @@ import {
   findSites,
   listIds,
   numberItems,
+  outOfMap,
   replacement,
   rewrite,
   unchosen,
@@ -224,6 +225,16 @@ describe("the references rewritten", () => {
     expect(() => rewrite(`two ${text}`, sites)).toThrow(
       "a.ts:1 no longer reads as planned",
     );
+  });
+});
+
+describe("a decisions file against its map", () => {
+  it("names the references to a number the map does not have", () => {
+    const sites = sitesIn("\`sample.md\` 1 and 3\n\`sample.md\` 2\n");
+    expect(outOfMap(sites, migration)).toEqual([]);
+    expect(outOfMap(sites, { "1": ["sample/a"], "2": ["sample/b"] })).toEqual([
+      "a.ts:1",
+    ]);
   });
 });
 

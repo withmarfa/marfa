@@ -8,7 +8,6 @@ import {
   indexOf,
   numbersIn,
   readIndex,
-  type Migration,
 } from "./spec-references.js";
 import { citationsInText, withoutDefinitions } from "./spec-statements.js";
 
@@ -181,33 +180,6 @@ describe("specification citations", () => {
     expect(dangling).toEqual([]);
   });
 
-  it("every statement a retired one was replaced by is active", () => {
-    const index = readIndex();
-    const missing = [...index.retired].flatMap(([id, replacedBy]) =>
-      replacedBy
-        .filter((target) => !index.active.has(target))
-        .map((target) => `${id} names ${target}`),
-    );
-    expect(missing).toEqual([]);
-  });
-
-  it("every migration names only statements its chapter has", () => {
-    const index = readIndex();
-    const unknown: string[] = [];
-    for (const [chapter, migration] of index.migrations) {
-      if (index.chapters.get(chapter)?.form !== "id") continue;
-      for (const [number, ids] of Object.entries(migration)) {
-        if (!/^\d+$/.test(number)) unknown.push(`${chapter} ${number}`);
-        for (const id of ids) {
-          if (!index.active.has(id) && !index.retired.has(id)) {
-            unknown.push(`${chapter} ${number}: ${id}`);
-          }
-        }
-      }
-    }
-    expect(unknown).toEqual([]);
-  });
-
   it("every cited title is a test or describe title in its file", () => {
     expect(
       unresolvedTitles(
@@ -242,30 +214,19 @@ describe("the reference checks see what they are for", () => {
     "",
     "**Tests:** waiting on #1.",
     "",
-    "## Retired",
-    "",
-    "- `sample/gone-rule`: replaced by `sample/second-rule`.",
-    "- `sample/lost-rule`: withdrawn.",
-    "",
   ].join("\n");
   const older = "1. A rule.\n2. Another rule.\n3. A third rule.\n";
-  const migration: Migration = {
-    "1": ["sample/first-rule"],
-    "2": ["sample/first-rule", "sample/second-rule"],
-  };
-  const index = indexOf(
-    { "sample.md": sample, "older.md": older, "other.md": "Prose.\n" },
-    { sample: migration },
-  );
+  const index = indexOf({
+    "sample.md": sample,
+    "older.md": older,
+    "other.md": "Prose.\n",
+  });
   const check = (text: string) => checkReferences("a comment", text, index);
 
   it("reads an ID and a number written for it", () => {
     expect(index.chapters.get("sample")?.form).toBe("id");
     expect(index.chapters.get("older")?.form).toBe("numbered");
-    expect([...index.active]).toEqual([
-      "sample/first-rule",
-      "sample/second-rule",
-    ]);
+    expect([...index.ids]).toEqual(["sample/first-rule", "sample/second-rule"]);
     expect(check("See \`sample/first-rule\` and \`older.md\` 3.")).toEqual({
       checked: 2,
       problems: [],
@@ -276,15 +237,6 @@ describe("the reference checks see what they are for", () => {
     const found = check("See \`sample/third-rule\`.");
     expect(found.problems).toEqual([
       "a comment line 1: \`sample/third-rule\` (no such statement)",
-    ]);
-  });
-
-  it("fails a retired ID and names what replaced it", () => {
-    expect(check("See \`sample/gone-rule\`.").problems).toEqual([
-      "a comment line 1: \`sample/gone-rule\` (retired, replaced by \`sample/second-rule\`)",
-    ]);
-    expect(check("See \`sample/lost-rule\`.").problems).toEqual([
-      "a comment line 1: \`sample/lost-rule\` (retired)",
     ]);
   });
 
@@ -299,19 +251,13 @@ describe("the reference checks see what they are for", () => {
     ).toEqual({ checked: 0, problems: [] });
   });
 
-  it("fails a number into a chapter that now has IDs and names them", () => {
+  it("fails a number into a chapter that has IDs, because it has no numbers", () => {
     expect(check("The rule (\`sample.md\` 1).").problems).toEqual([
-      "a comment line 1: sample.md 1 (the chapter now states its rules by ID: \`sample/first-rule\`)",
+      "a comment line 1: sample.md 1 (the chapter states its rules by ID, so it has no such number)",
     ]);
     expect(check("Rules \`sample.md\` 1 and 2.").problems).toEqual([
-      "a comment line 1: sample.md 1 (the chapter now states its rules by ID: \`sample/first-rule\`)",
-      "a comment line 1: sample.md 2 (the chapter now states its rules by ID: \`sample/first-rule\`, \`sample/second-rule\`)",
-    ]);
-  });
-
-  it("fails a number the migration does not map, and says so", () => {
-    expect(check("The rule \`sample.md\` 9.").problems).toEqual([
-      "a comment line 1: sample.md 9 (the chapter now states its rules by ID, and spec-migrations names none for this number)",
+      "a comment line 1: sample.md 1 (the chapter states its rules by ID, so it has no such number)",
+      "a comment line 1: sample.md 2 (the chapter states its rules by ID, so it has no such number)",
     ]);
   });
 
@@ -327,7 +273,7 @@ describe("the reference checks see what they are for", () => {
     ).toBe(4);
   });
 
-  it("does not read a chapter's headings, its Retired list or a fenced example as references", () => {
+  it("does not read a chapter's ID headings or a fenced example as references", () => {
     const text = [
       "### `sample/third-rule`",
       "",
@@ -335,22 +281,16 @@ describe("the reference checks see what they are for", () => {
       "See `sample/fourth-rule`.",
       "```",
       "",
-      "## Retired",
-      "",
-      "- `sample/fifth-rule`: withdrawn.",
-      "",
       "## After",
       "",
       "See `sample/sixth-rule`.",
     ].join("\n");
-    expect(withoutDefinitions(text).split("\n")).toHaveLength(13);
+    expect(withoutDefinitions(text).split("\n")).toHaveLength(9);
     expect(
       checkReferences("a chapter", text, index, { definitions: false }),
     ).toEqual({
       checked: 1,
-      problems: [
-        "a chapter line 13: \`sample/sixth-rule\` (no such statement)",
-      ],
+      problems: ["a chapter line 9: \`sample/sixth-rule\` (no such statement)"],
     });
   });
 

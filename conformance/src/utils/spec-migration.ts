@@ -239,6 +239,21 @@ export function replacement(site: Site): string {
   return site.kind === "own-parenthesis" ? `(${listed})` : listed;
 }
 
+/**
+ * The sites, as `file:line`, that name a number the map has no entry for:
+ * a decisions file made from a map that has since changed.
+ */
+export function outOfMap(
+  sites: readonly Site[],
+  migration: Migration,
+): string[] {
+  return sites
+    .filter((site) =>
+      site.numbers.some((number) => migration[String(number)] === undefined),
+    )
+    .map((site) => `${site.file}:${String(site.line)}`);
+}
+
 /** The sites that wait on a person, as `file:line` for a message. */
 export function unchosen(sites: readonly Site[]): string[] {
   return sites

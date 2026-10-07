@@ -47,18 +47,12 @@ export interface Statement {
   paragraphs?: Paragraph[];
 }
 
-export interface Retired {
-  id: string;
-  replacedBy: string[];
-}
-
 export interface Chapter {
   form: ChapterForm;
   statements: Statement[];
-  retired: Retired[];
   /** Numbered form: a statement that goes on after a blank line, which the parse cannot read. */
   orphans: string[];
-  /** ID form: lines in the Retired list, or headings, that the form has no place for. */
+  /** ID form: headings the form has no place for. */
   stray: number[];
 }
 
@@ -84,8 +78,6 @@ export function statementText(statement: Statement): string {
 const ID_HEADING = /^### `([^`]+)`\s*$/;
 const HEADING = /^(#{1,6}) (.*?)\s*$/;
 const FENCE = /^\s*```/;
-const RETIRED_LINE = /^- `([^`]+)`: (?:withdrawn|replaced by (.+))\.$/;
-const ID_LIST = /^`[^`]+`(?:(?:, | and |, and )`[^`]+`)*$/;
 
 export function readChapter(name: string, text: string): Chapter {
   const numbered = readNumbered(name, text);
@@ -105,7 +97,6 @@ export function readChapter(name: string, text: string): Chapter {
     statements: [...numbered.found, ...id.statements].sort(
       (a, b) => a.line - b.line,
     ),
-    retired: id.retired,
     orphans: numbered.orphans,
     stray: id.stray,
   };
@@ -165,13 +156,10 @@ function readNumbered(
 
 function readIds(text: string): {
   statements: Statement[];
-  retired: Retired[];
   stray: number[];
 } {
   const statements: Statement[] = [];
-  const retired: Retired[] = [];
   const stray: number[] = [];
-  let section = "";
   let current: Statement | undefined;
   let open: { lines: string[]; line: number } | undefined;
   let fenced = false;
@@ -214,33 +202,14 @@ function readIds(text: string): {
       flush(number - 1);
       const level = heading[1].length;
       current = undefined;
-      if (level <= 2) {
-        section = level === 2 ? heading[2] : "";
-        return;
-      }
+      if (level <= 2) return;
       const code = ID_HEADING.exec(line);
-      if (level === 3 && code !== null && section !== "Retired") {
+      if (level === 3 && code !== null) {
         current = { key: code[1], rule: "", line: number, paragraphs: [] };
         statements.push(current);
       } else {
         stray.push(number);
       }
-      return;
-    }
-    if (section === "Retired") {
-      if (/^\s*$/.test(line)) return;
-      const entry = RETIRED_LINE.exec(line);
-      const replaced = entry?.[2];
-      if (entry === null || (replaced !== undefined && !ID_LIST.test(replaced)))
-        stray.push(number);
-      else
-        retired.push({
-          id: entry[1],
-          replacedBy:
-            replaced === undefined
-              ? []
-              : [...replaced.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
-        });
       return;
     }
     if (/^\s*$/.test(line)) {
@@ -251,16 +220,15 @@ function readIds(text: string): {
     open.lines.push(line);
   });
   flush(lines.length);
-  return { statements, retired, stray };
+  return { statements, stray };
 }
 
 /**
  * The text with everything that defines a statement or shows the form
- * blanked out, line for line: the ID headings, the Retired list and fenced
- * blocks. What is left holds only references.
+ * blanked out, line for line: the ID headings and fenced blocks. What is
+ * left holds only references.
  */
 export function withoutDefinitions(text: string): string {
-  let section = "";
   let fenced = false;
   return text
     .split("\n")
@@ -269,14 +237,7 @@ export function withoutDefinitions(text: string): string {
         if (FENCE.test(line)) fenced = !fenced;
         return "";
       }
-      const heading = HEADING.exec(line);
-      if (heading) {
-        if (heading[1].length <= 2) {
-          section = heading[1].length === 2 ? heading[2] : "";
-        }
-        return ID_HEADING.test(line) ? "" : line;
-      }
-      return section === "Retired" ? "" : line;
+      return ID_HEADING.test(line) ? "" : line;
     })
     .join("\n");
 }
@@ -359,15 +320,9 @@ export function migratedChapters(dir = SPEC_DIR): string[] {
     .map(([name]) => name);
 }
 
-/** The IDs a chapter has: every one that is active and every one retired. */
-export function chapterIds(chapter: Chapter): {
-  active: string[];
-  retired: string[];
-} {
-  return {
-    active: chapter.statements
-      .filter((statement) => !/^\d+$/.test(statement.key))
-      .map((statement) => statement.key),
-    retired: chapter.retired.map((entry) => entry.id),
-  };
+/** The IDs a chapter has. */
+export function chapterIds(chapter: Chapter): string[] {
+  return chapter.statements
+    .filter((statement) => !/^\d+$/.test(statement.key))
+    .map((statement) => statement.key);
 }
