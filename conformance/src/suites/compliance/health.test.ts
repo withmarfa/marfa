@@ -2,6 +2,7 @@ import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
@@ -259,12 +260,20 @@ describe("the write probe", () => {
 
 describe("the error text of GET /health", () => {
   it("is given to the operator key and to no other caller", async () => {
+    expect((await until(isOk)).httpStatus).toBe(200);
+    const appToken = await approvedAppToken(server!);
     const strangers: [string, string | undefined][] = [
       ["a working key", server!.workingKey],
+      ["an app's access token", appToken],
       ["a key the instance does not hold", "marfa_a-key-no-instance-holds"],
       ["no credential", undefined],
     ];
-    expect((await until(isOk)).httpStatus).toBe(200);
+    // The witness that the app's token is a credential the instance
+    // accepts, so that it is withheld from by rule and not for being unknown.
+    const accepted = await fetch(`${server!.apiUrl}/items?limit=1`, {
+      headers: { Authorization: `Bearer ${appToken}` },
+    });
+    expect(accepted.status).toBe(200);
 
     renameTable("settings", "settings_away");
     try {
