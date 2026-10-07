@@ -1062,6 +1062,70 @@ describe("source_filter lever", () => {
     expect(byId.ok).toBe(true);
     expect(byId.data.item.id).toBe(created.data.item.id);
   });
+
+  it("leaves out of a window the events the instance's source filter does not admit", async () => {
+    const listed = `${ctx.source}-occ-listed`;
+    const unlisted = `${ctx.source}-occ-unlisted`;
+    const inFilter = await clientWithSource("occ-listed", listed);
+    const outOfFilter = await clientWithSource("occ-unlisted", unlisted);
+    const write = async (
+      writer: MarfaClient,
+      title: string,
+      properties: Record<string, unknown>,
+    ): Promise<string> => {
+      const r = await writer.createItem({
+        type: "core.event",
+        properties: { title: `${title} ${ctx.runId}`, ...properties },
+      });
+      expect(r.status, JSON.stringify(r.error)).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const window = {
+      from: "2057-05-10T00:00:00.000Z",
+      to: "2057-05-11T00:00:00.000Z",
+    };
+    const occurring = async (): Promise<string[]> => {
+      const r = await client.listOccurrences(window);
+      expect(r.status, JSON.stringify(r.error)).toBe(200);
+      return [...new Set(r.data.data.map((o) => o.item.id))].sort();
+    };
+
+    try {
+      await setConfig({});
+      const shown = await write(inFilter, "listed", {
+        starts_at: "2057-05-10T09:00:00.000Z",
+        ends_at: "2057-05-10T10:00:00.000Z",
+      });
+      const hidden = await write(outOfFilter, "unlisted", {
+        starts_at: "2057-05-10T09:00:00.000Z",
+        ends_at: "2057-05-10T10:00:00.000Z",
+      });
+      const shownSeries = await write(inFilter, "listed series", {
+        starts_at: "2057-05-09T12:00:00.000Z",
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=3"],
+      });
+      const hiddenSeries = await write(outOfFilter, "unlisted series", {
+        starts_at: "2057-05-09T12:00:00.000Z",
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=3"],
+      });
+
+      // The witness: before the filter the window holds both sources'
+      // events, standalone and recurring.
+      expect(await occurring()).toEqual(
+        [shown, hidden, shownSeries, hiddenSeries].sort(),
+      );
+
+      await setConfig({
+        enforcement: {
+          source_filter: { types: ["core.event"], sources: [listed] },
+        },
+      });
+      expect(await occurring()).toEqual([shown, shownSeries].sort());
+    } finally {
+      await setConfig(originalConfig);
+    }
+  });
 });
 
 describe("a key's own levers", () => {
