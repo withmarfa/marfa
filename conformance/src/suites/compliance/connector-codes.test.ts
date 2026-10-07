@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { AuditEntry, TestContext } from "../../client/types.js";
@@ -361,5 +362,142 @@ describe("a registration that was refused", () => {
     expect(
       (await operator().listConnectors()).data.data.map((row) => row.key_id),
     ).toContain(keyId);
+  });
+});
+
+describe("a body field no operation declares", () => {
+  it("refuses a body field it does not declare, on every connector and inbound operation that takes a body", async () => {
+    const own = await owner("undeclared");
+    const made = await address(own);
+    const delivery = idOf(await send(apiUrl, made.path, "waiting"));
+    const process = randomUUID();
+    const row = uuidv7();
+    const when = at();
+    expect((await own.client.holdConnector(own.id, process)).status).toBe(200);
+
+    interface Door {
+      label: string;
+      method: "POST" | "PUT";
+      path: string;
+      /** A body the operation takes. */
+      body: Record<string, unknown>;
+      /** A field no operation names, spelled like one it does. */
+      stray: string;
+      /** What the operation answers a body it takes, the first time and again. */
+      first: number;
+      again: number;
+    }
+    const doors: Door[] = [
+      {
+        label: "POST /connectors",
+        method: "POST",
+        path: "/connectors",
+        body: { name: `${ctx.runId} undeclared-register` },
+        stray: "descripton",
+        first: 201,
+        again: 200,
+      },
+      {
+        label: "POST runs",
+        method: "POST",
+        path: `/connectors/${own.id}/runs`,
+        body: { outcome: "succeeded", started_at: when, finished_at: when },
+        stray: "sumary",
+        first: 201,
+        again: 201,
+      },
+      {
+        label: "POST hold",
+        method: "POST",
+        path: `/connectors/${own.id}/hold`,
+        body: { process },
+        stray: "window_ms",
+        first: 200,
+        again: 200,
+      },
+      {
+        label: "PUT state",
+        method: "PUT",
+        path: `/connectors/${own.id}/state`,
+        body: { process, state: { cursor: "a" } },
+        stray: "merge",
+        first: 200,
+        again: 200,
+      },
+      {
+        label: "POST agreements",
+        method: "POST",
+        path: `/connectors/${own.id}/agreements`,
+        body: { process, clear: [row] },
+        stray: "sets",
+        first: 200,
+        again: 200,
+      },
+      {
+        label: "POST agreements/lookup",
+        method: "POST",
+        path: `/connectors/${own.id}/agreements/lookup`,
+        body: { item_ids: [row] },
+        stray: "waiting",
+        first: 200,
+        again: 200,
+      },
+      {
+        label: "POST endpoints",
+        method: "POST",
+        path: `/connectors/${own.id}/endpoints`,
+        body: { label: "undeclared" },
+        stray: "lable",
+        first: 201,
+        again: 201,
+      },
+      {
+        label: "POST deliveries/handled",
+        method: "POST",
+        path: `/connectors/${own.id}/deliveries/handled`,
+        body: { ids: [delivery], outcome: "processed" },
+        stray: "outcom",
+        first: 200,
+        again: 200,
+      },
+    ];
+
+    for (const door of doors) {
+      // The registration door is the one a key with none reaches.
+      const caller =
+        door.path === "/connectors"
+          ? await createSecondClient(ctx, "undeclared-register")
+          : own.client;
+      const call = (body: Record<string, unknown>) =>
+        caller.rawRequest<unknown>(door.path, { method: door.method, body });
+
+      const refused = await call({ ...door.body, [door.stray]: true });
+      expect(refused.status, door.label).toBe(400);
+      expect(refused.error?.error.code, door.label).toBe("validation_error");
+      expect(
+        refused.error?.error.details?.["unknown_body_fields"],
+        door.label,
+      ).toEqual([door.stray]);
+
+      // The witnesses: the same body without the field is taken, and a field
+      // of the caller's own, which starts with an underscore, is ignored.
+      expect((await call(door.body)).status, `${door.label}: without`).toBe(
+        door.first,
+      );
+      expect(
+        (await call({ ...door.body, _client: "kept by the caller" })).status,
+        `${door.label}: an underscore field`,
+      ).toBe(door.again);
+    }
+
+    // What the refusals would have done is not there to find: the one
+    // delivery was marked once, by the witness, and no run or endpoint came
+    // of a refusal.
+    expect((await own.client.listConnectorRuns(own.id)).data.data).toHaveLength(
+      2,
+    );
+    expect(
+      (await own.client.listInboundEndpoints(own.id)).data.data,
+    ).toHaveLength(3);
   });
 });
