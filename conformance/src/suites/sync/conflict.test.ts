@@ -727,6 +727,540 @@ describe("the server resolves a conflict", () => {
       "an echoed item field reverted a value written since, which is the clobber the version check exists to stop",
     ).toBe("feed");
   });
+
+  /** The rows under this file's source whose `body` or `notes` is `marker`. */
+  const holding = async (marker: string): Promise<string[]> => {
+    const found: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.listItems({
+        source: ctx.source,
+        limit: 200,
+        ...(cursor !== undefined && { cursor }),
+      });
+      expect(page.ok).toBe(true);
+      for (const item of page.data.data) {
+        if (item.properties.body === marker || item.properties.notes === marker)
+          found.push(item.id);
+      }
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return found;
+  };
+
+  it("writes the conflicted copy under the original's source and without its natural key", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const writerSource = `${ctx.source}-writer`;
+    const minted = await client.createKey({
+      label: "conflict-copy-source",
+      source: writerSource,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    // The witness that the two sources differ: a row the writer creates
+    // carries the writer's.
+    const own = await writer.createItem({
+      type: "core.note",
+      properties: { body: "written by the writer" },
+    });
+    expect(own.ok, JSON.stringify(own.error)).toBe(true);
+    trackItem(ctx, own.data.item.id);
+    expect(own.data.item.source).toBe(writerSource);
+
+    const sourceId = `copy-key-${ctx.runId}`;
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "original body" },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: { body: "body from the winner" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const resolved = await writer.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: "body from the writer" }, version: 1 },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copyId = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId).toBeTruthy();
+
+    const copy = await client.getItem(copyId!);
+    expect(copy.data.item.properties.body).toBe("body from the writer");
+    expect(copy.data.item.source).toBe(ctx.source);
+    expect(copy.data.item.source_id ?? null).toBeNull();
+    // The original keeps both, so the natural key still names one row.
+    const original = await client.getItem(id);
+    expect(original.data.item.source).toBe(ctx.source);
+    expect(original.data.item.source_id).toBe(sourceId);
+  });
+
+  it("resolves a colliding tier or source_id to the later writer", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const cases = [
+      {
+        field: "tier",
+        seed: { tier: "library" as const },
+        winner: { tier: "feed" as const },
+        loser: { tier: "feed" as const },
+      },
+      {
+        field: "source_id",
+        seed: { source_id: `resolve-seed-${ctx.runId}` },
+        winner: { source_id: `resolve-winner-${ctx.runId}` },
+        loser: { source_id: `resolve-loser-${ctx.runId}` },
+      },
+    ];
+    for (const { field, seed, winner, loser } of cases) {
+      const made = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title: `Resolve ${field}`, body: "original" },
+          ...seed,
+        }),
+      );
+      expect(made.ok, field).toBe(true);
+      const id = made.data.item.id;
+      trackItem(ctx, id);
+      expect(
+        (await client.updateItem(id, { ...winner, version: 1 })).ok,
+        field,
+      ).toBe(true);
+
+      // The control: without the flag the same write collides on the field.
+      const refused = await client.updateItem(id, { ...loser, version: 1 });
+      expect(refused.status, field).toBe(409);
+      expect(
+        (refused.error as unknown as { conflicting_fields?: string[] })
+          .conflicting_fields,
+        field,
+      ).toEqual([field]);
+
+      const resolved = await client.rawRequest<{
+        item: Record<string, unknown>;
+        conflict_resolution?: {
+          fields?: string[];
+          strategy?: Record<string, string>;
+          conflicted_copy_id?: string;
+        };
+      }>(`/items/${id}?conflict=auto`, {
+        method: "PATCH",
+        body: { ...loser, version: 1 },
+      });
+      expect(
+        resolved.status,
+        `${field}: ${JSON.stringify(resolved.error)}`,
+      ).toBe(200);
+      expect(resolved.data.conflict_resolution?.fields, field).toEqual([field]);
+      expect(resolved.data.conflict_resolution?.strategy?.[field], field).toBe(
+        "last_writer_wins",
+      );
+      expect(
+        resolved.data.conflict_resolution?.conflicted_copy_id,
+        `${field} has no keep-both strategy, so nothing is copied`,
+      ).toBeUndefined();
+      expect(resolved.data.item[field], field).toBe(
+        (loser as Record<string, unknown>)[field],
+      );
+      const after = await client.getItem(id);
+      expect(after.data.item.version, field).toBe(3);
+    }
+  });
+
+  it("resolves a property both writers set to one value as a collision", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Agreed", body: "original" },
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: { title: "The same new title" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const resolved = await client.rawRequest<{
+      item: { version: number; properties: Record<string, unknown> };
+      conflict_resolution?: {
+        fields?: string[];
+        strategy?: Record<string, string>;
+      };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { title: "The same new title" }, version: 1 },
+    });
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+    expect(resolved.data.conflict_resolution?.fields).toEqual(["title"]);
+    expect(resolved.data.conflict_resolution?.strategy?.title).toBe(
+      "last_writer_wins",
+    );
+    expect(resolved.data.item.properties.title).toBe("The same new title");
+    expect(resolved.data.item.version).toBe(3);
+  });
+
+  it("records the row the resolution moved on from, and gives the copy a history of its own", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Resolved history", body: "original body" },
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: {
+            title: "title from the winner",
+            body: "body from the winner",
+          },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const resolved = await client.rawRequest<{
+      item: { version: number };
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: {
+          title: "title from the loser",
+          body: "body from the loser",
+        },
+        version: 1,
+      },
+    });
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+    await trackSourceScopedItems({ client, ctx });
+    const copyId = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId).toBeTruthy();
+    expect(resolved.data.item.version).toBe(3);
+
+    const history = await client.getVersions(id);
+    expect(history.data.data.map((v) => v.version)).toEqual([1, 2]);
+    // Version 2 is the row the resolution left, the winner's.
+    expect(history.data.data[1]?.properties).toEqual({
+      title: "title from the winner",
+      body: "body from the winner",
+    });
+
+    const copy = await client.getItem(copyId!);
+    expect(copy.data.item.version).toBe(1);
+    expect((await client.getVersions(copyId!)).data.data).toHaveLength(0);
+  });
+
+  it("writes no copy where the resolution is refused after it, and writes it where the same write is not", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const type = `user.resolve-refused-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: {
+        title: { type: "string", required: true },
+        notes: { type: "string" },
+      },
+      merge_policy: { fields: { notes: "keep_both_copies" } },
+    } as never);
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const made = await client.createItem({
+      type,
+      source: ctx.source,
+      properties: { title: "original title", notes: "original notes" },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: {
+            title: "title from the winner",
+            notes: "notes from the winner",
+          },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    // The replace carries a losing value for the keep-both field, which the
+    // resolution copies, and leaves out the required title, whose clear
+    // takes the later writer and so leaves the row short of its type.
+    const replace = (properties: Record<string, unknown>) =>
+      client.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${id}?conflict=auto`, {
+        method: "PATCH",
+        body: { properties, properties_mode: "replace", version: 1 },
+      });
+    const loserNotes = `notes from the loser ${ctx.runId}`;
+    const refused = await replace({ notes: loserNotes });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const errors = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(errors?.map((e) => e.field)).toContain("title");
+    expect(await holding(loserNotes)).toEqual([]);
+    const unmoved = await client.getItem(id);
+    expect(unmoved.data.item.version).toBe(2);
+    expect(unmoved.data.item.properties.notes).toBe("notes from the winner");
+
+    // The witness: carrying the title, the same write is resolved and the
+    // copy holds the losing notes, so the refusal above left none behind.
+    const resolved = await replace({
+      title: "title from the loser",
+      notes: loserNotes,
+    });
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+    await trackSourceScopedItems({ client, ctx });
+    const copyId = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId).toBeTruthy();
+    expect(await holding(loserNotes)).toEqual([copyId]);
+  });
+
+  it("never resolves a write naming a version no snapshot covers, whatever conflict asks", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Never read", body: "original body" },
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: { body: "body from the winner" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+
+    const loserBody = `body from the loser ${ctx.runId}`;
+    for (const version of [0, 999]) {
+      for (const properties of [{ body: loserBody }, { notes: loserBody }]) {
+        const name = `${JSON.stringify(properties)} naming version ${String(version)}`;
+        const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
+          method: "PATCH",
+          body: { properties, version },
+        });
+        expect(refused.status, name).toBe(409);
+        expect(refused.error?.error.code, name).toBe("ancestor_unavailable");
+      }
+    }
+    expect(await holding(loserBody)).toEqual([]);
+    const unmoved = await client.getItem(id);
+    expect(unmoved.data.item.version).toBe(2);
+    expect(unmoved.data.item.properties.body).toBe("body from the winner");
+
+    // The witness: naming the retained version, the same write is resolved
+    // into a copy.
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: loserBody }, version: 1 },
+    });
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+    await trackSourceScopedItems({ client, ctx });
+    expect(await holding(loserBody)).toEqual([
+      resolved.data.conflict_resolution?.conflicted_copy_id,
+    ]);
+  });
+
+  it("refuses to resolve a stale move onto a row another writer moved since", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Moved twice", body: "original body" },
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    const moved = await client.updateItem(id, {
+      type: "core.bookmark",
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        type: "core.task",
+        retype: true,
+        properties: { title: "Moved twice" },
+        version: 1,
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+    expect(
+      (refused.error as unknown as { conflicting_fields?: string[] })
+        .conflicting_fields,
+    ).toContain("type");
+    const after = await client.getItem(id);
+    expect(after.data.item.type).toBe("core.bookmark");
+    expect(after.data.item.version).toBe(2);
+  });
+
+  it("takes conflict=manual and conflict=callback as absent, and refuses any other value", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const made = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Modes", body: "original body" },
+      }),
+    );
+    expect(made.ok).toBe(true);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    expect(
+      (
+        await client.updateItem(id, {
+          properties: { title: "title from the winner" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const stale = (mode: string) =>
+      client.rawRequest(`/items/${id}?conflict=${encodeURIComponent(mode)}`, {
+        method: "PATCH",
+        body: { properties: { title: "title from the loser" }, version: 1 },
+      });
+
+    for (const mode of ["manual", "callback"]) {
+      const refused = await stale(mode);
+      expect(refused.status, mode).toBe(409);
+      expect(refused.error?.error.code, mode).toBe("version_conflict");
+    }
+    for (const mode of ["bogus", "AUTO", "merge", ""]) {
+      const refused = await stale(mode);
+      expect(refused.status, JSON.stringify(mode)).toBe(400);
+      expect(refused.error?.error.code, JSON.stringify(mode)).toBe(
+        "validation_error",
+      );
+    }
+    const unmoved = await client.getItem(id);
+    expect(unmoved.data.item.version).toBe(2);
+    expect(unmoved.data.item.properties.title).toBe("title from the winner");
+
+    // The witness: auto resolves the same write.
+    const resolved = await stale("auto");
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+  });
+
+  it("resolves two stale writes arriving together, each into a copy of its own", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    for (let round = 0; round < 3; round++) {
+      const made = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title: "Raced", body: "original body" },
+        }),
+      );
+      expect(made.ok).toBe(true);
+      const id = made.data.item.id;
+      trackItem(ctx, id);
+      expect(
+        (
+          await client.updateItem(id, {
+            properties: {
+              title: "title from the winner",
+              body: "body from the winner",
+            },
+            version: 1,
+          })
+        ).ok,
+      ).toBe(true);
+
+      const writers = ["first", "second"].map((name) => ({
+        title: `title from the ${name} loser ${ctx.runId} ${String(round)}`,
+        body: `body from the ${name} loser ${ctx.runId} ${String(round)}`,
+      }));
+      const answers = await Promise.all(
+        writers.map((properties) =>
+          client.rawRequest<{
+            item: { version: number };
+            conflict_resolution?: { conflicted_copy_id?: string };
+          }>(`/items/${id}?conflict=auto`, {
+            method: "PATCH",
+            body: { properties, version: 1 },
+          }),
+        ),
+      );
+      await trackSourceScopedItems({ client, ctx });
+      expect(
+        answers.map((answer) => answer.status),
+        JSON.stringify(answers.map((a) => a.error ?? a.data)),
+      ).toEqual([200, 200]);
+      const copies = answers.map(
+        (answer) => answer.data.conflict_resolution?.conflicted_copy_id,
+      );
+      expect(copies[0]).toBeTruthy();
+      expect(copies[1]).toBeTruthy();
+      expect(copies[0]).not.toBe(copies[1]);
+      expect(answers.map((a) => a.data.item.version).sort()).toEqual([3, 4]);
+
+      // Whichever was ordered last took the title, and the row keeps the
+      // winner's body, which is a keep-both field.
+      const row = await client.getItem(id);
+      expect(row.data.item.version).toBe(4);
+      expect(writers.map((w) => w.title)).toContain(
+        row.data.item.properties.title,
+      );
+      expect(row.data.item.properties.body).toBe("body from the winner");
+      expect(
+        (await client.getVersions(id)).data.data.map((v) => v.version),
+      ).toEqual([1, 2, 3]);
+      for (const [index, copy] of copies.entries()) {
+        const held = await client.getItem(copy!);
+        expect(held.data.item.properties.body).toBe(writers[index]?.body);
+      }
+    }
+  });
 });
 
 describe("a conflicted copy names its original", () => {
