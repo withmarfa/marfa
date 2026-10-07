@@ -31,7 +31,7 @@ the endpoint refuses at all. `serverSideMerge` decides on a status too, and
 `updatedAfter` and `edgeUpdatedAfter` fall back to one when the control key is
 refused. Read the probe rather than counting them.
 
-**The idempotency door has three answers, not two.** A repeat under a key is
+**An idempotent operation has three answers, not two.** A repeat under a key is
 _honored_, _ignored_, or _reuse-refused_. The refusal — `422
 idempotency_key_reused` to a key sent with a different request — is the
 cleanest evidence available, because the confounders cannot reach it: a
@@ -39,7 +39,7 @@ natural-key match and a content dedupe both collapse writes that are _the
 same_, and this refusal fires on writes that _differ_. So `idempotencyKeys`
 sends a different-bodied pair, checks the replay half with a byte-identical
 repeat, and sends the same content under a fresh key as a third leg — if that
-collapses, the door dedupes on content and the probe throws rather than
+collapses, the operation dedupes on content and the probe throws rather than
 reporting a rule it could not see. A server that reads keys and does not
 refuse the reuse still reports `present`, with the deviation named in the
 evidence: whether the refusal is the _right_ behavior is a test's assertion

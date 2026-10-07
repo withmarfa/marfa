@@ -299,7 +299,7 @@ const bulkActionRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a job.",
+    "Applies one action to every item that matches a filter: change state, purge, update tags, tier, properties or own time. It matches only items you can write. With `dry_run: true` it returns the matched IDs; otherwise it queues a bulk-action job.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
@@ -373,7 +373,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Bulk actions"],
   summary: "Get a bulk-action job",
   description:
-    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or an operator key, can read it.",
+    "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the operator key, can read it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -401,7 +401,7 @@ const bulkActionStatusRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours is not an operator key.",
+        "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
     },
     404: {
       content: {
@@ -452,7 +452,7 @@ const bulkActionCancelRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: another credential queued the job, and yours is not an operator key.",
+        "- `forbidden`: another credential queued the job, and yours isn't the operator key.",
     },
     404: {
       content: {

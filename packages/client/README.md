@@ -26,7 +26,7 @@ for await (const item of everyItem) {
 }
 ```
 
-A door that takes raw bytes, such as `POST /blobs`, takes them as a `Blob`, an `ArrayBuffer`, a typed array or a `ReadableStream`, sent as they are, with the `Content-Type` the caller names, else a `Blob`'s own type, else the one the door declares: `await marfa.POST("/blobs", { body: bytes, headers: { "Content-Type": "image/png" } })`.
+An operation that takes raw bytes, such as `POST /blobs`, takes them as a `Blob`, an `ArrayBuffer`, a typed array or a `ReadableStream`, sent as they are, with the `Content-Type` the caller names, else a `Blob`'s own type, else the one the operation declares: `await marfa.POST("/blobs", { body: bytes, headers: { "Content-Type": "image/png" } })`.
 
 ## The contract
 

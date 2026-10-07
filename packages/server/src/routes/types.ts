@@ -553,7 +553,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field has the name of one every item has, such as `title`.\n- `inheritance_violation`: the type changes an inherited field's shape.",
+        "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, such as a `link_field` that isn't a string field.\n- `property_shadows_field`: a field is named like one every item has, such as `source_id`.\n- `inheritance_violation`: the type reshapes an inherited field.",
     },
     401: {
       content: {
