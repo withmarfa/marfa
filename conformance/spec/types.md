@@ -582,9 +582,15 @@ When a key holding `config.manage` sends `PUT /config`, the server MUST replace 
 
 ### `types/config-refused`
 
-If `PUT /config` names a lever of the wrong shape or a key it does not know, then the server MUST answer `400 validation_error` and keep the configuration.
+If `PUT /config` names a lever of the wrong shape, other than one missing a member it requires, or a key it does not know, then the server MUST answer `400 validation_error` and keep the configuration.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses a lever of the wrong shape`, `› refuses a configuration key it does not know, and keeps the configuration`.
+
+### `types/config-lever-missing-field`
+
+If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcement.source_allowlist` or `enforcement.source_filter` without `types` or `sources`, then the server MUST answer `400 missing_required_field` naming the missing member's path in `details.field`.
+
+**Tests:** `compliance/instance-config.test.ts › names the field a lever lacks with missing_required_field, and keeps the configuration`.
 
 ### `types/config-permission`
 
