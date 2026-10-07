@@ -1,118 +1,592 @@
 # Errors
 
+What every refusal looks like, and the refusals no other chapter owns. A refusal that belongs to one operation is stated with that operation, under its code. This chapter states the envelope, the closed set of codes, the headers a refusal carries, the answers to a request that is not read as JSON, to a path no operation serves, to a write that meets contention, to a fault and to an `Idempotency-Key` that cannot be served, what a refusal names of a missing grant or of an item in the bin, the limits a stream and a housekeeping job meet, a type whose parent chain cannot be resolved, and what the server reports of a failed database statement. The `409` envelopes of a stale write are `versions.md`'s, and the answer to a read view that has changed is `read-views.md`'s.
+
 ## The envelope
 
-1. A refused request answers with a JSON body of the shape `{ "error": { "code", "message" } }`, `message` a string, with an optional `details` object, and no `status` field inside `error`, except in the version envelopes below. `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/error-codes.test.ts › rejects item without type`, `compliance/adversarial.test.ts › malformed JSON body returns 400 validation_error`.
-2. `code` is lowercase snake case drawn from the server's closed vocabulary; the fixtures assert exact codes, never alternatives. Every citation in this file names the code it asserts.
-3. A body that is not JSON, an empty body, and a JSON array where an object is expected all answer `400 validation_error`. `compliance/adversarial.test.ts › malformed JSON body returns 400 validation_error`, `› empty body POST returns 400 validation_error`, `› array instead of object returns 400 validation_error`.
-4. An unmatched path answers `404 not_found` in the same envelope. `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
-5. The OAuth doors answer their own shapes: an RFC 7591 error object at registration and `invalid_request` at the token door; neither is the envelope, and neither is in the table below. Registration takes no credential, and one that carries an `Authorization` bearer the sign-in library does not accept, an API key among them, is read as an initial access token and refused `401` with the RFC 6750 object `{ "error": "invalid_token" }`, which the document declares. A registration whose body is not sent as `application/json` is refused `415` with the sign-in library's own `{ "message", "code": "UNSUPPORTED_MEDIA_TYPE" }`, which the document declares too. `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`, `› refuses a token request with no proof of the client`, `compliance/declared-refusals.test.ts › is refused 401 invalid_token in the RFC's shape, and registers with no credential`, `› is refused 415 in the shape the document declares for a body that is not JSON`.
+### `errors/envelope`
 
-## The version envelopes
+When a request is refused, other than with an answer under `/auth/*` that is in the sign-in library's own shape or is plain text, or one that prefers HTML (`errors/html-page`), the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings.
 
-6. A stale write whose base version is retained answers `409` with `error.code = "version_conflict"`, `error.status = 409`, `current` (the live version and properties), `ancestor` (the base version and its snapshot), `conflicting_fields` in ascending order, and the type's resolved `merge_policy`. Each snapshot carries the row's `tier`, `occurred_at` and `source_id` beside its properties, because the version check covers those three and `conflicting_fields` can name one: a caller told that `tier` collided and shown neither side's value has been named a reason it cannot act on. `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› refuses a stale write that collides on tier, occurred_at or source_id`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `correctness/merge-policy.test.ts › keep-both and LWW arrive in one 409, and the resolution reads back`.
-7. A write naming a version no snapshot exists for, whether never issued (0, 999) or thinned away, or whose snapshot is of a type the credential may not read (`versions/ancestor-unreadable`), answers `409` with `error.code = "ancestor_unavailable"`, `error.status = 409`, `current` and `requested_version`, and no `ancestor`, `conflicting_fields` or `merge_policy`. `correctness/item-versioning.test.ts › a version no client ever read answers ancestor_unavailable`, `compliance/error-codes.test.ts › rejects an update naming a version that never existed`.
-8. A stale `PATCH /items/{id}` carrying nothing to merge — a write naming a version and edges, and no properties, tier, `occurred_at` or `source_id` — answers `409` with `error.code = "version_conflict"`, `error.status = 409` and `current`, and no `ancestor`, `conflicting_fields` or `merge_policy`: there is no ancestor to compare against and no field that could have collided. A write naming none of those five and no `retype` is refused `400 validation_error` before the version is read. `correctness/item-versioning.test.ts › answers an edges-only stale write with the envelope minus its merge half`. **`DELETE /items/{id}` naming a stale `version` answers the same shape**, trashing nothing, as `POST /items/{id}/purge` does; a delete naming none trashes the row as it stands. `compliance/write-refusal-details.test.ts › refuses a stale one as a stale write carrying nothing to merge, and trashes nothing`, `› deletes unconditionally where no version is named`.
-9. A stale `PATCH /edges/{id}` answers the same shape, with `current` the whole edge as the server now holds it. An edge has no per-version history and no merge policy, so there is no ancestor and no field list to give; the key is `current` rather than `edge` so a client reads `current.version` off every single-write refusal carrying this code, whichever door it came from; the bulk doors report it per entry inside their own envelope instead. `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`.
+**Reason:** a client reads every refusal of the server's own from one shape, whichever operation answered it.
 
-10. Contention on the database's write lock answers `503 write_contention`, never `500`. A write that meets the lock is retried on the event loop until the instance's busy budget is spent, and only then refused; the refusal carries the budget in `details.budget_ms`. `503` and not `409`, because a conforming device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17) while a `409` blocks that write outright (22, 23) — and contention is exactly the case the retry exists for, so a `409` would strand a write that the next attempt would have landed. The budget is `SQLITE_BUSY_BUDGET_MS`, five seconds by default, and the refusal carries it. A bulk page that meets it before any entry has committed does not fold it into a per-entry `errored` outcome as it folds a verdict on an entry: nothing was written and the page answers `503` whatever `atomic` says, because a `200` carrying the refusal would tell a device there is nothing to retry. **A best-effort page that meets it after earlier entries committed** reports that entry `errored` with `write_contention`, having written nothing of it, and answers `200` with the rest, as it does any definitively rolled-back failure of the server's own there (an unexpected one is `internal_error`): a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice, with no idempotency key to stop it, since the bulk doors take none. If an entry's commit outcome remains unknown, the server MUST instead retain a partial `200` answer with that entry's `error.details.write_outcome` set to `unknown`, even before another entry has a confirmed commit. The entry may have been written; callers MUST reconcile its state before retrying that entry and MUST NOT replay the page. After an unknown outcome, a later definite failure MUST remain a per-entry failure. The server's own suites inject definite failures and lost commit acknowledgements on both bulk doors (`routes/committed-write-answer.test.ts` and `routes/bulk-uncertain-outcome.test.ts`). A read can meet the lock too: the credential gate records a key's first use in each hour before the door runs, so every credentialed door declares the refusal. A refused API-key use stamp is retried on the next request; only a successful stamp starts the hourly debounce. Client registration declares it too: it takes no credential, but it is a write, and it is refused the same way although the sign-in library serves it. `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `› refuses a read too, because the credential gate stamps a key's first use`, `› waits out a briefly held lock on the default budget`, `› refuses a non-atomic bulk page rather than reporting it entry by entry`, `› names the budget it spent, so the setting is observable`, `› refuses a housekeeping run, which writes outside a request's transaction`, `› refuses a client registration, which the sign-in library writes`.
+**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
 
-## What a refused write says
+### `errors/details-object`
 
-11. **A `403` caused by a grant the key lacks names the grant** in `details.grant`: `{ "kind", "name", "level" }`, `kind` one of `type`, `edge_type` and `extension`, `name` the type or edge type's identifier or the extension namespace, and `level` the level the key lacks, `read` or `write`, which is the level the door asked for. It rides on `403 type_not_permitted` for a type the key does not hold or holds for reading only, a folder door's `system.folder` included, on `403 edge_permission_denied`, beside the `details.edge_type` and `details.required` that code already carries, and on the `403 forbidden` an extension door answers a key without reach on the namespace. A client holding a write such a refusal stopped can tell a narrowed key from a write that will never land, and send it again once the grant is back. A refusal for any other reason names none: the reserved `system.*` fence, which no grant opens; a key whose type map reaches no type; a natural key resolving a row the key may not read, which must not name the row's type; a reserved extension namespace; a blob upload by a key whose map grants write on no type, which no one grant would open. On `POST /items/bulk` and `POST /edges/bulk` the grant rides where the entry's refusal does: in `error.details.grant` on an entry reported `errored`, and in `error.details.details.grant` on the `bulk_atomic_rollback` an atomic page answers. A row the key may not read is still answered `404`, and names nothing. `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names no grant where no grant would open the door`, `› names the grant on a bulk page, inside the rollback or on the entry`.
-12. **A write to an item in the bin answers `404 item_not_found` with `details: { "trashed": true }`** to a key that may read the item's type, on `PATCH /items/{id}`, `DELETE /items/{id}`, the metadata and tag write doors and the extension write doors, so a client holding a write to it can tell an item someone deleted from one that never existed. To a key that may not read the type, and on every read door, an item in the bin answers as a missing one, with no `details`. `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
+When the server carries `details` in the `error` object of a refusal, the server MUST give `details` as an object.
 
-13. When a request to a door that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server SHALL answer `400 validation_error` and SHALL change nothing.
+**Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`, `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
 
-    Reason: a body that is not read as JSON would reach the door as an empty object, and a door whose schema accepts `{}` would run a write the caller never sent, such as replacing an extension namespace's data with `{}`. A client that forgets the header is told, instead of losing data or learning nothing. The refusal is the one statement 3 gives a body that is not valid JSON.
+### `errors/status-absent`
 
-    Tests: `compliance/json-body-doors.test.ts › refuses a body that is missing or not sent as JSON with 400 validation_error on every such door`, `› changes nothing on these doors when the body is not sent as JSON`, `› still reads a body sent as JSON, whatever the case or parameters of its type`.
+The server MUST NOT carry a `status` member in the `error` object of a refusal other than `409 version_conflict` and `409 ancestor_unavailable`.
 
-14. The server SHALL NOT apply statement 13 to `POST /blobs`, `POST /restore`, an inbound webhook address (`inbound-webhooks.md`) or `POST /auth/oauth2/register`.
+**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
 
-    Reason: the first three take bodies that are not JSON: a blob's bytes, an archive, and whatever a sender posts. Registration takes JSON but belongs to the sign-in library, which answers a request that is not JSON in its own shape (statement 5).
+### `errors/status-version-envelope`
 
-    Tests: the server's own suite, `packages/server/src/routes/json-body-door-census.test.ts › are all classified`, `› name every unpublished write door`.
+When the server answers `409 version_conflict` or `409 ancestor_unavailable`, the server MUST carry `409` as `error.status`.
 
-15. When a request to a door that takes a JSON body has no credential, or lacks a standing permission the door checks before it reads the body, the server SHALL answer `401` or `403` before it applies statement 13.
+**Reason:** `versions.md` states the rest of each envelope. The member is the one thing that sets these two answers apart from every other refusal.
 
-    Reason: a caller who may not use the door learns that first, whatever it sent. A grant on an item's type is checked against the stored item after the body is read, so a credential without it is answered `400` for a body that is not JSON; that tells it nothing about the item.
+**Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `› answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `› rejects an update naming a version that never existed`, `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`, `compliance/edge-refusals.test.ts › answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy`, `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the row survives`.
 
-    Tests: the server's own suite, `packages/server/src/routes/json-body-door-census.test.ts › still asks for the credential first`, `› still asks for the permission before the body`.
+### `errors/code-closed`
 
-16. If a request reuses an `Idempotency-Key` whose first request differed only in whether its body was sent with a JSON `Content-Type`, then the server SHALL answer `422 idempotency_key_reused`.
+The server MUST give the `code` of every refusal it answers in the envelope as one of the codes in the table at the end of this chapter, in lowercase snake case.
 
-    Reason: the first request was refused by statement 13 or read as JSON, so the two are different requests, and replaying a refusal would tell the caller to do what it just did. Two spellings of a JSON type, such as with and without `charset=utf-8`, are the same request and replay.
+**Reason:** a client branches on the code, so a code outside the table is one no client was told of. The answers under `/auth/*` that are in the sign-in library's own shapes use its own codes, and a page there refuses in plain text.
 
-    Tests: the server's own suite, `packages/server/src/middleware/idempotency.test.ts › distinguishes a body sent as JSON from the same text sent as another type`, `› replays to a retry that spells the JSON type another way`.
+**Tests:** waiting on #1444.
 
-## Refusals of the server's own state
+### `errors/html-page`
 
-17. When a request repeats an `Idempotency-Key` whose first request has been claimed and not yet answered, the server SHALL answer `409 idempotency_key_in_flight` and SHALL NOT run the write.
+If a request's `Accept` header names `text/html` and does not name `application/json` before it, then the server MUST answer its refusal with an HTML page of the refusal's status in place of the JSON body.
 
-    Reason: the claim is what stops two arrivals of one key both writing, so the one that did not take it is told to ask again rather than let through. The status is `409` because something else did get there first, which a client branching on `409` expects it to mean.
+**Reason:** a person who follows a stale link is not handed a JSON body shown as raw text. A program that sends no such header is answered in the envelope.
 
-    Tests: `compliance/idempotency-refusals.test.ts › answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease`. The server's own suite stages the claim exactly, `packages/server/src/middleware/idempotency.test.ts`.
+**Tests:** `compliance/refusal-headers.test.ts › rides a page a browser is sent in place of the body, for a request that prefers HTML`.
 
-18. If the first request under an `Idempotency-Key` ended without recording an answer, then the server SHALL let a retry take the key over once the claim is older than the lease the server gives a request, and SHALL run the write for it.
+## The headers of an answer
 
-    Reason: a writer that dies between claiming and answering leaves a claim nothing completes, and without a lease the one failure the key exists for would refuse its retry for good.
+### `errors/code-header`
 
-    Tests: `compliance/idempotency-refusals.test.ts › answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease`.
+When the server answers a refusal in the envelope, the server MUST carry the body's `error.code` in the `X-Error-Code` header.
 
-19. When a request repeats an `Idempotency-Key` whose first answer was larger than 1,048,576 bytes, the server SHALL answer `422 idempotency_result_not_retained` with `details.original_status` the status the first answer carried, and SHALL NOT run the write again.
+**Reason:** a client or a proxy reads the refusal without parsing the body.
 
-    Reason: a record keeps the first answer's status and drops its body above that bound, because the alternative is a record of unbounded size per key or a second write. The repeat learns what the first attempt returned and that it was not repeated. The status is `422` and not `409` because nothing got there first.
+**Tests:** `compliance/refusal-headers.test.ts › repeats the body's code on a refusal of each status 400, 401, 403, 404, 409, 413 and 422`, `› repeats the body's code on a 429 and on a 503, which a server booted for them answers`, `compliance/metadata-routes.test.ts › answers 404 for an unknown item on every metadata door`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
 
-    Tests: `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`, `› replays an answer within the bound, so the refusal belongs to the size`.
+### `errors/html-page-code-header`
 
-20. If a request meets a fault for which the server holds no refusal, then the server SHALL answer `500 internal_error` in the envelope with the message `Internal server error` and no `details`, and SHALL send nothing of what failed.
+When the server answers a refusal with an HTML page, the server MUST carry the refusal's code in the `X-Error-Code` header.
 
-    Reason: a caller cannot act on a table name, a query or a stack, and the instance's internals are not the caller's to learn. What a caller can do is read what it changed before it repeats a write.
+**Tests:** `compliance/refusal-headers.test.ts › rides a page a browser is sent in place of the body, for a request that prefers HTML`.
 
-    Tests: `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
+### `errors/request-id`
 
-21. The server SHALL NOT answer `409 duplicate_source`.
+The server MUST carry an `X-Request-ID` header on every answer, a refusal included, other than the `415` of `errors/register-415`.
 
-    Reason: a create naming a natural key a row holds is an upsert onto that row, including two sent together (`items/natural-key-upsert` and `items/natural-key-concurrent`), so no door has a collision to report. The storage layer raises the code for a second row under one natural key, and the archive restore reads it as a row it already holds and counts it among its `duplicates`. A bulk entry under `create_only` that names such a key is skipped with the reason `duplicate_source`, which is a reason and not a code.
+**Reason:** it is the value a caller quotes to find its request in the server's log.
 
-    Tests: `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `› lands concurrent creates of one natural key on one row`, `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`.
+**Tests:** `compliance/refusal-headers.test.ts › is on the answer to every published door, served or refused, to a caller with a credential and to one without`.
 
-22. Where an instance sets a cap on live viewers, when a `GET /events` request, plain or copy, would pass it, the server SHALL answer `503 stream_capacity_exhausted` with `details.reason` `viewer_cap`, and SHALL admit a viewer again once one has left.
+### `errors/request-id-echo`
 
-    Reason: a viewer holds a connection for as long as it reads, so a cap is the one way an instance bounds them. A slot frees as streams end, so the refusal is one to ask again after.
+When a request carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
 
-    Tests: `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
+**Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`.
 
-23. If a run of a housekeeping job is asked for while that job is in the middle of a run, then the server SHALL answer `409 housekeeping_job_running` and SHALL NOT start a second run, unless that run has outlived its deadline and been given up on (`housekeeping/deadline-frees-job`).
+### `errors/request-id-replaced`
 
-    Reason: a job never overlaps itself, and the run the scheduler started on its own is a run like one asked for. A caller who gets the refusal asks again when the run has ended.
+If a request carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
 
-    Tests: `compliance/housekeeping-job-running.test.ts › answers 409 housekeeping_job_running, and runs once the earlier run has ended`.
+**Tests:** `compliance/refusal-headers.test.ts › is one of the server's own, not the caller's, when the caller sent more than 128 characters or one outside letters, digits, underscore and hyphen`.
 
-24. If a type's stored parent chain is circular or deeper than the server will follow, then a request that resolves the type SHALL be answered `409 type_chain_unresolvable` with `details.type_id`, and `PUT /types/{id}` SHALL still accept a corrected schema for it.
+### `errors/request-id-fresh`
 
-    Reason: the caller did nothing wrong, and every door that writes a type refuses such a chain, so meeting one means the registry already held it. It is coded so the type can be corrected: that door reads the stored schema without walking the chain, so a `500` there would leave nothing to fix it with.
+When a request carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
 
-    Tests: `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
+**Tests:** `compliance/refusal-headers.test.ts › is a different one of the server's own for each request that sent none`.
 
-25. When the server reports a fault of its own that no refusal names, whether the fault ended a request, ended a response body after the response began, or failed work no request was waiting on, the server SHALL NOT carry in the report any value that a failed database statement was bound to, on any sink it writes to: its log, its own printing of a failed response body, the telemetry it exports, the exception it sends to error tracking, and the notification it sends to the error webhook.
+### `errors/request-id-replay`
 
-    Reason: the values of a failed write are what was being written, its properties, tags and hashes, and each of those destinations is read by people and services the instance's data does not otherwise reach. A report is read from the instance's own sinks and not over HTTP, so the server's own suite asserts it rather than the referee.
+When the server replays an answer for an `Idempotency-Key`, the server MUST carry the `X-Request-ID` of the retry and not that of the first request.
 
-    Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text-census.test.ts`.
+**Tests:** `compliance/refusal-headers.test.ts › is the retry's own on an answer replayed for an Idempotency-Key`.
 
-26. When the server reports an unhandled fault in which a database statement failed, the server SHALL carry both the statement, with placeholders where its values were, and the driver's own reason for the failure in the fault's log line, the telemetry record of that line, the exception it sends to error tracking and, for a request, the notification it sends to the error webhook and the exception event on the request's span, except a reason that repeats a value the statement was bound to, which the report withholds.
+## A body that is not read as JSON
 
-    Reason: the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint. A driver sometimes quotes a token of the text it was given, such as a malformed search query, in any script and at any length, and that token is the value 25 keeps out.
+### `errors/body-invalid-json`
 
-    Tests: `packages/server/src/error-reports.test.ts`, `packages/server/src/error-text.test.ts`.
+If a request to an operation that takes a JSON body sends a body that is not valid JSON under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
 
-27. When the server reports a failed database statement anywhere else, in a housekeeping job's record, the health answer, a bulk action's messages or a warning about an event stream, the server SHALL carry the statement or the driver's reason, and SHALL NOT carry a value the statement was bound to.
+**Tests:** `compliance/adversarial.test.ts › malformed JSON body returns 400 validation_error`.
 
-    Reason: those reports have room for one line, so each keeps the part its reader needs, and the rule of 25 holds for all of them.
+### `errors/body-empty`
 
-    Tests: `packages/server/src/error-text.test.ts`, `packages/server/src/housekeeping/scheduler.test.ts`, `packages/server/src/routes/health.test.ts`.
+If a request to an operation that takes a JSON body sends an empty body under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/adversarial.test.ts › empty body POST returns 400 validation_error`.
+
+### `errors/body-not-object`
+
+If a request to an operation that takes a JSON object sends a JSON array in its place, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/adversarial.test.ts › array instead of object returns 400 validation_error`.
+
+### `errors/json-content-type`
+
+When a request to an operation that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server MUST answer `400 validation_error`.
+
+**Reason:** a body that is not read as JSON would reach the operation as an empty object, and an operation whose schema accepts `{}` would run a write the caller never sent, such as replacing an extension namespace's data with `{}`. A client that forgets the header is told, instead of losing data or learning nothing.
+
+**Tests:** `compliance/json-body-doors.test.ts › refuses a body that is missing or not sent as JSON with 400 validation_error on every such door`.
+
+### `errors/json-content-type-nothing`
+
+If a request to an operation that takes a JSON body is not sent with a JSON `Content-Type`, then the server MUST NOT change anything it stores.
+
+**Tests:** `compliance/json-body-doors.test.ts › changes nothing on these doors when the body is not sent as JSON`.
+
+### `errors/json-content-type-spelling`
+
+When a request to an operation that takes a JSON body is sent with a `Content-Type` that names JSON in any case or with parameters, the server MUST read the body as JSON.
+
+**Tests:** `compliance/json-body-doors.test.ts › still reads a body sent as JSON, whatever the case or parameters of its type`, `› writes each of these doors when the body is sent as JSON`.
+
+### `errors/json-order`
+
+When a request to an operation that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
+
+**Reason:** a caller that may not use the operation learns that first, whatever it sent. The grant on an item's type is checked against the stored item after the body is read, so a key without it is answered `400` for a body that is not JSON, which tells it nothing about the item.
+
+**Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› answers 403 forbidden on the operator's own door to a key that is not the operator key, where the operator key is answered 400`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
+
+## Registration, which the sign-in library answers
+
+### `errors/register-415`
+
+When `POST /auth/oauth2/register` is not sent with a JSON `Content-Type`, the server MUST answer `415` with a body of `message` and a `code` of `UNSUPPORTED_MEDIA_TYPE`, and no `error` member.
+
+**Reason:** registration takes JSON but belongs to the sign-in library, which refuses a body that is not JSON in its own shape and not with `errors/json-content-type`.
+
+**Tests:** `compliance/json-body-doors.test.ts › leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape`, `compliance/declared-refusals.test.ts › is refused 415 in the shape the document declares for a body that is not JSON`.
+
+### `errors/register-bearer-401`
+
+When `POST /auth/oauth2/register` carries an `Authorization` bearer the sign-in library does not accept, an API key included, the server MUST answer `401` with the body `{ "error": "invalid_token" }`.
+
+**Reason:** registration takes no credential, so a bearer it is sent is read as an initial access token.
+
+**Tests:** `compliance/declared-refusals.test.ts › is refused 401 invalid_token in the RFC's shape, and registers with no credential`.
+
+### `errors/register-415-headers`
+
+When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` or `X-Request-ID` on the answer.
+
+**Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries both.
+
+**Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries neither X-Error-Code nor X-Request-ID, where Marfa's own doors carry both`.
+
+## An `Idempotency-Key` that cannot be served
+
+### `errors/idem-reused-json`
+
+If a request repeats an `Idempotency-Key` whose first request differed only in whether its body was sent with a JSON `Content-Type`, then the server MUST answer `422 idempotency_key_reused`.
+
+**Reason:** the first request was refused by `errors/json-content-type` or read as JSON, so the two are different requests, and replaying a refusal would tell the caller to do what it just did.
+
+**Tests:** `compliance/json-body-doors.test.ts › answers 422 idempotency_key_reused to a retry sent as JSON after a first request that was not, and writes nothing`, `› answers 422 idempotency_key_reused to a retry not sent as JSON after a first request that was, and replays nothing`.
+
+### `errors/idem-json-spelling`
+
+When a request repeats an `Idempotency-Key` whose first request differed only in how it spelled the JSON `Content-Type`, the server MUST replay the first answer.
+
+**Reason:** two spellings of one type, such as with and without `charset=utf-8`, are the same request.
+
+**Tests:** `compliance/json-body-doors.test.ts › replays to a retry that spells the JSON type another way`.
+
+### `errors/idem-in-flight`
+
+When a request repeats an `Idempotency-Key` whose first request has been claimed and not yet answered, the server MUST answer `409 idempotency_key_in_flight`.
+
+**Reason:** the claim is what stops two arrivals of one key both writing, so the one that did not take it is told to ask again. The status is `409` because something else did get there first.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease`.
+
+### `errors/idem-in-flight-nothing`
+
+When the server answers `409 idempotency_key_in_flight`, the server MUST NOT run the write.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease`.
+
+### `errors/idem-lease`
+
+If the first request under an `Idempotency-Key` ended without recording an answer, then the server MUST run the write for a retry once the claim is older than 60 seconds.
+
+**Reason:** a writer that dies between claiming and answering leaves a claim nothing completes, and without a lease the one failure the key exists for would refuse its retry for good.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease`.
+
+### `errors/idem-not-retained`
+
+When a request repeats an `Idempotency-Key` whose first answer was larger than 1,048,576 bytes, the server MUST answer `422 idempotency_result_not_retained`.
+
+**Reason:** a record keeps the first answer's status and drops its body above that size, because the alternative is a record of unbounded size per key or a second write. The status is `422` and not `409` because nothing got there first.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`, `› replays an answer within the bound, so the refusal belongs to the size`.
+
+### `errors/idem-not-retained-status`
+
+When the server answers `422 idempotency_result_not_retained`, the server MUST carry the status the first answer carried in `details.original_status`.
+
+**Reason:** the repeat learns what the first attempt returned and that it was not repeated.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`.
+
+### `errors/idem-not-retained-nothing`
+
+When the server answers `422 idempotency_result_not_retained`, the server MUST NOT run the write again.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`.
+
+## A path or method no operation serves
+
+### `errors/unmatched-path`
+
+When a request names a path no operation serves, and is not a `GET` that carries `X-Marfa-Read-View`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
+
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Read-View`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
+
+### `errors/unmatched-method`
+
+When a request names a method no operation serves on a path that another method serves, the server MUST answer `404 not_found` and not `405`.
+
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`.
+
+### `errors/unmatched-read-view`
+
+When a `GET` that names a path no operation serves carries `X-Marfa-Read-View`, the server MUST answer `400 validation_error`, whether or not the request carries a credential.
+
+**Reason:** the header is refused where no conditional read exists, before the credential is asked for. It is the first step of `read-views/conditional-order`.
+
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 400 validation_error when it carries X-Marfa-Read-View, to a caller with a credential and to one without`.
+
+## Contention on the write lock
+
+### `errors/contention`
+
+If a write cannot get the store's write lock within the instance's busy budget, then the server MUST answer `503 write_contention`.
+
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts.md` 17), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
+
+**Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`.
+
+### `errors/contention-budget`
+
+When the server answers `503 write_contention`, the server MUST carry the busy budget it spent, in milliseconds, in `details.budget_ms`.
+
+**Tests:** `compliance/write-contention.test.ts › names the budget it spent, so the setting is observable`.
+
+### `errors/contention-wait`
+
+When a write meets a write lock that is released inside the instance's busy budget, the server MUST land the write.
+
+**Tests:** `compliance/write-contention.test.ts › waits out a briefly held lock on the default budget`.
+
+### `errors/contention-read`
+
+If a credentialed read is the first request a key makes in an hour and the write that records the key's use cannot get the write lock within the busy budget, then the server MUST answer the read `503 write_contention`.
+
+**Reason:** the server records a key's first use in each hour before the operation runs, so every credentialed operation can meet the lock.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+
+### `errors/contention-stamp-retry`
+
+If the server refuses a request `503 write_contention` at the write that records a key's use, then the server MUST set the key's `last_used_at` on the next request of that key that it serves.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+
+### `errors/contention-stamp-once`
+
+When the server has set a key's `last_used_at` in an hour, the server MUST serve the key's later requests in that hour while another writer holds the write lock.
+
+**Reason:** only a completed record of a key's use spares the next request that write.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+
+### `errors/contention-housekeeping`
+
+If `POST /housekeeping/{name}/run` cannot get the write lock within the busy budget, then the server MUST answer `503 write_contention`.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a housekeeping run, which writes outside a request's transaction`.
+
+### `errors/contention-registration`
+
+If `POST /auth/oauth2/register` cannot get the write lock within the busy budget, then the server MUST answer `503 write_contention` in the envelope.
+
+**Reason:** registration takes no credential and the sign-in library serves it, but it writes.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a client registration, which the sign-in library writes`.
+
+### `errors/contention-bulk-page`
+
+If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before any of its entries has committed, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
+
+**Reason:** nothing was written and the next attempt would land, and a `200` that carried the refusal would tell a device there is nothing to retry.
+
+**Tests:** `compliance/write-contention.test.ts › refuses a non-atomic bulk page rather than reporting it entry by entry`.
+
+### `errors/contention-bulk-entry`
+
+If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets the write lock at an entry after an earlier entry has committed, then the server MUST report that entry `errored` with the code `write_contention`, in a `200` answer.
+
+**Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
+
+**Tests:** waiting on #1444.
+
+## What a refusal names of a missing grant
+
+### `errors/grant-type`
+
+When the server answers `403 type_not_permitted` because a key holds no grant, or too low a grant, on a type at the level the operation asks, the server MUST carry `details.grant` with a `kind` of `type` and a `name` that is the type's identifier.
+
+**Reason:** a client holding a write that the refusal stopped can tell a narrowed key from a write that will never land, and send it again once the grant is back. A folder operation names `system.folder`.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the level read where the key may not read the type, on a list, its counts and an export`.
+
+### `errors/grant-edge-type`
+
+When the server answers `403 edge_permission_denied`, the server MUST carry `details.grant` with a `kind` of `edge_type` and a `name` that is the edge type's identifier.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the edge type and the level the key lacks beside the grant, on every door that writes an edge`.
+
+### `errors/grant-extension`
+
+When the server answers `403 forbidden` to an extension operation from a key that has no reach on the namespace, the server MUST carry `details.grant` with a `kind` of `extension` and a `name` that is the namespace.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`.
+
+### `errors/grant-level`
+
+When the server carries `details.grant`, the server MUST give its `level` as the level the operation asked for, `read` or `write`.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the level read where the key may not read the type, on a list, its counts and an export`.
+
+### `errors/edge-denied-details`
+
+When the server answers `403 edge_permission_denied`, the server MUST carry `details.edge_type`, naming the edge type, and `details.required`, naming the level the key lacks.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the edge type and the level the key lacks beside the grant, on every door that writes an edge`.
+
+### `errors/grant-bulk-entry`
+
+When a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` reports an entry `errored` for a grant the key lacks, the server MUST carry `details.grant` in the entry's `error.details`.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the grant on a bulk page, inside the rollback or on the entry`.
+
+### `errors/grant-bulk-rollback`
+
+When a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` is rolled back for a grant the key lacks, the server MUST carry `details.grant` in `error.details.details` of the `bulk_atomic_rollback`.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names the grant on a bulk page, inside the rollback or on the entry`.
+
+### `errors/grant-absent`
+
+If a `403` is not caused by a grant that the key could be given, such as the reserved `system.*` fence, a key whose type map reaches no type, a reserved extension namespace or a blob upload by a key whose map grants write on no type, then the server MUST NOT carry `details.grant`.
+
+**Reason:** no grant could let the request through, so a grant named would send the client to ask for one that cannot be had.
+
+**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`.
+
+## An item in the bin, or no item at all
+
+### `errors/bin-trashed`
+
+When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT` or `PATCH /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
+
+**Reason:** a client holding a write to the item can tell an item someone deleted from one that never existed. `items/write-in-bin` states the refusal itself.
+
+**Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`, `› answers a delete of an extension namespace on an item in the bin 404 with details.trashed, and nothing to a key that may not read the type`.
+
+### `errors/bin-unreadable`
+
+If a key may not read the type of an item in the bin, then the server MUST answer a write that names the item `404 item_not_found` with no `details`.
+
+**Reason:** the answer says nothing of whether the item exists or what type it is.
+
+**Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`, `› answers a delete of an extension namespace on an item in the bin 404 with details.trashed, and nothing to a key that may not read the type`.
+
+### `errors/bin-read`
+
+When a read names an item in the bin, the server MUST answer `404 item_not_found` with no `details`.
+
+**Reason:** a read answers an item in the bin as it answers one that does not exist.
+
+**Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
+
+### `errors/item-missing-bare`
+
+When a request names an item that no item holds, the server MUST answer `404 item_not_found` with no `details`.
+
+**Tests:** `compliance/metadata-routes.test.ts › answers 404 for an unknown item on every metadata door`.
+
+## A fault
+
+### `errors/internal-error`
+
+If a request meets a fault for which the server holds no refusal, then the server MUST answer `500 internal_error`.
+
+**Reason:** a fault is not the caller's to act on. What a caller can do is read what it changed before it repeats a write.
+
+**Tests:** `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
+
+### `errors/internal-error-body`
+
+When the server answers `500 internal_error`, the server MUST send exactly the body `{"error":{"code":"internal_error","message":"Internal server error"}}`.
+
+**Reason:** a caller cannot act on a table name, a query or a stack, and the instance's internals are not the caller's to learn.
+
+**Tests:** `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`, `› answers an atomic page 500 internal_error in the envelope, with no entry to name`.
+
+### `errors/internal-error-entry`
+
+If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false`, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
+
+**Reason:** the page answers `200` for the entries that landed, and the entry's `error` names nothing of what failed, as `errors/internal-error-body` names nothing.
+
+**Tests:** `compliance/internal-error.test.ts › is reported on that entry as internal_error with the entry's own message and no details, while the entries around it land`, `› is reported the same way on an entry of an edge page`.
+
+### `errors/internal-error-atomic`
+
+If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true`, then the server MUST answer the page `500 internal_error`.
+
+**Reason:** the fault is not a verdict on the entry, so the page is not answered `bulk_atomic_rollback`, which names an entry and its refusal.
+
+**Tests:** `compliance/internal-error.test.ts › answers an atomic page 500 internal_error in the envelope, with no entry to name`, `› is reported the same way on an entry of an edge page`.
+
+### `errors/internal-error-unknown`
+
+If the server cannot confirm whether an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` committed, then the server MUST give the entry reported `errored` the code `internal_error`.
+
+**Reason:** `items/bulk-outcome-unknown` and `edges/bulk-outcome-unknown` state the rest of the entry's answer, which the caller reads to reconcile that entry before it retries it.
+
+**Tests:** waiting on #1444.
+
+## The limits of a stream and of a job
+
+### `errors/stream-capacity`
+
+Where an instance sets a cap on live viewers, if a `GET /events` request, plain or copy, would pass the cap, then the server MUST answer `503 stream_capacity_exhausted`.
+
+**Reason:** a viewer holds a connection for as long as it reads, so a cap is the one way an instance bounds them.
+
+**Tests:** `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`, `compliance/declared-refusals.test.ts › refuses a viewer past the cap 503`.
+
+### `errors/stream-capacity-reason`
+
+When the server answers `503 stream_capacity_exhausted`, the server MUST carry `viewer_cap` in `details.reason`.
+
+**Tests:** `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
+
+### `errors/stream-capacity-frees`
+
+Where an instance sets a cap on live viewers, when a viewer leaves, the server MUST admit a `GET /events` request again.
+
+**Reason:** a slot frees as streams end, so the refusal is one to ask again after.
+
+**Tests:** `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
+
+### `errors/job-running`
+
+If `POST /housekeeping/{name}/run` names a job that is in the middle of a run that has not outlived its deadline, whether the scheduler or an earlier request started it, then the server MUST answer `409 housekeeping_job_running`.
+
+**Reason:** a job never overlaps itself, and a run the scheduler started on its own is a run like one asked for. A caller who gets the refusal asks again when the run has ended. `housekeeping/deadline-frees-job` states a run past its deadline.
+
+**Tests:** `compliance/housekeeping-job-running.test.ts › answers 409 housekeeping_job_running, and runs once the earlier run has ended`.
+
+### `errors/job-running-no-run`
+
+When the server answers `409 housekeeping_job_running`, the server MUST NOT start a second run of the job.
+
+**Tests:** `compliance/housekeeping-job-running.test.ts › answers 409 housekeeping_job_running, and runs once the earlier run has ended`.
+
+## A type whose parent chain cannot be resolved
+
+### `errors/type-chain`
+
+When a request resolves a type whose stored parent chain is circular or longer than 100 types, the server MUST answer `409 type_chain_unresolvable` with `details.type_id` naming that type.
+
+**Reason:** the caller did nothing wrong, and every operation that writes a type refuses such a chain, so meeting one means the registry already held it.
+
+**Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
+
+### `errors/type-chain-correctable`
+
+While a type's stored parent chain is unresolvable, the server MUST accept `PUT /types/{id}` for the type with a corrected schema.
+
+**Reason:** that operation reads the stored schema without walking the chain, so a `500` there would leave nothing to correct it with.
+
+**Tests:** `compliance/type-chain-unresolvable.test.ts › answers 409 type_chain_unresolvable naming the type, and is corrected by PUT /types/{id}`.
+
+## What a report of a failed database statement carries
+
+### `errors/report-log`
+
+When the server logs an unhandled fault in which a database statement failed, the server MUST carry in the fault's log line the failed statement, with a placeholder where each value was bound, and the driver's own reason for the failure.
+
+**Reason:** the statement and the driver's reason are what an operator needs to find the fault, such as a full disk or a violated constraint.
+
+**Tests:** `compliance/fault-reports.test.ts › is logged with the statement and the driver's reason, and none of the values the statement was bound to`.
+
+### `errors/report-log-values`
+
+When the server logs an unhandled fault in which a database statement failed, the server MUST NOT carry any value the statement was bound to anywhere in its log.
+
+**Reason:** the values of a failed write are what was being written, its properties, tags and hashes, and a log is read by people and services that the instance's data does not otherwise reach.
+
+**Tests:** `compliance/fault-reports.test.ts › is logged with the statement and the driver's reason, and none of the values the statement was bound to`.
+
+### `errors/report-webhook`
+
+When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST carry in the notification the failed statement, with a placeholder where each value was bound, and the driver's own reason for the failure.
+
+**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to`.
+
+### `errors/report-webhook-values`
+
+When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST NOT carry any value the statement was bound to in the notification.
+
+**Reason:** a webhook's receiver is a service the instance's data does not otherwise reach.
+
+**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook with the statement and the driver's reason, and none of the values the statement was bound to`.
+
+### `errors/report-reason-withheld`
+
+If the driver's reason for a failed database statement repeats a value the statement was bound to, then the server MUST withhold that reason from the report of the fault.
+
+**Reason:** a driver sometimes quotes a token of the text it was given, such as a malformed search query, in any script and at any length, and that token is a value `errors/report-log-values` keeps out.
+
+**Tests:** waiting on #1444.
+
+### `errors/report-response-began`
+
+When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST NOT carry any value the statement was bound to in its log.
+
+**Tests:** waiting on #1444.
+
+### `errors/report-background`
+
+When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST NOT carry any value the statement was bound to in its log.
+
+**Tests:** waiting on #1444.
+
+### `errors/report-health`
+
+While the write probe of `GET /health` fails on a database statement, when the operator key sends `GET /health`, the server MUST give the `database_write` component an `error` that carries the driver's reason for the failure and none of the values the probe write was bound to.
+
+**Reason:** the answer has room for one line, so it keeps the part its reader needs.
+
+**Tests:** `compliance/failed-statement-reports.test.ts › names the driver's reason and none of the values the probe write was bound to`.
+
+### `errors/report-housekeeping`
+
+When a run of a housekeeping job fails on a database statement, the server MUST record the failed statement, with a placeholder where each value was bound and none of the values, as the run's `error` and as the job's `last_error` in the listing.
+
+**Reason:** the record has room for one line, so it keeps the part its reader needs.
+
+**Tests:** `compliance/failed-statement-reports.test.ts › records the statement and none of the values it was bound to, in the run's answer and in the list`.
+
+### `errors/report-bulk-action`
+
+When a database statement fails for an item that a `POST /items/bulk-actions` job writes, the server MUST give that item's entry in the job's `result.errors` a `message` that carries the driver's reason for the failure and none of the values the statement was bound to.
+
+**Reason:** the job's messages have room for one line, so each keeps the part its reader needs.
+
+**Tests:** `compliance/failed-statement-reports.test.ts › names the driver's reason in each entry's error and none of the values its write was bound to`.
 
 ## Codes
 
@@ -189,5 +663,3 @@ Every code the server can answer is a row of the table below, which is written f
 | `write_contention`                | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                          |
 
 <!-- errors-table:end -->
-
-**A conditional working-copy read whose view changed answers `409 read_view_changed` before the ordinary resource refusal.** Its body is exactly `{"error":{"code":"read_view_changed","message":"The read view changed. Rebuild the working copy."}}`, without `details`, a resource identity or a read-view certificate. A copy stream not yet started uses the same envelope; one already started uses the no-id terminal in `read-views/terminal-frame`. Malformed copy grammar is `400 validation_error`, and generic validation, authentication and server failures carry no copy certificate. `compliance/read-views.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› rejects every alternate copy grammar before starting a stream`, `› certifies matching resource absence without certifying generic validation or authentication failures`.

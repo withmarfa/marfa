@@ -121,8 +121,8 @@ describe("edges carry a version", () => {
     // round trip the refusal already had the answer for.
     //
     // Under `current`, which is where every `version_conflict` this server
-    // answers puts the live row (`errors.md` 9), rather than under `edge`
-    // where the 200 puts it.
+    // answers puts the live row (`edges/update-stale-answer`), rather than
+    // under `edge` where the 200 puts it.
     const refused: EdgeEnvelope["edge"] | undefined = (
       stale.data as unknown as { current?: EdgeEnvelope["edge"] }
     ).current;

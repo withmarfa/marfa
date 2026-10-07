@@ -336,7 +336,7 @@ The server and a device index the same text and read a query the same way, so a 
 
 70. While an archive restore writes, if another request has to write and waits for the restore longer than the write budget, the server MUST refuse that request with `503 write_contention`.
 
-    Reason: the restore holds the write lock until it commits, and a caller retries a `503` (`errors.md` 10).
+    Reason: the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`).
 
     Tests: `packages/server/src/routes/archive-restore-bounds.test.ts › holds other writers in the queue and keeps its rows and types from readers until it commits`.
 

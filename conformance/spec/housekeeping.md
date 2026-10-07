@@ -46,7 +46,7 @@ While a run of a housekeeping job is in progress, the server MUST answer that jo
 
 ## Running a job now
 
-What the server answers to a run asked for while the same job is running is `errors.md` 23.
+What the server answers to a run asked for while the same job is running is `errors/job-running`.
 
 ### `housekeeping/run-now`
 

@@ -1450,7 +1450,7 @@ If a key that may read an edge type but not write it sends `POST /edges`, `PATCH
 
 When the server refuses `POST /edges` for a grant the key lacks, the server MUST name the grant in `details.grant`.
 
-**Reason:** the refusal says which grant to ask for (`errors.md` 11).
+**Reason:** the refusal says which grant to ask for (`errors/grant-edge-type`).
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`.
 
