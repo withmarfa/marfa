@@ -12,12 +12,12 @@ export interface SettingRow {
     | { kind: "count"; min: number; max?: number; unit?: string }
     | { kind: "decimal"; min: number; max: number }
     | { kind: "choice"; values: readonly string[] }
+    | { kind: "secret"; minLength?: number }
     | {
         kind:
           | "flag"
           | "url"
           | "text"
-          | "secret"
           | "origins"
           | "cidrs"
           | "header-name"
@@ -76,7 +76,9 @@ export function allowedValues(rule: SettingRow["rule"]): string {
     case "text":
       return "Any text";
     case "secret":
-      return "Text with no whitespace around it";
+      return rule.minLength === undefined
+        ? "Text with no whitespace around it"
+        : `Text of at least ${String(rule.minLength)} characters, with no whitespace around it`;
     case "origins":
       return `Comma-separated origins, each ${code("scheme://host[:port]")} with no path`;
     case "cidrs":

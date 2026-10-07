@@ -479,7 +479,7 @@ export type SettingRule =
   | { kind: "choice"; values: readonly string[] }
   | { kind: "url" }
   | { kind: "text" }
-  | { kind: "secret" }
+  | { kind: "secret"; minLength?: number }
   | { kind: "origins" }
   | { kind: "cidrs" }
   | { kind: "header-name" }
@@ -604,7 +604,10 @@ function secretSetting(
       return raw;
     });
   SETTING_META.set(schema, {
-    rule: { kind: "secret" },
+    rule: {
+      kind: "secret",
+      ...(minLength !== undefined && { minLength }),
+    },
     ...(defaultNote !== undefined && { defaultNote }),
     secret: true,
     description,
