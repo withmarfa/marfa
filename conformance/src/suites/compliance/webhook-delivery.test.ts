@@ -1176,5 +1176,131 @@ describe("outbound webhook delivery", () => {
       ),
       "an owner that may not read the kind was sent an edge of it",
     ).toHaveLength(0);
+    // The subscription's own record agrees with the receiver: one delivery,
+    // for the edge of the readable kind, and none for the other.
+    const rows = await owner.client.listWebhookDeliveries(narrow.data.id);
+    expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+    expect(rows.data.data).toHaveLength(1);
+    expect(rows.data.data[0]).toMatchObject({
+      webhook_id: narrow.data.id,
+      event_type: "edge.created",
+    });
+  });
+
+  it("delivers an edge event only where the key may read the type its source had when the event was published", async () => {
+    const edgeType = await registerEdgeType("published-source");
+    const owner = await keyWith("published-source-owner", {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const both = await keyWith("published-source-both", {
+      type_permissions: { "core.note": "read", "core.task": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const narrow = await owner.client.createWebhook({
+      url: receiver.hookUrl("source-narrow"),
+      events: ["edge.created"],
+    });
+    expect(narrow.status).toBe(201);
+    trackWebhook(ctx, narrow.data.id, owner.client);
+    // The witness that the edge was announced and could be sent: a
+    // subscription whose key reads the source's type as well as the edge's
+    // kind.
+    const witness = await both.client.createWebhook({
+      url: receiver.hookUrl("source-witness"),
+      events: ["edge.created"],
+    });
+    expect(witness.status).toBe(201);
+    trackWebhook(ctx, witness.data.id, both.client);
+
+    // Both ends of every edge are notes the owner reads, and the kind is one
+    // it reads, so the type of the source is the only thing it may not read.
+    const target = await makeNote("source-target");
+    const hiddenSource = await makeTask("source-hidden");
+    const readableSource = await makeNote("source-readable");
+    // The readable source is written last, so its delivery says the one
+    // before it was already decided.
+    const hidden = await link(hiddenSource, target, edgeType);
+    const readable = await link(readableSource, target, edgeType);
+
+    for (const edge of [hidden, readable]) {
+      const delivered = await receiver.waitFor(
+        (r) => r.path === "/hook/source-witness" && r.body.includes(edge),
+      );
+      expect(delivered.headers["x-marfa-event-type"]).toBe("edge.created");
+    }
+    await receiver.waitFor(
+      (r) => r.path === "/hook/source-narrow" && r.body.includes(readable),
+    );
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/source-narrow" && r.body.includes(hidden),
+      ),
+      "an owner that may not read the source's type was sent the edge",
+    ).toHaveLength(0);
+    const rows = await owner.client.listWebhookDeliveries(narrow.data.id);
+    expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+    expect(rows.data.data).toHaveLength(1);
+
+    // The type the source had when the event was published decides, so a
+    // retype after the first attempt changes nothing about a retry. The
+    // receiver refuses the first attempt, and the retype comes between it and
+    // the retry.
+    let refuse = true;
+    const hook = await startScriptedReceiver(() => ({
+      status: refuse ? 500 : 200,
+    }));
+    try {
+      const sub = await subscribe(hook, "retyped", owner.client, [
+        "edge.created",
+      ]);
+      const source = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { body: "hook-retyped" },
+        }),
+      );
+      expect(source.ok, JSON.stringify(source.error)).toBe(true);
+      trackItem(ctx, source.data.item.id);
+      const retypedEdge = await link(source.data.item.id, target, edgeType);
+      await waitFor("the first attempt", async () =>
+        hook.attempts("retyped").length >= 1 ? true : undefined,
+      );
+      const [first] = hook.attempts("retyped") as [Attempt];
+      // The witness: the event was sent while its source was a note.
+      expect(JSON.parse(first.body)).toMatchObject({
+        event_type: "edge.created",
+        source_type: "core.note",
+        edge: { id: retypedEdge },
+      });
+
+      const retyped = await client.updateItem(source.data.item.id, {
+        version: source.data.item.version,
+        type: "core.task",
+        retype: true,
+        properties: { title: "hook-retyped" },
+      });
+      expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
+      expect(retyped.data.item.type).toBe("core.task");
+
+      refuse = false;
+      await runRetriesUntil(
+        () => hook.attempts("retyped").length >= 2,
+        "the retry",
+      );
+      const [, retry] = hook.attempts("retyped") as [Attempt, Attempt];
+      expect(JSON.parse(retry.body)).toMatchObject({
+        source_type: "core.note",
+        edge: { id: retypedEdge },
+      });
+      const settled = await deliveryOf(
+        sub.id,
+        (r) => r.status === "success",
+        owner.client,
+      );
+      expect(settled.attempt).toBe(2);
+    } finally {
+      await hook.close();
+    }
   });
 });

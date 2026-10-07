@@ -11,7 +11,11 @@ import {
 } from "../../utils/setup.js";
 import { createNote, createTask } from "../../generators/items.js";
 import type { SseEvent } from "../../utils/sse.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  MUTATION_EVENT_NAMES,
+  withStream,
+} from "../../utils/stream.js";
 import {
   approvedApp,
   approvedAppToken,
@@ -218,6 +222,8 @@ describe("a stream answers to its credential as it stands", () => {
 const PING_INTERVAL_MS = 30_000;
 const PING_EARLY_MS = 500;
 const PING_LATE_MS = 5_000;
+/** The contract's 30 seconds, and the slack a reader's own scheduling adds. */
+const CREDENTIAL_ENDED_BOUND_MS = 35_000;
 
 describe("a quiet stream", () => {
   it(
@@ -255,6 +261,57 @@ describe("a quiet stream", () => {
       });
     },
     PING_INTERVAL_MS + PING_LATE_MS + 15_000,
+  );
+
+  it(
+    "ends a quiet stream with credential_ended within 30 seconds of its key's revocation",
+    async ({ signal }) => {
+      // The server of its own: no other file writes to it, so a frame that
+      // arrives between the revocation and the end is the stream's doing.
+      const server = own!;
+      const admin = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: server.workingKey,
+      });
+      const minted = await admin.createKey({
+        label: "stream-quiet-revoked",
+        source: "stream-quiet-revoked",
+        permissions: [],
+        type_permissions: { "core.note": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+
+      await withStream(server.apiUrl, minted.data.key, {}, async (stream) => {
+        // The witness: the stream was live before it went quiet.
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_cursor"),
+          "the frame announcing the stream's position",
+          signal,
+        );
+
+        expect((await admin.revokeKey(minted.data.id)).ok).toBe(true);
+        const revokedAt = Date.now();
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_incomplete"),
+          "the stream to say it ended",
+          signal,
+        );
+        const elapsed = Date.now() - revokedAt;
+
+        const ended = events.find((e) => e.event === "stream_incomplete");
+        expect((ended?.data as { reason?: string }).reason).toBe(
+          "credential_ended",
+        );
+        expect(
+          events.filter((e) => MUTATION_EVENT_NAMES.has(e.event)),
+          "an event frame arrived on a stream with nothing published",
+        ).toEqual([]);
+        expect(elapsed).toBeLessThanOrEqual(CREDENTIAL_ENDED_BOUND_MS);
+      });
+    },
+    CREDENTIAL_ENDED_BOUND_MS + 25_000,
   );
 });
 

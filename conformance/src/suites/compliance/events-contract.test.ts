@@ -842,10 +842,13 @@ interface Refusal {
 
 async function askEvents(
   credential: string | undefined,
-  options: { query?: string; cursor?: string } = {},
+  options: { query?: string; cursor?: string; readView?: string } = {},
 ): Promise<Refusal> {
   const headers: Record<string, string> = {};
   if (credential !== undefined) headers.Authorization = `Bearer ${credential}`;
+  if (options.readView !== undefined) {
+    headers["X-Marfa-Read-View"] = options.readView;
+  }
   if (options.cursor !== undefined) headers["Last-Event-ID"] = options.cursor;
   const response = await fetch(
     `${apiUrl}/events${options.query === undefined ? "" : `?${options.query}`}`,
@@ -871,8 +874,14 @@ async function askEvents(
 }
 
 /** Each fault a plain stream request can carry, one request apiece. */
-const FAULTS: { name: string; query?: string; cursor?: string }[] = [
+const FAULTS: {
+  name: string;
+  query?: string;
+  cursor?: string;
+  readView?: string;
+}[] = [
   { name: "an undeclared query key", query: "typ=core.note" },
+  { name: "a read view without copy=1", readView: "f".repeat(64) },
   { name: "a wildcard type", query: "type=*" },
   { name: "an unregistered type", query: "type=core.nothing_registers_this" },
   { name: "an unknown edges value", query: "edges=bogus" },
@@ -944,6 +953,23 @@ describe("the answers of the plain stream and the order its checks run in", () =
     expect(without.status).toBe(400);
     expect(without.details.unknown_parameters).toBeUndefined();
     expect(without.details.errors?.[0]?.path).toBe("type");
+  });
+
+  it("refuses X-Marfa-Read-View without copy=1 before an undeclared query key", async () => {
+    const readView = "f".repeat(64);
+    const refused = await askEvents(apiKey, {
+      query: "typ=core.note",
+      readView,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.code).toBe("validation_error");
+    expect(refused.details.unknown_parameters).toBeUndefined();
+
+    // The witness: without the header the same request is refused for the
+    // key, so it was the header that came first.
+    const without = await askEvents(apiKey, { query: "typ=core.note" });
+    expect(without.status).toBe(400);
+    expect(without.details.unknown_parameters).toEqual(["typ"]);
   });
 
   it("reads the type, then the edges, then the cursor, and names the first fault it meets", async () => {
