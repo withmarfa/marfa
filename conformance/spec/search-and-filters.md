@@ -1526,7 +1526,7 @@ Where `enforcement.strict_mode` does not name the type of an archived row, the s
 
 ### `search-and-filters/restore-blob-size`
 
-The server MUST restore an archive larger than the request cap that every JSON body sits under, when the volume has room for it beside the instance's reserve (`blobs/restore-reserve`).
+Where the volume has room for an archive beside the instance's reserve (`blobs/restore-reserve`), the server MUST restore it even when it is larger than the request cap that every JSON body sits under.
 
 **Reason:** the body streams to disk as an upload's does, so an archive that carries a blob larger than the cap restores.
 
