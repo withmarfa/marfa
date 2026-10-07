@@ -485,7 +485,7 @@ export async function cleanup(ctx: TestContext): Promise<void> {
   }
   outcomes.push(mergeOutcomes("Type", typeLevels));
   // Before the keys go: a registration stands after its key is revoked
-  // (`connectors.md` 5), and only the operator can remove another key's.
+  // (`connectors/revoked-registration-stays`), and only the operator can remove another key's.
   outcomes.push(await removeTrackedRegistrations(ctx));
   outcomes.push(
     await deleteAll(ctx.trackedKeys, (id) => provisioner.revokeKey(id), "Key"),

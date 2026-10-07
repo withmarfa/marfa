@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type {
@@ -124,6 +125,11 @@ function codeOf(answer: RawAnswer): string | undefined {
   return (JSON.parse(answer.body) as { error?: { code?: string } }).error?.code;
 }
 
+/** A `Retry-After` in whole seconds, and not zero. */
+function expectRetryAfter(answer: RawAnswer, what: string): void {
+  expect(answer.headers["retry-after"], what).toMatch(/^[1-9]\d*$/);
+}
+
 function idOf(answer: RawAnswer): string {
   expect(answer.status).toBe(202);
   return (JSON.parse(answer.body) as { id: string }).id;
@@ -202,15 +208,31 @@ describe("endpoints", () => {
 
     for (const input of [
       { duplicate_header: "not a header" },
+      { duplicate_header: "" },
+      { duplicate_header: "h".repeat(101) },
       { label: "" },
       { label: "x".repeat(201) },
     ]) {
       const invalid = await owner.client.createInboundEndpoint(owner.id, input);
-      expect(invalid.status, JSON.stringify(input)).toBe(400);
+      expect(invalid.status, JSON.stringify(input).slice(0, 40)).toBe(400);
       expect(invalid.error?.error.code).toBe("validation_error");
     }
     const listed = await owner.client.listInboundEndpoints(owner.id);
     expect(listed.data.data.map((row) => row.id)).toEqual([made.id]);
+
+    // The ends of the header name's length, and of the label's, are taken.
+    for (const input of [
+      { duplicate_header: "H" },
+      { duplicate_header: "H".repeat(100) },
+      { label: "x", duplicate_header: "X-GitHub-Delivery" },
+      { label: "x".repeat(200) },
+    ]) {
+      const taken = await owner.client.createInboundEndpoint(owner.id, input);
+      expect(taken.status, JSON.stringify(input).slice(0, 40)).toBe(201);
+      expect(taken.data.duplicate_header).toBe(
+        input.duplicate_header?.toLowerCase() ?? null,
+      );
+    }
   });
 
   it("holds a registration to ten live endpoints, and a retired one frees a place", async () => {
@@ -248,9 +270,14 @@ describe("endpoints", () => {
       retired.data,
     );
     expect(retired.data.retired_at).not.toBeNull();
+    // The witness that the address was given in full when it was made.
+    expect(made.path).toMatch(/^\/inbound\/[A-Za-z0-9_-]{43}$/);
+    const redacted = `/inbound/****${made.path.slice(-4)}`;
+    expect(retired.data.path).toBe(redacted);
     const again = await owner.client.retireInboundEndpoint(owner.id, made.id);
     expect(again.status).toBe(200);
     expect(again.data.retired_at).toBe(retired.data.retired_at);
+    expect(again.data.path).toBe(redacted);
     const listed = await owner.client.listInboundEndpoints(owner.id);
     expect(listed.data.data.map((row) => row.retired_at)).toEqual([
       retired.data.retired_at,
@@ -290,6 +317,25 @@ describe("endpoints", () => {
     const listed = await owner.client.listInboundDeliveries(owner.id);
     expect(listed.status).toBe(404);
     expect(listed.error?.error.code).toBe("connector_not_found");
+  });
+
+  it("lists none of a removed registration's deliveries under the next one its key makes", async () => {
+    const owner = await connector("deliveries-removed");
+    const made = await endpoint(owner);
+    const before = idOf(await send(apiUrl, made.path, "kept until removal"));
+    // The witness: the delivery is listed while the registration stands.
+    const listed = await owner.client.listInboundDeliveries(owner.id);
+    expect(listed.data.data.map((d) => d.id)).toEqual([before]);
+    expect((await owner.client.deleteConnector(owner.id)).status).toBe(200);
+
+    const again = await owner.client.registerConnector({
+      name: `${ctx.runId} deliveries-removed again`,
+    });
+    expect(again.status).toBe(201);
+    expect(again.data.id).not.toBe(owner.id);
+    const fresh = await owner.client.listInboundDeliveries(again.data.id);
+    expect(fresh.status).toBe(200);
+    expect(fresh.data.data).toEqual([]);
   });
 
   it("audits a creation and a retirement once each, and neither a receipt nor a handled mark", async () => {
@@ -610,6 +656,37 @@ describe("the receiving door on an instance that names its limits", () => {
     idOf(await send(server!.apiUrl, third.path, "x"));
   });
 
+  it("counts the unhandled deliveries a retired endpoint stored toward the backlog, until they are handled", async () => {
+    const owner = await freshConnector("backlog-retired");
+    const retiring = await endpoint(owner);
+    const live = await endpoint(owner);
+    const stored: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      stored.push(idOf(await send(server!.apiUrl, retiring.path, "x")));
+    }
+    expect(
+      (await owner.client.retireInboundEndpoint(owner.id, retiring.id)).status,
+    ).toBe(200);
+
+    // Two on the live endpoint make five, the backlog's whole room, with
+    // three of them held by an address that no longer answers.
+    for (let i = 0; i < 2; i++) {
+      idOf(await send(server!.apiUrl, live.path, "x"));
+    }
+    const full = await send(server!.apiUrl, live.path, "x");
+    expect(full.status).toBe(503);
+    expect(codeOf(full)).toBe("inbound_unavailable");
+
+    // The witness: handled, the retired endpoint's deliveries stop counting,
+    // so it was they that filled the room.
+    const marked = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: stored,
+      outcome: "processed",
+    });
+    expect(marked.status).toBe(200);
+    idOf(await send(server!.apiUrl, (await endpoint(owner)).path, "x"));
+  });
+
   it("refuses while the backlog's bytes are full", async () => {
     const owner = await freshConnector("backlog-bytes");
     const made = await endpoint(owner);
@@ -617,6 +694,19 @@ describe("the receiving door on an instance that names its limits", () => {
     const full = await send(server!.apiUrl, made.path, "y");
     expect(full.status).toBe(503);
     expect(codeOf(full)).toBe("inbound_unavailable");
+    expectRetryAfter(full, "backlog bytes");
+    const filling = await pending(owner);
+    expect(filling.map((d) => d.size)).toEqual([6]);
+
+    // The witness that it is the bytes and not the count that refused: one
+    // delivery is far under the count's room, and marking it handled frees
+    // room for a body of the whole byte cap again.
+    const marked = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: filling.map((d) => d.id),
+      outcome: "processed",
+    });
+    expect(marked.status).toBe(200);
+    idOf(await send(server!.apiUrl, made.path, "z".repeat(6)));
     expect((await pending(owner)).map((d) => d.size)).toEqual([6]);
   });
 
@@ -626,6 +716,7 @@ describe("the receiving door on an instance that names its limits", () => {
     const over = await send(server!.apiUrl, made.path, "x".repeat(7));
     expect(over.status).toBe(503);
     expect(codeOf(over)).toBe("inbound_unavailable");
+    expectRetryAfter(over, "prospective backlog bytes");
     idOf(await send(server!.apiUrl, made.path, "x".repeat(6)));
     idOf(await send(server!.apiUrl, made.path, ""));
     expect((await pending(owner)).map((d) => d.size)).toEqual([6, 0]);
@@ -683,6 +774,7 @@ describe("the receiving door on an instance that names its limits", () => {
         const held = await send(flight.apiUrl, made.path, "x".repeat(9));
         expect(held.status).toBe(503);
         expect(codeOf(held)).toBe("inbound_unavailable");
+        expectRetryAfter(held, "bytes in flight");
         expect(await pending(owner)).toEqual([]);
         idOf(await send(flight.apiUrl, made.path, "x".repeat(8)));
         expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
@@ -884,6 +976,272 @@ describe("reading and handling", () => {
     const after = (await pending(owner)).find((d) => d.id === repeat);
     expect(after?.duplicate_of).toEqual({ id: original, outcome: "processed" });
   });
+
+  it("refuses a state it does not know, rather than answering the unhandled deliveries", async () => {
+    const owner = await connector("read-state-invalid");
+    const made = await endpoint(owner);
+    const handled = idOf(await send(apiUrl, made.path, "handled"));
+    const waiting = idOf(await send(apiUrl, made.path, "waiting"));
+    expect(
+      (
+        await owner.client.markInboundDeliveriesHandled(owner.id, {
+          ids: [handled],
+          outcome: "processed",
+        })
+      ).status,
+    ).toBe(200);
+
+    for (const [state, ids] of [
+      ["pending", [waiting]],
+      ["handled", [handled]],
+      ["any", [handled, waiting]],
+    ] as const) {
+      const listed = await owner.client.listInboundDeliveries(owner.id, {
+        state,
+      });
+      expect(listed.status, state).toBe(200);
+      expect(listed.data.data.map((d) => d.id).sort(), state).toEqual(
+        [...ids].sort(),
+      );
+    }
+    for (const state of ["done", "Handled", "all", ""]) {
+      const refused = await owner.client.rawRequest<unknown>(
+        `/connectors/${owner.id}/deliveries?state=${state}`,
+      );
+      expect(refused.status, state).toBe(400);
+      expect(refused.error?.error.code, state).toBe("validation_error");
+    }
+  });
+
+  it("gives no duplicate_of to a delivery that arrives without its endpoint's duplicate header", async () => {
+    const owner = await connector("read-duplicate-absent");
+    const keyed = await endpoint(owner, {
+      duplicate_header: "X-GitHub-Delivery",
+    });
+    const bare = [
+      idOf(await send(apiUrl, keyed.path, "{}")),
+      idOf(await send(apiUrl, keyed.path, "{}")),
+    ];
+    // The witnesses: the endpoint does mark a repeat of a value it was sent.
+    const original = idOf(
+      await send(apiUrl, keyed.path, "{}", ["X-GitHub-Delivery", "guid-1"]),
+    );
+    const repeat = idOf(
+      await send(apiUrl, keyed.path, "{}", ["X-GitHub-Delivery", "guid-1"]),
+    );
+    const another = idOf(await send(apiUrl, keyed.path, "{}"));
+
+    const byId = new Map((await pending(owner)).map((d) => [d.id, d]));
+    expect(byId.size).toBe(5);
+    expect(byId.get(repeat)?.duplicate_of).toEqual({
+      id: original,
+      outcome: null,
+    });
+    for (const id of [...bare, original, another]) {
+      expect(byId.get(id)?.duplicate_of, id).toBeNull();
+    }
+  });
+
+  it("gives no duplicate_of to a delivery whose value only another endpoint of the registration carried", async () => {
+    const owner = await connector("read-duplicate-other");
+    const header = { duplicate_header: "X-GitHub-Delivery" };
+    const first = await endpoint(owner, header);
+    const second = await endpoint(owner, header);
+    const deliver = async (path: string, value: string) =>
+      idOf(await send(apiUrl, path, "{}", ["X-GitHub-Delivery", value]));
+    const onFirst = await deliver(first.path, "guid-1");
+    const onSecond = await deliver(second.path, "guid-1");
+    // The witnesses: each endpoint marks a repeat of what it carried itself.
+    const repeatOnFirst = await deliver(first.path, "guid-1");
+    const repeatOnSecond = await deliver(second.path, "guid-1");
+
+    const byId = new Map((await pending(owner)).map((d) => [d.id, d]));
+    expect(byId.get(onFirst)?.duplicate_of).toBeNull();
+    expect(byId.get(onSecond)?.duplicate_of).toBeNull();
+    expect(byId.get(repeatOnFirst)?.duplicate_of).toEqual({
+      id: onFirst,
+      outcome: null,
+    });
+    expect(byId.get(repeatOnSecond)?.duplicate_of).toEqual({
+      id: onSecond,
+      outcome: null,
+    });
+  });
+
+  it("answers each id of a handled mark once, in the order first named", async () => {
+    const owner = await connector("read-mark-order");
+    const made = await endpoint(owner);
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(idOf(await send(apiUrl, made.path, String(i))));
+    }
+    const [d0, d1, d2, d3, d4] = ids as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+
+    const earlier = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d1],
+      outcome: "rejected",
+    });
+    expect(earlier.status).toBe(200);
+    const earlierAt = earlier.data.data[0]?.handled_at;
+
+    // A repeated id is answered once, where it was first named, and a
+    // delivery marked before keeps the mark it had.
+    const marked = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d3, d1, d3, d0, d1],
+      outcome: "processed",
+    });
+    expect(marked.status).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/connectors/{id}/deliveries/handled",
+      200,
+      marked.data,
+    );
+    expect(marked.data.data.map((row) => row.id)).toEqual([d3, d1, d0]);
+    expect(marked.data.data.map((row) => row.outcome)).toEqual([
+      "processed",
+      "rejected",
+      "processed",
+    ]);
+    expect(marked.data.data[1]?.handled_at).toBe(earlierAt);
+    for (const row of marked.data.data) expect(row.handled_at).not.toBeNull();
+
+    // The order named is the order answered, not the order of arrival.
+    const last = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: [d4, d2],
+      outcome: "duplicate",
+    });
+    expect(last.data.data.map((row) => [row.id, row.outcome])).toEqual([
+      [d4, "duplicate"],
+      [d2, "duplicate"],
+    ]);
+
+    const handled = await owner.client.listInboundDeliveries(owner.id, {
+      state: "handled",
+    });
+    expect(handled.data.data.map((row) => row.id)).toEqual(ids);
+  });
+
+  it("takes 200 ids in a handled mark, and refuses 201, none and a body that names too little", async () => {
+    const owner = await connector("read-mark-bounds");
+    const made = await endpoint(owner);
+    const id = idOf(await send(apiUrl, made.path, "bounded"));
+
+    const refusals: [string, Record<string, unknown>, string, string?][] = [
+      [
+        "201 ids",
+        { ids: Array.from({ length: 201 }, () => id), outcome: "processed" },
+        "validation_error",
+      ],
+      ["no ids", { ids: [], outcome: "processed" }, "validation_error"],
+      [
+        "an unknown outcome",
+        { ids: [id], outcome: "done" },
+        "validation_error",
+      ],
+      ["no outcome", { ids: [id] }, "missing_required_field", "outcome"],
+      [
+        "no ids named",
+        { outcome: "processed" },
+        "missing_required_field",
+        "ids",
+      ],
+    ];
+    for (const [what, body, code, field] of refusals) {
+      const refused = await owner.client.rawRequest<unknown>(
+        `/connectors/${owner.id}/deliveries/handled`,
+        { method: "POST", body },
+      );
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe(code);
+      if (field !== undefined) {
+        expect(refused.error?.error.details?.["field"], what).toBe(field);
+      }
+    }
+    expect((await pending(owner)).map((d) => d.id)).toEqual([id]);
+
+    // Two hundred names, of one delivery, are two hundred ids and one answer.
+    const taken = await owner.client.markInboundDeliveriesHandled(owner.id, {
+      ids: Array.from({ length: 200 }, () => id),
+      outcome: "processed",
+    });
+    expect(taken.status).toBe(200);
+    expect(taken.data.data.map((row) => row.id)).toEqual([id]);
+    expect(await pending(owner)).toEqual([]);
+  });
+});
+
+describe("an address whose key has expired", () => {
+  let server: FreshServer | undefined;
+  beforeAll(async () => {
+    server = await bootFreshServer("inbound-key-expired", {
+      RATE_LIMIT_ENABLED: "false",
+    });
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(async () => {
+    await server?.stop();
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("answers 404 at an address whose key has expired, as at a revoked key's", async () => {
+    const minter = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: server!.workingKey,
+    });
+    const registered: { keyId: string; path: string }[] = [];
+    for (const label of ["expiring", "revoked"]) {
+      const minted = await minter.createKey({
+        label,
+        source: `inbound-key-${label}`,
+        default_tier: "library",
+      });
+      expect(minted.status).toBe(201);
+      const own = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: minted.data.key,
+      });
+      const connection = await own.registerConnector({ name: label });
+      expect(connection.status).toBe(201);
+      const made = await own.createInboundEndpoint(connection.data.id);
+      expect(made.status).toBe(201);
+      // The witness that each address answers while its key is good.
+      idOf(await send(server!.apiUrl, made.data.path, "live"));
+      registered.push({ keyId: minted.data.id, path: made.data.path });
+    }
+    const [expiring, revoked] = registered;
+    if (expiring === undefined || revoked === undefined) {
+      throw new Error("no key was minted");
+    }
+    expect((await minter.revokeKey(revoked.keyId)).status).toBe(200);
+
+    await server!.restart({
+      whileStopped: () => {
+        const db = new DatabaseSync(server!.sqlitePath);
+        try {
+          const past = new Date(Date.now() - 60_000).toISOString();
+          const changed = db
+            .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
+            .run(past, expiring.keyId);
+          expect(changed.changes).toBe(1);
+        } finally {
+          db.close();
+        }
+      },
+    });
+
+    const revokedAnswer = await send(server!.apiUrl, revoked.path, "after");
+    expect(revokedAnswer.status).toBe(404);
+    expect(codeOf(revokedAnswer)).toBe("not_found");
+    const expiredAnswer = await send(server!.apiUrl, expiring.path, "after");
+    expect(expiredAnswer.status).toBe(404);
+    expect(codeOf(expiredAnswer)).toBe("not_found");
+    expect(expiredAnswer.body).toBe(revokedAnswer.body);
+  });
 });
 
 describe("retained inbound capacity", () => {
@@ -971,6 +1329,7 @@ describe("retained inbound capacity", () => {
     const refused = await send(server!.apiUrl, made.path, "");
     expect(refused.status).toBe(503);
     expect(codeOf(refused)).toBe("inbound_unavailable");
+    expectRetryAfter(refused, "retained bytes");
     expect((await pending(owner)).map((row) => row.size)).toEqual([0]);
   });
   it("round trips retention overrides and refuses invalid values", async () => {

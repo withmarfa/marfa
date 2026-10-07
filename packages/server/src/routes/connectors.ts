@@ -31,6 +31,7 @@ import {
 } from "../page-limits.js";
 import { nullableRef, pageOf, wholeListOf } from "./_schemas.js";
 import { connectorsForReader } from "./_connector-reach.js";
+import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -378,7 +379,7 @@ const registerConnectorRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, or `description` is over 2,000 characters.",
+        "- `missing_required_field`: `name` is missing.\n- `validation_error`: `name` isn't 1 to 200 characters, `description` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.",
     },
     ...anyKeyResponses,
     ...forbiddenResponse(
@@ -509,7 +510,7 @@ const reportRunRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.\n- `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, or `summary` or `error` is over 2,000 characters.",
+        "- `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.\n- `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, `summary` or `error` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.",
     },
     ...ownKeyResponses,
   },
@@ -575,7 +576,7 @@ const createEndpointRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `label` isn't 1 to 200 characters, or `duplicate_header` isn't a valid header name.",
+        "- `validation_error`: `label` isn't 1 to 200 characters, `duplicate_header` isn't a valid header name, or the body has a top-level field this endpoint doesn't take.",
     },
     ...ownKeyOrOperatorResponses,
     409: {
@@ -763,7 +764,7 @@ const markHandledRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `ids` or `outcome` is missing.\n- `validation_error`: `ids` is empty or has more than 200 IDs, or `outcome` isn't `processed`, `duplicate` or `rejected`.",
+        "- `missing_required_field`: `ids` or `outcome` is missing.\n- `validation_error`: `ids` is empty or has more than 200 IDs, `outcome` isn't `processed`, `duplicate` or `rejected`, or the body has a top-level field this endpoint doesn't take.",
     },
     ...anyKeyResponses,
     403: ownKeyResponses[403],
@@ -798,6 +799,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(registerConnectorRoute, async (c) => {
     const key = requireAuth(c);
+    refuseUnknownBodyKeys(await c.req.json(), RegisterSchema);
     const body = c.req.valid("json");
     const { connector, created } = await runAuditedTransaction(
       storage,
@@ -880,6 +882,7 @@ export function connectorRoutes(storage: Storage) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
+    refuseUnknownBodyKeys(await c.req.json(), RunInputSchema);
     const body = c.req.valid("json");
     const started_at = normalizeTimeBound(body.started_at, "started_at");
     const finished_at = normalizeTimeBound(body.finished_at, "finished_at");
@@ -912,6 +915,7 @@ export function connectorRoutes(storage: Storage) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKeyOrOperator(connector.key_id, key);
+    refuseUnknownBodyKeys(await c.req.json(), EndpointInputSchema);
     const body = c.req.valid("json");
     const token = mintInboundToken();
     const endpoint = await runAuditedTransaction(
@@ -1031,6 +1035,7 @@ export function connectorRoutes(storage: Storage) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
+    refuseUnknownBodyKeys(await c.req.json(), HandledInputSchema);
     const { ids, outcome } = c.req.valid("json");
     const marked = await storage.inbound.markHandled(
       connector.id,

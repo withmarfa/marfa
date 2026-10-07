@@ -209,6 +209,35 @@ describe("POST /connectors", () => {
   });
 });
 
+describe("POST /connectors/{id}/runs", () => {
+  it("names a missing outcome as missing_required_field, and a wrong one as validation_error", async () => {
+    const mine = await register(ctx.workingKey, "reports runs");
+    const report = async (body: Record<string, unknown>) => {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${mine.connector.id}/runs`,
+        { key: ctx.workingKey, body },
+      );
+      const parsed = await json<{
+        error: { code: string; details?: { field?: string } };
+      }>(res);
+      return { status: res.status, ...parsed.error };
+    };
+    const times = { started_at: at(1000), finished_at: at(0) };
+    expect(await report(times)).toMatchObject({
+      status: 400,
+      code: "missing_required_field",
+      details: { field: "outcome" },
+    });
+    expect(await report({ ...times, outcome: "skipped" })).toMatchObject({
+      status: 400,
+      code: "validation_error",
+    });
+    expect(await remove(ctx.workingKey, mine.connector.id)).toBe(200);
+  });
+});
+
 describe("GET /connectors/{id} and DELETE /connectors/{id}", () => {
   it("answers one to the operator, 404 for an unknown id, and removes for the own key or the operator", async () => {
     const mine = await register(ctx.workingKey, "mine");
@@ -785,5 +814,95 @@ describe("GET /connectors/{id}/runs pages", () => {
     expect(
       [...first.data, ...second.data].map((r) => r.summary).sort(),
     ).toEqual(["run 0", "run 1", "run 2"]);
+  });
+});
+
+describe("a body field the operation does not declare", () => {
+  const unknownFields = async (res: Response): Promise<unknown> => {
+    const body = await json<{
+      error: { code: string; details?: { unknown_body_fields?: unknown } };
+    }>(res);
+    expect(body.error.code).toBe("validation_error");
+    return body.error.details?.unknown_body_fields;
+  };
+
+  it("refuses a registration that carries one, and registers nothing", async () => {
+    const mine = await mintKey("register-stray");
+    const refused = await request(ctx.app, "POST", "/connectors", {
+      key: mine.key,
+      body: { name: "stray", descripton: "misspelled" },
+    });
+    expect(refused.status).toBe(400);
+    expect(await unknownFields(refused)).toEqual(["descripton"]);
+    const listed = await json<{ data: Connector[] }>(
+      await request(ctx.app, "GET", "/connectors", { key: mine.key }),
+    );
+    expect(listed.data).toEqual([]);
+
+    const taken = await register(mine.key, "stray");
+    expect(taken.status).toBe(201);
+    const marked = await request(ctx.app, "POST", "/connectors", {
+      key: mine.key,
+      body: { name: "stray", _client: "kept by the caller" },
+    });
+    expect(marked.status).toBe(200);
+  });
+
+  it("refuses a run that carries one, and records nothing", async () => {
+    const mine = await mintKey("run-stray");
+    const { connector } = await register(mine.key, "run stray");
+    const run = {
+      outcome: "succeeded",
+      started_at: at(2_000),
+      finished_at: at(1_000),
+    };
+    const refused = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${connector.id}/runs`,
+      { key: mine.key, body: { ...run, sumary: "misspelled" } },
+    );
+    expect(refused.status).toBe(400);
+    expect(await unknownFields(refused)).toEqual(["sumary"]);
+    const none = await json<{ data: ConnectorRun[] }>(
+      await request(ctx.app, "GET", `/connectors/${connector.id}/runs`, {
+        key: mine.key,
+      }),
+    );
+    expect(none.data).toEqual([]);
+
+    const taken = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${connector.id}/runs`,
+      { key: mine.key, body: run },
+    );
+    expect(taken.status).toBe(201);
+  });
+
+  it("answers a key that is not the connector's, and an id nothing carries, before it names the field", async () => {
+    const mine = await mintKey("order-stray");
+    const { connector } = await register(mine.key, "order stray");
+    const missing = "00000000-0000-7000-8000-000000000000";
+    const run = {
+      outcome: "succeeded",
+      started_at: at(2_000),
+      finished_at: at(1_000),
+      sumary: "misspelled",
+    };
+    const asOther = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${connector.id}/runs`,
+      { key: otherKey, body: run },
+    );
+    expect(asOther.status).toBe(403);
+    const unknown = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${missing}/runs`,
+      { key: mine.key, body: run },
+    );
+    expect(unknown.status).toBe(404);
   });
 });

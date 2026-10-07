@@ -221,6 +221,21 @@ function unionIssuesExpanded(issues: ValidationIssue[]): ValidationIssue[] {
   });
 }
 
+/** Whether `path` names a key its parent object in `input` does not hold. */
+function isAbsent(input: unknown, path: readonly PropertyKey[]): boolean {
+  const last = path.at(-1);
+  if (last === undefined) return false;
+  let parent: unknown = input;
+  for (const key of path.slice(0, -1)) {
+    if (typeof parent !== "object" || parent === null) return false;
+    parent = (parent as Record<PropertyKey, unknown>)[key];
+  }
+  if (typeof parent !== "object" || parent === null || Array.isArray(parent)) {
+    return false;
+  }
+  return (parent as Record<PropertyKey, unknown>)[last] === undefined;
+}
+
 /**
  * Create an OpenAPIHono router with the defaultHook configured to throw
  * MarfaError on validation failure, preserving the existing error response format.
@@ -235,17 +250,13 @@ export function createOpenAPIRouter<
     defaultHook: (result) => {
       if (!result.success) {
         const issues = unionIssuesExpanded(result.error.issues);
-        // A field the schema required and the body did not carry reads, in
-        // Zod v4, as `{ code: "invalid_type", message: "...received
-        // undefined" }`. That `invalid_type` is Zod's own issue code and has
-        // nothing to do with a type identifier — the wire vocabulary has no
-        // such code. Matched here so the caller is told which field is
-        // missing rather than that its body failed validation somewhere.
-        const missingField = issues.find(
-          (i) =>
-            i.code === "invalid_type" &&
-            i.message.includes("received undefined"),
-        );
+        // Zod names an absent field by what it expected there (`invalid_type`
+        // for a string, `invalid_value` for an enum or a literal), so the
+        // input itself is asked whether the field is there. The validator
+        // hands the hook that input as `data`, which the hook's declared type
+        // leaves out of a failed result.
+        const input = (result as { data?: unknown }).data;
+        const missingField = issues.find((i) => isAbsent(input, i.path));
         if (missingField) {
           const field = missingField.path.join(".");
           throw new MarfaError(
