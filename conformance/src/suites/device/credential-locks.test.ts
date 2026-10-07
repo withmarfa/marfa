@@ -105,3 +105,95 @@ it("refuses an unsafe credential lock across environment overrides before contac
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+/**
+ * Runs the binary as the user it is, against `origin`, with the lock file for
+ * that origin made readable by others, which is a lock no command may use.
+ */
+async function withUnsafeLock(
+  origin: string,
+  args: string[],
+  input?: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const directory = join(userInfo().homedir, ".marfa-credential-locks");
+  const lock = join(
+    directory,
+    `${createHash("sha256").update(origin).digest("hex")}.lock`,
+  );
+  const environment = mkdtempSync(join(tmpdir(), "marfa-credential-unsafe-"));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
+  );
+  Object.assign(env, keychainEnv());
+  mkdirSync(directory, { mode: 0o700, recursive: true });
+  writeFileSync(lock, "", { flag: "wx", mode: 0o644 });
+  chmodSync(lock, 0o644);
+  try {
+    const child = execFile(requireBinary(), ["--json", "--url", origin, ...args], {
+      env: { ...env, HOME: environment },
+      timeout: 30_000,
+    });
+    child.stdin?.end(input ?? "");
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const code = await new Promise<number>((resolve) => {
+      child.on("close", (exit) => {
+        resolve(exit ?? -1);
+      });
+    });
+    return { code, stdout, stderr };
+  } finally {
+    // Retain the inode because another process may already be waiting on it.
+    chmodSync(lock, 0o600);
+    rmSync(environment, { recursive: true, force: true });
+  }
+}
+
+it("refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing", async () => {
+  const server = await ScriptedServer.start();
+  const prefix = `/credential-${randomUUID()}`;
+  const origin = `${server.url}${prefix}`;
+  server.copyAnswer("GET", `${prefix}/items/stats`, {
+    kind: "json",
+    status: 200,
+    body: { total: 0, by_type: {}, by_state: {}, by_tier: {} },
+  });
+  try {
+    const refused = await withUnsafeLock(origin, [
+      "--key",
+      "fixture-key",
+      "keys",
+      "keep",
+    ]);
+    expect(refused.code, refused.stdout + refused.stderr).toBe(1);
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      error: { code: "invalid" },
+    });
+    expect(refused.stderr).toContain("credential lock");
+    expect(
+      server.requests,
+      "the key was checked against the server before the lock was taken",
+    ).toHaveLength(0);
+  } finally {
+    await server.stop();
+  }
+});
+
+it("refuses a sign-in under an unsafe credential lock before asking for a code", async () => {
+  const server = await ScriptedServer.start();
+  const prefix = `/credential-${randomUUID()}`;
+  const origin = `${server.url}${prefix}`;
+  try {
+    const refused = await withUnsafeLock(origin, ["login", "--no-browser"]);
+    expect(refused.code, refused.stdout + refused.stderr).toBe(1);
+    expect(refused.stderr).toContain("credential lock");
+    expect(
+      server.requests,
+      "the sign-in reached the server before it found it could not keep what it is given",
+    ).toHaveLength(0);
+  } finally {
+    await server.stop();
+  }
+});

@@ -13,10 +13,12 @@ import {
   itemsPage,
   refusal,
   copyReplay,
+  copyIncompleteReplay,
   edgeTypeCatalog,
   typeCatalog,
   wireEdge,
   wireItem,
+  wireType,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
 
@@ -55,6 +57,7 @@ describe("what a hydration declares", () => {
         refused.ok,
         `hydrating ${JSON.stringify(types)} was accepted, so a device can ask for everything or for nothing and get a copy whose contents nobody declared`,
       ).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
     }
     expect(
       server.requests.map((request) => request.pathname),
@@ -97,6 +100,15 @@ describe("what a hydration declares", () => {
       "the first hydration read no page, so the count below says nothing about a refused one",
     ).toBeGreaterThan(0);
     const before = listed();
+    expect(
+      (
+        await device.update("n1", {
+          properties: { notes: "waiting" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const queued = await device.queue();
 
     const refused = await device.hydrate(
       ["core.note", "core.bookmark"],
@@ -126,6 +138,10 @@ describe("what a hydration declares", () => {
     expect(status.ok ? status.value.slice_types : status).toEqual([
       "core.note",
     ]);
+    expect(
+      await device.queue(),
+      "the refused hydration changed the queue",
+    ).toEqual(queued);
 
     // A type the key reads hydrates under the same key, so the refusal
     // above is the unreadable type's and not the key's.
@@ -234,6 +250,9 @@ describe("what a hydration declares", () => {
           hydrated.refusal.raw,
           "the refusal did not name the type, so a caller cannot tell which to correct",
         ).toContain(declared);
+        expect(hydrated.refusal.code).toBe(
+          declared === "acme.bookmark" ? "unknown_type" : "invalid",
+        );
       }
     }
 
@@ -255,7 +274,10 @@ describe("what a hydration declares", () => {
       keptEdges.ok ? keptEdges.value.map((item) => item.id) : keptEdges,
       "the hydration naming an edge type the server does not hold cleared the copy it had",
     ).toEqual(["n1"]);
-    if (!unheldEdge.ok) expect(unheldEdge.refusal.raw).toContain("acme.link");
+    if (!unheldEdge.ok) {
+      expect(unheldEdge.refusal.raw).toContain("acme.link");
+      expect(unheldEdge.refusal.code).toBe("unknown_type");
+    }
 
     // The control, on the same server: a well-formed name it holds
     // hydrates, so the refusals above are about the names rather than the
@@ -564,5 +586,177 @@ describe("what a hydration leaves behind", () => {
       status.ok ? status.value.event_cursor : null,
       "the cursor the hydration reported is not the cursor the store kept, so a catch-up resumes from somewhere the caller was never told about",
     ).toBe("42");
+  });
+});
+
+describe("what a hydration asks for", () => {
+  it("asks the item listing for each declared type at the slice's tier, every state", async () => {
+    harness = await startHarness("listing-asked");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "note", tier: "feed" } }],
+        "core.file": [
+          {
+            item: {
+              id: "trashed-image",
+              type: "core.file.image",
+              tier: "feed",
+              state: "trashed",
+              properties: { title: "image" },
+            },
+          },
+        ],
+      },
+    });
+    const hydrated = await device.hydrate(["core.note", "core.file"], "feed");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(
+      server.requests
+        .filter((request) => request.pathname === "/items")
+        .map((request) => [
+          request.query.get("type"),
+          request.query.get("tier"),
+          request.query.get("state"),
+          request.query.get("include"),
+        ]),
+    ).toEqual([
+      ["core.note", "feed", "any", "edges,metadata"],
+      ["core.file", "feed", "any", "edges,metadata"],
+    ]);
+    const held = await device.list({ allStates: true });
+    expect(held.ok ? held.value.map((row) => row.id).sort() : held).toEqual([
+      "note",
+      "trashed-image",
+    ]);
+  });
+
+  it("refuses a wildcard whose root breaks the grammar before reading anything, and takes one that names nothing", async () => {
+    harness = await startHarness("wildcards");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    for (const wildcard of ["Bad.*", ".*", "core..*"]) {
+      const refused = await device.hydrate([wildcard], "library");
+      expect(refused.ok, `${wildcard} was taken`).toBe(false);
+      if (!refused.ok) {
+        expect(refused.refusal.code).toBe("invalid");
+        expect(refused.refusal.raw).toContain(wildcard);
+      }
+    }
+    expect(server.requests, "a refused wildcard was sent").toEqual([]);
+    const nothing = await device.hydrate(["acme.*"], "library");
+    expect(
+      nothing.ok,
+      `a wildcard naming no type the catalog holds was refused: ${JSON.stringify(nothing)}`,
+    ).toBe(true);
+    const status = await device.status();
+    expect(status.ok && [status.value.hydration, status.value.slice_types]).toEqual(
+      ["complete", ["acme.*"]],
+    );
+  });
+
+  it("hydrates a type whose descendant alone the key reads, by name or by declared parent", async () => {
+    harness = await startHarness("descendant-readable");
+    const { server, device } = harness;
+    const reads = (grant: Record<string, "read" | "none">) =>
+      answers.currentKey("fixture-key", {}, { "*": "none", ...grant });
+    scriptHydration(server, {
+      head: "10",
+      catalog: typeCatalog([wireType("acme.photo", { parent: "core.file" })]),
+      key: [
+        reads({ "core.note": "read" }),
+        reads({ "core.file.image": "read" }),
+        reads({ "acme.photo": "read" }),
+      ],
+    });
+    // The witness: a key that reads nothing under the type is refused it.
+    const refused = await device.hydrate(["core.file"], "library");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("forbidden");
+    for (const how of ["by name", "by declared parent"]) {
+      const hydrated = await device.hydrate(["core.file"], "library");
+      expect(
+        hydrated.ok,
+        `a type whose descendant the key reads ${how} was refused: ${JSON.stringify(hydrated)}`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("how a hydration completes", () => {
+  it("applies a write made during the snapshot before the hydration returns", async () => {
+    harness = await startHarness("own-replay");
+    const { server, device } = harness;
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeadRead("10"),
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "during" })),
+      ]),
+    );
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    scriptKey(server);
+    server.copyAnswer("GET", "/items", itemsPage([{ item: wireItem({ id: "before" }) }]));
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(
+      hydrated.ok && hydrated.value.cursor,
+      "the hydration reported the head it read rather than the cursor its replay reached",
+    ).toBe("11");
+    const held = await device.list();
+    expect(
+      held.ok ? held.value.map((row) => row.id).sort() : held,
+      "a write made while the pages were read was missing when the hydration returned",
+    ).toEqual(["before", "during"]);
+  });
+
+  it("does not complete a hydration whose replay sends no live marker", async () => {
+    harness = await startHarness("no-marker");
+    const { server, device } = harness;
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeadRead("10"),
+      copyIncompleteReplay("10", []),
+    );
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    scriptKey(server);
+    server.copyAnswer("GET", "/items", itemsPage([{ item: wireItem({ id: "n1" }) }]));
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, "a replay with no live marker completed a hydration").toBe(
+      false,
+    );
+    if (!hydrated.ok) expect(hydrated.refusal.code).toBe("stream_incomplete");
+    const status = await device.status();
+    expect(status.ok && status.value.hydration).not.toBe("complete");
+    expect((await device.list()).ok).toBe(false);
+  });
+
+  it("expires the copy when a listing hands back a cursor it already read", async () => {
+    harness = await startHarness("repeated-cursor");
+    const { server, device } = harness;
+    server.copyAnswer("GET", "/events", copyHeadRead("10"));
+    server.copyAnswer("GET", "/types", typeCatalog());
+    server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+    scriptKey(server);
+    server.copyAnswer(
+      "GET",
+      "/items",
+      itemsPage([{ item: wireItem({ id: "a" }) }], { nextCursor: "p2" }),
+      itemsPage([{ item: wireItem({ id: "b" }) }], { nextCursor: "p2" }),
+    );
+    const hydrated = await device.hydrate(["core.note"], "library");
+    expect(hydrated.ok, "a listing that loops was walked to an end").toBe(false);
+    if (!hydrated.ok) {
+      expect(hydrated.refusal.code).toBe("copy_expired");
+      expect(hydrated.refusal.raw).toContain("read_view_invalid");
+    }
+    expect(
+      server.requests.filter((request) => request.pathname === "/items").length,
+    ).toBe(2);
   });
 });

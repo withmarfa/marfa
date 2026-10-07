@@ -214,6 +214,62 @@ describe("the contract the binary was built for", () => {
     const envelope = refusal(outcome.stderr);
     expect(envelope.error.code).not.toBe("contract_mismatch");
     expect(envelope.error.server?.status).toBe(502);
+    expect([envelope.error.code, envelope.exit, outcome.code]).toEqual([
+      "unnamed_answer",
+      3,
+      3,
+    ]);
+  });
+
+  it("says a write it refused for its contract was sent and may have taken effect", async () => {
+    server = await ScriptedServer.start();
+    server.copyAnswer(
+      "POST",
+      "/items",
+      naming(
+        { kind: "json", status: 201, body: { item: {} } },
+        String(builtFor + 1),
+      ),
+    );
+    const outcome = await marfa([
+      "--json",
+      "--url",
+      server.url,
+      "--key",
+      KEY,
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: "sent", body: "sent" }),
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(1);
+    expect(refusal(outcome.stderr).error.code).toBe("contract_mismatch");
+    expect(
+      outcome.stderr,
+      "a write refused for its contract did not say it may have taken effect",
+    ).toContain("may have taken effect");
+    expect(sent(server)).toEqual(["POST /items"]);
+  });
+
+  it("refuses a redirect without following it", async () => {
+    server = await ScriptedServer.start();
+    server.copyAnswer("GET", "/items", {
+      kind: "json",
+      status: 307,
+      body: {},
+      headers: { location: "/elsewhere" },
+    });
+    const outcome = await listItems(server.url);
+    expect(outcome.code, outcome.stderr).toBe(1);
+    const envelope = refusal(outcome.stderr);
+    expect([envelope.error.code, envelope.error.server?.status]).toEqual([
+      "redirect",
+      307,
+    ]);
+    expect(outcome.stderr).toContain("/elsewhere");
+    expect(sent(server), "the redirect was followed").toEqual(["GET /items"]);
   });
 
   it("still says which server this is, and that its contract is another", async () => {
@@ -868,21 +924,71 @@ describe("every command holds the server to the contract", () => {
       MARFA_API_KEY: KEY,
     });
 
+  it("names the page a docs site does not hold, and the site that answers with a fault", async () => {
+    server = await ScriptedServer.start();
+    server.answer("GET", "/missing/page.md", markdownPage("not found", 404));
+    for (const status of [500, 503, 403]) {
+      server.answer(
+        "GET",
+        `/faulty-${String(status)}.md`,
+        markdownPage("no", status),
+      );
+    }
+    const missing = await docs(server.url, ["missing/page"]);
+    expect(missing.code, missing.stderr).toBe(1);
+    expect(refusal(missing.stderr).error.code).toBe("docs_page_not_found");
+    expect(missing.stderr).toContain("missing/page");
+    for (const status of [500, 503, 403]) {
+      const faulty = await docs(server.url, [`faulty-${String(status)}`]);
+      expect(faulty.code, `${String(status)}: ${faulty.stderr}`).toBe(3);
+      expect(faulty.stdout).toBe("");
+      expect(refusal(faulty.stderr).error.code).toBe("docs_unreachable");
+      expect(faulty.stderr).toContain(server.url);
+    }
+  });
+
   it("exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it", async () => {
     server = await ScriptedServer.start();
-    server.answer("GET", "/api/docs/search", {
-      kind: "json",
-      status: 200,
-      contract: null,
-      body: { hits: "catch-all" },
-    });
-    server.answer("GET", "/api/docs/topics", {
-      kind: "bytes",
-      status: 200,
-      body: Buffer.from("<html>catch-all</html>"),
-      contentType: "application/json",
-    });
-    for (const args of [["search", "files"], ["topics"]]) {
+    // Consumed in order: a body that is not the shape read, then entries
+    // without the title or the address each carries.
+    server.answer(
+      "GET",
+      "/api/docs/search",
+      {
+        kind: "json",
+        status: 200,
+        contract: null,
+        body: { hits: "catch-all" },
+      },
+      {
+        kind: "json",
+        status: 200,
+        contract: null,
+        body: { hits: [{ url: "https://docs.marfa.so/untitled" }] },
+      },
+    );
+    server.answer(
+      "GET",
+      "/api/docs/topics",
+      {
+        kind: "bytes",
+        status: 200,
+        body: Buffer.from("<html>catch-all</html>"),
+        contentType: "application/json",
+      },
+      {
+        kind: "json",
+        status: 200,
+        contract: null,
+        body: { pages: [{ title: "Nowhere" }] },
+      },
+    );
+    for (const args of [
+      ["search", "files"],
+      ["topics"],
+      ["search", "files"],
+      ["topics"],
+    ]) {
       const outcome = await docs(server.url, args);
       expect(outcome.code, outcome.stderr).toBe(3);
       expect(outcome.stdout).toBe("");
@@ -890,6 +996,8 @@ describe("every command holds the server to the contract", () => {
       expect(outcome.stderr).not.toContain("<html>");
     }
     expect(sent(server)).toEqual([
+      "GET /api/docs/search",
+      "GET /api/docs/topics",
       "GET /api/docs/search",
       "GET /api/docs/topics",
     ]);
@@ -1054,8 +1162,10 @@ describe("every command holds the server to the contract", () => {
       "docs/get-started/files",
       "/docs/get-started/files.md",
       "get-started/files#a-heading",
+      "get-started/files?from=search",
       "https://docs.marfa.so/get-started/files",
       "https://docs.marfa.so/docs/get-started/files.md",
+      "http://docs.marfa.so/get-started/files",
     ]) {
       const outcome = await docs(server.url, [named]);
       expect(outcome.code, `${named}: ${outcome.stderr}`).toBe(0);
@@ -1064,7 +1174,7 @@ describe("every command holds the server to the contract", () => {
     expect(new Set(sent(server))).toEqual(
       new Set(["GET /get-started/files.md"]),
     );
-    expect(sent(server)).toHaveLength(9);
+    expect(sent(server)).toHaveLength(11);
   });
 
   it("posts redelivery with encoded ids and no body", async () => {
@@ -1255,10 +1365,41 @@ describe("every command holds the server to the contract", () => {
 
 /**
  * The working copy holds the same server to the contract its core was built
- * for, which is the same document's (`device.md` 42).
+ * for, which is the same document's (`device/contract-mismatch`).
  */
 describe("the contract the working copy was built for", () => {
   const other = String(builtFor + 1);
+
+  it.each([
+    ["its own", BUILT_FOR],
+    ["another", other],
+    ["none", null],
+  ] as const)(
+    "refuses a redirect a hydration is answered with, naming %s contract, without following it",
+    async (_named, contract) => {
+      harness = await startHarness(`contract-redirect-${String(contract)}`);
+      const { server: scripted, device } = harness;
+      scripted.copyAnswer("GET", "/events", {
+        kind: "json",
+        status: 307,
+        body: {},
+        contract,
+        headers: { Location: "/elsewhere" },
+      });
+      const refused = await device.hydrate(["core.note"], "library");
+      expect(refused.ok, "a hydration followed a redirect").toBe(false);
+      if (!refused.ok) {
+        expect(refused.refusal.code).toBe("redirect");
+        expect(refused.refusal.raw).toContain("/elsewhere");
+      }
+      expect(
+        scripted.requests.map((request) => request.pathname),
+        "the redirect was followed",
+      ).toEqual(["/events"]);
+      const status = await device.status();
+      expect(status.ok && status.value.hydration).toBe("never");
+    },
+  );
 
   it("refuses a hydration from a server on another contract, holding nothing", async () => {
     harness = await startHarness("contract-hydrate");
@@ -1823,7 +1964,7 @@ describe("the contract the working copy was built for", () => {
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
       // Taken as from something in front of the server, whatever its
-      // status, and named by it (`device.md` 42).
+      // status, and named by it (`device/unnamed-environmental`).
       expect(refused.refusal.code).toBe("unnamed_answer");
       expect(refused.refusal.raw).toContain("502");
       expect(refused.refusal.raw).toContain('"exit":3');

@@ -19,6 +19,7 @@ import {
   SCRIPTED_TYPES,
   snapshotType,
   answers,
+  catchupTooOld,
   connected,
   copyHeldLog,
   copyLiveReplay,
@@ -615,12 +616,13 @@ describe("the working copy holds one slice", () => {
       harness = await startHarness("thumbnail-after-spent");
       const { server, device } = harness;
       scriptHydration(server, { head: "10", catalog: photos(false) });
-      // `cover` becomes the thumbnail after the device's second read: the
-      // one the stream opened with and the one `icon` sent it to.
+      // `cover` becomes the thumbnail only at the read after the one `icon`
+      // sends the device to, so only a device that looks past `icon` to
+      // `cover` reads the catalog that declares it.
       let reads = 0;
       server.copyAnswer("GET", "/types", () => {
         reads += 1;
-        return photos(reads > 2);
+        return photos(reads > 3);
       });
       server.copyAnswer(
         "GET",
@@ -659,7 +661,7 @@ describe("the working copy holds one slice", () => {
       expect(
         reads,
         "the image after one already read again for, in the same item, did not send the device to the catalog",
-      ).toBe(3);
+      ).toBe(4);
     });
 
     it("keeps a thumbnail out of its index when its property was read again for before its type declared it", async () => {
@@ -718,10 +720,13 @@ describe("the working copy holds one slice", () => {
       harness = await startHarness("thumbnail-catch-up-after-spent");
       const { server, device } = harness;
       scriptHydration(server, { head: "10", catalog: photos(false) });
+      // The hydration's replay reads once and the catch-up's start once;
+      // `cover` becomes the thumbnail only at the read after the one `icon`
+      // sends the catch-up to.
       let reads = 0;
       server.copyAnswer("GET", "/types", () => {
         reads += 1;
-        return photos(reads > 2);
+        return photos(reads > 3);
       });
       server.copyAnswer(
         "GET",
@@ -758,7 +763,7 @@ describe("the working copy holds one slice", () => {
       expect(
         reads,
         "the image after one already read again for, in the same item, did not send the catch-up to the catalog",
-      ).toBe(3);
+      ).toBe(4);
     });
   });
 
@@ -1228,6 +1233,7 @@ describe("the working copy holds one slice", () => {
       altered.ok,
       "the device kept bytes that are not the blob they were fetched as, so the name answers a different file",
     ).toBe(false);
+    if (!altered.ok) expect(altered.refusal.code).toBe("decoding");
     // The altered blob's own link was followed, so the refusal is the check
     // on what came back and not a fetch that never happened.
     expect(
@@ -1327,6 +1333,49 @@ describe("the working copy belongs to one server", () => {
     } finally {
       await elsewhere.stop();
     }
+  });
+
+  it("opens a store under another key at the origin it is bound to", async () => {
+    harness = await startHarness("origin-key");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const asked = server.requests.length;
+    const caught = await device.reopen({ key: "another-key" }).catchUp();
+    expect(
+      caught.ok,
+      `a store refused the key it was not hydrated under, so a rotated key strands its copy: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    // The witness: the catch-up went out under the other key.
+    expect(
+      server.requests
+        .slice(asked)
+        .every(
+          (request) => request.headers.authorization === "Bearer another-key",
+        ),
+    ).toBe(true);
+  });
+
+  it("refuses a store opened at another path prefix of its host, sending nothing there", async () => {
+    harness = await startHarness("origin-prefix");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const asked = server.requests.length;
+    const refused = await device
+      .reopen({ url: `${server.url}/elsewhere` })
+      .catchUp();
+    expect(
+      refused.ok,
+      "a store was caught up from another path of its host",
+    ).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("wrong_server");
+      expect(refused.refusal.raw).toContain(`${server.url}/elsewhere`);
+    }
+    expect(server.requests.length, "a request reached the other path").toBe(
+      asked,
+    );
   });
 
   it("keeps the key out of the store", async () => {
@@ -1490,7 +1539,19 @@ describe("the working copy belongs to one server", () => {
       refused.ok,
       "a store another schema version made was read as though this one had",
     ).toBe(false);
-    if (!refused.ok) expect(refused.refusal.code).toBe("wrong_schema");
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("wrong_schema");
+      expect(refused.refusal.raw).toContain(harness.device.store);
+    }
+    const written = await harness.device.get("n1");
+    expect(
+      written.ok,
+      "a writer opened a store another schema version made",
+    ).toBe(false);
+    if (!written.ok) {
+      expect(written.refusal.code).toBe("wrong_schema");
+      expect(written.refusal.raw).toContain(harness.device.store);
+    }
   });
 
   it("refuses a store another build shaped, by name, with the writes it holds unsent", async () => {
@@ -1540,6 +1601,45 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
+  it("names a blocked write among the writes a store of another shape holds unsent", async () => {
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    harness = await hydratedHarness("store-shape-held", {
+      rows: { "core.note": [{ item: { id, version: 3 } }] },
+    });
+    const edit = await harness.device.update(id, {
+      properties: { title: "edited", body: "edited" },
+      version: 3,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    scriptWrites(harness.server, {
+      update: [refusal(409, "version_conflict", "the row moved")],
+    });
+    const drained = await harness.device.drain();
+    // The witness: the write is blocked, which the server has not taken.
+    expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
+      "blocked",
+    ]);
+
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec("ALTER TABLE queue RENAME COLUMN follows TO after_write");
+    } finally {
+      store.close();
+    }
+    const refused = await harness.device.queue();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code).toBe("wrong_schema");
+    expect(refused.refusal.raw).toContain("1 write");
+    const said = (
+      JSON.parse(refused.refusal.raw) as { error: { message: string } }
+    ).error.message.replace(harness.device.store, "");
+    expect(
+      said,
+      "the refusal counted a blocked write without saying a blocked write is among them",
+    ).toContain("blocked");
+  });
+
   it("opens a store made before a table this build adds, and adds it", async () => {
     harness = await hydratedHarness("store-older", {
       rows: { "core.note": [{ item: { id: "n1" } }] },
@@ -1550,8 +1650,20 @@ describe("the working copy belongs to one server", () => {
     } finally {
       store.close();
     }
+    // A reader cannot add a table, and says the store wants this build's
+    // writer once rather than that another build made it.
+    const reader = harness.device.reopen({ reader: true });
+    const early = await reader.get("n1");
+    expect(early.ok, "a reader read a store that lacks a table it reads").toBe(
+      false,
+    );
+    if (!early.ok) {
+      expect(early.refusal.code).toBe("invalid");
+      expect(early.refusal.raw).toContain("writer");
+    }
     const read = await harness.device.get("n1");
     expect(read.ok, JSON.stringify(read)).toBe(true);
+    expect((await reader.get("n1")).ok).toBe(true);
     const reopened = new DatabaseSync(harness.device.store);
     try {
       const tables = reopened
@@ -1925,13 +2037,90 @@ describe("the working copy says what it is", () => {
     }
   });
 
+  it("refuses a local write after an interrupted hydration", async () => {
+    harness = await startHarness("interrupted-write");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    // Answers are taken in order, so the second hydration is the one that
+    // dies part way.
+    server.copyAnswer("GET", "/items", { kind: "drop" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the hydrated copy takes a write.
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "taken", body: "taken" },
+        })
+      ).ok,
+    ).toBe(true);
+    const queued = await device.queue();
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
+
+    const refused = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    expect(
+      refused.ok,
+      "a copy part way through a hydration took a write onto a piece of a copy",
+    ).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
+    expect(await device.queue()).toEqual(queued);
+
+    const sentBefore = server.requests.length;
+    const drained = await device.drain();
+    expect(drained.ok ? "drained" : drained.refusal.code).toBe(
+      "hydration_incomplete",
+    );
+    expect(server.requests.length, "the refused drain asked the server").toBe(
+      sentBefore,
+    );
+    expect(await device.queue()).toEqual(queued);
+  });
+
+  it("reports complete for a copy whose cursor aged out until a catch-up learns it, asking nothing to report", async () => {
+    harness = await startHarness("expired-is-an-answer");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, copyStreamCursor("900"), catchupTooOld("500", "10")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const asked = server.requests.length;
+    const before = await device.status();
+    expect(before.ok && before.value.hydration).toBe("complete");
+    expect(server.requests.length, "the report asked the server").toBe(asked);
+
+    expect((await device.catchUp()).ok).toBe(false);
+    const after = await device.status();
+    expect(after.ok && after.value.hydration).toBe("expired");
+    const write = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    expect(write.ok, "an expired copy took a write").toBe(false);
+    if (!write.ok) expect(write.refusal.code).toBe("hydration_incomplete");
+
+    const sentBefore = server.requests.length;
+    const drained = await device.drain();
+    expect(drained.ok ? "drained" : drained.refusal.code).toBe("copy_expired");
+    expect(server.requests.length, "the refused drain asked the server").toBe(
+      sentBefore,
+    );
+  });
+
   it("reports an interrupted re-hydration as in progress, not as a copy that aged out", async () => {
     // The state the other three words are defined against. A hydration
     // clears the cursor before it reads a page and leaves the previous
     // slice declared, so a re-hydration that dies partway leaves a store
     // that declares a slice and holds no cursor — which is the shape of a
     // copy whose cursor aged out. The two are told apart by the marker, and
-    // which of them wins is a claim `device.md` 5 makes in words.
+    // which of them wins is a claim `device/report-fields` makes in words.
     harness = await startHarness("interrupted-rehydration");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -1975,7 +2164,7 @@ describe("the working copy says what it is", () => {
 describe("a local read answers the active state unless asked otherwise", () => {
   /**
    * Three rows, one per state, in one slice. Hydration asks the server for
-   * every state (`device.md` 31), so what the copy holds is not in question
+   * every state (`device/list-default-active`), so what the copy holds is not in question
    * here and what a read answers is.
    */
   async function hydrateEveryState(label: string): Promise<void> {
@@ -2160,6 +2349,53 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toEqual(["filed", "live"]);
   });
 
+  it("stops finding a row once an event puts it in the bin", async () => {
+    harness = await startHarness("search-binned-later");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: { id: "doomed", properties: { title: "zqlater", body: "b" } },
+          },
+        ],
+      },
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent(
+          "11",
+          "item.deleted",
+          wireItem({
+            id: "doomed",
+            state: "trashed",
+            updated_at: "2026-09-19T00:00:00.000Z",
+            properties: { title: "zqlater", body: "b" },
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const ids = async (filters: { allStates?: boolean; state?: string }) => {
+      const hits = await device.search("zqlater", filters);
+      return hits.ok ? hits.value.map((hit) => hit.item.id) : hits;
+    };
+    // The witness: the row is found before it goes to the bin.
+    expect(await ids({})).toEqual(["doomed"]);
+    expect((await device.catchUp()).ok).toBe(true);
+    const held = await device.list({ state: "trashed" });
+    expect(held.ok ? held.value.map((row) => row.id) : held).toEqual([
+      "doomed",
+    ]);
+    expect(
+      [await ids({ allStates: true }), await ids({ state: "trashed" })],
+      "a row put in the bin after it was indexed was still found",
+    ).toEqual([[], []]);
+  });
+
   it("reads an archived row by id and reports a trashed one as absent", async () => {
     await hydrateEveryState("local-get-state");
     const device = harness!.device;
@@ -2287,7 +2523,7 @@ describe("a local search narrows as a list does", () => {
 
 /**
  * A local read takes the server's listing grammar and answers it from the
- * copy (`device.md` 24 and 36).
+ * copy (`device/filter-grammar-refused` and `device/filter-as-server`).
  *
  * A filter the copy answered differently from the server would show one set
  * of rows offline and another online for the same question, with nothing to

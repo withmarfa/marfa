@@ -129,7 +129,7 @@ describe("the queue answers before there is anything in it", () => {
     // not about the copy: a device that made them hydrate first would
     // refuse the question at the moment it matters most, which is when the
     // server cannot be reached. The store is made and never hydrated, since
-    // a path with no store at all is refused (`device.md` 45).
+    // a path with no store at all is refused (`device/command-no-store`).
     expect((await harness.device.status()).ok).toBe(true);
     const queued = await harness.device.queue();
     expect(
@@ -858,7 +858,7 @@ describe("what a drain sends and reports", () => {
     );
     expect(attached.ok, JSON.stringify(attached)).toBe(true);
     if (!attached.ok) return;
-    const fileId = attached.value[1]?.item_id ?? "";
+    const fileId = attached.value.item.item_id ?? "";
     acceptUploads(server);
     let fileRow: {
       id: string;
@@ -1091,7 +1091,7 @@ describe("what a drain sends and reports", () => {
     );
     expect(attached.ok, JSON.stringify(attached)).toBe(true);
     if (!attached.ok) return;
-    const fileId = attached.value[1]?.item_id ?? "";
+    const fileId = attached.value.item.item_id ?? "";
     acceptUploads(server);
     let fileRow: {
       id: string;
@@ -1640,7 +1640,7 @@ describe("what a queue holds", () => {
         `a queued row carries no kind at all: ${JSON.stringify(row)}`,
       ).toBe(true);
     }
-    // And a purge is not among them (`device.md` 25): the binary offers no
+    // And a purge is not among them (`device/purge-unqueued`): the binary offers no
     // command for one, so no queue can hold one.
     expect(
       WRITE_KINDS,
@@ -1904,7 +1904,7 @@ describe("offline, reconnect and re-hydration", () => {
     ).toBe(true);
     if (!drained.ok) return;
     // An unreachable server cannot say which instance it is, so the pass
-    // ends before anything is sent, and says why (`device.md` 2).
+    // ends before anything is sent, and says why (`device/instance-unconfirmed` and `device/instance-unconfirmed-says`).
     expect(drained.value.answered).toBe(0);
     expect(drained.value.undelivered).toBe(1);
     expect(drained.value.unavailable).toContain("which instance");
@@ -3752,6 +3752,7 @@ describe("an upload is a queued write", () => {
       empty.ok,
       "an empty file was queued as an upload the server will refuse",
     ).toBe(false);
+    if (!empty.ok) expect(empty.refusal.code).toBe("invalid");
     expect((await queueOf(device)).map((row) => row.kind)).toEqual([
       "upload_blob",
     ]);
@@ -3877,8 +3878,8 @@ describe("an upload is a queued write", () => {
       `the device could not attach a file: ${JSON.stringify(attached)}`,
     ).toBe(true);
     if (!attached.ok) return;
-    const [upload, item, edge] = attached.value;
-    expect(attached.value.map((row) => row.kind)).toEqual([
+    const { upload, item, edge } = attached.value;
+    expect([upload, item, edge].map((row) => row.kind)).toEqual([
       "upload_blob",
       "create_item",
       "create_edge",
@@ -3955,6 +3956,34 @@ describe("an upload is a queued write", () => {
       target_id: HELD.id,
       edge_type: "attached-to",
     });
+  });
+
+  it("types an added file by its extension, whatever its case, where it is told nothing", async () => {
+    harness = await hydratedHarness("upload-defaults", { rows: held() });
+    const { device } = harness;
+    for (const [name, mime, type] of [
+      [
+        "report.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "core.file",
+      ],
+      [
+        "SHEET.XLSX",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "core.file",
+      ],
+      ["Photo.JPG", "image/jpeg", "core.file.image"],
+      ["blob.unknown", "application/octet-stream", "core.file"],
+    ] as const) {
+      const added = await device.addFile(fileOf(name, `bytes of ${name}\n`));
+      expect(added.ok, JSON.stringify(added)).toBe(true);
+      if (!added.ok) continue;
+      const file = await device.get(added.value[1]?.item_id ?? "");
+      expect(
+        file.ok && [file.value.type, file.value.properties.mime_type],
+        `${name} was typed otherwise`,
+      ).toEqual([type, mime]);
+    }
   });
 
   it("adds a file as an upload and a file item, linked to nothing", async () => {
@@ -4035,7 +4064,12 @@ describe("an upload is a queued write", () => {
     // The witness: the same file attached queues an edge, so the device
     // links a file when asked to and the absence above is the command's.
     const attached = await device.attach(HELD.id, fileOf("novel.epub", bytes));
-    expect(attached.ok && attached.value.map((row) => row.kind)).toEqual([
+    expect(
+      attached.ok &&
+        [attached.value.upload, attached.value.item, attached.value.edge].map(
+          (row) => row.kind,
+        ),
+    ).toEqual([
       "upload_blob",
       "create_item",
       "create_edge",
@@ -4098,7 +4132,7 @@ describe("an upload is a queued write", () => {
     );
     expect((await device.putBlob(fileOf("kept.txt", kept))).ok).toBe(true);
 
-    // Beside the store, in the folder named for it (`device.md` 38).
+    // Beside the store, in the folder named for it (`device/upload-copied`).
     const heldAt = `${device.store}.blobs/${hashOf(gone).slice("sha256:".length)}`;
     expect(
       existsSync(heldAt),
@@ -4228,7 +4262,7 @@ describe("an upload is a queued write", () => {
     );
     expect(attached.ok).toBe(true);
     if (!attached.ok) return;
-    const file = await device.get(attached.value[1]?.item_id ?? "");
+    const file = await device.get(attached.value.item.item_id ?? "");
     expect(file.ok).toBe(true);
     if (!file.ok) return;
     expect(

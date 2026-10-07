@@ -27,7 +27,7 @@ import {
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-// `device.md` 88 to 99: a body written through a working copy, against the
+// `device/body-edges` to `device/attach-title`: a body written through a working copy, against the
 // run's server.
 
 let client: MarfaClient;
@@ -173,6 +173,65 @@ describe("links", () => {
       { state: "item", id: later.id },
       { state: "item", id: remote },
     ]);
+  });
+
+  it("makes no edge for a link to the item itself or in a comment, and reads an event's description as its body", async () => {
+    const target = await note(device, named("Commented target"));
+    const host = await note(device, named("Self host"));
+    await drained(device);
+    await setBody(
+      device,
+      host.id,
+      [
+        `[[${host.id}]] and [[${named("Self host")}]]`,
+        `<!-- [[${named("Commented target")}]] -->`,
+        `%% [[${named("Commented target")}]] %%`,
+      ].join("\n"),
+    );
+    await drained(device);
+    expect(
+      await referencesFrom(host.id),
+      "a link to the item itself, or one in a comment, made an edge",
+    ).toEqual([]);
+
+    // The witness: the same name outside a comment, in the property an
+    // event keeps its body in, is a link.
+    const made = value(
+      await device.create({
+        type: "core.event",
+        properties: {
+          title: named("Event host"),
+          description: `[[${named("Commented target")}]]`,
+        },
+      }),
+    );
+    trackItem(ctx, made.item_id!);
+    await drained(device);
+    expect(await referencesFrom(made.item_id!)).toEqual([target.id]);
+  });
+
+  it("pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it", async () => {
+    const remote = await remoteNote(named("Pinned remote"));
+    const host = await note(
+      device,
+      named("Pin host"),
+      `[[${named("Pinned remote")}]]`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([remote]);
+    expect(
+      value(await device.status()).pinned,
+      "an item only the server holds was linked without being held",
+    ).toContain(remote);
+    expect(value(await device.get(remote)).id).toBe(remote);
+
+    await setBody(device, host.id, "no link now");
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([]);
+    expect(
+      value(await device.status()).pinned,
+      "a body's pin stayed after no edge needed it",
+    ).not.toContain(remote);
   });
 
   it("queues no edge write for an edit that leaves the body as it was", async () => {
@@ -406,13 +465,17 @@ describe("embeds", () => {
     const host = await note(device, named("Attach host"));
     const first = value(await device.attach(host.id, join(dir, name)));
     const second = value(await device.attach(host.id, join(dir, name)));
-    const files = [first[1].item_id!, second[1].item_id!];
+    const files = [first.item.item_id!, second.item.item_id!];
     for (const file of files) trackItem(ctx, file);
     const texts = [];
     for (const file of files) {
       texts.push(value(await device.embedText(host.id, file)).embed);
     }
     expect(texts).toEqual([`![[${name}]]`, `![[pasted-${ctx.runId} 2.png]]`]);
+    expect(
+      [first.embed, second.embed],
+      "the attach did not answer the text that embeds the file it attached",
+    ).toEqual(texts);
     const before = (await unsent(device)).length;
     await setBody(device, host.id, texts.join("\n"));
     const after = await unsent(device);
@@ -425,6 +488,17 @@ describe("embeds", () => {
     expect(await attachedTo(host.id)).toEqual([...files].sort());
     const refused = await device.embedText(host.id, host.id);
     expect(refused.ok, "a note was given embed text").toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
+    const elsewhere = await note(device, named("Unattached host"));
+    const unattached = await device.embedText(elsewhere.id, files[0]!);
+    expect(
+      unattached.ok,
+      "a file was given embed text in an item it is not attached to",
+    ).toBe(false);
+    if (!unattached.ok) {
+      expect(unattached.refusal.code).toBe("invalid");
+      expect(unattached.refusal.raw).toContain("not attached");
+    }
   });
 });
 

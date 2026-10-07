@@ -1,7 +1,13 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
-import { requireBinary } from "./harness.js";
+import { refusal } from "../../device/marfa-answers.js";
+import {
+  requireBinary,
+  scriptHydration,
+  startHarness,
+  type Harness,
+} from "./harness.js";
 
 /**
  * "A copy saves before it has reached a server."
@@ -166,6 +172,10 @@ describe("a copy no server has been named for", () => {
     });
     expect(stale.ok ? "queued" : stale.refusal.code).toBe("unknown_type");
     expect(
+      value(await device.queue()).map((write) => write.kind),
+      "a save queued under a type the app no longer declares left the queue",
+    ).toEqual(["create_item"]);
+    expect(
       (await device.create({ type: "app.dish.entry", properties: {} })).ok,
     ).toBe(true);
   });
@@ -210,5 +220,55 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.itemTypes()).map((type) => type.id)).toContain(
       "core.note",
     );
+  });
+});
+
+describe("a hydration that registers what the app declares", () => {
+  let harness: Harness | undefined;
+  afterEach(async () => {
+    await harness?.stop();
+    harness = undefined;
+  });
+
+  it("registers a declared parent before its child, and fails a hydration whose registration meets a failing server", async () => {
+    harness = await startHarness("register-order");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const registered: string[] = [];
+    server.answer(
+      "POST",
+      "/types",
+      refusal(503, "unavailable", "try later"),
+      (request) => {
+        const sent = JSON.parse(request.body) as { id: string };
+        registered.push(sent.id);
+        return { kind: "json", status: 201, body: sent };
+      },
+    );
+    value(await device.status());
+    value(
+      await device.declareTypes([
+        {
+          id: "app.child.entry",
+          parent: "app.parent.entry",
+          fields: { title: { type: "string" } },
+        },
+        { id: "app.parent.entry", fields: { title: { type: "string" } } },
+      ]),
+    );
+    const failed = await device.hydrate(["core.note"], "library");
+    expect(
+      failed.ok,
+      "a server failing a registration was reported as a type the key may not register",
+    ).toBe(false);
+    if (!failed.ok) expect(failed.refusal.code).toBe("server");
+    expect(value(await device.status()).hydration).toBe("never");
+
+    const hydrated = value(await device.hydrate(["core.note"], "library"));
+    expect(
+      registered,
+      "a declared child was registered before its parent",
+    ).toEqual(["app.parent.entry", "app.child.entry"]);
+    expect(hydrated.unregistered_types).toEqual([]);
   });
 });

@@ -245,3 +245,86 @@ it("refuses a property with no name on create and edit, and takes one with a nam
   const drained = await device.drain();
   expect(drained.ok && drained.value.verdicts.at(-1)?.verdict).toBe("accepted");
 });
+
+it("refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does", async () => {
+  const tags = (count: number, prefix: string) =>
+    Array.from({ length: count }, (_, at) => `${prefix}-${String(at)}`);
+  const full = await client.createItem({
+    type,
+    source: ctx.source,
+    properties: { title: "a hundred tags" },
+    tags: tags(100, "held"),
+  });
+  expect(full.ok, JSON.stringify(full.error)).toBe(true);
+  trackItem(ctx, full.data.item.id);
+  const id = full.data.item.id;
+  expect((await device.catchUp()).ok).toBe(true);
+  // The witness: the server refuses each write below on its own door.
+  for (const refused of [
+    await client.createItem({
+      type,
+      source: ctx.source,
+      properties: { title: "too many" },
+      tags: tags(101, "sent"),
+    }),
+    await client.addTags(id, ["one-more"]),
+    await client.updateMetadata(id, { tags: ["one-more"] }),
+    await client.replaceMetadata(id, { tags: tags(101, "sent") }),
+  ]) {
+    expect(refused.status, "the server took more than 100 tags").toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  }
+
+  const before = await device.queue();
+  expect(before.ok).toBe(true);
+  const held = await device.get(id);
+  expect(held.ok && held.value.tags.length).toBe(100);
+  const file = join(scratch, "tagged.txt");
+  writeFileSync(file, "bytes a refused file must not leave behind");
+  for (const [door, outcome] of [
+    [
+      "items create",
+      await device.create({
+        type,
+        properties: { title: "too many" },
+        tags: tags(101, "sent"),
+      }),
+    ],
+    ["items add", await device.addFile(file, { tags: tags(101, "sent") })],
+    ["tags add", await device.addTag(id, "one-more")],
+    ["metadata merge", await device.writeMetadata(id, ["one-more"], "merge")],
+    [
+      "metadata replace",
+      await device.writeMetadata(id, tags(101, "sent"), "replace"),
+    ],
+  ] as const) {
+    expectRefusedAsTheServerDoes(outcome, `${door} past 100 tags`);
+  }
+  expect(await device.queue(), "a write past 100 tags was queued").toEqual(
+    before,
+  );
+  expect(await device.get(id), "a write past 100 tags was saved").toEqual(held);
+
+  // A hundred is taken, and a row holding a hundred still takes a tag it
+  // holds already and sheds one.
+  const created = await device.create({
+    type,
+    properties: { title: "a hundred" },
+    tags: tags(100, "sent"),
+  });
+  expect(created.ok, JSON.stringify(created)).toBe(true);
+  if (created.ok) trackItem(ctx, created.value.item_id!);
+  expect((await device.addTag(id, "held-0")).ok).toBe(true);
+  expect((await device.removeTag(id, "held-1")).ok).toBe(true);
+  expect((await device.addTag(id, "one-more")).ok).toBe(true);
+  const drained = await device.drain();
+  expect(drained.ok, JSON.stringify(drained)).toBe(true);
+  if (!drained.ok) return;
+  const verdicts = drained.value.verdicts.map((verdict) => verdict.verdict);
+  // The create, a write for each of its tags, and the three tag writes.
+  expect(verdicts.length).toBe(104);
+  expect(
+    verdicts.filter((verdict) => verdict !== "accepted"),
+    "the server refused a write the device took",
+  ).toEqual([]);
+});

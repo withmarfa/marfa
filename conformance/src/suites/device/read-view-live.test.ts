@@ -103,7 +103,10 @@ it.each(["retyping", "grant narrowing"])(
       expect(remote.status).toBe(404);
       const caught = await device.catchUp();
       expect(caught.ok).toBe(false);
-      if (!caught.ok) expect(caught.refusal.code).toBe("copy_expired");
+      if (!caught.ok) {
+        expect(caught.refusal.code).toBe("copy_expired");
+        expect(caught.refusal.raw).toContain("read_view_changed");
+      }
       expect(value(await device.status()).hydration).toBe("expired");
       expect((await device.list()).ok).toBe(false);
       expect(value(await device.queue())).toEqual(before);

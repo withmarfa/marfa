@@ -12,7 +12,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A purge through a working copy (`device.md` 75 to 82), run against a real
+ * A purge through a working copy (`device/purge-not-held` to `device/purge-unanswered`), run against a real
  * server and the real binary: sent at once and never queued, refused with the
  * copy and the queue left as they were, and the row, its edges and its pin
  * taken out once the server answers.

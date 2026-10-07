@@ -15,7 +15,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * A working copy reads a folder's settings, answers its search, and writes
- * its settings through the folder door (`device.md` 63 to 73), against the
+ * its settings through the folder door (`device/folder-system-tier` to `device/folder-write-accepted`), against the
  * real server and the real binary.
  */
 
@@ -191,6 +191,11 @@ describe("a copy reads a folder's settings and answers its search", () => {
     const notHeld = refused(await unheld.listInFolder(id("shelf")));
     expect(notHeld.code, notHeld.raw).toBe("not_found");
     expect(notHeld.raw).toContain("not_held");
+    const notHeldSearch = refused(
+      await unheld.searchInFolder("marmalade", id("shelf")),
+    );
+    expect(notHeldSearch.code, notHeldSearch.raw).toBe("not_found");
+    expect(notHeldSearch.raw).toContain("not_held");
 
     const parents = copy("parents");
     value(
@@ -238,7 +243,12 @@ describe("a copy writes a folder's settings through the folder door", () => {
     expect(after.code, after.raw).toBe("validation");
     expect(after.raw).toContain("invalid_transition");
     const gone = refused(await device.listInFolder(created.id));
+    expect(gone.code, gone.raw).toBe("invalid");
     expect(gone.raw).toContain("revoked");
+    const goneSearch = refused(
+      await device.searchInFolder("marmalade", created.id),
+    );
+    expect(goneSearch.code, goneSearch.raw).toBe("invalid");
 
     expect(value(await device.queue())).toEqual([]);
     const read = await client.getItem(created.id);
@@ -269,6 +279,9 @@ describe("a copy writes a folder's settings through the folder door", () => {
     });
     value(await device.catchUp());
     expect(value(await device.folder(served)).settings.title).toBe(title);
+    const unanswered = refused(await device.listInFolder(served));
+    expect(unanswered.code, unanswered.raw).toBe("invalid");
+    expect(unanswered.raw).toContain("backref");
     expect(value(await device.revokeFolder(served)).state).toBe("revoked");
 
     const offline = copy("offline", "http://127.0.0.1:9");
@@ -278,5 +291,52 @@ describe("a copy writes a folder's settings through the folder door", () => {
     );
     expect(unsent.code, unsent.raw).toBe("network");
     expect(value(await offline.queue())).toEqual([]);
+  });
+
+  it("refuses settings the server would refuse, or defaults its search would not hold, before anything is sent", async () => {
+    const title = `Refused ${ctx.runId}`;
+    for (const [settings, code] of [
+      [{ title, search: { types: [typeId], filter: "title eq" } }, "validation"],
+      [
+        { title, search: { types: [typeId] }, defaults: { tags: [""] } },
+        "validation",
+      ],
+      [
+        { title, search: { types: [typeId] }, defaults: { type: "core.task" } },
+        "invalid",
+      ],
+      [
+        { title, search: { types: [typeId] }, defaults: { tier: "feed" } },
+        "invalid",
+      ],
+    ] as const) {
+      const outcome = refused(await device.createFolder(settings));
+      expect(outcome.code, `${JSON.stringify(settings)}: ${outcome.raw}`).toBe(
+        code,
+      );
+    }
+    const listed = await client.listItems({
+      type: FOLDER_TYPE,
+      filter: `properties.title eq "${title}"`,
+    });
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    expect(listed.data.data, "a refused folder reached the server").toEqual(
+      [],
+    );
+
+    // A change is held to the settings it leaves: alone, a default type
+    // is held by a search of every type, and the shelf searches one other.
+    const before = await client.getItem(id("shelf"));
+    expect(before.ok, JSON.stringify(before.error)).toBe(true);
+    const change = refused(
+      await device.changeFolder(
+        id("shelf"),
+        { defaults: { type: "core.task" } },
+        before.data.item.version,
+      ),
+    );
+    expect(change.code, change.raw).toBe("invalid");
+    const after = await client.getItem(id("shelf"));
+    expect(after.ok && after.data.item.version).toBe(before.data.item.version);
   });
 });

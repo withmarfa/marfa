@@ -12,7 +12,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * The bin through a working copy (`device.md` 83 to 85,
+ * The bin through a working copy (`device/bin-read`, `device/bin-unheld`, `device/bin-offline` and `device/pin-trashed`,
  * `queue-and-verdicts.md` 56), against a real server and the real binary.
  * Each device command is a process of its own, so every step here is also a
  * device started again.
@@ -143,6 +143,34 @@ it("refuses to pin a row in the bin, saying so", async () => {
   expect(value(await copy.status()).pinned).not.toContain(doomed.id);
 });
 
+it("keeps a row it holds in the bin when a pin of it is refused", async () => {
+  const trashed = await trashedNote("held in the bin");
+  const copy = await device("pin-held", "library");
+  const inBin = async () =>
+    value(
+      await copy.list({
+        state: "trashed",
+        tier: "library",
+        filter: `id eq "${trashed.id}"`,
+      }),
+    ).map((row) => row.id);
+  // The witness: a copy of the library holds the row its slice takes, in
+  // the bin as in any other state.
+  expect(await inBin()).toContain(trashed.id);
+
+  const refused = await copy.pin(trashed.id);
+  expect(refused.ok, "a row in the bin was pinned").toBe(false);
+  if (!refused.ok) {
+    expect(refused.refusal.code).toBe("not_found");
+    expect(refused.refusal.raw).toContain("trashed");
+  }
+  expect(
+    await inBin(),
+    "a refused pin let go of a row the slice takes, so the copy no longer shows the bin it holds",
+  ).toContain(trashed.id);
+  expect(value(await copy.status()).pinned).not.toContain(trashed.id);
+});
+
 it("restores a row read from the bin that the copy does not hold", async () => {
   const copy = await device("restore", "library");
   const made = value(
@@ -159,7 +187,7 @@ it("restores a row read from the bin that the copy does not hold", async () => {
   value(await copy.forget());
   // The witness: the row is in the bin on the server and not in the copy.
   expect((await findInBin(copy, [id])).found.has(id)).toBe(true);
-  // A local read by id answers no row in the bin, held or not (device.md 32).
+  // A local read by id answers no row in the bin, held or not (`device/get-trashed`).
   const held = value(await copy.list({ state: "trashed" }));
   expect(
     held.map((row) => row.id),

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { keychainEnv } from "../utils/keychain.js";
 import {
+  type Attached,
   type BodyLinks,
   type CatchUpReport,
   type Change,
@@ -88,7 +89,7 @@ export interface CliDeviceOptions {
   store: string;
   url?: string;
   key?: string;
-  /** Open the store to read only (`device.md` 41). */
+  /** Open the store to read only (`device/reader-not-writer`). */
   reader?: boolean;
   /**
    * The folder registry the binary reads, standing in for one machine's
@@ -128,7 +129,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /**
-   * Holds the event stream open for `seconds` (`device.md` 40): a line per
+   * Holds the event stream open for `seconds` (`device/follow-applies`): a line per
    * event that changed the copy, then the report.
    */
   async follow(
@@ -212,7 +213,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
-  /** What a folder's search holds, answered from the copy (`device.md` 65). */
+  /** What a folder's search holds, answered from the copy (`device/folder-list`). */
   async listInFolder(
     folder: string,
     page: { limit?: number; offset?: number } = {},
@@ -235,7 +236,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<FolderRow>(["folders", "get", id]);
   }
 
-  /** Sent through the folder door at once, never queued (`device.md` 69). */
+  /** Sent through the folder door at once, never queued (`device/folder-write-at-once` and `device/folder-write-unqueued`). */
   async createFolder(
     settings: Record<string, unknown>,
   ): Promise<Outcome<FolderRow>> {
@@ -270,7 +271,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /**
-   * The thumbnail an item carries (`device.md` 29), its bytes written to
+   * The thumbnail an item carries (`device/thumbnail-from-row`), its bytes written to
    * `out`; `thumbnail` is null for an item that carries none.
    */
   async thumbnail(
@@ -713,23 +714,23 @@ export class CliDevice implements DeviceUnderTest {
       type?: string;
       tier?: Tier;
     } = {},
-  ): Promise<Outcome<QueuedWrite[]>> {
+  ): Promise<Outcome<Attached>> {
     const args = ["items", "attach", item, path];
     if (options.tier !== undefined) args.push("--tier", options.tier);
     if (options.mimeType !== undefined)
       args.push("--mime-type", options.mimeType);
     if (options.title !== undefined) args.push("--title", options.title);
     if (options.type !== undefined) args.push("--type", options.type);
-    return this.json<QueuedWrite[]>(args);
+    return this.json<Attached>(args);
   }
 
   /** Each link and embed of a file in an item's body, with what it names
-   *  (`device.md` 97). */
+   *  (`device/body-links-read`). */
   async bodyLinks(id: string): Promise<Outcome<BodyLinks>> {
     return this.json<BodyLinks>(["items", "links", id]);
   }
 
-  /** The text that embeds a file item in an item's body (`device.md` 98). */
+  /** The text that embeds a file item in an item's body (`device/embed-text`). */
   async embedText(
     host: string,
     file: string,
